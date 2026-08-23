@@ -136,7 +136,7 @@ struct EagerOpen {
     /// What was opened, to be compared against what is asked for.
     path: PathBuf,
     /// The pending result, taken by the first matching request.
-    pending: Mutex<Option<ReplyRx<DocumentInfo>>>,
+    pending: Mutex<Option<ReplyRx<DocumentInfo, progressive::Refusal>>>,
 }
 
 /// Whether page geometry should be collected lazily rather than up front.
@@ -352,14 +352,14 @@ fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
 /// Capacity one, for one message. [`render::Reply`] is `FnOnce`, so the send in
 /// [`reply_channel`] cannot find the channel full --- which is what lets it be
 /// a `try_send` and never block the render thread either.
-type ReplyRx<T> = tauri::async_runtime::Receiver<Result<T, String>>;
+type ReplyRx<T, E = String> = tauri::async_runtime::Receiver<Result<T, E>>;
 
 /// A reply callback to hand the render service, and where its answer lands.
 ///
 /// Built here rather than at each call site so that the sender's half of the
 /// arrangement --- the capacity, and the send that must not block --- is stated
 /// once for every caller, the eager open in `start_eager_open` included.
-fn reply_channel<T: Send + 'static>() -> (render::Reply<T>, ReplyRx<T>) {
+fn reply_channel<T: Send + 'static, E: Send + 'static>() -> (render::ReplyTo<T, E>, ReplyRx<T, E>) {
     let (tx, rx) = tauri::async_runtime::channel(1);
     (
         Box::new(move |result| {
@@ -378,10 +378,13 @@ fn reply_channel<T: Send + 'static>() -> (render::Reply<T>, ReplyRx<T>) {
 /// gone, and a persisted `render thread stopped` (see `diag.rs`) then says a
 /// thread died without saying what was being asked of it. The name is the one
 /// piece a reader sending the log back cannot supply.
-async fn await_reply<T>(command: &str, mut rx: ReplyRx<T>) -> Result<T, String> {
+async fn await_reply<T, E>(command: &str, mut rx: ReplyRx<T, E>) -> Result<T, E>
+where
+    E: From<String>,
+{
     rx.recv()
         .await
-        .ok_or_else(|| format!("render thread stopped ({command})"))?
+        .ok_or_else(|| E::from(format!("render thread stopped ({command})")))?
 }
 
 /// Opens a document and returns its page geometry.
@@ -389,13 +392,23 @@ async fn await_reply<T>(command: &str, mut rx: ReplyRx<T>) -> Result<T, String> 
 /// Collects an eager open if one is outstanding, which is why this takes the
 /// app handle: the pending receiver is managed state that only exists in that
 /// variant.
+///
+/// `password` is what the reader typed after a previous call came back with
+/// [`progressive::Refusal::locked`] set. It is a parameter rather than a second
+/// command because opening a locked document and opening any other document
+/// differ in one argument, and giving them separate entry points would give the
+/// pool two ways to acquire a document to keep in step.
+///
+/// The refusal is structured for one reason: a locked document is not a damaged
+/// one, and the frontend has to be able to ask rather than apologise.
 #[tauri::command]
 async fn open_document(
     app: tauri::AppHandle,
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
     path: String,
-) -> Result<DocumentInfo, String> {
+    password: Option<String>,
+) -> Result<DocumentInfo, progressive::Refusal> {
     let wanted = PathBuf::from(&path);
     // Kept because `wanted` is moved into the open below, and the fingerprint
     // is taken after it.
@@ -410,6 +423,11 @@ async fn open_document(
         // head start, which is what a speculative optimisation is allowed to
         // lose, rather than returning the wrong document.
         .filter(|eager| eager.path == wanted)
+        // And never when a password is being offered. The eager open was started
+        // before anyone could type one, so its result is the locked refusal that
+        // *prompted* this call --- collecting it here would answer the reader's
+        // password with the failure that asked for it, forever.
+        .filter(|_| password.is_none())
         .and_then(|eager| eager.pending.lock().take());
     // Both branches end at the same place on purpose. The edit model has to be
     // started for the document that was actually opened, and the eager path
@@ -421,7 +439,7 @@ async fn open_document(
         await_reply("open_document", rx).await?
     } else {
         let (reply, rx) = reply_channel();
-        service.open(wanted, lazy_geometry(), reply);
+        service.open(wanted, lazy_geometry(), password, reply);
         await_reply("open_document", rx).await?
     };
     let pages = u32::try_from(info.page_count).map_err(|_| {
@@ -1998,7 +2016,9 @@ fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
     let path = PathBuf::from(std::env::var("TPDF_STARTUP").ok()?);
 
     let (reply, rx) = reply_channel();
-    service.open(path.clone(), lazy_geometry(), reply);
+    // No password: nothing has had the chance to ask for one this early, and a
+    // locked document simply comes back locked for `open_document` to relay.
+    service.open(path.clone(), lazy_geometry(), None, reply);
     startup::mark("eager open requested");
     Some(EagerOpen {
         path,
@@ -2521,13 +2541,13 @@ mod tests {
         // The control, and the reason the two below mean anything: a helper
         // that always failed --- or one that lost the answer --- would satisfy
         // an assertion that only looked at the error.
-        let (reply, rx) = reply_channel::<u32>();
+        let (reply, rx) = reply_channel::<u32, String>();
         reply(Ok(4711));
         assert_eq!(block_on(await_reply("page_text", rx)), Ok(4711));
 
         // And the service's own refusals pass through untouched, rather than
         // being reworded into a channel failure.
-        let (reply, rx) = reply_channel::<u32>();
+        let (reply, rx) = reply_channel::<u32, String>();
         reply(Err("no such document".to_string()));
         assert_eq!(
             block_on(await_reply("page_text", rx)),
@@ -2536,7 +2556,7 @@ mod tests {
 
         // Dropping the callback without calling it is what a caller sees when
         // the thread behind it is gone.
-        let (reply, rx) = reply_channel::<u32>();
+        let (reply, rx) = reply_channel::<u32, String>();
         drop(reply);
         let said = block_on(await_reply("page_text", rx)).unwrap_err();
         assert!(said.contains("render thread stopped"), "{said:?}");
@@ -2547,7 +2567,7 @@ mod tests {
 
         // A second name, because a constant baked into the helper would pass
         // every assertion above.
-        let (reply, rx) = reply_channel::<u32>();
+        let (reply, rx) = reply_channel::<u32, String>();
         drop(reply);
         let said = block_on(await_reply("document_outline", rx)).unwrap_err();
         assert!(said.contains("document_outline"), "{said:?}");

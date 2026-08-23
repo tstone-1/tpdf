@@ -590,6 +590,7 @@ fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: 
     service.open(
         work.to_path_buf(),
         true,
+        None,
         Box::new(move |r| {
             let _ = tx.send(r);
         }),

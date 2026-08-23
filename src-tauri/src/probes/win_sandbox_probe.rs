@@ -272,7 +272,7 @@ fn render_bytes(lib_dir: &Path, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     // Leaked because `open_bytes` needs the buffer to outlive the document, and
     // the document lives until this process exits either way.
     let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-    let document = RawDocument::open_bytes(bindings, bytes)?;
+    let document = RawDocument::open_bytes(bindings, bytes, None).map_err(|r| r.reason)?;
     let page = document.page(0)?;
     let (pixels, progress) =
         progressive::render_tile(bindings, &page, TILE, None, &CancelToken::new())?;

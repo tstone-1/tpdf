@@ -135,7 +135,7 @@ pub fn main() {
         tpdf_lib::render::pool_size(),
         NO_RETIRE,
     );
-    let worker_doc = match wait(|reply| workers.open(document.clone(), false, reply)) {
+    let worker_doc = match wait(|reply| workers.open(document.clone(), false, None, reply)) {
         Ok(info) => info,
         Err(e) => {
             println!("[FAIL] a worker-backed service opens the document      {e}");
@@ -179,7 +179,7 @@ pub fn main() {
 
     // ---------------------------------------------------- then the in-process
     let in_process = RenderService::start_with(library_dir, Backend::InProcess);
-    let native_doc = match wait(|reply| in_process.open(document.clone(), false, reply)) {
+    let native_doc = match wait(|reply| in_process.open(document.clone(), false, None, reply)) {
         Ok(info) => info,
         Err(e) => {
             println!("[FAIL] an in-process service opens the document        {e}");
@@ -732,7 +732,7 @@ pub fn main() {
     // measured against: a close that took down more than it was asked to would
     // otherwise look identical to one that worked.
     let before_second = pool_pids(&workers);
-    let second_doc = wait(|reply| workers.open(document.clone(), false, reply));
+    let second_doc = wait(|reply| workers.open(document.clone(), false, None, reply));
     let closing = match &second_doc {
         Ok(info) => {
             // Which pids belong to the document about to be closed: everything
@@ -815,11 +815,11 @@ pub fn main() {
             // slower to appear than on macOS; the race was always here and macOS
             // was winning it.
             let quiet = settled_descriptors(&workers);
-            let throwaway = wait(|reply| workers.open(document.clone(), true, reply));
+            let throwaway = wait(|reply| workers.open(document.clone(), true, None, reply));
             let opened_fds = settled_descriptors(&workers);
             let released = match &throwaway {
                 Ok(info) => wait(|reply| workers.close(info.id, reply)),
-                Err(e) => Err(e.clone()),
+                Err(e) => Err(e.reason.clone()),
             };
             let settled = settled_descriptors(&workers);
             report.check(
@@ -831,7 +831,7 @@ pub fn main() {
             // And the id itself is spent. A backend that filled the hole would
             // hand this id to a document the caller has never seen, while every
             // check above still passed.
-            let reopened = wait(|reply| workers.open(document.clone(), true, reply));
+            let reopened = wait(|reply| workers.open(document.clone(), true, None, reply));
             report.check(
                 "a closed id is not handed out to the next document",
                 reopened.as_ref().is_ok_and(|info| {
@@ -839,7 +839,7 @@ pub fn main() {
                 }),
                 match &reopened {
                     Ok(info) => format!("id {} after closing {}", info.id, worker_doc.id),
-                    Err(e) => e.clone(),
+                    Err(e) => e.reason.clone(),
                 },
             );
         }
@@ -863,7 +863,7 @@ pub fn main() {
     // a close that took the worker out from under it would lose the tile, and a
     // close that waits returns *after* the render it was queued behind.
     if render_ms >= WITHDRAWABLE_MS {
-        let busy = wait(|reply| workers.open(document.clone(), true, reply));
+        let busy = wait(|reply| workers.open(document.clone(), true, None, reply));
         match &busy {
             Ok(info) => {
                 let (tx, rx) = channel();
@@ -897,7 +897,11 @@ pub fn main() {
                     ),
                 );
             }
-            Err(e) => report.check("a close waits for the render it interrupted", false, e),
+            Err(e) => report.check(
+                "a close waits for the render it interrupted",
+                false,
+                e.reason.clone(),
+            ),
         }
     } else {
         report.skip(
@@ -975,7 +979,7 @@ fn retiring_idle_workers(report: &mut Report, document: &Path, render_ms: f64, o
         tpdf_lib::render::pool_size(),
         RETIRE_IDLE,
     );
-    let doc = match wait(|reply| service.open(document.to_path_buf(), false, reply)) {
+    let doc = match wait(|reply| service.open(document.to_path_buf(), false, None, reply)) {
         Ok(info) => info,
         Err(e) => {
             // Every name, on every path. A defect that stops the document
@@ -1128,7 +1132,7 @@ fn retiring_idle_workers(report: &mut Report, document: &Path, render_ms: f64, o
 fn dropping_a_service_kills_its_workers(report: &mut Report, document: &Path) {
     let before = worker_pids();
     let doomed = RenderService::start_tuned(library_dir(), Backend::Worker, 2, RETIRE_IDLE);
-    let opened = wait(|reply| doomed.open(document.to_path_buf(), true, reply));
+    let opened = wait(|reply| doomed.open(document.to_path_buf(), true, None, reply));
 
     // Waited for, so the spare is *in the slot* rather than owned by the thread
     // still warming it. Both die, but only the first dies promptly, and a check
@@ -1154,7 +1158,7 @@ fn dropping_a_service_kills_its_workers(report: &mut Report, document: &Path) {
         RETIRE_DROP,
         opened.is_ok() && !mine.is_empty() && gone,
         match &opened {
-            Err(e) => e.clone(),
+            Err(e) => e.reason.clone(),
             Ok(_) if mine.is_empty() => "the service spawned no process to lose".into(),
             Ok(_) if gone => format!("its {} process(es) {mine:?} went with it", mine.len()),
             Ok(_) => format!("{survivors:?} of {mine:?} outlived the service by 10 s"),
@@ -1294,7 +1298,7 @@ fn spare_outlives_nothing(report: &mut Report, document: &Path) {
 /// the check watching it would pass while the defect was present.
 fn run_spare_lifetime(document: PathBuf) -> ! {
     let service = RenderService::start_with(library_dir(), Backend::Worker);
-    let opened = wait(|reply| service.open(document, false, reply));
+    let opened = wait(|reply| service.open(document, false, None, reply));
     if let Ok(info) = &opened {
         let at = Placement::inside(info.pages.first().unwrap_or(&PageSize {
             width_pt: 612.0,
@@ -1338,7 +1342,7 @@ fn run_spare_lifetime(document: PathBuf) -> ! {
 ///
 /// `u32::MAX` for one that did not, which no real id reaches --- so a comparison
 /// against it is false rather than accidentally true.
-fn second_doc_id(info: &Result<DocumentInfo, String>) -> u32 {
+fn second_doc_id(info: &Result<DocumentInfo, tpdf_lib::progressive::Refusal>) -> u32 {
     info.as_ref().map_or(u32::MAX, |info| info.id)
 }
 
@@ -1960,21 +1964,21 @@ fn tile_of(
 const ANSWER_BOUND: Duration = Duration::from_secs(60);
 
 /// Drives one of the service's callback-shaped calls to an answer.
-fn wait<T: Send + 'static>(
-    call: impl FnOnce(Box<dyn FnOnce(Result<T, String>) + Send>),
-) -> Result<T, String> {
-    let (tx, rx): (_, Receiver<Result<T, String>>) = channel();
+fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
+    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
+) -> Result<T, E> {
+    let (tx, rx): (_, Receiver<Result<T, E>>) = channel();
     call(Box::new(move |result| {
         let _ = tx.send(result);
     }));
     match rx.recv_timeout(ANSWER_BOUND) {
         Ok(result) => result,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(format!(
             "no answer within {} s --- the service is wedged, not slow",
             ANSWER_BOUND.as_secs()
-        )),
+        ))),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err("the render thread stopped".into())
+            Err(E::from("the render thread stopped".to_string()))
         }
     }
 }

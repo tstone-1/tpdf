@@ -128,7 +128,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file)?;
+    let document = RawDocument::open(bindings, &args.file, None)?;
 
     match args.mode {
         Mode::Align => align(args, &document, bindings),

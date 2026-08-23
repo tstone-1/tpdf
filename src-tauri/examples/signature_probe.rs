@@ -147,7 +147,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file)?;
+    let document = RawDocument::open(bindings, &args.file, None)?;
     let ours = document.properties()?;
     let theirs = pdfium_signatures(bindings, document.handle());
 

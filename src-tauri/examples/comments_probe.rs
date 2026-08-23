@@ -100,7 +100,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // refuses is one this answer would never be wanted for. It is also where
     // the page count comes from, which is what bounds the scan.
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file)?;
+    let document = RawDocument::open(bindings, &args.file, None)?;
     let comments = document.comments()?;
 
     match args.mode {

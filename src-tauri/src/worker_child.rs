@@ -155,8 +155,14 @@ fn serve(args: &[String]) -> Result<(), String> {
     // here is until the process exits.
     let bytes: &'static [u8] = unsafe { doc_shm.as_static() };
     std::mem::forget(doc_shm);
-    let document = match RawDocument::open_bytes(bindings, bytes) {
+    let document = match RawDocument::open_bytes(bindings, bytes, None) {
         Ok(document) => document,
+        // **Asked about, not refused.** A locked document is the one refusal a
+        // reader can answer, so it becomes a conversation rather than an
+        // epitaph. `unlock` serves the same stdin every later request arrives
+        // on and returns the opened document, so the loop below is reached with
+        // nothing about it different.
+        Err(refusal) if refusal.locked => unlock(bindings, bytes, &refusal.reason)?,
         // **Answered, not died on.** `open_failure` writes the four reasons a
         // document does not open in a reader's words --- it needs a password, it
         // uses a scheme we cannot read, it is not a PDF, it could not be read ---
@@ -169,7 +175,7 @@ fn serve(args: &[String]) -> Result<(), String> {
         // Reported 2026-08-21 against 26.8.6 on Windows and reproduced here on
         // macOS in one command, with two different causes --- so it was never a
         // platform defect, only a platform where the message is invisible.
-        Err(reason) => return refuse(&reason),
+        Err(refusal) => return refuse(&refusal.reason),
     };
 
     // The same state machine the in-process renderer uses, for the same reason:
@@ -254,6 +260,96 @@ fn establish_boundary() -> Result<(), String> {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         Err("no process boundary is implemented on this platform".into())
+    }
+}
+
+/// Serves a locked document's requests until a password opens it.
+///
+/// The one refusal a reader can do something about, so it is a question rather
+/// than an epitaph. Every request that is not [`Request::Unlock`] is answered
+/// with `locked` --- including the [`Request::Open`] the parent sends first ---
+/// and an `Unlock` retries the load with what the reader typed.
+///
+/// **Retrying in place is legal because a failed load poisons nothing.** That is
+/// measured rather than assumed: loading one AES-256 fixture's bytes with no
+/// password, the right password, a wrong one and the right one again, in a
+/// single process, opens on both correct attempts and refuses on both others.
+/// So a wrong password costs a reply, not a process. `docs/PLAN.md` §5 has the
+/// run.
+///
+/// **Reads stdin the way [`wait_for_document`] does, and for its reason.** Both
+/// this and [`spawn_reader`] go through `std::io::stdin()`, whose buffer is
+/// shared; a private `BufReader` here would swallow whatever arrived promptly
+/// behind the password into a buffer that is then dropped, and the first request
+/// of the reader's session would vanish. `refuse` may wrap stdin because it never
+/// hands the stream on to anybody.
+///
+/// The wording of a second failure is chosen here rather than by
+/// [`progressive::open_failure`], which cannot know: PDFium answers
+/// `FPDF_ERR_PASSWORD` for a document given no password and one given the wrong
+/// password alike. This loop is the only place that knows a password was tried.
+///
+/// # Errors
+///
+/// The pipe closing, which is how a reader who dismisses the prompt lets the
+/// worker exit; or a failure that is no longer about the password, which no
+/// password will fix.
+fn unlock(
+    bindings: progressive::Bindings,
+    bytes: &'static [u8],
+    first: &str,
+) -> Result<RawDocument, String> {
+    use std::io::BufRead;
+
+    let mut out = std::io::stdout();
+    let mut reason = first.to_string();
+    loop {
+        let mut line = String::new();
+        let read = std::io::stdin()
+            .lock()
+            .read_line(&mut line)
+            .map_err(|e| format!("reading a password: {e}"))?;
+        if read == 0 {
+            return Err("the parent closed the pipe while the document was locked".into());
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request = match serde_json::from_str::<Request>(line.trim()) {
+            Ok(request) => request,
+            Err(e) => {
+                reply(&mut out, &Response::err(format!("unreadable request: {e}")))?;
+                continue;
+            }
+        };
+        // Skipped rather than answered, exactly as on the ordinary path: a
+        // withdrawal has no reply, and answering one would leave the parent a
+        // reply ahead of itself for the rest of this worker's life.
+        if matches!(request, Request::Withdraw { .. }) {
+            continue;
+        }
+        let Request::Unlock { password } = request else {
+            reply(&mut out, &Response::locked(&reason))?;
+            continue;
+        };
+        match RawDocument::open_bytes(bindings, bytes, Some(&password)) {
+            Ok(document) => {
+                reply(
+                    &mut out,
+                    &Response::json(&serde_json::json!({"unlocked": true})),
+                )?;
+                return Ok(document);
+            }
+            Err(refusal) if refusal.locked => {
+                reason = "That password did not open this document.".into();
+                reply(&mut out, &Response::locked(&reason))?;
+            }
+            // No longer a password problem, so no password will fix it.
+            Err(refusal) => {
+                reply(&mut out, &Response::err(&refusal.reason))?;
+                return Err(refusal.reason);
+            }
+        }
     }
 }
 
@@ -385,6 +481,13 @@ fn handle(
             Ok(update) => Response::json(&update),
             Err(e) => Response::err(e),
         },
+        // Reached when the document opened without one --- a reader who typed a
+        // password for a file that did not need it, or a second worker for a
+        // document whose encryption an empty user password already satisfied.
+        // Accepted rather than refused: the request asks for a document this
+        // process can read, and it has one. Refusing would report a failure for
+        // a state that is exactly what was wanted.
+        Request::Unlock { .. } => Response::json(&serde_json::json!({"unlocked": true})),
     }
 }
 
@@ -596,7 +699,7 @@ fn wait_for_document() -> Result<Shm, String> {
 /// effect, so a warm that silently stopped working shows up as the saving
 /// disappearing rather than as nothing at all.
 fn warm_fonts(bindings: progressive::Bindings) {
-    let Ok(document) = RawDocument::open_bytes(bindings, WARM_DOCUMENT) else {
+    let Ok(document) = RawDocument::open_bytes(bindings, WARM_DOCUMENT, None) else {
         return;
     };
     // Through `render_tile`, not a bespoke render: warming has to exercise the

@@ -114,7 +114,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // comes from there. `--mode agree` needs the handle for a second reason ---
     // it is what the outline is read through.
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file)?;
+    let document = RawDocument::open(bindings, &args.file, None)?;
     let links = document.links()?;
 
     match args.mode {

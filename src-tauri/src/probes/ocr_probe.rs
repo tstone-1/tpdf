@@ -142,7 +142,7 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
     let bindings = progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))));
 
-    let document = RawDocument::open(bindings, file)?;
+    let document = RawDocument::open(bindings, file, None)?;
     let page = document.page(0)?;
     let sheet = render(bindings, &page, scale)?;
     let embedded = text::extract(&page)?;

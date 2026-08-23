@@ -77,6 +77,82 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Prompt for every refusal, not only the answerable one. A password
+        # dialog in front of a corrupt file asks a reader for something that
+        # cannot help, and no answer ends it.
+        #
+        # This one is why the three `ask` mocks that assert they are NOT called
+        # still resolve `null`: with a bare `vi.fn()` resolving `undefined` this
+        # mutation SPUN FOREVER and killed the vitest worker, which is a hang and
+        # not a red test -- docs/TRAPS.md has the entry.
+        "unlock: prompt for a refusal a password cannot fix",
+        "src/lib/unlock.ts",
+        "      if (!isOpenRefusal(e) || !e.locked || !ask) throw e;",
+        "      if (!isOpenRefusal(e) || !ask) throw e;",
+        "does not ask about a refusal that is not the answerable one",
+    ),
+    Mutation(
+        # Read a dismissal as "try again with nothing". The reader pressed
+        # Cancel and the open runs once more, refuses identically, and they are
+        # shown the refusal they had already dismissed.
+        "unlock: retry with no password when the reader declines",
+        "src/lib/unlock.ts",
+        "      if (typed === null) throw e;",
+        "      if (typed === null) return await open(undefined);",
+        "rethrows the refusal when the reader declines",
+    ),
+    Mutation(
+        # One retry rather than a loop. Mistyping twice is ordinary, and the
+        # second attempt would return the raw refusal instead of asking again.
+        "unlock: allow one retry instead of as many as are offered",
+        "src/lib/unlock.ts",
+        "  let password: string | undefined;\n  for (;;) {",
+        "  let password: string | undefined;\n  for (let once = 0; once < 2; once++) {",
+        "asks again after a wrong password, showing the backend's second wording",
+    ),
+    Mutation(
+        # Send an empty field as an empty password. PDFium distinguishes them --
+        # an empty *user* password is what most permission-restricted documents
+        # carry -- so this retries the attempt that already failed, and the
+        # reader watches Unlock do nothing.
+        "passworddialog: read an empty field as an empty password",
+        "src/lib/passworddialog.ts",
+        "    this.settle(this.field.value || null);",
+        "    this.settle(this.field.value);",
+        "reads an empty field as no answer rather than as an empty password",
+    ),
+    Mutation(
+        # Leave the password in the input. It is the one place the secret would
+        # outlive its use, in a live element attached to the document.
+        "passworddialog: keep the password in the field after closing",
+        "src/lib/passworddialog.ts",
+        '    this.field.value = "";\n    if (this.shown) {',
+        "    if (this.shown) {",
+        "clears the field on every close, however it closed",
+    ),
+    Mutation(
+        # Stack a second question on the first. Whoever awaited the first is
+        # holding an open that never finishes, and nothing later can settle it --
+        # the test that catches this one does so by TIMING OUT, which is the
+        # failure shape docs/TRAPS.md warns reads as a broken harness.
+        "passworddialog: leave the previous question unsettled",
+        "src/lib/passworddialog.ts",
+        "    // A second question dismisses the first rather than stacking on it. Nothing\n"
+        "    // issues two today; what this rules out is a promise nobody settles.\n"
+        "    this.settle(null);",
+        "",
+        "settles an outstanding question when a second one is asked",
+    ),
+    Mutation(
+        # Dismiss on any click, including one that bubbled out of the panel. The
+        # reader clicks their own password field and the dialog closes.
+        "passworddialog: dismiss on a click anywhere, not only the backdrop",
+        "src/lib/passworddialog.ts",
+        "      if (event.target === this.backdrop) this.settle(null);",
+        "      this.settle(null);",
+        "treats a click on the backdrop as a dismissal and one on the panel as nothing",
+    ),
+    Mutation(
         # Offer a reload for every refusal. "A document must keep at least one
         # page" then arrives with a button that discards the reader's work in
         # exchange for nothing, which is the shape this whole module exists to

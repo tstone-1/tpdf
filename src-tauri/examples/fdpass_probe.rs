@@ -207,7 +207,7 @@ mod imp {
     fn page_count_here(document: &Path) -> Result<u32, String> {
         let pdfium = bind(&library_dir())?;
         let bindings = progressive::bindings_of(pdfium);
-        let doc = RawDocument::open(bindings, document)?;
+        let doc = RawDocument::open(bindings, document, None)?;
         Ok(doc.page_count())
     }
 
@@ -263,7 +263,7 @@ mod imp {
         std::mem::forget(shm);
         std::mem::forget(fd);
 
-        let document = RawDocument::open_bytes(bindings, bytes)?;
+        let document = RawDocument::open_bytes(bindings, bytes, None).map_err(|r| r.reason)?;
         writeln!(out, "pages={}", document.page_count()).map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
         Ok(())

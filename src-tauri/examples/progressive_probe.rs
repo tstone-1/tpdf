@@ -135,7 +135,7 @@ fn main() {
     );
     println!();
 
-    let document = match RawDocument::open(raw, &args.file) {
+    let document = match RawDocument::open(raw, &args.file, None) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("[FAIL] {e}");

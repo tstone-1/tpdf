@@ -35,11 +35,14 @@
     type Offer,
   } from "./lib/recovery";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
+  import { isOpenRefusal } from "./lib/ipc";
+  import { openWithPassword } from "./lib/unlock";
   import { label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
   import { PropertiesDialog } from "./lib/propertiesdialog";
+  import { PasswordDialog } from "./lib/passworddialog";
   import type { Properties } from "./lib/properties";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
@@ -179,6 +182,7 @@
   let palette: Palette | null = null;
   let sidebar: Sidebar | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
+  let passwordDialog: PasswordDialog | null = null;
   /**
    * What the document says about itself, once anybody has asked.
    *
@@ -1456,6 +1460,11 @@
       // context menu is: a modal that lives in a scroll box is clipped by it.
       propertiesDialog = new PropertiesDialog(document.body);
 
+      // Beside it, and for its reason. A locked document is asked about
+      // rather than reported, which is the whole of what this adds --- see
+      // `passworddialog.ts`.
+      passwordDialog = new PasswordDialog(document.body);
+
       // On `document.body`, not inside a panel: a menu opened on the last row
       // of the page strip would otherwise be clipped by that panel's scroll
       // box. Runs a chosen command through the registry, exactly as the palette
@@ -1724,6 +1733,24 @@
    * whose last document has since been deleted or unmounted needs an empty
    * window, not a dialog about a file they did not ask for.
    */
+  /**
+   * Opens `path`, asking the reader for a password if it turns out to need one.
+   *
+   * The decision is in `unlock.ts` so that it can be tested; what stays here is
+   * the `invoke` and the dialog, which are the two things this component is the
+   * right place for. A refusal that is not about the password, and a reader who
+   * declines to answer one, both arrive at the caller's `catch` as the refusal.
+   */
+  async function openOrAsk(path: string): Promise<DocumentInfo> {
+    // Captured once, so the closure cannot see it become null between the
+    // check and the call --- and so the type-checker can see that too.
+    const dialog = passwordDialog;
+    return openWithPassword(
+      (password) => invoke<DocumentInfo>("open_document", { path, password }),
+      dialog ? (problem) => dialog.ask(basename(path), problem) : null,
+    );
+  }
+
   async function openDocument(
     path: string,
     resuming = false,
@@ -1746,7 +1773,7 @@
      */
     let replaced = false;
     try {
-      const doc = await invoke<DocumentInfo>("open_document", { path });
+      const doc = await openOrAsk(path);
 
       // Released only once the replacement exists, so a file that turns out not
       // to open leaves the reader with what they had --- and recorded here,
@@ -2168,7 +2195,7 @@
       }
       // A document that was open last time and is not there now is not a
       // failure the reader caused, so the window simply comes up empty.
-      if (!resuming) error = String(e);
+      if (!resuming) error = isOpenRefusal(e) ? e.reason : String(e);
     } finally {
       opening = false;
       // In the `finally`, so that a failed open greys the menu back out. Every

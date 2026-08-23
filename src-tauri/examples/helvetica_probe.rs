@@ -127,7 +127,7 @@ fn measure(
     text: &str,
 ) -> Result<(f64, f64), String> {
     write_page(path, text)?;
-    let document = RawDocument::open(bindings, path)?;
+    let document = RawDocument::open(bindings, path, None)?;
     let page = document.page(0)?;
     let width = (page.width_pt() * SCALE).round() as u16;
     let height = (page.height_pt() * SCALE).round() as u16;

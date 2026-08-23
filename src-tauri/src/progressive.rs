@@ -251,7 +251,7 @@ mod err {
 /// become a route for a string the file wrote.
 pub fn open_failure(code: std::os::raw::c_ulong) -> String {
     match code {
-        err::PASSWORD => "This document needs a password, and tpdf cannot ask for one yet.".into(),
+        err::PASSWORD => "This document is locked, and needs a password.".into(),
         err::SECURITY => "This document uses a security scheme tpdf cannot read.".into(),
         err::FORMAT => "This file is not a PDF, or it is damaged beyond reading.".into(),
         err::FILE => "This file could not be read from disk.".into(),
@@ -259,6 +259,97 @@ pub fn open_failure(code: std::os::raw::c_ulong) -> String {
         // null handle with no error set, and reporting "no error" for a document
         // that did not open is worse than admitting the reason is unknown.
         _ => "This document could not be opened, and PDFium did not say why.".into(),
+    }
+}
+
+/// Why a document would not open, in a form a caller can branch on.
+///
+/// A string was enough while every refusal was final. It stopped being enough
+/// when one of them became a *question*: a locked document is not damaged, and a
+/// caller that paints "this document is locked" the way it paints "this file is
+/// not a PDF" tells the reader to go and find a better copy of a file that is
+/// perfectly good. So the one distinction anything acts on is a field, and the
+/// rest stays prose.
+///
+/// [`locked`](Self::locked) is deliberately *not* three-valued. PDFium answers
+/// `FPDF_ERR_PASSWORD` for a document given no password and for one given the
+/// wrong password alike --- measured, not assumed --- so the worker cannot tell
+/// them apart and does not pretend to. Whether the reader has already tried is a
+/// fact about the conversation, and it belongs to whoever is holding it.
+///
+/// `Serialize` because it is what a Tauri command answers with: the frontend
+/// needs the distinction as much as the pool does, and a serialised `{reason,
+/// locked}` is what lets it show a password prompt for one refusal and an error
+/// for every other. Nothing deserialises it --- it travels one way.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Refusal {
+    /// What to show a reader. Chosen in this file; never from the document.
+    pub reason: String,
+    /// The document is encrypted, and the password it was given --- which may
+    /// have been none --- did not open it.
+    pub locked: bool,
+}
+
+impl Refusal {
+    /// Words an `FPDF_ERR_*` code and says whether it is answerable.
+    ///
+    /// Separate from [`last`](Self::last) so that there is something to test: the
+    /// call that *reads* the code needs bindings and a failed load in front of
+    /// it, and this needs neither. What could go wrong here is the flag being
+    /// set for the wrong code --- prompting for a password on a file that is not
+    /// a PDF, or reporting a locked document as damaged --- and that is a
+    /// property of this line alone.
+    #[must_use]
+    pub fn of(code: std::os::raw::c_ulong) -> Self {
+        Self {
+            reason: open_failure(code),
+            locked: code == err::PASSWORD,
+        }
+    }
+
+    /// Reads PDFium's last error and words it.
+    ///
+    /// # Safety
+    ///
+    /// Meaningful only immediately after the failed load it describes: PDFium
+    /// keeps one error per thread and the next call overwrites it.
+    unsafe fn last(bindings: Bindings) -> Self {
+        // SAFETY: no arguments, and the contract above is the caller's.
+        Self::of(unsafe { bindings.FPDF_GetLastError() })
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reason)
+    }
+}
+
+impl From<Refusal> for String {
+    fn from(refusal: Refusal) -> Self {
+        refusal.reason
+    }
+}
+
+/// Widens a plain failure into a refusal, which is always *not* locked.
+///
+/// Safe in that direction and only in that one: a `String` carries no
+/// locked-ness, so nothing is being inferred here --- a caller that had the
+/// distinction would not have thrown it away first. It exists so that `?` works
+/// on the ordinary failures inside an open, which are page geometry and are
+/// about as far from encryption as this module gets.
+impl From<String> for Refusal {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            locked: false,
+        }
+    }
+}
+
+impl From<&str> for Refusal {
+    fn from(reason: &str) -> Self {
+        Self::from(reason.to_string())
     }
 }
 
@@ -326,19 +417,18 @@ impl RawDocument {
     /// This is the probe's route in. The viewer's route is a mapped descriptor
     /// handed to a sandboxed worker, which has no path to open --- see the threat
     /// model. Both end at the same `FPDF_DOCUMENT`.
-    pub fn open(bindings: Bindings, path: &Path) -> Result<Self, String> {
-        let text = path
-            .to_str()
-            .ok_or_else(|| format!("path is not UTF-8: {}", path.display()))?;
+    pub fn open(bindings: Bindings, path: &Path, password: Option<&str>) -> Result<Self, Refusal> {
+        let text = path.to_str().ok_or_else(|| Refusal {
+            reason: format!("path is not UTF-8: {}", path.display()),
+            locked: false,
+        })?;
 
         // SAFETY: `text` outlives the call, and Pdfium copies what it needs.
-        let handle = unsafe { bindings.FPDF_LoadDocument(text, None) };
+        let handle = unsafe { bindings.FPDF_LoadDocument(text, password) };
         if handle.is_null() {
-            // SAFETY: no arguments, and the call is only meaningful directly
-            // after the failure it describes --- PDFium keeps one error per
-            // thread and the next call overwrites it.
-            let code = unsafe { bindings.FPDF_GetLastError() };
-            return Err(open_failure(code));
+            // SAFETY: read immediately after the failure it describes --- PDFium
+            // keeps one error per thread and the next call overwrites it.
+            return Err(unsafe { Refusal::last(bindings) });
         }
 
         let form = RawForm::open(bindings, handle);
@@ -364,18 +454,36 @@ impl RawDocument {
     /// --- it reads from it for as long as the document is open, which is why
     /// this takes `&'static [u8]` rather than a borrow the caller could end.
     ///
+    /// `password` is the reader's, when they have supplied one. It is a key to
+    /// bytes this process already holds rather than a new authority: a worker
+    /// that cannot read them is a worker that renders nothing, so nothing here
+    /// widens what a compromised one could reach. It is taken by reference and
+    /// never stored on the document.
+    ///
+    /// **A failed load poisons nothing**, which is what makes retrying in place
+    /// legal rather than merely plausible. Measured on
+    /// `testdata/incr-encrypted-pw.pdf` (AES-256, user password `swordfish`):
+    /// loading the same bytes with no password, then the right one, then a wrong
+    /// one, then the right one again, in one process, opens on both correct
+    /// attempts and refuses on both others. `docs/PLAN.md` §5 has the run.
+    ///
     /// # Errors
     ///
-    /// Bytes PDFium will not parse, or an encrypted document with no password.
-    pub fn open_bytes(bindings: Bindings, bytes: &'static [u8]) -> Result<Self, String> {
+    /// Bytes PDFium will not parse, or an encrypted document whose password this
+    /// was not. The two are distinguished by [`Refusal::locked`], because only
+    /// the second is worth asking a reader about.
+    pub fn open_bytes(
+        bindings: Bindings,
+        bytes: &'static [u8],
+        password: Option<&str>,
+    ) -> Result<Self, Refusal> {
         // SAFETY: the buffer is `'static`, so it outlives the document, which is
         // exactly what this call requires and what the safe wrapper cannot
         // express.
-        let handle = unsafe { bindings.FPDF_LoadMemDocument64(bytes, None) };
+        let handle = unsafe { bindings.FPDF_LoadMemDocument64(bytes, password) };
         if handle.is_null() {
-            // SAFETY: as in `open`.
-            let code = unsafe { bindings.FPDF_GetLastError() };
-            return Err(open_failure(code));
+            // SAFETY: as in `open` --- read immediately after the failure.
+            return Err(unsafe { Refusal::last(bindings) });
         }
 
         let form = RawForm::open(bindings, handle);
@@ -1456,10 +1564,58 @@ mod tests {
     fn a_password_is_named_as_a_password() {
         let said = open_failure(err::PASSWORD);
         assert!(said.contains("password"), "{said:?}");
-        // And it says tpdf cannot ask yet, rather than implying the file is
-        // broken --- which is the whole point of the change. A reader who is
-        // told "damaged" goes looking for another copy of a file that is fine.
+        // And it does not imply the file is broken, which is the whole point of
+        // the wording: a reader told "damaged" goes looking for another copy of
+        // a file that is fine.
         assert!(!said.contains("damaged"), "{said:?}");
+        // It also must not claim tpdf cannot ask, which it did until the prompt
+        // existed. A message that tells a reader to give up in front of a dialog
+        // asking them not to is worse than either alone.
+        assert!(!said.contains("cannot ask"), "{said:?}");
+    }
+
+    /// Which refusals a reader can answer, over every code PDFium documents.
+    ///
+    /// The flag decides whether the app shows a password prompt or an error, so
+    /// both directions are defects a reader meets: set too widely, a file that is
+    /// not a PDF asks for a password it has none for; set too narrowly, a locked
+    /// document is reported as damaged and there is nothing to type into.
+    ///
+    /// Enumerated rather than spot-checked, for the reason
+    /// [`each_reason_says_something_different`] is: a version that answered
+    /// `true` for everything passes any test that only asks about the password.
+    #[test]
+    fn only_a_password_refusal_is_one_a_reader_can_answer() {
+        for code in [0, 1, 2, 3, 5, 6, 99] {
+            let refusal = Refusal::of(code);
+            assert!(
+                !refusal.locked,
+                "code {code} is not a password problem: {refusal:?}"
+            );
+            // And the wording travels with the flag rather than beside it, so
+            // the two cannot disagree about the same code.
+            assert_eq!(refusal.reason, open_failure(code));
+        }
+        let locked = Refusal::of(err::PASSWORD);
+        assert!(locked.locked, "{locked:?}");
+        assert_eq!(locked.reason, open_failure(err::PASSWORD));
+    }
+
+    /// A failure that arrived as prose is never one to prompt about.
+    ///
+    /// The `From` impls exist so `?` works on the ordinary failures inside an
+    /// open --- page geometry, a path that is not UTF-8. None of those is
+    /// answerable, and a widening that guessed otherwise would put a password
+    /// dialog in front of a document that is simply broken.
+    #[test]
+    fn a_refusal_widened_from_prose_is_not_locked() {
+        assert!(!Refusal::from("page 3 has no size".to_string()).locked);
+        assert!(!Refusal::from("page 3 has no size").locked);
+        assert_eq!(
+            String::from(Refusal::from("page 3 has no size")),
+            "page 3 has no size",
+            "the prose survives the round trip"
+        );
     }
 
     /// The control: an unknown code must not read as a working document.

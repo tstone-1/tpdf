@@ -19,6 +19,28 @@ have the binary.)
 
 ## [26.8.8] - Unreleased
 
+### Added: a document behind a password can be opened
+
+Until now an encrypted PDF could be chosen from the file dialog and then not
+opened, by any route --- tpdf diagnosed it correctly and said so, in a sentence
+that ended *"and tpdf cannot ask for one yet"*. It asks now: a locked document
+brings up a prompt, the wrong password says so and lets you try again, and the
+right one opens the file and everything in it --- rendering, search, text, the
+outline, comments, links and the properties readout.
+
+The password is kept for as long as the document is open, because it has to be:
+tpdf parses in several sandboxed processes and starts new ones as you read, and
+each of them meets the same encryption. Without that, a locked document would
+show the page you were looking at and refuse the next one. It is not written
+anywhere, and it goes when the document closes.
+
+**Saving one is still refused**, and that has not changed: a document with
+encryption on it is not written, because writing would silently remove the
+encryption. That refusal now covers a narrower case than it reads --- an append
+can preserve it, given the password --- and `docs/PLAN.md` §5 has what closing it
+involves.
+
+
 ### Fixed: ten tests over the save path had never run outside one machine
 
 No behaviour change, and the reason it is worth an entry is that it was invisible.

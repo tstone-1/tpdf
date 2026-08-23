@@ -231,7 +231,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = progressive::bindings_of(progressive::bind(&args.library)?);
-    let document = RawDocument::open(bindings, &args.file)?;
+    let document = RawDocument::open(bindings, &args.file, None)?;
 
     match args.mode {
         Mode::Roundtrip => roundtrip(args, &document),
@@ -1014,7 +1014,7 @@ fn render(
     number: u32,
     scale: f32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
-    let document = RawDocument::open(bindings, file)?;
+    let document = RawDocument::open(bindings, file, None)?;
     let page = document.page(number)?;
     let width = (page.width_pt() * scale).round() as u16;
     let height = (page.height_pt() * scale).round() as u16;

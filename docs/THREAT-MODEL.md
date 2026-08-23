@@ -1128,6 +1128,50 @@ unreachable object leaves the original untouched beside it, and this one does no
 over a document does not remove a prior incremental revision, garbage-collect anything, or
 make hidden content gone. `docs/PLAN.md` §6 is the operation that does, and it is not built.
 
+#### T6.9 — A reader's password, added 2026-08-23
+
+**A new kind of value crosses the boundary, and it is the first secret.** Every earlier
+`Request` variant names page numbers, geometry and a reader's search query; `Unlock`
+carries a password. Three things are worth stating rather than leaving to be noticed.
+
+- **It grants the worker no authority it did not have.** The document's bytes are already
+  mapped into that process --- that is what the handover is --- and a key to bytes you are
+  holding is not a new reach. What it changes is that they stop being noise. A worker that
+  cannot read them is a worker that renders nothing, so this widens nothing an attacker
+  who had already compromised a worker could reach.
+- **It travels on stdin and never in argv.** The pipe is the parent's, private to the two
+  processes; a command line is readable from the process table by anything running as this
+  user. That is the whole of the difference and it is why `Request::Unlock` is a message
+  rather than a spawn argument.
+- **It is not logged.** No diagnostic prints a request body, and the field's own doc
+  comment says so, which is the only thing standing between it and the next person who
+  adds a trace of the protocol.
+
+**It is held in the app process for the document's lifetime, and that is a requirement
+rather than a convenience.** `Held::password` is what `Workers::spawn_into` replays to
+every worker after the first --- the one the pool grows under contention, and every
+replacement for one that crashed --- because each maps the same bytes and meets the same
+encryption. A design that unlocked only the first worker would render the page a reader
+is looking at and refuse the next.
+
+**What that costs, stated plainly: the password is in this process's memory while the
+document is open.** So is every decrypted page of it, which is the more revealing of the
+two, and neither is defended against something that can read this process's memory --- an
+adversary who has that has already won. It is not written to disk, does not reach the
+session file, and goes when the slot does. What is *not* done, and would be the next rung
+if it were worth one, is zeroing the buffer on drop: `String` does not, the value is
+copied by every `clone` on the way to a worker, and a partial job here would read as a
+guarantee.
+
+**The refusal is structured for a reason that is a security one as much as a usability
+one.** `Refusal::locked` travels as a field, so nothing downstream matches on a message to
+decide whether to prompt. A frontend deciding *"show a password box"* by looking for the
+word "password" in a backend string is one wording change away from prompting for the
+wrong refusal --- and the strings themselves are chosen in `progressive.rs` and
+`worker_child.rs`, never taken from the document, so no failure path can become a route
+for text a stranger wrote. That is the T8 property, in the one place a new error channel
+was added.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

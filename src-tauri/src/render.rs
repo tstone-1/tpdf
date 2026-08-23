@@ -290,7 +290,21 @@ impl Backend {
     }
 }
 
-pub(crate) type Reply<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
+/// What a job is answered through, for any failure type.
+///
+/// Two failure types exist and there is one alias for both, rather than two
+/// spellings of the same `Box<dyn FnOnce(..)>` that have to be kept in step.
+pub(crate) type ReplyTo<T, E> = Box<dyn FnOnce(Result<T, E>) + Send>;
+
+pub(crate) type Reply<T> = ReplyTo<T, String>;
+
+/// A reply whose failure is more than prose.
+///
+/// Only [`Job::Open`] uses it, and only because one of its refusals is a
+/// question rather than a verdict: a locked document is not a broken one, and
+/// the difference has to survive the trip back to the reader. Every other job
+/// fails one way and keeps [`Reply`].
+pub(crate) type ReplyRefusal<T> = ReplyTo<T, progressive::Refusal>;
 
 /// Looks up an open document, distinguishing an id that never existed from one
 /// that has been closed.
@@ -341,7 +355,14 @@ pub(crate) enum Job {
         path: PathBuf,
         /// Collect only page 1's size instead of the whole table.
         lazy_geometry: bool,
-        reply: Reply<DocumentInfo>,
+        /// The reader's password, when a previous attempt came back locked.
+        ///
+        /// Owned rather than borrowed because a job outlives its caller's frame,
+        /// and dropped with the job: nothing here retains it, and the only place
+        /// it is held for a document's lifetime is the pool, which needs it to
+        /// build that document's later workers.
+        password: Option<String>,
+        reply: ReplyRefusal<DocumentInfo>,
     },
     Tile {
         request: TileRequest,
@@ -592,12 +613,21 @@ impl RenderService {
     /// `lazy_geometry` skips collecting every page's size, which spike 0.2
     /// measured at 86 ms on a 775-page document --- the largest avoidable item
     /// in the startup budget. See PLAN §4.
-    pub fn open(&self, path: PathBuf, lazy_geometry: bool, reply: Reply<DocumentInfo>) {
+    /// `password` is the reader's, when a previous attempt came back locked. It
+    /// travels no further than the worker's stdin --- see `Request::Unlock`.
+    pub fn open(
+        &self,
+        path: PathBuf,
+        lazy_geometry: bool,
+        password: Option<String>,
+        reply: ReplyRefusal<DocumentInfo>,
+    ) {
         if self
             .tx
             .send(Job::Open {
                 path,
                 lazy_geometry,
+                password,
                 reply,
             })
             .is_err()
@@ -873,7 +903,12 @@ impl RenderService {
 /// interior mutability it needs: a `RefCell` where there is provably one thread,
 /// a `Mutex` and a `Condvar` where there are several.
 pub(crate) trait Engine {
-    fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String>;
+    fn open(
+        &self,
+        path: &Path,
+        lazy_geometry: bool,
+        password: Option<&str>,
+    ) -> Result<DocumentInfo, progressive::Refusal>;
     fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String>;
     fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String>;
     fn search(
@@ -903,8 +938,9 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         Job::Open {
             path,
             lazy_geometry,
+            password,
             reply,
-        } => reply(engine.open(&path, lazy_geometry)),
+        } => reply(engine.open(&path, lazy_geometry, password.as_deref())),
         Job::Tile { request, reply } => reply(engine.tile(&request)),
         Job::Text {
             doc,
@@ -948,7 +984,12 @@ fn serve(rx: Receiver<Job>, engine: &dyn Engine) {
 fn drain(rx: Receiver<Job>, error: &str) {
     for job in rx {
         match job {
-            Job::Open { reply, .. } => reply(Err(error.to_string())),
+            // Not locked: a backend that never started has not looked at the
+            // document, so it cannot be saying anything about its encryption.
+            Job::Open { reply, .. } => reply(Err(progressive::Refusal {
+                reason: error.to_string(),
+                locked: false,
+            })),
             Job::Tile { reply, .. } => reply(Err(error.to_string())),
             Job::Text { reply, .. } => reply(Err(error.to_string())),
             Job::Search { reply, .. } => reply(Err(error.to_string())),
@@ -1000,9 +1041,14 @@ impl InProcess {
 }
 
 impl Engine for InProcess {
-    fn open(&self, path: &Path, lazy_geometry: bool) -> Result<DocumentInfo, String> {
+    fn open(
+        &self,
+        path: &Path,
+        lazy_geometry: bool,
+        password: Option<&str>,
+    ) -> Result<DocumentInfo, progressive::Refusal> {
         let t0 = Instant::now();
-        let doc = RawDocument::open(self.bindings, path)?;
+        let doc = RawDocument::open(self.bindings, path, password)?;
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
