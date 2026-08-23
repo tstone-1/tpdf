@@ -13331,3 +13331,80 @@ whole or not at all, and the message says which.
 the second was found by grepping for what the first one should have said. A defect class with
 one instance almost never has one instance, and the cheapest moment to look for the rest is
 while the right predicate is still in your head.
+
+### A capability absent through a struct default has no defect to find
+
+Windows readers could not print a page range. Not because the range was ignored --- because the
+Pages radio button and its two edit controls were **greyed out**, and had been since printing
+landed.
+
+The whole of the cause:
+
+```rust
+let mut dialog = PRINTDLGW {
+    Flags: PD_RETURNDC | PD_ALLPAGES | PD_NOSELECTION,
+    nCopies: 1,
+    ..Default::default()      // nMinPage: 0, nMaxPage: 0
+};
+```
+
+Win32 disables the Pages controls whenever `nMinPage == nMaxPage`. Both were zero, so the
+condition held, so the field was dead. Nothing was mis-set: the two fields were never mentioned,
+and a field you did not write is a field no reviewer reads.
+
+**The failure has no observable of any kind.** A wrong value produces wrong output; an ignored
+value produces a surprise. An absent capability produces *nothing* --- no error, no log line, no
+wrong page, no failing check. `print_probe.rs` drives the entire Windows print path to a real
+spooler and back through the OS parser, and it is structurally blind here, because a modal
+dialog needs a person and every check it makes is about the job rather than the panel. The only
+instrument that reports a missing capability is somebody trying to use it.
+
+**The neighbouring flag makes it sharper.** `PD_NOSELECTION` is set two lines above, with a
+comment giving the rule: *"offering the radio button and then ignoring it would be worse than
+not offering it."* That reasoning was applied deliberately to the Selection control and never
+reached the Pages control, which was in the same struct, governed by the same dialog, and
+disabled by an omission rather than by the argument.
+
+The general form, and it is not about Win32. **Where a platform API takes a struct you fill in
+partially, the fields you leave out are decisions you did not know you made.** They are invisible
+in a diff, invisible in a review, and invisible to any test that does not drive the UI those
+fields configure. The cheap habit: when initialising an OS struct with `..Default::default()`,
+read the documentation for the fields you are *not* setting, specifically for sentences of the
+form "if X equals Y, the control is disabled".
+
+**And the fix has to close the rule it just exposed.** Enabling the field without reading
+`PD_PAGENUMS` back would have produced the exact defect `PD_NOSELECTION`'s comment forbids ---
+a control offered and ignored --- on the noisier of the two controls. Offering and honouring
+are one change, not two.
+
+### A *Not done* note can describe a route with no reader in it
+
+`docs/PLAN.md` carried this for a week, in the ranked list, as the print subsystem's open gap:
+
+> **Not done:** an explicit page range still carries no marks and no crops. A reader who types
+> "2-4" into the print panel of a marked-up document gets those pages without their marks.
+
+The first sentence is true. The second cannot happen, and never could.
+
+`print_document` takes a `pages` argument, and `grep -rn "print_document" src/` finds two
+callers: `App.svelte`, which passes `pages: null` on every print, and `viewercheck.ts`, which is
+the check harness. tpdf has **no page-range field of its own** --- `appcommands.ts` says so at
+the command, as a decision --- so what a reader types goes into the *system* panel, which
+filters the job we already handed over. That job is `save::print_bytes`'s output. It has the
+marks on it.
+
+So the note described the parameter accurately and the product not at all, and the two were
+easy to conflate because the parameter is named after the thing the reader does.
+
+**What it cost is the ranking.** For a week the print subsystem's gap was a route no reader
+reaches, while the real gap sat one platform over --- the Windows panel's Pages field, disabled
+by a struct default, which nothing in the document mentioned. A wrong entry in a ranked list is
+worse than a missing one: it is read as coverage, and it aims the next session at the wrong
+place. This one aimed two.
+
+**A *Not done* is a claim about the product, and it deserves the check any other claim gets.**
+Not "is this code still unwritten" --- that is easy and it is the wrong question --- but *can a
+reader get here at all*. For a Tauri command, that is one grep over the callers. The trap
+already in this file about a note outliving the work that closes it is the same family and the
+milder case: that one was true once. This one was written about a route that has had no reader
+in it since the day the command was added.

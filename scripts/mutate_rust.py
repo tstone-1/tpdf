@@ -350,6 +350,38 @@ MUTATIONS = [
         only_on="macos",
     ),
     Mutation(
+        # Off by one at the front of the range. A panel's "1" is the first sheet
+        # and not an index, so this prints page 2 when the reader asked for 1 ---
+        # a wrong page rather than a missing one, which is the shape that reaches
+        # paper looking exactly like a job that worked.
+        "print: read a page range's first number as an index rather than a page",
+        "src/print.rs",
+        "    Ok((first - 1..last).collect())",
+        "    Ok((first..last).collect())",
+        "a_page_range_names_the_sheets_between_its_ends",
+    ),
+    Mutation(
+        # Clamp a range that runs off the end instead of refusing it. "3 to 99" on
+        # a four-sheet job becomes "3 to 4", which is a plausible answer to a
+        # question nobody asked --- and the only place it can be noticed is the
+        # paper.
+        "print: clamp a page range to the job instead of refusing it",
+        "src/print.rs",
+        "    if last > count {",
+        "    if false {",
+        "a_range_that_cannot_be_printed_is_refused_rather_than_clamped",
+    ),
+    Mutation(
+        # Take a backwards range as empty rather than as a mistake. `4 to 2` then
+        # spools nothing and reports success, which reads as a printer that did
+        # not respond.
+        "print: let a backwards page range through as an empty selection",
+        "src/print.rs",
+        "    if first > last {",
+        "    if first > last && false {",
+        "a_range_that_cannot_be_printed_is_refused_rather_than_clamped",
+    ),
+    Mutation(
         # Collapse the split back: put the way-out sentence into the bare fact,
         # which is where it lived until 2026-08-19. The pre-rename refusal then
         # tells a reader their edits are still here and to save them under

@@ -333,6 +333,52 @@ pub fn expect_pages(found: usize, expected: Option<usize>) -> Result<(), String>
     }
 }
 
+/// Which sheets of a built job a print panel's page range names, zero-based.
+///
+/// **This is not [`select`], and the difference is which document the numbers
+/// are about.** `select` decides what goes *into* a job --- pages of the file,
+/// composed with the reader's edits --- and runs before a byte is written. This
+/// runs after: the job exists, a panel has shown it to the reader, and they have
+/// typed a range over the sheets in front of them. So `1` here is the job's first
+/// sheet whatever page of the original it came from, which is what a reader
+/// looking at a print preview means by it.
+///
+/// `None` is every sheet, which is what a panel returns when the reader left the
+/// range alone or the field was disabled.
+///
+/// **Refused rather than repaired**, for the reason [`build`] gives: a range is
+/// an instruction, and printing the sheets that happened to be inside it is the
+/// plausible wrong answer that only shows up on paper. The panel validates
+/// against the bounds it was given, so a bad pair arriving here means the bounds
+/// were wrong rather than the reader.
+///
+/// **Nothing on macOS calls this, and that is not an oversight.** `NSPrintPanel`
+/// applies its own range to the document it was handed, so the range never
+/// reaches our code there; `print_win::present` has to apply it itself. The
+/// function lives here rather than in `print_win.rs` so that the arithmetic --- the
+/// half that decides which page comes out --- is compiled and tested on every
+/// platform instead of only the one that cannot run the tests locally.
+///
+/// # Errors
+///
+/// A range running backwards, starting before the first sheet, or ending past
+/// the last.
+pub fn sheets(range: Option<(u32, u32)>, count: u32) -> Result<Vec<u32>, String> {
+    let Some((first, last)) = range else {
+        return Ok((0..count).collect());
+    };
+    if first > last {
+        return Err(format!("pages {first} to {last} run backwards"));
+    }
+    if first < 1 {
+        return Err("there is no page 0 to print from".into());
+    }
+    if last > count {
+        return Err(format!("page {last} is not in this job, which has {count}"));
+    }
+    Ok((first - 1..last).collect())
+}
+
 /// The pages to keep, validated against what the document has.
 fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
     match pages {
@@ -456,7 +502,7 @@ mod tests {
             "and it is a subset rather than the whole file"
         );
     }
-    use super::{build, route, select, Job, PagePlan, Pages, Route};
+    use super::{build, route, select, sheets, Job, PagePlan, Pages, Route};
     use crate::pagetree::{drop_pages, effective_rotation};
 
     /// A selection of pages, none of them turned by an edit.
@@ -2045,6 +2091,44 @@ mod tests {
             );
             assert_eq!(our_bytes, their_bytes, "{name}: bytes differ");
         }
+    }
+
+    /// A panel's range names sheets of the job, and every bound is inclusive.
+    ///
+    /// The interesting row is the last: `1` is the first sheet, not an index, so
+    /// an off-by-one here prints the wrong page and nothing else notices --- the
+    /// job is correct, the spooler is correct, and the paper is wrong.
+    #[test]
+    fn a_page_range_names_the_sheets_between_its_ends() {
+        assert_eq!(sheets(None, 3), Ok(vec![0, 1, 2]));
+        assert_eq!(sheets(Some((1, 3)), 3), Ok(vec![0, 1, 2]));
+        assert_eq!(sheets(Some((2, 3)), 3), Ok(vec![1, 2]));
+        assert_eq!(sheets(Some((2, 2)), 3), Ok(vec![1]));
+        assert_eq!(sheets(Some((1, 1)), 3), Ok(vec![0]));
+    }
+
+    /// A job with no sheets asks for none, rather than refusing.
+    ///
+    /// `None` is "whatever this job has", and a job that has nothing is a
+    /// question for whoever built it. Refusing here would put a second, later
+    /// answer in front of a reader for a failure `build` already reports.
+    #[test]
+    fn no_range_over_an_empty_job_asks_for_nothing() {
+        assert_eq!(sheets(None, 0), Ok(vec![]));
+    }
+
+    /// Three ways a range is wrong, and none of them is repaired.
+    ///
+    /// Clamping is the tempting alternative and it is the one that reaches
+    /// paper: "3 to 99" on a four-sheet job would silently become "3 to 4",
+    /// which is a plausible answer to a question the reader did not ask. The
+    /// same argument `build` makes about a page outside the document.
+    #[test]
+    fn a_range_that_cannot_be_printed_is_refused_rather_than_clamped() {
+        assert!(sheets(Some((3, 2)), 4).is_err());
+        assert!(sheets(Some((0, 2)), 4).is_err());
+        assert!(sheets(Some((1, 5)), 4).is_err());
+        assert!(sheets(Some((1, 1)), 0).is_err());
     }
 
     #[test]
