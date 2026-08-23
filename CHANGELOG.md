@@ -17,6 +17,19 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.9] - Unreleased
+
+### Fixed: the release page described a narrower product than the release it was on
+
+The notes GitHub shows beside the installers are a literal in the release workflow,
+deliberately --- reading them out of `CHANGELOG.md` would let a tag pick up a heading of
+the wrong shape. The cost is that nothing can make them stale except nobody reading
+them, and `26.8.8` was published with **stamps** still listed under *what it is not,
+yet*, one release after they shipped, no mention of opening a document behind a
+password, and an eraser described as taking ink only. The page itself was corrected
+before publishing; this is the same correction in the workflow, so the next release
+does not repeat it.
+
 ## [26.8.8] - 2026-08-23
 
 ### Fixed: Back and Forward were offered when there was nowhere to go
