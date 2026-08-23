@@ -1802,16 +1802,22 @@ which is what makes it evidence rather than a milestone.
     the cross-reference chained and the page count survived --- and the previous revision of
     that file is the attacker's bytes verbatim, so this is a coordinator-side parse of
     untrusted input on every append, which is the commonest save there is. It is bounded by
-    the same `MAX_DECODE`, and it is **not** under `spawn_blocking`: the `match` that calls
-    it runs directly on the async runtime, unlike the three writers above. So a document
-    engineered to make that read-back spin stalls the runtime rather than a blocking pool.
+    the same `MAX_DECODE`. It was **also not** under `spawn_blocking` --- the `match` that
+    calls it ran directly on the async runtime, unlike the three writers above, so a
+    document engineered to make the read-back spin stalled the runtime rather than a
+    blocking pool.
 
-    Disclosed rather than fixed, and the reason is timing rather than difficulty: this was
-    found by step 6 of the release checklist, and rethreading the save path with no check
-    that can observe the difference is the riskier of the two actions on the day a release
-    is cut. `docs/PLAN.md` ranks it. The general shape is the one this entry already
-    records --- **a mitigation that moved half a path reads exactly like one that moved the
-    path**, and the half that stayed is the one nobody writes down.
+    **That half is fixed the same day.** The whole `landed` match is on the blocking pool
+    now, which moves the rewrite's own work with it: `verify_before_commit` hashes every
+    byte of the file, and it was on the runtime too. What is *not* fixed is the process:
+    the append's read-back still parses attacker-derived bytes in the coordinator, and
+    closing that needs the worker to be handed the file it just wrote --- the
+    output-channel problem this entry names for the rewriting save, arriving one path
+    early. `docs/PLAN.md` ranks it.
+
+    The general shape is the one this entry already records --- **a mitigation that moved
+    half a path reads exactly like one that moved the path**, and the half that stayed is
+    the one nobody writes down.
 
     Decompression is bounded at
     `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather

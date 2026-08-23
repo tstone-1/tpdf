@@ -430,7 +430,6 @@ export class CommentList {
   };
 }
 
-/** The DOM id of a row, so a reply can name the row it answers. */
 /**
  * A row's first-line element, walked by position rather than found by selector.
  *
@@ -445,6 +444,7 @@ function bodyOf(row: HTMLElement | undefined): HTMLElement | null {
   return body ?? null;
 }
 
+/** The DOM id of a row, so a reply can name the row it answers. */
 function rowId(id: number): string {
   return `tpdf-comment-${id}`;
 }

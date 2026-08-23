@@ -313,12 +313,12 @@ export class Sidebar {
     this.mine.setMarks(rows);
   }
 
-  /** Replaces the comments shown. `null` is a document that could not be read. */
   /** Supplies the words some comments cover; see {@link CommentList.setWords}. */
   setCommentWords(words: ReadonlyMap<number, string>): void {
     this.notes.setWords(words);
   }
 
+  /** Replaces the comments shown. `null` is a document that could not be read. */
   setComments(comments: Comments | null): void {
     this.notes.setComments(comments);
   }

@@ -3298,6 +3298,62 @@ MUTATIONS += [
     ),
 ]
 
+# --- Back and Forward grey when there is nowhere to go ---------------------
+MUTATIONS += [
+    Mutation(
+        # Say nothing when a jump records a place. Back becomes live and the
+        # menu is never told, so the item stays greyed with somewhere to go --
+        # which is the state it shipped in until the guards existed at all, and
+        # a stale grey is a route the reader cannot take.
+        "viewer: keep a recorded jump from the window",
+        "src/lib/viewer.ts",
+        "      this.history.push(this.position);",
+        "      this.history.push(this.position);\n      if (false)",
+        "announces a jump, which is what makes Back live",
+    ),
+    Mutation(
+        # Say nothing when a new document empties the history. Back stays live
+        # in the menu on a file nobody has jumped in, and pressing it does
+        # nothing -- the mirror of the mutation above, and the one a reader
+        # meets every time they open a second file.
+        "viewer: keep a cleared history from the window",
+        "src/lib/viewer.ts",
+        "    this.history.clear();\n    // And say so, or Back stays live in the menu on a document with nowhere",
+        "    this.history.clear();\n    if (false)\n    // And say so, or Back stays live in the menu on a document with nowhere",
+        "announces a new document emptying the history",
+    ),
+    Mutation(
+        # Offer Back whenever a document is open, which is what both commands
+        # did until 2026-08-23: the menu offers it on a document nobody has
+        # jumped in and the press does nothing at all.
+        "appcommands: offer Back with nowhere to go back to",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && (actions.viewer()?.canGoBack ?? false),",
+        "      enabled: withDocument,",
+        "withholds both on a document nobody has jumped in",
+    ),
+    Mutation(
+        # Ask Back's question for Forward as well. After a jump Back is live and
+        # Forward is not, so one predicate for both offers a Forward that goes
+        # nowhere -- the case a single "has a history" flag cannot express.
+        "appcommands: ask Back's question for Forward",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && (actions.viewer()?.canGoForward ?? false),",
+        "      enabled: () => withDocument() && (actions.viewer()?.canGoBack ?? false),",
+        "offers Back once there is somewhere to go, and still withholds Forward",
+    ),
+    Mutation(
+        # Reach through a closed document to a remembered answer. With no viewer
+        # there is nothing to ask, and `?? true` offers both commands on an
+        # empty window.
+        "appcommands: assume a jump is available when there is no document",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && (actions.viewer()?.canGoBack ?? false),",
+        "      enabled: () => actions.viewer()?.canGoBack ?? true,",
+        "withholds both with no document, whatever a stale history would say",
+    ),
+]
+
 # --- a colour a reader can choose ----------------------------------------
 MUTATIONS += [
     Mutation(
@@ -3671,6 +3727,18 @@ TEST_FILES = [
     # reads `ViewerStatus` and the other viewer tests read the accessors, so this
     # is the only file where a mutation to `report`'s own summary can go red.
     "src/lib/viewer.test.ts",
+    # Added 2026-08-23 while cutting 26.8.8, and *after* the mutations: the run
+    # refused all seven of them --- three under `unlock.ts` and four under
+    # `passworddialog.ts` --- with "no test here is named ...", for tests both
+    # files plainly define. Twelfth time, and the note ten entries above predicts
+    # it exactly: the tests are written first and this list is edited only by
+    # whoever writes the mutations, so the gap is the normal case. Twelve
+    # omissions, twelve refusals, no SURVIVED --- which is the guard earning its
+    # keep and also the argument for deriving this list from a glob instead. Not
+    # done here, because widening the name set on the day a release is cut can
+    # surface a duplicate test name and refuse the run for an unrelated reason.
+    "src/lib/unlock.test.ts",
+    "src/lib/passworddialog.test.ts",
 ]
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
@@ -3698,8 +3766,17 @@ def npx() -> str:
     return shutil.which("npx") or "npx"
 
 
-def run_tests(files: list[str] | None = None) -> tuple[set[str], int | None, str]:
-    """Runs the suite, returning the failed test names, the summary's count and the log.
+def run_tests(files: list[str] | None = None) -> tuple[set[str], int | None, int, str]:
+    """Runs the suite, returning the failed names, the summary's count, the line count and the log.
+
+    The names come back as a SET and the line count separately, because they are
+    different quantities and the cross-check below needs the second one. Thirteen
+    test names are defined in more than one file --- `closes on Escape`,
+    `is one tab stop`, `normalises a negative turn` and ten others --- so a
+    mutation that reddens two of them collapses to one name while vitest counts
+    two, and the cross-check condemned the harness for a discrepancy the suite
+    had put there. `all_test_names` had already learned that duplicates exist and
+    returns a list of files per name; this end of the same run had not.
 
     `files` narrows the run to the file the mutation's own test lives in, which
     vitest is told by name rather than by any table kept here -- the control
@@ -3726,13 +3803,14 @@ def run_tests(files: list[str] | None = None) -> tuple[set[str], int | None, str
     )
     out = done.stdout + done.stderr
     # Split on the marker and take the rest of the line -- never a fixed column.
-    names = {m.strip() for m in FAILED_TEST.findall(out) if m.strip()}
+    lines = [m.strip() for m in FAILED_TEST.findall(out) if m.strip()]
+    names = set(lines)
     summary = SUMMARY.search(out)
     counted = None
     if summary:
         failed = SUMMARY_FAILED.search(summary.group(1))
         counted = int(failed.group(1)) if failed else 0
-    return names, counted, out
+    return names, counted, len(lines), out
 
 
 def all_test_names() -> dict[str, list[str]]:
@@ -4417,7 +4495,7 @@ def main() -> int:
         return 1
 
     print("--- control: the suite must be green before anything is broken", flush=True)
-    names, counted, out = run_tests()
+    names, counted, red_lines, out = run_tests()
     if counted is None:
         print("[FAIL] the control run produced no summary line, so nothing below is readable")
         print(out[-2000:])
@@ -4496,12 +4574,12 @@ def main() -> int:
                         for file in files
                     }
                 )
-                names, counted, out = run_tests(aimed or None)
+                names, counted, red_lines, out = run_tests(aimed or None)
                 narrow = bool(aimed)
                 if counted is not None and not names and narrow:
                     # Nothing in that file noticed. Whether anything else did is
                     # exactly the question, so now every file runs.
-                    names, counted, out = run_tests()
+                    names, counted, red_lines, out = run_tests()
                     narrow = False
             finally:
                 target.write_bytes(backup.read_bytes())
@@ -4511,10 +4589,11 @@ def main() -> int:
                 problems += 1
                 continue
             # The cross-check: the reporter's per-test lines and its own count
-            # must agree, or one of the two has stopped describing the run.
-            if len(names) != counted:
+            # must agree, or one of the two has stopped describing the run. It
+            # counts LINES rather than distinct names -- see `run_tests`.
+            if red_lines != counted:
                 print(
-                    f"[FAIL] {mutation.name}: {len(names)} failing test lines but the summary "
+                    f"[FAIL] {mutation.name}: {red_lines} failing test lines but the summary "
                     f"says {counted} -- this harness cannot read its own output"
                 )
                 problems += 1

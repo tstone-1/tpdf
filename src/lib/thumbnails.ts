@@ -610,13 +610,6 @@ export class Thumbnails {
   }
 
   /**
-   * Rotates the strip to match the view, dropping every thumbnail.
-   *
-   * All of them, because a thumbnail is a rendered bitmap and a rotated page is
-   * a different picture --- the same reason the scroller drops tier 1. The rows
-   * change shape with it, so they are rebuilt rather than restyled.
-   */
-  /**
    * Turns page inversion on or off, discarding every thumbnail.
    *
    * Narrower than {@link setTurns} and for a reason worth stating: the rows do
@@ -643,6 +636,13 @@ export class Thumbnails {
     this.layout();
   }
 
+  /**
+   * Rotates the strip to match the view, dropping every thumbnail.
+   *
+   * All of them, because a thumbnail is a rendered bitmap and a rotated page is
+   * a different picture --- the same reason the scroller drops tier 1. The rows
+   * change shape with it, so they are rebuilt rather than restyled.
+   */
   setTurns(turns: number): void {
     const next = ((turns % 4) + 4) % 4;
     if (next === this.turns) return;

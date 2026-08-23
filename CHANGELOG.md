@@ -17,7 +17,75 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.8] - Unreleased
+## [26.8.8] - 2026-08-23
+
+### Fixed: Back and Forward were offered when there was nowhere to go
+
+Both were greyed only by "is a document open", so the menu bar offered them on a
+document nobody had jumped in and pressing one did nothing. They now grey when
+the jump history is empty in that direction --- and the history is announced on
+every change, which it was not: a jump from a link said so, and the identical
+jump from the outline, a search result or a comment said nothing, so Back could
+stay greyed with somewhere to go.
+
+### Fixed: two file operations ran on the wrong thread during a save
+
+The last step of a save --- verifying and renaming for a rewrite, writing and
+reading back for an append --- ran on the thread that also serves the window's
+messages, rather than on the pool every other part of a save uses. On a large
+document that is a hash of every byte, or a whole-file parse, in the way of the
+interface. Both are on the pool now. Nothing you can do was different; a very
+large save could make the window stop answering for the length of it.
+
+### Changed: a doc comment that documents nothing is now refused by a gate
+
+Thirty-one comments in the frontend had been separated from what they describe
+by a later insertion, so they documented nothing --- silently, because two of
+them in a row is legal and only the last one binds. One of them was a twelve-line
+argument against a feature that had since been built. All were repaired, and the
+rule is now checked on every commit.
+
+### Fixed: ten mutations could not report on the tests they were written for
+
+Both found by running the front-end mutation table while cutting this release, and
+both of the same shape --- a check that could not answer, in the tool whose whole job
+is to say the tests can fail.
+
+Seven of them, all written for opening a document behind a password, named tests in
+two suites the harness had never been told about. It refused to start rather than
+calling them survivors, which is that guard working exactly as intended and the
+twelfth time that list has been forgotten. The two suites are listed now, and all
+seven go red at the test named for each.
+
+The other three were condemned by the harness itself, reported as *"this harness
+cannot read its own output"* --- off by exactly one, every time. It cross-checks the
+failing test lines against the count in vitest's own summary, which is the right
+thing to check, and it was counting distinct *names* against a count of *tests*.
+Thirteen test names in this repository are defined in two files at once, so any
+mutation reddening two of them looked like a broken reporter and was in fact a
+mutation the suite had caught. The count and the names are separate quantities now.
+
+Nothing you can do is different. What changed is that all 412 front-end mutations are
+proven rather than 409, and the three that were not are the eraser and the box tool.
+
+### Fixed: the README and the threat model each described a narrower product than this one
+
+Both were re-read against the code while cutting this release, which is the step
+that exists for it. The README never listed **stamps** at all --- an earlier fix
+had removed the claim that they could not be made and never added the claim that
+they could --- said nothing about opening a document behind a **password**, and
+still said an encrypted source is refused rather than saved, which stopped being
+the whole truth when marks became appendable to one. All four corrected.
+
+`docs/THREAT-MODEL.md` had a sharper error. Its residual-risk list recorded that
+a save which only adds marks is prepared in a sandboxed worker now, and read as
+though the whole append had moved there. Only the preparation did: the check that
+the written file parses and kept its pages re-reads that file in the application
+process, on the async runtime rather than the blocking pool the three other
+writers use --- and the previous revision of that file is the document you opened.
+Nothing you can do is different; what changed is that the document now says so.
+Two commands added since the last release --- moving a mark, and turning a dragged
+rectangle into a crop box --- had no entry at all and now have one.
 
 ### Changed: the eraser takes any mark, not only a drawing's strokes
 

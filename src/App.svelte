@@ -1233,6 +1233,20 @@
   }
 
   /**
+   * Shows a message, and the buttons that go with it.
+   *
+   * One function because the two are one fact. Setting `error` and `offers`
+   * separately is a pair that drifts, and the way it drifts is a stale Reload
+   * button surviving next to an unrelated message --- which is a button that
+   * discards the reader's work, offered for a reason that has gone. `say(null)`
+   * clears both.
+   */
+  function say(message: string | null, next: Offer[] = []) {
+    error = message;
+    offers = message === null ? [] : next;
+  }
+
+  /**
    * Opens the current document's path again.
    *
    * The place is captured here and handed to the open, rather than left to the
@@ -1247,20 +1261,6 @@
    * refuses because the app has not noticed yet is worse than one that always
    * does what it says.
    */
-  /**
-   * Shows a message, and the buttons that go with it.
-   *
-   * One function because the two are one fact. Setting `error` and `offers`
-   * separately is a pair that drifts, and the way it drifts is a stale Reload
-   * button surviving next to an unrelated message --- which is a button that
-   * discards the reader's work, offered for a reason that has gone. `say(null)`
-   * clears both.
-   */
-  function say(message: string | null, next: Offer[] = []) {
-    error = message;
-    offers = message === null ? [] : next;
-  }
-
   function reloadDocument() {
     const path = openPathName;
     if (!path) return;
@@ -1442,12 +1442,6 @@
   }
 
   /**
-   * The shortcuts that belong to the window rather than to the surface.
-   *
-   * The routing is `appcommands.ts`'s, for the reason the registration above
-   * gives: ⌘K was unreachable by any check while it lived in this file.
-   */
-  /**
    * The toolbar's route into the palette.
    *
    * Through `togglePalette` rather than `palette?.open()`, so the button and ⌘K
@@ -1462,6 +1456,12 @@
     });
   }
 
+  /**
+   * The shortcuts that belong to the window rather than to the surface.
+   *
+   * The routing is `appcommands.ts`'s, for the reason the registration above
+   * gives: ⌘K was unreachable by any check while it lived in this file.
+   */
   function onWindowKey(event: KeyboardEvent) {
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
@@ -1740,6 +1740,18 @@
   }
 
   /**
+   * Checks, then says what was found -- including "nothing", which is the point.
+   *
+   * The launch check deliberately does not come through here: an answer nobody
+   * asked for is exactly the element-arriving-on-its-own that the header's own
+   * silence is designed to avoid.
+   */
+  async function checkAndSay(): Promise<void> {
+    notice = updateNotice({ kind: "checking" }, appVersion);
+    notice = updateNotice(await updates.check(), appVersion);
+  }
+
+  /**
    * Opens a document, one at a time.
    *
    * **Serialised, and it has to be.** The body below suspends three times --- on
@@ -1760,18 +1772,6 @@
    * double-click waits for the first open, which is why the body no longer waits
    * on `firstPaint()` --- see the outline note at the end of it.
    */
-  /**
-   * Checks, then says what was found -- including "nothing", which is the point.
-   *
-   * The launch check deliberately does not come through here: an answer nobody
-   * asked for is exactly the element-arriving-on-its-own that the header's own
-   * silence is designed to avoid.
-   */
-  async function checkAndSay(): Promise<void> {
-    notice = updateNotice({ kind: "checking" }, appVersion);
-    notice = updateNotice(await updates.check(), appVersion);
-  }
-
   function openPath(
     path: string,
     resuming = false,
@@ -1780,18 +1780,6 @@
     return opens.run(() => openDocument(path, resuming, resume));
   }
 
-  /**
-   * Opens a document, putting the reader back where they left it.
-   *
-   * Never called directly --- {@link openPath} is the entry point, and going
-   * around it reintroduces the interleaving described there.
-   *
-   * `resuming` is set only by the launch restore, and changes one thing: a
-   * document that no longer opens is not an error to report. Someone who chose
-   * a file and cannot have it needs to be told; someone who launched the app and
-   * whose last document has since been deleted or unmounted needs an empty
-   * window, not a dialog about a file they did not ask for.
-   */
   /**
    * Opens `path`, asking the reader for a password if it turns out to need one.
    *
@@ -1810,6 +1798,18 @@
     );
   }
 
+  /**
+   * Opens a document, putting the reader back where they left it.
+   *
+   * Never called directly --- {@link openPath} is the entry point, and going
+   * around it reintroduces the interleaving described there.
+   *
+   * `resuming` is set only by the launch restore, and changes one thing: a
+   * document that no longer opens is not an error to report. Someone who chose
+   * a file and cannot have it needs to be told; someone who launched the app and
+   * whose last document has since been deleted or unmounted needs an empty
+   * window, not a dialog about a file they did not ask for.
+   */
   async function openDocument(
     path: string,
     resuming = false,
@@ -2072,6 +2072,15 @@
         // taken by the nib and one taken from the list are one command and one
         // undo, however the reader asked.
         onUnmarked: (mark) => void applyEdit((e) => e.unmark(mark)),
+        // **Back and Forward grey when there is nowhere to go, and this is what
+        // keeps that honest.** A menu item's enablement is a *pushed* map, so a
+        // guard reading state that moves outside the push sites is wrong
+        // between them --- which is the trap `refreshMenu` already carries. The
+        // history moves on a jump, on a step back and on a new document, and
+        // none of those is an edit; the frame loop's push covers the ones that
+        // also move the page, and this covers the ones that do not, including a
+        // link to somewhere on the page the reader is already looking at.
+        onNavigate: () => refreshMenu(),
         onStatus: (next) => {
           status = next;
           // Here rather than in a `$derived`, because this is the only moment

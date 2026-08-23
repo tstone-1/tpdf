@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 465 entries
+The one thing this file does *not* carry in full is the trap list --- 466 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -775,17 +775,18 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently seventeen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+Currently eighteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
 workflow-parity check, a mutation-anchor check, a README-claim check, a corpus-classification
 check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
-`cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check,
-`npm run check`, `npm run test`, `npm run build`, and a third-party-notices check. Two of them are
+`cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
+doc-comment check, `npm run check`, `npm run test`, `npm run build`, and a
+third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
-**All seventeen can be green on a Mac while the Windows tree does not compile**, and that is not
+**All eighteen can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
@@ -946,9 +947,37 @@ scan on either side. It found a **second** one on its first run — `onNavigate`
 a Back and Forward affordance can be re-enabled after a jump and which nothing consumes,
 because both commands are guarded on `withDocument` alone and neither greys when there is
 nowhere to go. That is now the one entry in its exemption table, with the reason, and wiring
-it is the same piece of work as making them grey. Proved by mutation in four directions:
+it was the same piece of work as making them grey.
+
+**That work is done as of 2026-08-23 and the table is empty.** `Viewer.canGoBack` and
+`canGoForward` are `History`'s own answers, both commands read them, and `App.svelte`
+refreshes the pushed menu map on every history change --- which had to include the three
+causes that were not announcing at all: a jump from the outline, a search result or a comment
+all go through `goToDestination`, and only `followLink` was calling the callback. The table
+stays as an empty `dict` rather than being deleted, so the next genuinely-unwired callback is
+written against this reasoning rather than from scratch. Proved by mutation in four directions:
 dropping the wiring, renaming a wired key, an exemption naming nothing (a `[WARN]`, not a
 failure), and the control.
+
+**`docs` exists because a twelve-line comment argued against the feature being built, and
+documented nothing.** `armErase`'s doc had been separated from the method by the crop tool's,
+and two `/** */` blocks in a row bind only the second --- silently, with no lint, no type
+error and nothing a test can assert on. The orphan read *"Only drawings are erasable ...
+making the eraser remove whole marks of any kind would be a second, much more destructive
+command wearing the same cursor"*: a live design argument, attached to nothing, in the file
+where somebody would go looking for exactly that reasoning.
+
+**A scan found 31 across the frontend**, in twelve files, and all were repaired. The rule the
+gate pins is total rather than allowlisted --- a doc comment must be followed by code --- and
+what makes that possible is a *spelling*: a block introducing a **group** of declarations is
+a plain `/* */`, not a doc comment. There is one in the tree, over `commands.ts`'s scoring
+weights. The single structural exception is the module header at line 1, recognised by
+position, and removing it is one of the four controls that prove the gate fires: it then
+reports all 22 of them.
+
+What it cannot see is a doc comment on the **wrong** declaration --- one that binds and
+describes something else. Nothing mechanical can, and that is written in the script rather
+than left to be discovered.
 
 **`sinks` enforces `docs/THREAT-MODEL.md` T8**, which until 2026-08-02 was the one mitigation
 in that document held by convention rather than by a line. Document text --- outline titles,
@@ -1185,7 +1214,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 465 of them and the full text
+titles. Only the titles are here, because there are 466 of them and the full text
 was 93% of this file --- an instruction budget spent on the 460 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1537,6 +1566,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A wait built on `pgrep -f` outlives the job, and every later check agrees with it (the instrument agreed with the truth, and would have agreed with anything)
 - A mutation harness that dies leaves the mutation in the tree (a `finally` does not survive `pkill`, and on a feature branch the leftover is invisible in `git status`)
 - A mutation aimed at deleted code is refused far too late to matter
+- A cross-check that counts names against a count of tests is wrong wherever two tests share a name (three mutations condemned by an off-by-one the SUITE put there; the same run's other end had learned about the duplicates two days earlier)
 - A mutation harness knows only the tests it was told to run (three lists in one increment; the guard is loud, and the fix for one of them was to move the function)
 - A verification chained after a failed edit reports success for work that is not there
 - A restored file with its original timestamp leaves the build serving the mutation

@@ -33,7 +33,6 @@ import { colorFor, type MarkColor } from "./markcolors";
 // one, which cannot be loaded outside a webview.
 export type { MarkView, PageView };
 
-/** Mirrors `edits::EditState`. */
 /**
  * What `save_copy` and `extract_pages` report about the file they wrote.
  *
@@ -47,6 +46,7 @@ export interface Copied {
   changed: boolean;
 }
 
+/** Mirrors `edits::EditState`. */
 export interface EditState {
   pages: PageView[];
   marks: MarkView[];

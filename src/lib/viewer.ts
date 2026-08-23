@@ -70,13 +70,6 @@ import {
 import { PointerDrag, type DragPoint } from "./drag";
 
 /**
- * A point on screen, as every event that carries one reports it.
- *
- * Structural rather than `PointerEvent`, so a `contextmenu` MouseEvent and a
- * synthetic point from the check harness are the same thing to the hit tests.
- * Nothing that takes one reads any other field.
- */
-/**
  * A point on a page, in that page's laid-out space, in points.
  *
  * Deliberately not {@link ScreenPoint}, which is in client coordinates: the two
@@ -89,6 +82,13 @@ export interface Point {
   y: number;
 }
 
+/**
+ * A point on screen, as every event that carries one reports it.
+ *
+ * Structural rather than `PointerEvent`, so a `contextmenu` MouseEvent and a
+ * synthetic point from the check harness are the same thing to the hit tests.
+ * Nothing that takes one reads any other field.
+ */
 export interface ScreenPoint {
   clientX: number;
   clientY: number;
@@ -546,13 +546,6 @@ const PAGE_OVERLAP = 0.9;
 const COPY_CHUNK = 16;
 
 /**
- * Overlay fills, all painted with `multiply` so the glyphs stay legible.
- *
- * The current match is a different hue rather than a darker shade of the same
- * one: on a page with many hits, "which of these am I on" has to survive being
- * read at a glance and next to a highlight of the other colour.
- */
-/**
  * How opaque a mark's ink is on the overlay, by whether it is a wash or a line.
  *
  * **Two renderers draw these marks and they must agree.** This is the overlay's,
@@ -580,39 +573,6 @@ const COPY_CHUNK = 16;
 const WASH_ALPHA = 0.85;
 const LINE_ALPHA = 1;
 
-/**
- * Draws a comment's icon in the box a mark gives it.
- *
- * **Ours only until the file is saved.** Every reader synthesises its own icon
- * for a `/Text` annotation --- which is why `save.rs` writes no appearance
- * stream for one --- so this is what a reader sees while they are working, and
- * Acrobat's or Preview's bubble is what they see afterwards. The two will not
- * be the same picture. They are in the same place and the same size, which is
- * what `ICON_SIZE` is for, and that is the property worth having: a comment
- * must not move when the file is saved.
- *
- * A rounded box with a tail, outlined in a darker shade of its own fill so it
- * stays visible on yellow paper and on a dark inverted page alike. Drawn with
- * the canvas's own primitives rather than an image, because an icon that needs
- * a resource is an icon that can fail to load.
- */
-/**
- * Lays down the path of the ellipse inscribed in a rectangle.
- *
- * **Traces, does not paint.** Both callers set their own stroke first --- the
- * committed mark in the reader's colour, the drag preview dashed in
- * `PREVIEW_STROKE` --- and a helper that stroked for them would need a colour
- * argument and a dash argument to say the same two things twice.
- *
- * `ctx.ellipse` rather than the four Bézier arcs `save.rs` writes, and the two
- * agree: `KAPPA` is the approximation a content stream needs because PDF has no
- * ellipse operator, and a canvas has one. Using it here keeps the overlay exact
- * and leaves the approximation in the one place that cannot avoid it.
- *
- * No inset, for the box's reason: the stroke straddles the path and half of it
- * falls outside the rectangle, which is correct on a canvas with no clip and
- * wrong in an appearance stream, whose `/BBox` would cut it away.
- */
 /**
  * Lays down the zigzag of a squiggle, fitted to a band.
  *
@@ -656,6 +616,23 @@ function traceSquiggle(
   }
 }
 
+/**
+ * Lays down the path of the ellipse inscribed in a rectangle.
+ *
+ * **Traces, does not paint.** Both callers set their own stroke first --- the
+ * committed mark in the reader's colour, the drag preview dashed in
+ * `PREVIEW_STROKE` --- and a helper that stroked for them would need a colour
+ * argument and a dash argument to say the same two things twice.
+ *
+ * `ctx.ellipse` rather than the four Bézier arcs `save.rs` writes, and the two
+ * agree: `KAPPA` is the approximation a content stream needs because PDF has no
+ * ellipse operator, and a canvas has one. Using it here keeps the overlay exact
+ * and leaves the approximation in the one place that cannot avoid it.
+ *
+ * No inset, for the box's reason: the stroke straddles the path and half of it
+ * falls outside the rectangle, which is correct on a canvas with no clip and
+ * wrong in an appearance stream, whose `/BBox` would cut it away.
+ */
 function traceEllipse(
   ctx: CanvasRenderingContext2D,
   left: number,
@@ -678,6 +655,22 @@ function traceEllipse(
   );
 }
 
+/**
+ * Draws a comment's icon in the box a mark gives it.
+ *
+ * **Ours only until the file is saved.** Every reader synthesises its own icon
+ * for a `/Text` annotation --- which is why `save.rs` writes no appearance
+ * stream for one --- so this is what a reader sees while they are working, and
+ * Acrobat's or Preview's bubble is what they see afterwards. The two will not
+ * be the same picture. They are in the same place and the same size, which is
+ * what `ICON_SIZE` is for, and that is the property worth having: a comment
+ * must not move when the file is saved.
+ *
+ * A rounded box with a tail, outlined in a darker shade of its own fill so it
+ * stays visible on yellow paper and on a dark inverted page alike. Drawn with
+ * the canvas's own primitives rather than an image, because an icon that needs
+ * a resource is an icon that can fail to load.
+ */
 function drawBubble(
   ctx: CanvasRenderingContext2D,
   left: number,
@@ -764,6 +757,13 @@ const CROP_SCRIM = "rgba(0, 0, 0, 0.33)";
  * hangs. See {@link paintCommentGhost}.
  */
 const BUBBLE_EDGE = "rgba(0, 0, 0, 0.55)";
+/**
+ * Overlay fills, all painted with `multiply` so the glyphs stay legible.
+ *
+ * The current match is a different hue rather than a darker shade of the same
+ * one: on a page with many hits, "which of these am I on" has to survive being
+ * read at a glance and next to a highlight of the other colour.
+ */
 const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
 
@@ -884,26 +884,6 @@ export class Viewer {
 
   private frameHandle = 0;
   private running = false;
-  /**
-   * Whether {@link destroy} has run. Checked wherever a continuation re-enters.
-   *
-   * Almost everything here is asynchronous and almost none of it is cancellable:
-   * a text extraction is an IPC round trip that resolves whenever it resolves,
-   * and `TextCache.load` never rejects --- a failure resolves to `null`. So a
-   * document closed while any of that is outstanding leaves `.then` callbacks
-   * holding a viewer that has been torn down, and the one they all reach is
-   * {@link wake}, which was idempotent about *running* and said nothing about
-   * *destroyed*: it restarted the frame loop.
-   *
-   * What that costs is worth spelling out, because a resurrected loop does not
-   * look like a leak from anywhere. The zombie tick drives the destroyed
-   * scroller, which requests tiles for a document the backend has closed; they
-   * fail; the backoff arms a retry; the retry wakes the zombie again, every
-   * eight seconds, forever. And each tick fires the *old* `onStatus` and
-   * `onPosition` closures, which in `App.svelte` write the module-level `status`
-   * --- so a closed document keeps driving the sidebar and the header of the one
-   * that replaced it.
-   */
   /** Every comment in the document, in page order. Empty until it arrives. */
   private commentItems: readonly Comment[] = [];
   private linkItems: readonly Link[] = [];
@@ -957,14 +937,6 @@ export class Viewer {
   private drawKind: MarkKind | null = null;
   /** Which stamp an armed stamp tool will place. `null` for every other kind. */
   private drawStamp: StampName | null = null;
-  /**
-   * The rectangle being dragged, in the slot's laid-out space.
-   *
-   * Held rather than recomputed from the drag, because the overlay paints it
-   * once a frame and the drag reports client coordinates --- which mean
-   * something different after a scroll. Both corners are stored on the page, so
-   * a preview follows the page rather than the window.
-   */
   /**
    * The finished strokes of the drawing in progress, and the page they are on.
    *
@@ -1022,6 +994,14 @@ export class Viewer {
     last: Point;
   } | null = null;
 
+  /**
+   * The rectangle being dragged, in the slot's laid-out space.
+   *
+   * Held rather than recomputed from the drag, because the overlay paints it
+   * once a frame and the drag reports client coordinates --- which mean
+   * something different after a scroll. Both corners are stored on the page, so
+   * a preview follows the page rather than the window.
+   */
   private drawing: {
     slot: number;
     from: Point;
@@ -1069,12 +1049,6 @@ export class Viewer {
    */
   private readonly cropDrag: PointerDrag;
   /**
-   * The box's drag, which owns its own listener pair.
-   *
-   * Constructed once, in the constructor, because it registers nothing until
-   * {@link PointerDrag.start} takes a press --- an idle one costs a field.
-   */
-  /**
    * Where the pointer is, in the page's own space, while a tool is armed.
    *
    * Only the comment tool reads it, and only to paint the ghost bubble that says
@@ -1113,8 +1087,34 @@ export class Viewer {
 
   private readonly moveDrag: PointerDrag;
 
+  /**
+   * The box's drag, which owns its own listener pair.
+   *
+   * Constructed once, in the constructor, because it registers nothing until
+   * {@link PointerDrag.start} takes a press --- an idle one costs a field.
+   */
   private readonly drawDrag: PointerDrag;
 
+  /**
+   * Whether {@link destroy} has run. Checked wherever a continuation re-enters.
+   *
+   * Almost everything here is asynchronous and almost none of it is cancellable:
+   * a text extraction is an IPC round trip that resolves whenever it resolves,
+   * and `TextCache.load` never rejects --- a failure resolves to `null`. So a
+   * document closed while any of that is outstanding leaves `.then` callbacks
+   * holding a viewer that has been torn down, and the one they all reach is
+   * {@link wake}, which was idempotent about *running* and said nothing about
+   * *destroyed*: it restarted the frame loop.
+   *
+   * What that costs is worth spelling out, because a resurrected loop does not
+   * look like a leak from anywhere. The zombie tick drives the destroyed
+   * scroller, which requests tiles for a document the backend has closed; they
+   * fail; the backoff arms a retry; the retry wakes the zombie again, every
+   * eight seconds, forever. And each tick fires the *old* `onStatus` and
+   * `onPosition` closures, which in `App.svelte` write the module-level `status`
+   * --- so a closed document keeps driving the sidebar and the header of the one
+   * that replaced it.
+   */
   private readonly life = new Lifetime();
   /**
    * Wake scheduled for a request whose backoff has not elapsed.
@@ -2398,7 +2398,18 @@ export class Viewer {
    * {@link History.push}.
    */
   goToDestination(page: number, top: number | null): void {
-    if (!this.replaying) this.history.push(this.position);
+    if (!this.replaying) {
+      this.history.push(this.position);
+      // **Announced here for the reason the push itself is here.** Back has
+      // somewhere to go now that it did not a moment ago, and a caller telling
+      // the window about that is a rule somebody has to keep following --- the
+      // fifth caller is the one that forgets, which is the argument the
+      // paragraph above already makes about recording the jump at all. Until
+      // 2026-08-23 only `followLink` announced it, so a jump from the outline,
+      // a search result or a comment left Back greyed in the menu bar with
+      // somewhere to go.
+      this.opts.onNavigate?.();
+    }
     const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
     const base = this.scroller.pageTopOf(clamped);
     // A turned page has no vertical offset to scroll to: at a quarter turn the
@@ -2687,14 +2698,6 @@ export class Viewer {
   }
 
   /**
-   * Turns a pointer event into a caret.
-   *
-   * Returns `null` while the page's text has not arrived --- and asks for it, so
-   * the next attempt can succeed. A drag that begins before the text lands
-   * therefore does nothing until it does, rather than anchoring at character
-   * zero and selecting the whole page on the first move.
-   */
-  /**
    * Where a point in a page lands in the window, in CSS pixels from its corner.
    *
    * The inverse of what {@link caretFrom} does with a pointer event, and it
@@ -2744,6 +2747,10 @@ export class Viewer {
     // The history belongs to the document, not to the session: keeping it would
     // let Back scroll a new document to a page number the old one had.
     this.history.clear();
+    // And say so, or Back stays live in the menu on a document with nowhere to
+    // go back to --- the mirror of the case above, and the one a reader meets
+    // every time they open a second file.
+    this.opts.onNavigate?.();
     // The accessibility tree too, and this is the half a sighted reader never
     // sees: without it a table of contents is announced as ordinary prose, with
     // nothing for a screen reader to tell one from the other.
@@ -2785,6 +2792,26 @@ export class Viewer {
   /** Whether Back and Forward would do anything. For the check harness. */
   get historyDepths(): { back: number; forward: number } {
     return this.history.depths;
+  }
+
+  /**
+   * Forgets where the reader has been. For the check harness.
+   *
+   * `setLinks` already does this, and using it for the purpose would mean
+   * clearing the links to clear the history --- a side effect standing in for an
+   * intention, which reads as a trick to whoever meets it next. The harness
+   * needs it because Back and Forward are guarded on the history rather than on
+   * a document being open, so "which commands does an open document offer" has
+   * no fixed answer until the history is at a known point: a corpus whose text
+   * the search phase could jump into arrives at the command phase with somewhere
+   * to go back to, and one with no text does not.
+   *
+   * Announced, for the reason every other history change is: Back has nowhere to
+   * go now, and a menu that was told about the jump has to be told about this.
+   */
+  clearHistory(): void {
+    this.history.clear();
+    this.opts.onNavigate?.();
   }
 
   /** The link the keyboard is on, or -1. For the check harness. */
@@ -2904,9 +2931,32 @@ export class Viewer {
     }
 
     // Recorded by `goToDestination`, not here: one mechanism, so a link and an
-    // outline row cannot come to disagree about what Back means.
+    // outline row cannot come to disagree about what Back means. The same now
+    // goes for *announcing* it --- this line used to call `onNavigate` itself,
+    // which is why the link was the one route that told the window and the
+    // other three were not.
     this.goToDestination(link.target.page, link.target.top_pt);
-    this.opts.onNavigate?.();
+  }
+
+  /**
+   * Whether Back has anywhere to go, so a menu item can grey when it has not.
+   *
+   * `History`'s own answer rather than a second one derived here, which is the
+   * rule this file keeps: a copy of a distinction is what lets one of them
+   * drift. It exists because {@link ViewerOptions.onNavigate} did --- that
+   * callback was declared so a Back affordance could be re-enabled after a
+   * jump, and until 2026-08-23 nothing consumed it, because both commands were
+   * guarded on "a document is open" alone and neither ever greyed. The wiring
+   * gate carried it as its one exemption, saying that wiring the callback was
+   * the same piece of work as making them grey. This is that work.
+   */
+  get canGoBack(): boolean {
+    return this.history.canGoBack;
+  }
+
+  /** Whether Forward has anywhere to go. {@link canGoBack}'s twin. */
+  get canGoForward(): boolean {
+    return this.history.canGoForward;
   }
 
   /** Goes back to where the reader was before the last jump. */
@@ -4183,6 +4233,14 @@ export class Viewer {
     };
   }
 
+  /**
+   * Turns a pointer event into a caret.
+   *
+   * Returns `null` while the page's text has not arrived --- and asks for it, so
+   * the next attempt can succeed. A drag that begins before the text lands
+   * therefore does nothing until it does, rather than anchoring at character
+   * zero and selecting the whole page on the first move.
+   */
   private caretFrom(event: PointerEvent): Caret | null {
     const point = this.pointFrom(event);
     if (!point) return null;

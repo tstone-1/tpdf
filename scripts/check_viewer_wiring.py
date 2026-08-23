@@ -51,18 +51,22 @@ APP = ROOT / "src/App.svelte"
 #: viewer reports something, which is rarely true and always worth writing down
 #: -- the same rule `viewer_sweep.py` applies to a fixture it does not open.
 #:
-#: The one entry is a finding rather than a decision: this check was written for
-#: `onDrawn` and turned up `onNavigate` on its first run, which is the argument
-#: for a set diff over a spot fix.
-NOT_WIRED: dict[str, str] = {
-    "onNavigate": (
-        "it exists so a Back and Forward affordance can be re-enabled after a "
-        "jump, and there is no such affordance: both commands are guarded on "
-        "`withDocument` alone, so neither greys when there is nowhere to go. "
-        "Wiring this is the same piece of work as making them grey, and it "
-        "belongs with that rather than as an empty callback here"
-    ),
-}
+#: **Empty since 2026-08-23, and the one entry it held was a finding rather
+#: than a decision.** This check was written for `onDrawn` and turned up
+#: `onNavigate` on its first run -- declared so that a Back and Forward
+#: affordance could be re-enabled after a jump, and consumed by nothing,
+#: because both commands were guarded on `withDocument` alone and neither ever
+#: greyed. The entry said as much and said the repair was the same piece of
+#: work as making them grey. That work is done: `Viewer.canGoBack` and
+#: `canGoForward` are `History`'s own answers, the two commands read them, and
+#: `App.svelte` refreshes the pushed menu map on every history change.
+#:
+#: It stays as an empty table on purpose. The alternative is deleting the
+#: mechanism and rebuilding it the next time a callback is genuinely not
+#: needed, at which point the reason would be written from scratch rather than
+#: against this one -- and an exemption with no reason is what the rule exists
+#: to prevent.
+NOT_WIRED: dict[str, str] = {}
 
 #: `onX?: ...` inside the exported options interface.
 DECLARED = re.compile(r"^  (on[A-Za-z0-9]+)\?:", re.M)

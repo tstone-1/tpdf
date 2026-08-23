@@ -621,22 +621,6 @@ async function run(path: string): Promise<void> {
   check("destroys cleanly", viewer.idle, "frame loop stopped");
 }
 
-/**
- * Text selection, on whatever the current page happens to be.
- *
- * The load-bearing assertion is the **ordering** one: text dragged near the top
- * of the page must come from earlier in the page's text than text dragged near
- * the bottom. That is the only check here that ties a screen position to
- * specific characters, and so the only one that can see a coordinate error.
- *
- * It replaced a substring check --- "the dragged text appears in the whole
- * page's text" --- which sounded like it tested the same thing and could not
- * fail. A selection is a contiguous range of character *indices*, so its text is
- * a substring of the page's text no matter where the boxes claim the characters
- * are. Inverting the y-flip in `text.rs` passed all twenty checks, and the drag
- * even returned real words; it was simply the wrong words. Nothing about a
- * property that holds by construction can be evidence of anything.
- */
 /** What a fixture's generator says each of its pages should read as. */
 interface ReadingManifest {
   pages: { page: number; name: string; lines: string[] }[];
@@ -874,6 +858,22 @@ async function fitChecks(root: HTMLElement, viewer: Viewer): Promise<void> {
   );
 }
 
+/**
+ * Text selection, on whatever the current page happens to be.
+ *
+ * The load-bearing assertion is the **ordering** one: text dragged near the top
+ * of the page must come from earlier in the page's text than text dragged near
+ * the bottom. That is the only check here that ties a screen position to
+ * specific characters, and so the only one that can see a coordinate error.
+ *
+ * It replaced a substring check --- "the dragged text appears in the whole
+ * page's text" --- which sounded like it tested the same thing and could not
+ * fail. A selection is a contiguous range of character *indices*, so its text is
+ * a substring of the page's text no matter where the boxes claim the characters
+ * are. Inverting the y-flip in `text.rs` passed all twenty checks, and the drag
+ * even returned real words; it was simply the wrong words. Nothing about a
+ * property that holds by construction can be evidence of anything.
+ */
 async function selectionChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -2125,6 +2125,10 @@ async function stepToAnotherPage(
   );
 }
 
+/** The check that a guessed page is not read aloud, named once for its skips. */
+const GUESSED_TEXT_CHECK =
+  "a page whose characters mean nothing is not read out";
+
 /**
  * What a screen reader would find.
  *
@@ -2143,10 +2147,6 @@ async function stepToAnotherPage(
  * What is **not** checked, and is not claimed: that any of this is *pleasant* to
  * listen to. That needs a screen reader and a person.
  */
-/** The check that a guessed page is not read aloud, named once for its skips. */
-const GUESSED_TEXT_CHECK =
-  "a page whose characters mean nothing is not read out";
-
 async function accessibilityChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -4098,6 +4098,18 @@ async function appCommandChecks(
     // promises; `file.saveCopy` is deliberately not here, because a copy of an
     // unedited document is a file a reader wants.
     "file.save",
+    // Guarded on the jump history rather than on a document, which is why the
+    // phase clears it below: both are correct to offer after a jump, and this
+    // check is about what an open document alone earns. `nav.forward` joined
+    // this list on 2026-08-23 with the guard that greys them, and `nav.back`
+    // joined at the same moment for a reason the red line did not show --- it
+    // was *offered* on this corpus, because the search phase had jumped to a
+    // hit before this phase ran, and would have been withheld on a corpus with
+    // no text for the search phase to find. A check whose expected answer
+    // depends on which fixture it is looking at is one that fails somewhere
+    // else later.
+    "nav.back",
+    "nav.forward",
   ];
 
   // And the other direction, declared for the same reason. This list was the
@@ -4148,6 +4160,11 @@ async function appCommandChecks(
   // break it somewhere else.
   palette.open();
   palette.close();
+  // To a known point, so the two nav commands above have one answer on every
+  // corpus. Not restored afterwards, and that is deliberate rather than an
+  // oversight: `linkChecks` is the next thing that reads the history and opens
+  // by calling `setLinks`, which clears it too.
+  viewer.clearHistory();
   const withDocument = registry.search("").map((ranked) => ranked.command.title);
   const missing = registered.filter(
     (id) => !withDocument.includes(titleOf(id)),
@@ -6918,6 +6935,25 @@ async function pageRotationChecks(
 }
 
 /**
+ * A page's text as a short comparable string, or `""` if it has none.
+ *
+ * What makes a page identifiable to a check that can only see the layout. A
+ * count cannot tell "page 2 was removed" from "page 3 was removed and everything
+ * renumbered", and neither can it tell a page that moved from a page that stayed
+ * --- both phases below rest on this, and both skip rather than pass when two
+ * pages come back with the same string.
+ */
+function fingerprint(
+  text: { codes: number[]; width_pt: number } | null,
+): string {
+  return !text || text.codes.length === 0
+    ? ""
+    : `${text.codes.length}@${text.width_pt.toFixed(1)}:${text.codes
+        .slice(0, 32)
+        .join(",")}`;
+}
+
+/**
  * Removing a page from the document, which is the edit that moves every other.
  *
  * **What makes this hard to check is the same thing that makes it worth
@@ -6939,25 +6975,6 @@ async function pageRotationChecks(
  * Puts the document back before returning, asserted rather than assumed, because
  * every phase after this one inherits what it leaves.
  */
-/**
- * A page's text as a short comparable string, or `""` if it has none.
- *
- * What makes a page identifiable to a check that can only see the layout. A
- * count cannot tell "page 2 was removed" from "page 3 was removed and everything
- * renumbered", and neither can it tell a page that moved from a page that stayed
- * --- both phases below rest on this, and both skip rather than pass when two
- * pages come back with the same string.
- */
-function fingerprint(
-  text: { codes: number[]; width_pt: number } | null,
-): string {
-  return !text || text.codes.length === 0
-    ? ""
-    : `${text.codes.length}@${text.width_pt.toFixed(1)}:${text.codes
-        .slice(0, 32)
-        .join(",")}`;
-}
-
 async function pageDeletionChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -8281,20 +8298,6 @@ function preview(text: string): string {
 }
 
 /**
- * The print command, up to but not including the panel.
- *
- * Everything about printing that a test can reach is in Rust and covered there.
- * What is **not** covered anywhere else is the wiring: a mistyped command name
- * or a parameter Tauri cannot deserialise compiles perfectly and fails the first
- * time somebody presses Cmd-P. Nothing in the gate would notice, because the
- * two sides never meet until then.
- *
- * So these ask for jobs the backend must *refuse*, and assert on the reason it
- * gives. A refusal proves the command exists, the arguments arrived, and
- * `print::build` ran --- and stops before anything platform-specific, which is
- * the half that would need a person and a sheet of paper.
- */
-/**
  * That a document can be released, through the command the app really calls.
  *
  * `backend-probe` pins what releasing *does* --- the process dies, the id is
@@ -9258,22 +9261,6 @@ async function overlayInkChecks(
 }
 
 /**
- * What a reader sees *while* drawing, which no committed mark can show.
- *
- * **This exists because the first version of ink previewed a freehand stroke as
- * a dashed rubber-band rectangle.** `paintDrawing` drew that for every live
- * drag, so the line appeared only on release --- and it shipped, because every
- * check in this phase reads marks the *model* holds, and a preview is by
- * definition not one of those. The overlay had a phase and the preview had
- * nothing.
- *
- * Two readings, and the second is what makes this about *drawings* rather than
- * about one stroke. A rubber band inks all four sides of its own box and leaves
- * the middle clear, which is also what a correct two-stroke drawing does --- so
- * "not a rectangle" is read from a single diagonal stroke, whose box a rectangle
- * would outline and whose line crosses the middle instead.
- */
-/**
  * How the phase names its results, keyed rather than indexed --- see
  * {@link INK_CHECK} for what an index cost the check above it.
  */
@@ -9729,6 +9716,22 @@ function hueOf(r: number, g: number, b: number): number | null {
   return (deg + 360) % 360;
 }
 
+/**
+ * What a reader sees *while* drawing, which no committed mark can show.
+ *
+ * **This exists because the first version of ink previewed a freehand stroke as
+ * a dashed rubber-band rectangle.** `paintDrawing` drew that for every live
+ * drag, so the line appeared only on release --- and it shipped, because every
+ * check in this phase reads marks the *model* holds, and a preview is by
+ * definition not one of those. The overlay had a phase and the preview had
+ * nothing.
+ *
+ * Two readings, and the second is what makes this about *drawings* rather than
+ * about one stroke. A rubber band inks all four sides of its own box and leaves
+ * the middle clear, which is also what a correct two-stroke drawing does --- so
+ * "not a rectangle" is read from a single diagonal stroke, whose box a rectangle
+ * would outline and whose line crosses the middle instead.
+ */
 async function inkPreviewChecks(
   root: HTMLElement,
   viewer: Viewer,
@@ -10442,6 +10445,20 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
   );
 }
 
+/**
+ * The print command, up to but not including the panel.
+ *
+ * Everything about printing that a test can reach is in Rust and covered there.
+ * What is **not** covered anywhere else is the wiring: a mistyped command name
+ * or a parameter Tauri cannot deserialise compiles perfectly and fails the first
+ * time somebody presses Cmd-P. Nothing in the gate would notice, because the
+ * two sides never meet until then.
+ *
+ * So these ask for jobs the backend must *refuse*, and assert on the reason it
+ * gives. A refusal proves the command exists, the arguments arrived, and
+ * `print::build` ran --- and stops before anything platform-specific, which is
+ * the half that would need a person and a sheet of paper.
+ */
 async function printChecks(path: string, doc: DocumentInfo): Promise<void> {
   const print = async (
     pages: number[] | null,

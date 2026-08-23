@@ -88,7 +88,6 @@ export interface MarkPopupOptions {
   onOpen: (mark: number | null) => void;
 }
 
-/** The note editor for one mark the reader made. */
 /**
  * The word a reader sees for each kind.
  *
@@ -166,6 +165,7 @@ export function nameOf(kind: MarkKind): string {
   return NAMES[kind];
 }
 
+/** The note editor for one mark the reader made. */
 export class MarkPopup {
   private readonly host: HTMLElement;
   private readonly element: HTMLElement;

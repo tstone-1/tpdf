@@ -40,13 +40,26 @@ function harness(
   selected = false,
   markOpen = false,
   dirty = false,
+  history: { back?: boolean; forward?: boolean } = {},
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
-    // Not a real viewer: nothing here calls a method on it, and the guards ask
-    // only whether it is null. A cast is honest about that; a stub with a dozen
-    // methods would suggest they are exercised.
-    viewer: () => (hasDocument ? ({} as never) : null),
+    // Not a real viewer: the guards ask whether it is null and, since
+    // 2026-08-23, whether the history has anywhere to go. A cast is honest
+    // about the rest; a stub with a dozen methods would suggest they are
+    // exercised.
+    //
+    // **Both default to `false`**, which is the state a document actually opens
+    // in --- nobody has jumped yet --- rather than the convenient one. That is
+    // the same argument the update flags below make, and it is what makes the
+    // greyed direction the one every other test in this file exercises.
+    viewer: () =>
+      hasDocument
+        ? ({
+            canGoBack: history.back ?? false,
+            canGoForward: history.forward ?? false,
+          } as never)
+        : null,
     pageCount: () => 3,
     openDocument: () => fired.push("openDocument"),
     reloadDocument: () => fired.push("reloadDocument"),
@@ -871,5 +884,71 @@ describe("Highlight selection", () => {
       .all()
       .find((entry: { id: string }) => entry.id === "edit.highlightSelection");
     expect(command?.keys).toBeUndefined();
+  });
+});
+
+/**
+ * Back and Forward, which grey when there is nowhere to go.
+ *
+ * They were guarded on "a document is open" alone until 2026-08-23, so the menu
+ * offered Back on a document nobody had jumped in and the press did nothing.
+ * The viewer's `onNavigate` callback had been declared for exactly this and was
+ * consumed by nothing, which the wiring gate carried as its one exemption.
+ */
+describe("moving back and forward through jumps", () => {
+  /**
+   * Whether the registry would offer a command right now.
+   *
+   * `enabled` is optional on a `Command` --- most have no guard --- so asking
+   * for it through `?.` types as possibly-undefined and an unguarded call does
+   * not compile. Throwing rather than defaulting: a command that has lost its
+   * guard is the defect these tests exist to catch, and `?? true` would report
+   * it as working.
+   */
+  function offers(registry: CommandRegistry, id: string): boolean {
+    const command = registry.find(id);
+    if (!command) throw new Error(`${id} is not registered`);
+    if (!command.enabled) throw new Error(`${id} has no guard`);
+    return command.enabled();
+  }
+
+  it("withholds both on a document nobody has jumped in", () => {
+    // The state a document opens in, and the one every other test in this file
+    // exercises by default: the stack is empty in both directions.
+    const { registry, fired } = harness();
+    expect(registry.run("nav.back")).toBe(false);
+    expect(registry.run("nav.forward")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
+  it("offers Back once there is somewhere to go, and still withholds Forward", () => {
+    // The two are asked separately rather than through one "has a history"
+    // predicate, which is what a stack popped in one direction needs: after a
+    // jump Back is live and Forward is not, and a single flag cannot say that.
+    const { registry } = harness(true, {}, {}, false, false, false, { back: true });
+    expect(offers(registry, "nav.back")).toBe(true);
+    expect(offers(registry, "nav.forward")).toBe(false);
+  });
+
+  it("offers Forward once Back has been pressed, and still offers Back", () => {
+    // The mirror. Both live is the ordinary state in the middle of a stack, and
+    // a guard that answered one question for both would have to pick one.
+    const { registry } = harness(true, {}, {}, false, false, false, {
+      back: true,
+      forward: true,
+    });
+    expect(offers(registry, "nav.back")).toBe(true);
+    expect(offers(registry, "nav.forward")).toBe(true);
+  });
+
+  it("withholds both with no document, whatever a stale history would say", () => {
+    // The control on the `&&`: with no viewer there is nothing to ask, and the
+    // guard must not reach through a null to a remembered answer.
+    const { registry } = harness(false, {}, {}, false, false, false, {
+      back: true,
+      forward: true,
+    });
+    expect(offers(registry, "nav.back")).toBe(false);
+    expect(offers(registry, "nav.forward")).toBe(false);
   });
 });

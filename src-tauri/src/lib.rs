@@ -1018,7 +1018,21 @@ async fn save_document(
     // either way, so the reader is reopening either way, and a rename that the
     // mapping really did block reports that itself --- which is a better message
     // than one this end guesses from a close reply.
-    let landed = match &prepared {
+    //
+    // **On the blocking pool, and this whole match had been on the async
+    // runtime until 2026-08-23.** Every arm below does real file work on a file
+    // the size of the reader's document: the rewrite hashes every byte of it in
+    // `verify_before_commit` and then renames, and the append writes, waits for
+    // the platter, reads the whole file back and *parses it with `lopdf`*. That
+    // last one is a parse of attacker-derived bytes --- the previous revision is
+    // the document the reader opened --- so it belongs where the other three
+    // coordinator-side parses already are. `docs/THREAT-MODEL.md` residual risk
+    // 17 said the append had moved into the worker; its *preparation* had, and
+    // this is the half that had not.
+    //
+    // `prepared` is consumed rather than borrowed, which is what lets it cross
+    // into the closure, and nothing after this line reads it.
+    let landed = tauri::async_runtime::spawn_blocking(move || match prepared {
         Prepared::Rewrite(staged) => {
             // One more look before the rename, closing the window the split
             // above opens. What it compares and why it compares against staging
@@ -1032,9 +1046,10 @@ async fn save_document(
             // already happened, so the reader's model and their journal are
             // gone. `refused` would tell them their document is still open when
             // it is not, which is the one thing that flag decides.
-            save::verify_before_commit(staged, Path::new(&source))
+            save::verify_before_commit(&staged, Path::new(&source))
                 .map_err(SaveFailure::after_close_by)?;
             save::commit_in_place(&staged.path, Path::new(&source))
+                .map_err(SaveFailure::after_close)
         }
         // No second look of its own because it takes its own, and it has to be
         // its own: `verify_before_commit` compares against a *path*, and an
@@ -1049,15 +1064,43 @@ async fn save_document(
         // `fingerprint.rs` says so in its own header, and `docs/TRAPS.md` has
         // had *Equal length is not no change* since before either was written.
         Prepared::Append(appended) => {
-            save::append_in_place(appended, Path::new(&source), password.as_deref())
+            save::append_in_place(&appended, Path::new(&source), password.as_deref())
+                .map_err(SaveFailure::after_close)
         }
-    };
-    landed.map_err(|why| {
-        SaveFailure::after_close(match closed {
-            Ok(()) => why,
-            Err(also) => format!("{why} --- and the document did not close cleanly: {also}"),
-        })
     })
+    .await
+    // The pool itself failing --- a panic in the closure, or a runtime shutting
+    // down. `after_close` for the same reason every arm above is: the document
+    // is gone whatever happened to the file.
+    .map_err(|e| SaveFailure::after_close(format!("the save did not finish: {e}")))?;
+
+    landed.map_err(|why| with_close_note(why, closed))
+}
+
+/// Adds what became of the close to a failure that happened after it.
+///
+/// **Both arms of the save carry this now, and the rewrite's first failure did
+/// not before.** `verify_before_commit`'s refusal used to leave through `?` and
+/// skip it, which was an accident of where the early return sat rather than a
+/// decision: the close has happened either way, so a reader whose document also
+/// failed to close should be told once, on whichever refusal reaches them.
+///
+/// **A function rather than a closure inside the command, so it has a failing
+/// case.** `save_document` is an async Tauri command that needs a running app,
+/// a render service and a real file, so nothing in `cargo test` can call it ---
+/// which is this repository's own rule about a guard written inline in a
+/// command, arriving in the same function whose comments already cite it twice.
+///
+/// The fields a program branches on are untouched. Only `message` grows, which
+/// is the one part of a `SaveFailure` written for a human.
+fn with_close_note(mut why: SaveFailure, closed: Result<(), String>) -> SaveFailure {
+    if let Err(also) = closed {
+        why.message = format!(
+            "{} --- and the document did not close cleanly: {also}",
+            why.message
+        );
+    }
+    why
 }
 
 /// A save that has been prepared, by whichever writer the plan chose.
@@ -2406,8 +2449,53 @@ pub fn run() {
 mod tests {
     use super::{
         app_version, await_reply, env_list, env_or, parse_setting, reply_channel, spike_env,
-        with_session, WEBVIEW_ALIVE,
+        with_close_note, with_session, SaveFailure, WEBVIEW_ALIVE,
     };
+
+    /// A save that failed after the close, with the document closing cleanly.
+    ///
+    /// The message is left alone, which is the ordinary case: nothing else went
+    /// wrong and a note about the close would be a sentence about nothing.
+    #[test]
+    fn a_clean_close_adds_nothing_to_a_failure() {
+        let why = with_close_note(SaveFailure::after_close("the rename failed"), Ok(()));
+        assert_eq!(why.message, "the rename failed");
+        assert!(why.reopen);
+        assert!(!why.changed);
+    }
+
+    /// Both things went wrong, and the reader is told both once.
+    #[test]
+    fn a_failed_close_is_added_to_the_failure_the_reader_sees() {
+        let why = with_close_note(
+            SaveFailure::after_close("the rename failed"),
+            Err("the worker did not answer".into()),
+        );
+        assert_eq!(
+            why.message,
+            concat!(
+                "the rename failed --- and the document did not close cleanly: ",
+                "the worker did not answer"
+            )
+        );
+    }
+
+    /// **The flags are what a program branches on, and this must not touch
+    /// them.** `changed` decides whether the window offers Reload, and a note
+    /// about the close says nothing about whether the file moved --- so a
+    /// decoration that reset it would withdraw the one action that helps.
+    #[test]
+    fn a_close_note_changes_the_sentence_and_not_the_fields() {
+        let before = SaveFailure {
+            message: "refused".into(),
+            reopen: true,
+            changed: true,
+        };
+        let after = with_close_note(before, Err("also this".into()));
+        assert!(after.reopen);
+        assert!(after.changed);
+        assert!(after.message.starts_with("refused --- and the document"));
+    }
 
     /// The four files a version bump has to move together, checked at build time.
     ///
