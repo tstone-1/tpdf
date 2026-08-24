@@ -19,6 +19,24 @@ have the binary.)
 
 ## [26.8.9] - Unreleased
 
+### Added: a gate that refuses a front-end mutation which cannot go red
+
+`mutate_frontend.py` runs vitest over a hand-kept `TEST_FILES`, and a suite
+missing from it never runs --- so a mutation aimed at it can only report
+SURVIVED, which reads as a gap in the tests rather than a mistake in the
+harness. The harness refuses to start when that happens, and has caught it
+twelve times since 2026-08-17 without ever printing a false SURVIVED. It just
+cannot answer until a full control pass has run, so each catch costs a run
+already in progress --- seven mutations refused while `26.8.8` was being cut.
+
+The new `mutations` gate asks the same question against the same source of
+names, in about twelve seconds, before anything is edited. Its other half is
+`UNMUTATED`: every suite vitest collects is either run under mutation or
+excluded with a reason, so a file that is neither is a finding. Its first run
+found `viewer.test.ts` listed twice.
+
+Nothing about what the harness runs has changed.
+
 ### Fixed: the release page described a narrower product than the release it was on
 
 The notes GitHub shows beside the installers are a literal in the release workflow,

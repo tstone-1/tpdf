@@ -260,8 +260,8 @@ jobs:
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag
           a thumbnail in the page strip, or use the command palette. Text you
-          drag across can be highlighted, underlined, struck out or underlined
-          with a squiggle; you can leave a comment anywhere on a page, draw a
+          drag across can be highlighted, underlined, struck out or
+          squiggled; you can leave a comment anywhere on a page, draw a
           box, an ellipse or freehand ink on one, add a text box, stamp it
           APPROVED, CONFIDENTIAL, DRAFT or FINAL, and rub any of it out again
           with the eraser. A page can also be cropped by dragging out the part
