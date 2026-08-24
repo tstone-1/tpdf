@@ -2210,12 +2210,28 @@ Two things follow, and the second is the open one:
   where PDFium reads that page correctly.** `merge-probe` skips its ink
   comparison with the reason printed, rather than failing a correct merge or
   passing quietly.
-- **The viewer still lays such a page out from PDFium's number.** `RawPage::width_pt`
-  is `FPDF_GetPageWidthF` directly, so a document with an inherited box and a
-  rotated page renders wrong in tpdf today. Not fixed here: the repair is to
-  prefer `pagetree::displayed_page` on the render path, which is a change to how
-  every page's geometry is obtained and deserves its own increment with its own
-  before-and-after. `docs/PLAN.md` ranks it.
+- **Fixed 2026-08-24, and the repair is not the one this entry predicted.** It said to
+  prefer `pagetree::displayed_page` over `RawPage::width_pt` on the render path. That
+  would correct the *number* and leave the *render*, because PDFium draws from its own
+  idea of the sheet: the page would report 600x400 and still come out clipped. What
+  works is to give PDFium the box instead --- `RawDocument::page` writes the page tree's
+  rectangle onto the loaded page with the setter the crop tool already uses, and the
+  reported size, the origin, the render and the character boxes all follow. Measured on
+  the fixture: 400x400 and 1 inked pixel before, 600x400 and 1013 after, through
+  `RawDocument::page` with nothing else touched.
+
+  Two things worth carrying from doing it. **The discriminator is
+  `FPDFPage_GetMediaBox` answering `None`** --- that API does not walk `/Parent` either,
+  so "PDFium has no sheet for this page" *is* "this page inherits one", which is why the
+  repair costs nothing on a document that states its own boxes: it never parses
+  anything. And **`FPDFPage_GetCropBox` does answer on such a page, in a different
+  convention** --- `[0 0 600 400]` here, the displayed shape rather than the page's own,
+  where every ordinary page gives the unrotated box. So it is not usable as the second
+  opinion, and a repair built on it would be right on this fixture by accident.
+
+  `examples/geometry_probe.rs` is the check, `docs/PLAN.md` has the increment, and
+  `merge-probe` went from 27/27 with 3 skipped to **30/30 with none**: the skip existed
+  because PDFium mis-read the source page, and it does not any more.
 
 Worth knowing that this is not an exotic document. A producer that writes one
 `/MediaBox` on the page tree root rather than on every page is ordinary --- it is

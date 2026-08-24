@@ -2593,6 +2593,51 @@ MUTATIONS = [
         '    DetailPrint "$INSTDIR\\pdfium"',
         "the_windows_installer_clears_the_way_for_the_pdfium_directory",
     ),
+    Mutation(
+        # Prefer the page tree even where PDFium answered. Nothing visible moves
+        # on any fixture -- the two agree wherever both answer -- so this is here
+        # for the rule rather than for a symptom: the renderer's own reading is
+        # what every downstream number is consistent with, and a second opinion
+        # can only introduce a disagreement between the size a page reports and
+        # the pixels it produces.
+        "geometry: let the page tree override PDFium's own reading",
+        "src/progressive.rs",
+        "        (None, Some(from_tree)) => from_tree,",
+        "        (_, Some(from_tree)) => from_tree,",
+        "the_page_tree_decides_only_where_pdfium_has_no_media_box",
+    ),
+    Mutation(
+        # Refuse to answer where PDFium could not. The page then keeps the box
+        # PDFium computed for an inheriting page, which is the defect -- and a
+        # document whose bytes cannot be re-read is meant to end up here, so the
+        # arm has to stay reachable rather than be deleted.
+        "geometry: decline the page tree's box even when it is the only one",
+        "src/progressive.rs",
+        "        (None, Some(from_tree)) => from_tree,",
+        "        (None, Some(_)) => crop,",
+        "the_page_tree_decides_only_where_pdfium_has_no_media_box",
+    ),
+    Mutation(
+        # Return a short answer instead of refusing when the two parsers count
+        # pages differently. The caller indexes positionally, so page 5's box
+        # lands on page 4 -- a plausible page at a plausible size, with nothing
+        # for a reader to notice.
+        "geometry: return what the page tree found rather than refusing",
+        "src/pagetree.rs",
+        "    if pages.len() != page_count {",
+        "    if false {",
+        "a_page_count_the_two_parsers_disagree_about_is_refused",
+    ),
+    Mutation(
+        # Stop undoing the display transpose. Every dimension is right and the
+        # rectangle is on its side, which is the shape of error that survives a
+        # size comparison and only a box comparison can see.
+        "geometry: hand back the displayed rectangle as the page's own",
+        "src/pagetree.rs",
+        "        let (width, height) = if self.turns % 2 == 1 {\n            (self.height, self.width)\n        } else {\n            (self.width, self.height)\n        };",
+        "        let (width, height) = (self.width, self.height);",
+        "the_pages_own_box_is_the_same_rectangle_at_every_turn",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

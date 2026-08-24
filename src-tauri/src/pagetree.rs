@@ -28,7 +28,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lopdf::{Dictionary, Document, Object, ObjectId};
+use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
 use crate::sweep;
 
@@ -101,6 +101,33 @@ pub struct DisplayedPage {
     /// then it is the difference between a rectangle landing on its text and
     /// landing somewhere else entirely.
     pub origin: (f32, f32),
+}
+
+impl DisplayedPage {
+    /// The same rectangle in the page's **own** space, before `/Rotate`.
+    ///
+    /// [`width`](Self::width) and [`height`](Self::height) are what a reader
+    /// sees, so they are already transposed on a quarter turn. A `/CropBox` is
+    /// not: §14.11.2 puts it in the page's coordinate system, and so does every
+    /// PDFium box API. Anything handing this rectangle back to either wants
+    /// this rather than those two.
+    ///
+    /// A method rather than four lines at the call site, because the transpose
+    /// is the part that is easy to get backwards and this module's own note is
+    /// about second copies of exactly that kind of rule.
+    pub fn box_pt(&self) -> [f32; 4] {
+        let (width, height) = if self.turns % 2 == 1 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        [
+            self.origin.0,
+            self.origin.1,
+            self.origin.0 + width,
+            self.origin.1 + height,
+        ]
+    }
 }
 
 /// One of a page's boxes, inherited, normalised, and refused if it is degenerate.
@@ -185,6 +212,59 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
         turns,
         origin: (shown[0], shown[1]),
     }
+}
+
+/// A cap on one decompressed stream while reading the page tree.
+///
+/// The same 64 MB every other `lopdf` scan here uses. The page tree itself is
+/// tiny, but the objects reached on the way to it are the document's, so this
+/// parse is as much attacker-facing as any other.
+const MAX_DECODE: usize = 64 * 1024 * 1024;
+
+/// The box every page is displayed from, in page order.
+///
+/// **Why this exists at all**: `FPDFPage_GetMediaBox` does not walk `/Parent`,
+/// so a page that inherits its box from an ancestor gets no answer from PDFium
+/// --- and `FPDF_GetPageWidthF` then reports `width x width` for one that also
+/// carries a quarter turn. `docs/TRAPS.md` has the crossed measurements. This is
+/// the answer PDFium cannot give, in the space its own box API uses, so that
+/// `RawDocument::page_cropped` can hand it back.
+///
+/// Boxes come out in PDFium's page-index order, and a document `lopdf` and
+/// PDFium disagree about the *length* of is refused outright rather than
+/// returned short. Applying page 5's box to page 4 is worse than applying none:
+/// the failure would be a plausible page at a plausible size, on a document
+/// where nothing looks wrong.
+///
+/// # Errors
+///
+/// The bytes not parsing, or the two parsers disagreeing about the page count.
+pub fn displayed_boxes(
+    bytes: &[u8],
+    page_count: usize,
+    password: Option<&str>,
+) -> Result<Vec<[f32; 4]>, String> {
+    let document = Document::load_mem_with_options(
+        bytes,
+        LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("could not parse the document: {e}"))?;
+
+    let pages = document.get_pages();
+    if pages.len() != page_count {
+        return Err(format!(
+            "the page tree holds {} pages and the renderer sees {page_count}",
+            pages.len()
+        ));
+    }
+    Ok(pages
+        .values()
+        .map(|&id| displayed_page(&document, id).box_pt())
+        .collect())
 }
 
 /// `count` numbers out of an object that may be an array or a reference to one.
@@ -739,6 +819,65 @@ mod tests {
             .expect("the page tree")
             .set("MediaBox", vec![0.into(), 0.into(), 612.into(), 792.into()]);
         (doc, a, b)
+    }
+
+    /// The box comes back in the page's own space at every quarter turn.
+    ///
+    /// `width` and `height` are what a reader sees and are transposed on an odd
+    /// turn; a `/CropBox` is not, and neither is any PDFium box API. So the one
+    /// thing this method has to do is undo that, and the check is that the
+    /// rectangle is the **same** at all four turns while the displayed
+    /// dimensions swap.
+    ///
+    /// A page that was square could not tell the two apart, which is why the
+    /// fixture is 612 by 792.
+    #[test]
+    fn the_pages_own_box_is_the_same_rectangle_at_every_turn() {
+        let sheet = [0.0, 0.0, 612.0, 792.0];
+        for (rotate, displayed) in [
+            (0, (612.0, 792.0)),
+            (90, (792.0, 612.0)),
+            (180, (612.0, 792.0)),
+            (270, (792.0, 612.0)),
+        ] {
+            let (doc, page, _) = two_pages_with_media(Some(rotate));
+            let shown = displayed_page(&doc, page);
+            assert_eq!(
+                (shown.width, shown.height),
+                displayed,
+                "the displayed size at {rotate} degrees"
+            );
+            assert_eq!(
+                shown.box_pt(),
+                sheet,
+                "the page's own box at {rotate} degrees"
+            );
+        }
+    }
+
+    /// A document the two parsers count differently is refused, not returned short.
+    ///
+    /// The boxes come back positionally and the caller indexes them by PDFium's
+    /// page number, so a `lopdf` walk that saw a different set of pages puts
+    /// page 5's box on page 4. That is worse than putting none there: the
+    /// failure is a plausible page at a plausible size, on a document where
+    /// nothing else looks wrong, and the reader has no way to notice.
+    #[test]
+    fn a_page_count_the_two_parsers_disagree_about_is_refused() {
+        let (doc, _, _) = two_pages_with_media(Some(90));
+        let mut bytes = Vec::new();
+        let mut doc = doc;
+        doc.save_to(&mut bytes).expect("serialise");
+
+        let refused = displayed_boxes(&bytes, 3, None).expect_err("three against two");
+        assert!(
+            refused.contains('2') && refused.contains('3'),
+            "the refusal must name both counts, not merely decline: {refused}"
+        );
+        // The control: the same bytes with the count the file actually has come
+        // back, and with the box the pages inherit rather than a default sheet.
+        let boxes = displayed_boxes(&bytes, 2, None).expect("two against two");
+        assert_eq!(boxes, vec![[0.0, 0.0, 612.0, 792.0]; 2]);
     }
 
     /// A crop is written on the page, never on the `/Pages` node it inherits

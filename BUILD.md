@@ -534,6 +534,62 @@ done
 #     above was found. Not a dependency and not on every machine: a spike tool,
 #     not a gate.
 
+# geometry-probe: the page PDFium lays out, against the page the document describes.
+#
+# `FPDFPage_GetMediaBox` does not walk `/Parent`, so a page inheriting its box
+# from an ancestor gets no answer from PDFium -- and `FPDF_GetPageWidthF` then
+# reports `width x width` for one that also carries a quarter turn. That is a
+# document laid out square with its content clipped off the sheet, and nothing
+# errors. `RawDocument::page` repairs it by handing PDFium the box
+# `pagetree::displayed_boxes` derived; this is what says so.
+#
+#   size    the displayed width and height PDFium reports equal the page tree's.
+#           `400.0 x 400.0 against 600.0 x 400.0` before the repair.
+#   box     `crop_pt`, which every coordinate on the page is measured from, is
+#           that rectangle in the page's OWN space. Not implied by the size
+#           check: before the repair this page answered `[0 0 600 400]`, the
+#           right size in the wrong convention.
+#   ink     the page draws something -- the reader-visible half, and the one no
+#           structural check makes. 1, 3 and 0 inked pixels of ~26,600 before,
+#           1013, 1062 and 1317 after. The floor is 0.1%, and the margin is
+#           printed either way.
+#   cost    the page tree was parsed IFF some page needed it. Every number above
+#           is identical whether the parse happened or not, so a repair that
+#           parsed every document would be invisible here and would put a whole
+#           `lopdf` pass on the path a reader waits on.
+#
+cargo run --release --manifest-path src-tauri/Cargo.toml --example geometry-probe -- \\
+    testdata/inherited.pdf --lib vendor/pdfium/lib
+cargo run --release --manifest-path src-tauri/Cargo.toml --example geometry-probe -- \\
+    testdata/links.pdf --lib vendor/pdfium/lib
+#
+# **Run both, and the second is not a formality.** `inherited.pdf` is the only
+# fixture in the corpus PDFium has no `/MediaBox` for, so it is the only one
+# where the repair does anything -- and therefore the only one where the cost
+# check passes for the wrong reason. A document that states its own boxes is
+# where "the page tree was not parsed" has to hold, and it is the one mutation
+# (`geometry: parse the page tree for every document`) that nothing else can
+# catch. Measured 2026-08-24 on Windows (`--lib vendor/pdfium/bin` there):
+# 10/10 and 25/25.
+#
+# Three mutations, all caught, in `scripts/mutate_viewer.py` under `geometry:`;
+# four more against the unit tests in `scripts/mutate_rust.py`.
+#
+# **It runs on any fixture, and the ink check has a precondition it cannot
+# assert.** Every other window corpus is green (4/4 to 37/37) except
+# `encodings.pdf`, which is 9/10: its page 2 extracts fourteen Japanese
+# characters and renders 0 of 56,600 pixels, being `/UniJIS-UCS2-H` over a
+# non-embedded `KozMinPro-Regular` that needs a substituted font. Size and box
+# pass on that page, so it is a font on this machine and not a box. The probe's
+# own header says why no guard is written for it.
+#
+# **`inherited.pdf` is deliberately NOT a window corpus**, and the reason is in
+# `scripts/viewer_sweep.py` rather than here. Short version: with the repair a
+# window run is 271/272 (from 257/260 before it), and the one failure is the
+# agree phase's synthetic text box coming out at half the height one line of
+# type needs on the shortest pages in the corpus. That is a text-box question,
+# not a geometry one; `docs/PLAN.md` ranks it.
+
 # merge-probe: a merged document against the two that went into it.
 #
 # `save::write_merged`'s unit tests are lopdf reading back what lopdf wrote, plus
@@ -562,24 +618,39 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example merge-probe -
     testdata/rotated.pdf testdata/inherited.pdf --lib vendor/pdfium/lib
 #
 # Measured 2026-08-24 on Windows (`--lib vendor/pdfium/bin` there): 50/50 on the
-# first, 27/27 with 3 skipped on the second. Four mutations, and the two that
-# survive are as informative as the two that do not:
+# first, 30/30 on the second. Four mutations, and the two that survive are as
+# informative as the two that do not:
 #
 #   merge::append shifting by 0                   7/23   caught
 #   merge::append grafting nothing                16/21  caught
-#   pagetree::detached_page materialising nothing 21/27  caught -- ONLY on the
+#   pagetree::detached_page materialising nothing 21/30  caught -- ONLY on the
 #                                                 second run; the first stays at
-#                                                 38/38, because no page of
+#                                                 50/50, because no page of
 #                                                 rotated.pdf or links.pdf
 #                                                 inherits anything. That is why
 #                                                 `testdata/inherited.pdf` exists.
-#   detached_page keeping /Parent                 27/27  SURVIVES, correctly: it
+#   detached_page keeping /Parent                 30/30  SURVIVES, correctly: it
 #                                                 drags the source tree in as
 #                                                 unreferenced objects and
 #                                                 changes nothing a renderer can
 #                                                 see. The unit test
 #                                                 `the_walk_does_not_leave_the_page_it_started_from`
 #                                                 is what covers it.
+#
+# **The second run was 27/27 with 3 skipped until the geometry repair the same
+# day.** The three were the ink comparisons, skipped because PDFium read the
+# source page at the wrong size; it does not any more, so they run. The two
+# `detached_page` rows were re-measured against the repaired renderer and the
+# two `merge::append` rows were not -- they are on the first corpus, which the
+# repair cannot reach, and its clean total is unmoved at 50/50.
+#
+# One figure did NOT reproduce and is recorded rather than explained: the
+# materialisation mutation's first-corpus total was written down as 38/38 before
+# the repair and measures 50/50 after, so twelve checks that skipped under it no
+# longer do. The verdict is the same either way -- it survives on a corpus that
+# inherits nothing, which is the whole point of the row -- and chasing the
+# denominator was not worth a run. If you are about to rely on that number,
+# measure it rather than reading it.
 #
 # `--emit PATH` keeps the merged file instead of deleting it, which is how you
 # hand one to `backend-probe` (40/43, 3 skipped, through the sandboxed pool) or
