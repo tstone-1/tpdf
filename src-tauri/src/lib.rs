@@ -2532,6 +2532,70 @@ mod tests {
             assert_eq!(found, cargo, "{label} disagrees with Cargo.toml");
         }
     }
+
+    /// Where the bundler puts PDFium, checked against where the app looks for it.
+    ///
+    /// **A trailing slash in a Tauri resource map is a rename, not a directory**,
+    /// and `docs/TRAPS.md` records that from the macOS side --- which is why the
+    /// macOS config names `pdfium/libpdfium.dylib` in full. The Windows twin was
+    /// written as `"pdfium/"` and shipped the runtime DLL as a file called
+    /// `pdfium`, with no extension. `pdfium_library_dir` then found no
+    /// `pdfium.dll` in either bundled candidate, the worker's bind failed, and
+    /// every worker exited 1 --- so the installed 26.8.8 could not open any
+    /// document at all. It was invisible here because a *locally built* install
+    /// is rescued by the first candidate, the dev tree baked in at compile time;
+    /// a release binary carries the runner's path, which exists on no machine
+    /// that installs it.
+    ///
+    /// Both configs are checked from whichever host runs, through `include_str!`.
+    /// That is the whole point: a Mac never parses the Windows config, which is
+    /// how one half of a twin kept a bug the other half had already fixed.
+    #[test]
+    fn the_bundle_puts_pdfium_where_the_app_looks_for_it() {
+        for (label, source, loadable) in [
+            (
+                "tauri.windows.conf.json",
+                include_str!("../tauri.windows.conf.json"),
+                "pdfium.dll",
+            ),
+            (
+                "tauri.macos.conf.json",
+                include_str!("../tauri.macos.conf.json"),
+                "libpdfium.dylib",
+            ),
+        ] {
+            let parsed: serde_json::Value =
+                serde_json::from_str(source).unwrap_or_else(|e| panic!("{label} is not JSON: {e}"));
+            let resources = parsed
+                .get("bundle")
+                .and_then(|b| b.get("resources"))
+                .and_then(serde_json::Value::as_object)
+                .unwrap_or_else(|| panic!("{label} has no bundle.resources map"));
+
+            let (from, to) = resources
+                .iter()
+                .find(|(from, _)| from.contains("vendor/pdfium"))
+                .map(|(from, to)| {
+                    (
+                        from.clone(),
+                        to.as_str()
+                            .unwrap_or_else(|| panic!("{label}: {from} maps to a non-string"))
+                            .to_owned(),
+                    )
+                })
+                .unwrap_or_else(|| panic!("{label} maps nothing out of vendor/pdfium"));
+
+            assert!(
+                !to.ends_with('/'),
+                "{label}: {from} -> {to:?} ends in a slash, which renames the file"
+            );
+            assert_eq!(
+                to,
+                format!("pdfium/{loadable}"),
+                "{label}: {from} must land in the pdfium/ directory the app searches, named as it looks"
+            );
+        }
+    }
     use crate::{session, startup};
     use std::cell::RefCell;
     use tauri::async_runtime::block_on;

@@ -123,7 +123,28 @@ fn serve(args: &[String]) -> Result<(), String> {
 
     // BEFORE the sandbox. Binding opens and maps libpdfium, which a policy
     // denying file reads forbids.
-    let pdfium = bind(&library_dir)?;
+    //
+    // **Answered, not died on**, for the reason the open below gives and with a
+    // worse history: this returned `Err`, the process exited 1, and the message
+    // naming the missing library went to a stderr a GUI process does not have.
+    // What a reader saw was `worker stopped answering (exited with 1)` for every
+    // document in an installation that shipped the library under the wrong name
+    // --- reported against 26.8.8 on Windows, where the bundler had renamed
+    // `pdfium.dll` to `pdfium` and the app could not find it.
+    //
+    // The boundary is applied first where a platform has one, so the refusing
+    // process is contained like any other. Its own failure is discarded: there
+    // is nothing left to protect here --- no document is ever loaded on this path
+    // --- and refusing to refuse would put the reader back where they started.
+    let pdfium = match bind(&library_dir) {
+        Ok(pdfium) => pdfium,
+        Err(e) => {
+            let _ = establish_boundary();
+            return refuse(&format!(
+                "tpdf could not load its PDF engine. Reinstalling should fix it. ({e})"
+            ));
+        }
+    };
     let bindings = progressive::bindings_of(pdfium);
 
     establish_boundary()?;

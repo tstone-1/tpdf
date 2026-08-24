@@ -585,6 +585,61 @@ fn main() {
         }
     }
 
+    // ---------------------------------------- a worker that cannot bind at all
+    //
+    // The same failure one layer earlier, and this is the one that shipped.
+    // 26.8.8's Windows installer laid `pdfium.dll` down under the name `pdfium`,
+    // so `bind` failed in every worker, `serve` returned `Err`, and the process
+    // exited 1 --- for every document, by every route, with the message naming
+    // the missing library written to a stderr a GUI process does not have. What
+    // a reader could see was `worker stopped answering (exited with 1)`.
+    //
+    // The fixture is a directory with no PDFium in it. Like the block above this
+    // cannot be a `#[test]`: the claim is about a **process** answering rather
+    // than dying, and under `cargo test` `current_exe` is a test binary that does
+    // not serve.
+    let mut engine_checks = |name: &str, ok: bool, detail: String| check(name, ok, detail);
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-no-pdfium-here");
+    match std::fs::create_dir_all(&nowhere) {
+        Err(e) => engine_checks(
+            "a worker that cannot load PDFium answers rather than exiting",
+            false,
+            format!("could not create {}: {e}", nowhere.display()),
+        ),
+        Ok(()) => match Worker::spawn(&document, &nowhere) {
+            Err(e) => engine_checks(
+                "a worker that cannot load PDFium answers rather than exiting",
+                false,
+                format!("no worker started: {e}"),
+            ),
+            Ok(mut blind) => {
+                let reply = blind.call(&Request::Open {
+                    lazy_geometry: false,
+                });
+                // `Ok(_)` is the assertion: a reply at all means the process was
+                // alive to send one, where before it had exited.
+                engine_checks(
+                    "a worker that cannot load PDFium answers rather than exiting",
+                    matches!(&reply, Ok(r) if !r.ok),
+                    describe(&reply),
+                );
+                // And it has to name the engine. Without this the check above is
+                // satisfied by any error at all, including the epitaph of a
+                // worker that died for some other reason entirely.
+                let said = match &reply {
+                    Ok(r) => r.error.clone(),
+                    Err(e) => e.clone(),
+                };
+                engine_checks(
+                    "and it names the engine rather than an exit code",
+                    said.contains("PDF engine") && !said.contains("exited with"),
+                    format!("said {said:?}"),
+                );
+            }
+        },
+    }
+    let _ = std::fs::remove_dir_all(&nowhere);
+
     println!(
         "\n{}/{checks} checks passed, {skipped} not applicable to this platform",
         checks - failures

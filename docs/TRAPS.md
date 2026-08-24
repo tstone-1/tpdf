@@ -4598,6 +4598,61 @@ the version bump and the tag, rather than during a build anyone could repeat. Th
 argument for the dev-library-hidden check being a *step* in `BUILD.md` rather than something CI
 eventually notices.
 
+### The same trailing slash on the other platform, left there by a prediction that it was survivable
+
+The entry above fixed `tauri.macos.conf.json` and deliberately left
+`tauri.windows.conf.json` at `"../vendor/pdfium/bin/pdfium.dll": "pdfium/"`, on the reasoning
+that *"Windows survives the same map because WiX ignores the target directory and the
+resource-root candidate catches it"*, and that changing a config for a platform you cannot
+re-run trades a measured pass for a predicted one. The caution was right. The prediction was
+wrong.
+
+Measured on 2026-08-24 against the released 26.8.8, installed from CI:
+
+```
+C:\Users\mail\AppData\Local\tpdf\pdfium       7211520 bytes
+```
+
+One file, no extension, byte-identical to `vendor/pdfium/bin/pdfium.dll`. Windows honours the
+target exactly as macOS does. So both bundled candidates in `pdfium_library_dir` miss ---
+`<resources>/pdfium/pdfium.dll` cannot exist, because `pdfium` is a *file*, and
+`<resources>/pdfium.dll` is absent --- the worker's `bind` fails, and **the shipped Windows build
+could not open a single document**.
+
+**Why no local run ever saw it, and this is the half worth carrying.** The first candidate
+`pdfium_library_dir` tries is the dev tree, `CARGO_MANIFEST_DIR/../vendor/pdfium/<subdir>`, baked
+in at compile time. An installer built on the development machine therefore finds the
+repository's own library and works perfectly --- while the release binary carries the *runner's*
+path:
+
+```
+D:\a\tpdf\tpdf\src-tauri
+```
+
+which exists on no machine that installs it. A locally built install and a CI-built install of
+the same commit behave differently, and only the second is what anybody downloads.
+
+**What the reader saw was `worker stopped answering (exited with 1 (0x00000001))`** --- for every
+document, by every route. The worker's own message names the missing library, and it goes to
+stderr, which a GUI-subsystem process does not have. The parent's open path did not write to the
+diagnostics file either, so a session in which nothing could be opened left an empty log:
+byte-identical to a session with nothing wrong. Both are fixed --- the worker answers a failed
+bind with a sentence a reader can act on instead of exiting 1, and the open path records the
+failure with the path it was opening.
+
+Three things to take from it, none of which is "check the config":
+
+- **A prediction about the platform you cannot run is not a reason to leave it alone; it is the
+  reason to write the check that runs everywhere.** The test that now pins both maps,
+  `the_bundle_puts_pdfium_where_the_app_looks_for_it`, reads both files through `include_str!`
+  from whichever host runs, and would have gone red on the Mac the day the macOS half was fixed.
+- **A fallback reaching outside the artifact makes the artifact untestable.** The dev-tree
+  candidate exists for `cargo run`, and it silently rescued every bundle ever opened on this
+  machine. `AGENTS.md` already recorded that a bundled app finding its library in the dev tree
+  proves nothing about the bundle --- and then the same tree proved it for three weeks.
+- **Fixing one twin is half a fix.** The entry above is a complete, correct, measured account of
+  the mechanism, and it sat directly above the config still carrying it.
+
 ### An interpolated status label is two columns narrower when it passes
 
 `backend-probe` and `worker-probe` printed their verdicts as `"[{}] {name:56} {}"` with `OK`

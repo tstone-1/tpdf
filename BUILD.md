@@ -1200,6 +1200,18 @@ whichever the platform has, named. The footprint check is no longer a `[SKIP]` h
 *"the parent can read what bounds the worker's memory"* and passes on both, so the probe now
 reports **17/17 with none not applicable** on either platform.
 
+**Two checks were added on 2026-08-24, so the number is now 19** --- measured **19/19 with none
+not applicable on Windows**; the macOS figure was 17/17 before they existed and has not been
+re-run. They cover a worker that cannot load PDFium at all: it must **answer** the request with
+a reason, rather than exiting 1 the way the shipped 26.8.8 did, and the reason must name the
+engine rather than being the parent's epitaph for a dead child. The fixture is a directory with
+no PDFium in it, so it needs nothing generated.
+
+Reverting `worker_child`'s bind arm to `bind(&library_dir)?` turns both red with
+`worker stopped answering (exited with 1 (0x00000001))` --- which is the string the reader who
+reported it saw, reproduced from the other end. That is the mutation to re-run if either check
+is ever in doubt.
+
 The probe's own reading on `incr-scan-40p.pdf`, which is the strongest form of the result
 because it is the same three numbers macOS printed:
 
