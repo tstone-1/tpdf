@@ -7,17 +7,15 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 469 entries
-in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
+The one thing this file does *not* carry in full is the trap list, which lives in
+[`docs/TRAPS.md`](docs/TRAPS.md) and is indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
 
-That number is written in **three** places here, and this is the one that goes stale: the
-two under "Known traps" were moved when the entries landed and this was not, so the file
-said 275 and 282 at once. The authority is `grep -c '^### ' docs/TRAPS.md`, the *titles*
-have a gate behind them (`traps` in `scripts/gates.py`, which diffs the two sets), and no
-count in prose has one --- which is the whole reason the gate compares sets rather than
-totals.
+No count of the entries is written here. The authority is `grep -c '^### ' docs/TRAPS.md`, the
+*titles* have a gate behind them (`traps` in `scripts/gates.py`, which diffs the two sets), and
+a count in prose has none --- which is the whole reason the gate compares sets rather than
+totals, and why three copies of that number here once said 275 and 282 at once.
 
 ## What tpdf is
 
@@ -76,16 +74,14 @@ edit it by hand; a hand-maintained notices file is wrong the first time a depend
 and nothing says so.
 
 **The `cargo metadata` sweep this file has recommended since the beginning is real and
-structurally incomplete, and the gap is the whole product.** It sees every cargo package ---
-572 of them on 2026-08-21, a figure that belongs in the command's output rather than in this
-sentence. It is blind to the **fourteen C++ libraries compiled into libpdfium** --- FreeType, ICU,
-libjpeg-turbo, libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float,
-simdutf, llvm-libc --- because no cargo command can see inside a prebuilt blob, and that
-blob is the thing that actually parses PDFs. A sweep complete over cargo and silent about
-everything else passes exactly like one that covered everything, which is the
-consistency-versus-completeness trap arriving in the licensing constraint that the entire
-project rests on. The gate now enumerates `vendor/pdfium/licenses/` as a third population,
-so a new file appearing there is a finding.
+structurally incomplete, and the gap is the whole product.** It sees every cargo package, and it
+is blind to the **C++ libraries compiled into libpdfium** --- FreeType, ICU, libjpeg-turbo,
+libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float, simdutf, llvm-libc ---
+because no cargo command can see inside a prebuilt blob, and that blob is the thing that
+actually parses PDFs. A sweep complete over cargo and silent about everything else passes
+exactly like one that covered everything, which is the consistency-versus-completeness trap
+arriving in the licensing constraint the entire project rests on. The gate enumerates
+`vendor/pdfium/licenses/` as a third population, so a new file appearing there is a finding.
 
 Two GPL strings live in there and both are benign; they are allowlisted **by file and by
 mechanism** in the script, never inferred, and an entry naming a file that has gone produces
@@ -212,63 +208,44 @@ is the strongest statement available about what cannot have regressed.
 the macOS side). The struct fields, the `use`, `WorkerSender`'s inner type and three accessors
 were all renamed onto the aliases, and two `#[cfg(not(target_os = "macos"))]` refusal arms were
 deleted --- macOS lines, changed. The behaviour is identical because the aliases resolve to the
-same types, but that is a claim about what a compiler does, not the "nothing on that platform
-was touched" the sentence promised, and the two are only the same thing until one of them is
-wrong. What actually stands behind macOS here is that the harnesses were re-run there: `gates`
-8/8 with 168 tests, `backend-probe` 41 names across four corpora with identical name sets,
-`worker-probe` 12/12 on four, `viewer_check` 86 names across all six, `session_check` and
-`open_check` green. Worth stating because the original phrasing invites the next session to
-skip exactly that.
-
-Those two counts are **of their date and are no longer current** --- 168 tests and 86 names were
-what that run measured, and macOS reports **182 tests and 109 check names** as of 2026-07-31.
-They are left rather than overwritten because the paragraph is about what was verified when;
-the number to work from is the one in `BUILD.md`'s table, which is the single place these are
-written down.
+same types, but that is a claim about what a compiler does rather than the "nothing on that
+platform was touched" the sentence promised, and the two are only the same thing until one of
+them is wrong. What actually stands behind macOS is that every harness was re-run there. The
+counts those runs produced belong in `BUILD.md`'s table, which is the single place they are
+written down; a count in prose goes stale the next time a check is added.
 
 **Windows no longer fails open.** `Backend::default_here()` selects workers there, proved by
 the external module check above rather than by the absence of our own warning.
 
-**`backend-probe` runs on Windows too, and passes** (re-measured 2026-07-31): **38/42** on
-`text-base14` and `text-cid`, **39/42** on `outline-hostile`, **40/42** on `vector-heavy`, which
-is where a render is slow enough for the withdrawal checks to run rather than skip. Name sets
-byte-identical across all four, diffed rather than counted. This paragraph read `37/41 ... 40/41`
-until then, which is the same count one commit earlier and **not** a platform difference --- see
-`BUILD.md`, which carries the table and why the "one check is macOS-only" reading was wrong.
-No failures on any. The
-boundary, the pixel comparisons, capacity, crash restart, replacement, retirement, close,
-descriptor return **and the spare's lifetime** all pass. Its Windows primitives are Toolhelp for
-the module list and the process table, `GetProcessHandleCount` for descriptors, and
-`TerminateProcess` for a hostile kill from outside the pool.
-
-That run is also the end-to-end evidence for the Windows spare, and it is worth reading the
-detail rather than the count: `at open: pool [18840], children [2672, 18840], spares [2672]` ---
-a warmed child exists, is correctly *excluded* from the pool, and the laziness claim beside it
-still says `opened with 1`.
+**`backend-probe` runs on Windows too, and passes** --- on `text-base14`, `text-cid`,
+`outline-hostile` and `vector-heavy`, the last of which is where a render is slow enough for the
+withdrawal checks to run rather than skip. Name sets diffed pairwise rather than counted, no
+failures on any; `BUILD.md` carries the per-corpus table. The boundary, the pixel comparisons,
+capacity, crash restart, replacement, retirement, close, descriptor return **and the spare's
+lifetime** all pass, and that run is also the end-to-end evidence for the Windows spare: a warmed
+child exists and is correctly *excluded* from the pool, with the laziness claim beside it intact.
+Its Windows primitives are Toolhelp for the module list and the process table,
+`GetProcessHandleCount` for descriptors, and `TerminateProcess` for a hostile kill from outside
+the pool.
 
 **The two failures it first reported were the probe's, not the pool's**, and the correction is
-worth more than the result. They read as a pool that grows to six and keeps one, with a handle
-count that never moved --- two independent observations agreeing on "created, used and destroyed
-rather than pooled", which is what was recorded here for a day. Both readings were honest and
-neither could say *when* it was taken: the sample sat behind a five-second wait for a
-pre-spawned spare, and Windows has none, so it spent its whole bound on every call --- longer
-than the phase's own four-second idle timeout. The instrument retired the pool and then measured
-it. Nothing in `workers.rs` was touched. See the trap, which is now about the wait rather than
-about the pool.
+worth more than the result. Two independent observations agreed that workers were created and
+destroyed rather than pooled, and neither could say *when* the sample was taken: it sat behind a
+five-second wait for a pre-spawned spare, which Windows did not have, so it spent its whole bound
+on every call --- longer than the phase's own four-second idle timeout. The instrument retired the
+pool and then measured it. Nothing in `workers.rs` was touched. See the trap, which is now about
+the wait rather than about the pool.
 
 `pool-bench` and `prespawn-bench` act as their own worker on Windows now --- their `#[cfg(unix)]`
 gate on the re-exec dated from before `worker_child` compiled there, and left each binary unable
 to be the thing it measures.
 
-**`tile-bench` was never blocked at all**, and this file said it was for two days: the list of
-four refusing binaries had it in, and running it showed no refusal --- only a hardcoded
-`vendor/pdfium/lib` and a `NaN` where a peak should be. Both fixed, so it now measures on Windows.
-That is the trap of the same name arriving in this file rather than in the code: a blocker list
-is written by reading, and reading over-reports. `worker-bench` is the one genuine refusal left,
-and its reason is real --- it carries its own POSIX worker implementation, fd passing and SBPL
-profiles included, and shares no mechanism with the Windows model. Seven of its eight modes; the
-eighth needs no worker, was trapped behind the module's `cfg`, and now runs --- see the symbol-scan
-trap for what it found.
+**`tile-bench` was never blocked at all**, and this file said it was for two days: running it
+showed no refusal, only a hardcoded `vendor/pdfium/lib` and a `NaN` where a peak should be, both
+now fixed. A blocker list is written by reading, and reading over-reports. `worker-bench` is the
+one genuine refusal left, and its reason is real --- it carries its own POSIX worker
+implementation, fd passing and SBPL profiles included, and shares no mechanism with the Windows
+model. Seven of its eight modes; the eighth needs no worker and now runs.
 
 **The two viewer harnesses run there too** (2026-07-30). `session_check.py` needed no porting at
 all and passes its four phases with both controls --- note it needs a document of **at least eight
@@ -287,19 +264,17 @@ The one phase that stays macOS-only is the cold double-click, and that is not a 
 double-click arrives in `argv`, which the `argv` phase already covers, so there is no second
 mechanism there to test.
 
-So the tally on documented blockers is **four lists wrong this week, always by over-reporting**:
-of six benchmarks and harnesses called macOS-only, two were genuinely gated, one was trapped
-behind a `cfg` it never needed, one had only a hardcoded path, one needed nothing, and one was
-two-thirds portable. Run it before writing it down as blocked.
+So the tally on documented blockers is **four lists wrong in one week, always by
+over-reporting**: of six benchmarks and harnesses called macOS-only, two were genuinely gated,
+one was trapped behind a `cfg` it never needed, one had only a hardcoded path, one needed
+nothing, and one was two-thirds portable. Run it before writing it down as blocked.
 
-**The error has a second direction, found 2026-07-30, and it is the quieter one.** The two
-mutation harnesses were on nobody's blocked list --- and `scripts/mutate_rust.py` had never
-executed a single mutation on Windows, dying on `read_text()` before its first one, while
-`scripts/mutate_frontend.py` silently could not find three of its anchors. Both are fixed and
-now report 22/22 and 75/75. Over-reporting a blocker costs a capability nobody uses;
-**under-reporting one costs a check everybody believes ran**, which is the more expensive of
-the two. A harness that has never run on a platform produces no failures there, and neither
-does one that passes.
+**The error has a second direction, and it is the quieter one.** The two mutation harnesses were
+on nobody's blocked list --- and `scripts/mutate_rust.py` had never executed a single mutation on
+Windows, dying on `read_text()` before its first one, while `scripts/mutate_frontend.py` silently
+could not find three of its anchors. Over-reporting a blocker costs a capability nobody uses;
+**under-reporting one costs a check everybody believes ran**, and a harness that has never run on
+a platform produces no failures there, exactly like one that passes.
 
 **Pre-spawning works on Windows too** (2026-07-30), so both platforms now start a worker before
 a file is chosen. The handover is the only part that differs and it had to: a macOS parent
@@ -339,36 +314,35 @@ fine.
 
 **A third asymmetry closed 2026-08-23, and it had been a missing capability rather than a
 defect: a Windows reader could not print a page range at all.** `PRINTDLGW`'s `nMinPage` and
-`nMaxPage` both came from `..Default::default()` as zero, and Win32 greys out the Pages radio
-and its edit controls whenever those are equal --- so the field was dead while a macOS reader
-typing "2 to 4" into `NSPrintPanel` got two to four. `print::sheets` now turns a range into
-sheet indices and `print_win::spool` prints those rather than `0..count`. The arithmetic is in
-the **portable** module deliberately, so the half that decides which page comes out is tested on
-every platform; nothing on macOS calls it, because AppKit applies its own range to the document
-it was handed. What no check here can reach is the dialog itself --- see the trap of that name,
-and `BUILD.md` beside the probe invocation. Copies are the same shape and are deliberately left
-alone: `nCopies` goes in as 1 and is never read back.
+`nMaxPage` both came from `..Default::default()` as zero, and Win32 greys out the Pages radio and
+its edit controls whenever those are equal, so the field was dead while a macOS reader typing
+"2 to 4" into `NSPrintPanel` got two to four. `print::sheets` now turns a range into sheet indices
+and `print_win::spool` prints those rather than `0..count`. The arithmetic is in the **portable**
+module deliberately, so the half that decides which page comes out is tested on every platform;
+nothing on macOS calls it, because AppKit applies its own range to the document it was handed.
+What no check here can reach is the dialog itself --- see the trap of that name. Copies are the
+same shape and are deliberately left alone: `nCopies` goes in as 1 and is never read back.
 
 Three things came free with it, and the third is the one worth noticing:
 
-- **`examples/print_probe.rs` verifies the whole path without paper.** "Microsoft Print to PDF" is a
-  real driver and a real spooler, and naming an output file in `DOCINFOW.lpszOutput` stops it
-  raising a save dialog --- so everything except the panel is driven end to end and the result is
-  re-read by the OS parser. 8/8, including **ink per page** rather than a page count, because a
+- **`examples/print_probe.rs` verifies the whole path without paper.** "Microsoft Print to PDF"
+  is a real driver and a real spooler, and naming an output file in `DOCINFOW.lpszOutput` stops
+  it raising a save dialog --- so everything except the panel is driven end to end and the result
+  is re-read by the OS parser. It asserts **ink per page** rather than a page count, because a
   broken blit produces the right number of blank sheets (proved: mutating the blit away leaves
   the count green and only the ink red).
 - **Three of `print.rs`'s four third-parser checks now run on Windows**, where they were
   `#[cfg(target_os = "macos")]` because PDFKit used to be the only independent parser available.
-  Proved to buy real coverage rather than merely existing: breaking `effective_rotation` turns
-  both rotation checks red here, including `rotated.pdf`'s *which-pages-survived* case. The
-  fourth needs text, which `Windows.Data.Pdf` has none of, so it asserts the page count and
-  prints a `[SKIP]` naming what it could not check.
+  They buy real coverage rather than merely existing: breaking `effective_rotation` turns both
+  rotation checks red here, including `rotated.pdf`'s *which-pages-survived* case. The fourth
+  needs text, which `Windows.Data.Pdf` has none of, so it asserts the page count and prints a
+  `[SKIP]` naming what it could not check.
 - **Printing maps a PDF parser into the app process, on both platforms.** That is the honest
-  complication in "the app process never maps the PDF parser", and it is now measured instead of
-  glossed: `print-probe` reads its own module table and reports 80 modules with none named
-  pdfium, and `Windows.Data.Pdf.dll` beside it as what it mapped instead. The boundary's real
-  guarantee is narrower than the sentence sounds --- no *our* PDFium, and the parser that is
-  there is patched by Windows Update rather than pinned in `Cargo.lock`.
+  complication in "the app process never maps the PDF parser", and it is measured rather than
+  glossed: `print-probe` reads its own module table and finds none named pdfium, with
+  `Windows.Data.Pdf.dll` beside it as what it mapped instead. The boundary's real guarantee is
+  narrower than the sentence sounds --- no *our* PDFium, and the parser that is there is patched
+  by Windows Update rather than pinned in `Cargo.lock`.
 
 The `windows` crate this needs adds no crate to the tree: it is already there transitively
 through Tauri's WebView2 stack, and it is `MIT OR Apache-2.0`, checked rather than assumed.
@@ -383,83 +357,59 @@ sources.** The bundler enumerates that directory and registers the first entry n
 and failing `light.exe`. The two `imp.rs` bodies now live in `src/probes/`, reached by
 `#[path]`, which leaves module parentage and every `super::` in them unchanged.
 
-It had never been caught because Windows packaging had never been attempted --- `BUILD.md`
-mentioned neither MSI nor WiX. The trap entry records the four theories that were wrong first,
-including an experiment whose control was placed where it could not fire.
+It had never been caught because Windows packaging had never been attempted, and the trap entry
+records the four theories that were wrong first, including an experiment whose control was placed
+where it could not fire.
 
 **And it no longer ships the spikes.** Until 2026-07-31 the installer carried all 17 probe and
 benchmark executables --- a sandbox prober and a hostile-document harness among them --- because
-they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets now: cargo
-builds and links them exactly as before, the `bins` gate keeps covering them through
-`--examples`, and the bundler does not see them. Extracting the MSI shows a payload of three
-files (`tpdf.exe`, `tpdf_lib.dll`, `pdfium.dll`); the MSI went 16.7 -> 8.0 MB and the NSIS setup
-8.8 -> 5.8 MB. The invocations moved with them: `--example <name>`, and built artifacts now sit
-in `target/release/examples/`.
-
-**That gate flag is load-bearing, and was proved so rather than assumed.** Dropping
-`--examples` would narrow the `bins` gate back to the one thing it was added to catch ---
-`backend_probe.rs`'s dyld symbols, which is now an example --- leaving only the app under
-`--bins`. An undefined extern called from one example's `main` turns the gate red with
-`LNK2019`, which is the check that says the flag does something.
+they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets now: cargo builds
+and links them exactly as before, the `bins` gate keeps covering them through `--examples`, and
+the bundler does not see them, so the MSI payload is three files (`tpdf.exe`, `tpdf_lib.dll`,
+`pdfium.dll`) and about half the size it was. The invocations moved with them: `--example <name>`,
+and built artifacts sit in `target/release/examples/`. **That gate flag is load-bearing, and was
+proved so rather than assumed** --- without `--examples` the `bins` gate covers only the app, and
+an undefined extern called from one example's `main` is what turns it red with `LNK2019`.
 
 **The JavaScript harness does ship, and as of 2026-08-02 that is a decision rather than the
 unexamined half of the same hygiene.** `App.svelte` statically imports all six webview entry
-points --- `viewercheck`, `scrollbench`, `sessioncheck`, `opencheck`, `autobench`, `startup`
---- so the functional check and its five siblings sit in `dist/assets/index-*.js`, which
-`frontendDist` embeds whole into the binary. Read out of the shipped file rather than off the
-import list: check names such as *"a bare k does not open the palette"* and the timeline's
-`TIMELINE-JSON` marker are literals in the minified bundle,
-and `dist/shell.html` (9.0 kB), the framework-free page `ShellMode::Blank` loads, ships
-beside it. The weight is **77.1 kB of a 221.2 kB bundle, 34.9%**, measured two ways that
-agree: attributing the bundle's own sourcemap back to its sources, and separately minifying
-each of the six with every import external, which lands at 77.8 kB --- 0.9% apart.
+points --- `viewercheck`, `scrollbench`, `sessioncheck`, `opencheck`, `autobench`, `startup` ---
+so the functional check and its five siblings sit in the bundle that `frontendDist` embeds whole
+into the binary, beside `dist/shell.html`, the framework-free page `ShellMode::Blank` loads. Read
+out of the shipped file rather than off the import list. The weight is **77.1 kB of a 221.2 kB
+bundle, 34.9%**, measured two ways that agree to 0.9%.
 
-**It stays, and the first reason is the one the checks are built on.** Their whole design is
-that they observe the artifact that ships; the frame loop, the input handlers and the layout
-they assert against exist nowhere else, which is why they need a real window at all.
-Excluding them at build time would run the 109-name invariant against a bundle nobody
-installs --- a checked artifact and a shipped artifact that agree about everything except the
-difference between them, which is the writer-and-its-own-reader failure this repository has
-already recorded twice from other directions.
+**It stays, for two reasons.** The checks are built on observing the artifact that ships --- the
+frame loop, the input handlers and the layout they assert against exist nowhere else, which is why
+they need a real window at all --- so excluding them at build time would run the 109-name
+invariant against a bundle nobody installs, which is the writer-and-its-own-reader failure this
+repository has already recorded twice from other directions. And the payload is not what decides
+cold start: the `blank` variant deletes the *entire* payload --- no module graph, no Svelte, no
+`@tauri-apps/api` --- and moved warm start by -8.4, +9.9 and -0.2 ms across three interleaved runs
+(`docs/PLAN.md` §0), because the webview's first custom-protocol request costs ~45 ms and whichever
+request is first pays it. 77 kB inside that floor is not a lever.
 
-**The second reason is measured, and not marginally.** Priority 1 is a cold start under
-300 ms, and the frontend payload is not what decides it: the `blank` variant deletes the
-*entire* payload --- no module graph, no Svelte, no `@tauri-apps/api` --- and moved warm
-start by -8.4, +9.9 and -0.2 ms across three interleaved runs (`docs/PLAN.md` §0). The reason
-is the trap *"The shell floor is ~250 ms"*: the webview's first request over a Tauri custom
-protocol costs ~45 ms and whichever request is first pays it, so a smaller payload only moves
-which line of the table wears it. 77 kB inside a floor built from a WKWebView and a protocol
-toll is not a lever. The six launch-time probes are the same shape --- each entry point asks
-Rust for its variable through `spike_env` and returns on `None` --- and the baseline's first
-IPC costs 0.0 ms, because the module fetch has already paid the toll.
-
-**The 2026-07-31 removal does not transfer, and the difference is authority rather than
-size.** The 17 that left were *executables*: independently launchable, each with its own
-hostile-input surface, sitting in the install directory where anything that can run a file
-can run them. They were also 8.7 MB of a 16.7 MB MSI, over a hundred times this harness.
-Dead JS in an embedded bundle is launchable by nothing: it holds no authority the bundle does
-not already have, and it cannot start itself, since every entry point is inert unless its
-variable is set in the app process's own environment. That environment surface is the
-binary's, not the bundle's --- the `TPDF_*` levers are read in `src-tauri/src`, and **no
-`TPDF_` string occurs in the shipped JS at all**. Read the *"payload of three files"* above as
-the statement about executables that it is; the frontend rides inside `tpdf.exe`. (That
-sentence said "the 32 `TPDF_*` levers" until 2026-08-05, when there were 36. The number was
-never the invariant --- *which side of the boundary they are read on* is --- and it is
-deliberately not restated here, for the reason the trap count is a `grep -c` and not a
-sentence: `grep -rhoE 'TPDF_[A-Z0-9_]+' src-tauri/src | sort -u | wc -l`.)
+**The 2026-07-31 removal does not transfer, and the difference is authority rather than size.**
+The 17 that left were *executables*: independently launchable, each with its own hostile-input
+surface, sitting in the install directory where anything that can run a file can run them. Dead JS
+in an embedded bundle is launchable by nothing --- it holds no authority the bundle does not
+already have, and every entry point is inert unless its variable is set in the app process's own
+environment, which is the binary's surface rather than the bundle's: **no `TPDF_` string occurs in
+the shipped JS at all**. Read the *"payload of three files"* above as the statement about
+executables that it is; the frontend rides inside `tpdf.exe`.
 
 **The honest cost is `spike_print` and `spike_exit`**, registered in `generate_handler` and
 therefore callable by any script the webview runs: one prints to stdout, the other calls
-`process::exit` with the code it is handed. Two things bound that, and neither is a promise
-about the harness. The CSP is `default-src 'self'` with no `'unsafe-inline'`, so the only
-script that runs is the one that shipped --- residual risk 7 in `docs/THREAT-MODEL.md` carries
-that, the T8 invariant that keeps document text from becoming script or navigation, and the
-seam it leaves, since a grep over TypeScript cannot see the Rust half. The marginal authority
-is nil: a caller able to reach `spike_exit` can already reach `open_document` and the print
-path, so what these two add is a denial of service, not an escalation. **What would reopen
-the decision**: a spike command with authority past print-and-exit, or a harness grown to
-where bundle size moves the shell floor. The second is 45 ms of protocol toll away --- but
-this is a decision about the numbers above, to be re-measured rather than inherited.
+`process::exit` with the code it is handed. Two things bound that, and neither is a promise about
+the harness. The CSP is `default-src 'self'` with no `'unsafe-inline'`, so the only script that
+runs is the one that shipped --- residual risk 7 in `docs/THREAT-MODEL.md` carries that, the T8
+invariant that keeps document text from becoming script or navigation, and the seam it leaves,
+since a grep over TypeScript cannot see the Rust half. The marginal authority is nil: a caller
+able to reach `spike_exit` can already reach `open_document` and the print path, so what these two
+add is a denial of service, not an escalation. **What would reopen the decision**: a spike command
+with authority past print-and-exit, or a harness grown to where bundle size moves the shell floor.
+The second is 45 ms of protocol toll away --- a decision about the numbers above, to be
+re-measured rather than inherited.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -615,9 +565,7 @@ where PDFium generates them: the note icon fills 637 of the 756 pixels in its ow
 the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
 reach before `annots.rs` was the *text*.
 
-Two crates carry the search, and this sentence said **three** while naming one until
-2026-08-01 --- which is the counting-in-prose failure this file records elsewhere about the trap
-list, arriving in the section where a missing dependency matters most.
+Two crates carry the search.
 
 `regex` (MIT OR Apache-2.0) reads a reader's pattern, and it was already in the tree
 transitively through the toolchain, so declaring it added no package. `caseless` (MIT) does
@@ -632,12 +580,10 @@ copyleft families by name across the whole tree; the only hits are MPL-2.0 (file
 Servo's CSS crates via Tauri) and a triple-licensed `r-efi` whose `MIT OR Apache-2.0` arm
 applies, so the licence the repository already grants is intact.
 
-That sentence carried a package count for weeks and it is deliberately gone. It read **531**
-while the tree held 572, having been left behind by the updater plugin's 48 crates and again
-by the certificate reader's 9 --- a number in prose with no gate behind it, which is the
-failure this file already records about the trap count and then repeated here. The authority
-is the command: `cargo metadata --format-version 1 | python3 -c 'import json,sys;
-print(len(json.load(sys.stdin)["packages"]))'`.
+No package count is written here either, for the reason the trap count is not: one in prose
+read **531** while the tree held 572, left behind by the updater plugin's 48 crates and again by
+the certificate reader's 9. The authority is the command: `cargo metadata --format-version 1 |
+python3 -c 'import json,sys; print(len(json.load(sys.stdin)["packages"]))'`.
 
 **One crate reads XMP, added 2026-08-21, and it adds no package.** `quick-xml` (MIT) was
 already in the tree through Tauri's `plist` dependency, so declaring it direct changed the
@@ -664,15 +610,15 @@ definite-length form, dropping whatever follows it. It is **no dependency at all
 lines, because the alternative was a general BER library for one length rule --- and it exists
 because the specification and reality disagree. RFC 5652 requires DER; a signer that streams its
 output cannot know a value's length before writing the value, so it writes the indefinite form,
-and `der` refuses that outright with *indefinite length disallowed*. Measured on a real signed
-contract: five indefinite values nineteen levels deep, and every reader here saw nothing. It
-also decides **where the blob ends**, which is the same question and was the larger half --- the
-trailing-zero scan it replaced could not tell zero padding from a two-byte end-of-contents
-marker, and ate three of them. What it deliberately does **not** do is canonicalise: a `SET OF`
-out of order or a constructed string in segments comes out as it went in and is refused by the
-parser after it, which is reported as unread. Its own bounds are in `docs/THREAT-MODEL.md` §T6.8,
-and the property that lets it sit in front of *every* signature rather than only the ones that
-need it --- a DER blob comes back byte-identical --- is asserted against the real fixtures.
+and `der` refuses that outright. Measured on a real signed contract: five indefinite values
+nineteen levels deep, and every reader here saw nothing. It also decides **where the blob ends**,
+which is the same question and was the larger half --- the trailing-zero scan it replaced could
+not tell zero padding from a two-byte end-of-contents marker, and ate three of them. What it
+deliberately does **not** do is canonicalise: a `SET OF` out of order or a constructed string in
+segments comes out as it went in and is refused by the parser after it, which is reported as
+unread. Its bounds are in `docs/THREAT-MODEL.md` §T6.8, and the property that lets it sit in
+front of *every* signature --- a DER blob comes back byte-identical --- is asserted against the
+real fixtures.
 
 Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) --- the
@@ -685,17 +631,16 @@ Apache-2.0), which is the largest single addition the tree has taken --- **48 cr
 325 to 373**, because it brings a TLS stack (`rustls`) and archive extraction (`zip`, `tar`).
 All permissive, swept as below.
 
-**That plugin is also the only network authority in the application, and it changed a
-property that had held until 26.8.2: tpdf made no request at all.** It is spent narrowly ---
-one check per launch, issued after every spike and check entry point has returned, so every
-harness here still runs offline; nothing downloads or installs without a click; and the
-payload's signature is verified against a compiled-in public key before anything is
-unpacked, which is what keeps those two new archive parsers from ever seeing attacker-chosen
-bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version, residual risks included.
-Checked against the licensing constraint
-above rather than assumed --- every dependency added has to be, because one copyleft crate
-anywhere in the tree removes the option of making this repository public. The check is
-`cargo metadata` over the whole tree, not a glance at the crate's own README.
+**That plugin is also the only network authority in the application, and it changed a property
+that had held until 26.8.2: tpdf made no request at all.** It is spent narrowly --- one check per
+launch, issued after every spike and check entry point has returned, so every harness here still
+runs offline; nothing downloads or installs without a click; and the payload's signature is
+verified against a compiled-in public key before anything is unpacked, which is what keeps those
+two new archive parsers from ever seeing attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the
+worked-out version, residual risks included. Every dependency added has to be checked against the
+licensing constraint above rather than assumed, because one copyleft crate anywhere in the tree
+removes the option of making this repository public. The check is `cargo metadata` over the whole
+tree, not a glance at the crate's own README.
 
 ### What each library is, and is not
 
@@ -744,18 +689,16 @@ Each release is a `Release vYY.M.MICRO: ...` commit. Unreleased work sits under
 release time.
 
 **That heading form is measured safe here, and it is not safe everywhere** --- checked
-2026-08-16, because the cross-repo notes flag tpdf as a repo where it had been assumed and
-never verified. It is dangerous wherever the release tooling selects a CHANGELOG section by
-matching the version heading: a prefix match accepts `## [1.1.2] - Unreleased` exactly as it
-accepts a dated one, so a forgotten rename publishes a release whose notes say *Unreleased*
-with nothing going red. `xlsxturbo` is such a repo and uses a bare `## [Unreleased]` for that
-reason.
-
-`release.yml` here reads **nothing** from `CHANGELOG.md`. Its `releaseBody` is a literal
-block in the workflow, so no tag can pick up a heading of any shape. The cost of that is the
-opposite failure and it is real: the body cannot go stale by tooling, only by nobody reading
-it, and it shipped a **"Nothing here edits a document"** paragraph that this release makes
-false. Re-read it on every release; the file says so at the point it matters.
+2026-08-16, because the cross-repo notes flag tpdf as a repo where it had been assumed and never
+verified. It is dangerous wherever the release tooling selects a CHANGELOG section by matching
+the version heading: a prefix match accepts `## [1.1.2] - Unreleased` exactly as it accepts a
+dated one, so a forgotten rename publishes a release whose notes say *Unreleased* with nothing
+going red. `xlsxturbo` is such a repo and uses a bare `## [Unreleased]` for that reason.
+`release.yml` here reads **nothing** from `CHANGELOG.md` --- its `releaseBody` is a literal block
+in the workflow --- so no tag can pick up a heading of any shape. The cost is the opposite
+failure and it is real: that body cannot go stale by tooling, only by nobody reading it, and it
+shipped a **"Nothing here edits a document"** paragraph that a later release made false. Re-read
+it on every release.
 
 ---
 
@@ -806,29 +749,24 @@ weeks after the tables grew past it, which is the failure the trap count above a
 has a `grep -c` for.
 
 Zero means one of two things and the gate deliberately does not guess which, because they need
-different fixes. Either **a killed harness left its edit in the tree**: the harnesses mutate
-files a feature branch is usually already modifying, so the leftover shows nothing new in `git
-status` and nothing eye-catching in a large diff --- `viewer.ts` sat holding `this.rotateBy(turns)`
-in place of a page turn, and the next run's red baseline read as a defect in the feature. Or
-**the anchor has drifted**, and the mutation is aimed at code that is gone. The harness does
-refuse that when it reaches it, which is correct and far too late: it is one run of a harness
-that takes twenty minutes, and `mutate_viewer.py` carried an anchor deleted by commit `9e9be98`
-for weeks without anything saying so. An ordinary `*id` -> `id` cleanup in `save.rs` did the
-same thing to a passing mutation within the hour.
+different fixes. Either **a killed harness left its edit in the tree**: the harnesses mutate files
+a feature branch is usually already modifying, so the leftover shows nothing new in `git status`
+and nothing eye-catching in a large diff --- `viewer.ts` sat holding `this.rotateBy(turns)` in
+place of a page turn, and the next run's red baseline read as a defect in the feature. Or **the
+anchor has drifted**, and the mutation is aimed at code that is gone. The harness does refuse that
+when it reaches it, which is correct and far too late: that is one run of a harness that takes
+twenty minutes, and an anchor has sat dead for weeks with nothing saying so.
 
-**It asks a second question as of 2026-08-20: can the test it names go red on this
-platform?** An anchor is a string in a file; platform gating decides which strings become
-code, so the first invariant was structurally unable to see that `recentdocs`'s two
-Windows mutations named a test inside `#[cfg(all(test, windows))]` and declared no
-`only_on`. On a Mac that name does not exist and the harness's guard --- right to be loud
-about a name it cannot find --- refuses the **whole** table, so 198 mutations had been
-unrunnable there since the day those two were written. Exactly the mirror of the `menu::`
-incident the harness's own comment describes, and found by reading rather than by
-anything. The gate locates the `fn`, finds its enclosing gated module, and requires
-`only_on` to match; a test defined on both sides of the cfg --- one rule with a test per
-platform, which is what `resolved` has --- needs no declaration. Proved three ways: a missing
-declaration fails, a wrong one fails, and a scan finding no gated module anywhere fails
-rather than passing everything in silence.
+**It asks a second question as of 2026-08-20: can the test it names go red on this platform?**
+An anchor is a string in a file; platform gating decides which strings become code, so the first
+invariant was structurally unable to see that `recentdocs`'s two Windows mutations named a test
+inside `#[cfg(all(test, windows))]` and declared no `only_on`. On a Mac that name does not exist
+and the harness's guard --- right to be loud about a name it cannot find --- refuses the **whole**
+table, so 198 mutations had been unrunnable there since the day those two were written. The gate
+locates the `fn`, finds its enclosing gated module, and requires `only_on` to match; a test
+defined on both sides of the cfg needs no declaration. Proved three ways: a missing declaration
+fails, a wrong one fails, and a scan finding no gated module anywhere fails rather than passing
+everything in silence.
 
 **`mutations` exists because a guard that works can still answer too late.**
 `mutate_frontend.py` runs vitest over `TEST_FILES`, a hand-kept list, and a suite absent from
@@ -866,13 +804,12 @@ because widening the name set can surface a duplicate test name and refuse a run
 unrelated reason. That objection still holds and this does not touch it: the gate changes what
 is *checked*, never what runs. Its first run found `viewer.test.ts` listed twice.
 
-**`readme` exists because the public README described an older product for weeks and
-nothing could see it.** An outside review compared it with the command registry on
-2026-08-22: it said editing had just begun, it said *the open file is never modified in
-place* --- false since Save in place shipped in `26.8.5` --- and its *Not built yet* list
-still named ink, shapes, text boxes and squiggly, all four registered commands with
-shortcuts. A prospective user was being told the product was materially less capable than
-the binary.
+**`readme` exists because the public README described an older product for weeks and nothing
+could see it.** An outside review compared it with the command registry on 2026-08-22: it said
+editing had just begun, it said *the open file is never modified in place* --- false since Save
+in place shipped in `26.8.5` --- and its *Not built yet* list still named four commands that were
+registered and had shortcuts. A prospective user was being told the product was materially less
+capable than the binary.
 
 The gate is deliberately one narrow claim rather than an attempt on the whole document.
 Each *Not built yet* bullet carries an HTML comment naming the command that would exist if
@@ -902,46 +839,41 @@ run for real, that every corpus reports the **same check names** --- diffed as s
 check that stopped being printed and a check that started skipping are identical in a total.
 
 **It also asked a second question until 26.8.3, and that one made it red on every hosted
-runner**: whether every corpus has a fixture. That is a precondition of *running* a sweep,
-not an invariant of the repository, and `ci_fixtures.py` states in its own docstring why nine
-of the fourteen are deliberately not generatable there --- fonttools with a per-image system
-font, qpdf, a 550 MB write. So the gate demanded on a runner exactly what the repository had
-already written down as absent, and no local run could notice, because a development checkout
-has all forty-three fixtures. The missing list is reported by `--list` as `[INFO]` now, and
-the refusal moved to the run path, aimed at the corpora that run will actually open: a full
-sweep is unchanged, and `--only links` on a machine holding `links` works instead of being
-refused over twelve fixtures it was never going to touch.
+runner**: whether every corpus has a fixture. That is a precondition of *running* a sweep, not an
+invariant of the repository, and `ci_fixtures.py` states in its own docstring why nine of the
+fourteen are deliberately not generatable there --- fonttools with a per-image system font, qpdf,
+a 550 MB write. So the gate demanded on a runner exactly what the repository had already written
+down as absent, and no local run could notice, because a development checkout has every fixture.
+The missing list is an `[INFO]` line from `--list` now, and the refusal moved to the run path,
+aimed at the corpora that run will actually open.
 
-**`workflows` exists because the first tag this repository ever pushed went red on both
-runners, and the code was fine.** `release.yml`'s `gates` job was written from `ci.yml` and
-the copy dropped the fixture-generation step, so `print.rs`'s
-`a_third_parser_checks_a_job_built_from_a_document_we_did_not_write` --- which needs
-`rotated.pdf` --- failed on macOS and Windows while passing in CI and locally. The release
-gate was therefore weaker than the gate it exists to satisfy, which is the rule this file
-already states about hand-copied commands, with a whole step lost rather than a flag. Two
-fixes, and the second is the one that lasts: the list of runner-generatable fixtures moved
-into `scripts/ci_fixtures.py` so both workflows call one line, and
-`scripts/check_workflow_parity.py` now compares the two `gates` jobs step for step --- every
-`uses:` with its pinned SHA and every `run:` body, in order. Step *names* are deliberately
-not compared, and a control proves it: rewording a label stays green while repointing a pin,
-weakening a gate command, deleting a step and renaming the job all go red. It refuses a job
-it cannot find and a job whose step scan came back empty, since both read exactly like two
-jobs that agree. What it does **not** compare is anything outside that job --- the triggers
-and the `release` job differ on purpose, and that difference is the fork threat model rather
-than drift.
+**`workflows` exists because the first tag this repository ever pushed went red on both runners,
+and the code was fine.** `release.yml`'s `gates` job was written from `ci.yml` and the copy
+dropped the fixture-generation step, so a `print.rs` test that needs `rotated.pdf` failed on both
+runners while passing in CI and locally. The release gate was therefore weaker than the gate it
+exists to satisfy, which is the rule this file already states about hand-copied commands, with a
+whole step lost rather than a flag. Two fixes, and the second is the one that lasts: the list of
+runner-generatable fixtures moved into `scripts/ci_fixtures.py` so both workflows call one line,
+and `scripts/check_workflow_parity.py` compares the two `gates` jobs step for step --- every
+`uses:` with its pinned SHA and every `run:` body, in order. Step *names* are deliberately not
+compared, and a control proves it: rewording a label stays green while repointing a pin,
+weakening a gate command, deleting a step and renaming the job all go red. It refuses a job it
+cannot find and a job whose step scan came back empty, since both read exactly like two jobs that
+agree. What it does **not** compare is anything outside that job --- the triggers and the
+`release` job differ on purpose, and that difference is the fork threat model rather than drift.
 
-**It also asserts what authority a gates job holds, since 2026-08-22, and that half exists
-because comparing steps was blind to it.** An outside review found the composition: the
-release workflow declared `contents: write` at file level, every job inherited it, and the
-gates job then checked out with the default credential-persisting `actions/checkout` and ran
-`pip install pyhanko pyhanko-certvalidator` --- unpinned, resolved from PyPI at the moment
-the job started --- **before any gate ran**. Three properties close it, in both files because
-these two jobs are meant to be one job: `contents: read` declared on the job or the workflow,
+**It also asserts what authority a gates job holds, and that half exists because comparing steps
+was blind to it.** The composition an outside review found: the release workflow declared
+`contents: write` at file level, every job inherited it, and the gates job then checked out with
+the default credential-persisting `actions/checkout` and ran `pip install pyhanko
+pyhanko-certvalidator` --- unpinned, resolved from PyPI at the moment the job started ---
+**before any gate ran**. Three properties close it, in both files because these two jobs are
+meant to be one job: `contents: read` declared on the job or the workflow,
 `persist-credentials: false` on the checkout, and a Python install that names
 `scripts/fixture-tools.txt` rather than package names. All four failure modes were proved by
 mutation, the load-bearing one being **deleting the install step**, which without that check
-passes exactly like a clean run. The exclusions this gate's docstring lists are where the
-next defect lives; that is now written there rather than left as a design note.
+passes exactly like a clean run. The exclusions this gate's docstring lists are where the next
+defect lives.
 
 **`pdfium` verifies the library, not the stamp beside it**, as of 2026-08-02. It compared the
 pin against a digest the installer itself had written, and its only fact about the tree was
@@ -954,16 +886,15 @@ the archive check and the machines holding one are fine --- but the run prints a
 saying which of the two checks it actually ran. The trap *"A directory that exists is not the
 library you need"* had arrived inside the script whose docstring names that same mistake.
 
-**`traps` compares `docs/TRAPS.md`'s titles against this file's index as sets.** The count
-here has an authority (`grep -c '^### '`) and stopped drifting; the index did not, and was
-three entries short on 2026-08-02 --- added by the commit that had updated the number. So the
-tally was right while the list nobody counts was wrong, which is the doctrine one level up:
-the invariant is the set of titles, and a set diff needs no number. The rule it enforces is
-the file's own --- a bullet is the title verbatim, optionally with a parenthetical the index
-adds where a title misleads on its own. It refuses an empty scan on either side and a
-duplicate on either side, since two bullets covering one title can hide a third going
-missing. Proved by removing a bullet, adding one naming nothing, duplicating one, and by
-disabling the parenthetical rule inside the checker; all four red.
+**`traps` compares `docs/TRAPS.md`'s titles against this file's index as sets.** The invariant
+is the set of titles and a set diff needs no number, which is the doctrine one level up: on
+2026-08-02 the tally was right while the index nobody counts was three entries short, added by
+the commit that had updated the number. The rule it enforces is the file's own --- a bullet is
+the title verbatim, optionally with a parenthetical the index adds where a title misleads on its
+own. It refuses an empty scan on either side and a duplicate on either side, since two bullets
+covering one title can hide a third going missing. Proved four ways, all red: removing a bullet,
+adding one naming nothing, duplicating one, and disabling the parenthetical rule in the
+checker.
 
 **`wiring` exists because the box shipped inert and three layers of tests said otherwise.**
 `Viewer` reports what it cannot decide through optional callbacks on `ViewerOptions`;
@@ -1089,31 +1020,25 @@ scaffolding, and the rule was that they land when there is something for them to
 front-end logic with an answer that can be wrong rather than merely ugly. `npm run lint`
 still does not exist, for the same reason as before.
 
-**There is CI for ordinary commits as of 2026-08-02, and a release workflow since
-2026-07-31.** This paragraph said the opposite for two days and the reasoning it gave was
-half right, which is the more interesting half: the objection was never cost, it was that a
-workflow restating the gate commands in YAML would be *a second place for the gate list to
-live*. `ci.yml` does not restate them --- it invokes `scripts/gates.py`, exactly as
-`release.yml` does --- so that objection never applied to the workflow that was eventually
-written. What changed materially is that the repository went public, and macOS runner
-minutes bill at 10x against a private allowance and are free here. The stated reason and the
-operative reason were different, which is worth noticing: "one machine" was a description of
-the circumstances, not an argument.
+**There is CI for ordinary commits as of 2026-08-02, and a release workflow since 2026-07-31.**
+The objection that delayed it was never cost --- it was that a workflow restating the gate
+commands in YAML would be *a second place for the gate list to live*, and neither workflow does
+that: both invoke `scripts/gates.py`. What changed materially is that the repository went public,
+and macOS runner minutes bill at 10x against a private allowance and are free here. The stated
+reason and the operative reason were different: "one machine" was a description of the
+circumstances, not an argument.
 
 It runs on `pull_request` rather than `pull_request_target`, asks for `contents: read`, and
 **references no secret** --- see the fork threat model under Repository facts, and the header
 comment in the file, which is the copy that has to stay right.
 
-**So `gh run list --workflow=ci.yml --branch main --limit 1` is now the cheapest first thing
-to do in a session, and it answers a question a handover cannot.** On 2026-08-02 the macOS
-handover predicted, correctly and in detail, that the worker split would break here --- while
-CI had already proved it 26 minutes earlier and gone red on `macos-latest` for exactly that
-reason. A handover is written before the run it triggers finishes, so it is authoritative
-about the code and structurally stale about the build; and on a two-platform repository the
-machine that files it is the one that cannot compile half of what it moved. Establishing
-green first costs one command, and it converts every later failure into a statement about
-your own change. Select the workflow rather than taking the newest run, and read the job
-count beside the conclusion --- two jobs, not one.
+**So `gh run list --workflow=ci.yml --branch main --limit 1` is now the cheapest first thing to
+do in a session, and it answers a question a handover cannot.** A handover is written before the
+run it triggers finishes, so it is authoritative about the code and structurally stale about the
+build; and on a two-platform repository the machine that files it is the one that cannot compile
+half of what it moved. Establishing green first costs one command, and it converts every later
+failure into a statement about your own change. Select the workflow rather than taking the newest
+run, and read the job count beside the conclusion --- two jobs, not one.
 
 What CI structurally cannot cover, and the reason `BUILD.md` still schedules them by hand:
 `viewer_check.py` and `mutate_viewer.py` drive a real window and need an unlocked,
@@ -1121,40 +1046,27 @@ unoccluded screen, so on a headless runner they do not fail, **they hang** --- w
 failure shape this repository is least able to read, since a hang and a pass both produce no
 red. The mutation harnesses rebuild per mutation and take minutes.
 
-`.github/workflows/release.yml` fires only on a CalVer tag, and it exists because **the
-predicted trigger was the wrong one**. This file expected CI to arrive with the repo going
-public or a second contributor; what actually forced it is that notarization needs a Mac,
-an Apple Developer ID and API credentials, and cutting a signed macOS release by hand from
-whichever machine happens to be free is precisely the step that should not depend on who is
-sitting where. Worth recording because the prediction was confident and specific.
+`.github/workflows/release.yml` fires only on a CalVer tag. It **invokes `scripts/gates.py`**
+rather than re-listing commands in YAML --- a hand-copied command quietly loses a `--locked` and
+then gates something weaker than the real gate. It is ported from `screenpick`'s working workflow,
+and the one part with no precedent anywhere in the portfolio is signing the bundled
+`libpdfium.dylib`: neither sibling ships a native library, and notarization requires every Mach-O
+in the bundle to carry a Developer ID signature and the hardened runtime. The dylib is therefore
+signed in `vendor/` *before* the bundler copies it, which is now known to be sufficient --- the
+`.app` notarized `Accepted`, and both it and the dylib chain to Apple Root CA with the hardened
+runtime. Its verification step is written to fail rather than warn: a skipped notarization exits 0
+and produces an app Gatekeeper rejects on any machine that has never seen it.
 
-It **invokes `scripts/gates.py`** rather than re-listing commands in YAML, which was the
-one instruction this file did get right --- a hand-copied command quietly loses a `--locked`
-and then gates something weaker than the real gate.
-
-**Its macOS half ran green on 2026-08-03**, and this paragraph read "Nothing in its macOS
-half has ever run" until then. It is ported from `screenpick`'s working workflow, and the
-one part with no precedent anywhere in the portfolio is signing the bundled
-`libpdfium.dylib`: neither sibling ships a native library, and notarization requires every
-Mach-O in the bundle to carry a Developer ID signature and the hardened runtime. The dylib
-is therefore signed in `vendor/` *before* the bundler copies it, which is correct whether or
-not Tauri re-signs nested resources --- and is now known to be sufficient, since the `.app`
-notarized `Accepted` and both it and the dylib chain to Apple Root CA with the hardened
-runtime. Its verification step is written to fail rather than warn --- a skipped
-notarization exits 0 and produces an app Gatekeeper rejects on any machine that has never
-seen it.
-
-**It took four rehearsal tags, and the sequence is the lesson.** Each failed one step later
-than the last --- the gates job (a step lost when it was copied from `ci.yml`), then the
-dylib signing (nothing had imported the certificate yet), then the verification step itself
-(`mapfile` is bash 4; macOS runners give a `run:` block bash 3.2, so it exited 127 *after*
-the app and DMG had both notarized). That is the shape of running a sequence end to end for
-the first time rather than bad luck: **the last step of a pipeline is its least-tested code,
-because everything before it must succeed before it runs even once.** All three are in
-`docs/TRAPS.md`, and `BUILD.md`'s release checklist now has the rehearsal-tag habit as step
-10 --- it previously ended at the commit and never said to push a tag at all. The tag glob
-matches an `-rcN` suffix on purpose so a rehearsal is possible; a failed run publishes
-nothing, since `release` needs `gates` and the release is created as a **draft**.
+**It took four rehearsal tags, and the sequence is the lesson.** Each failed one step later than
+the last --- the gates job (a step lost when it was copied from `ci.yml`), then the dylib signing
+(nothing had imported the certificate yet), then the verification step itself (`mapfile` is bash 4
+and macOS runners give a `run:` block bash 3.2, so it exited 127 *after* the app and DMG had both
+notarized). That is the shape of running a sequence end to end for the first time rather than bad
+luck: **the last step of a pipeline is its least-tested code, because everything before it must
+succeed before it runs even once.** All three are in `docs/TRAPS.md`, and `BUILD.md`'s release
+checklist has the rehearsal-tag habit as step 10. The tag glob matches an `-rcN` suffix on purpose
+so a rehearsal is possible; a failed run publishes nothing, since `release` needs `gates` and the
+release is created as a **draft**.
 
 > ⚠ **Every Windows measurement below was taken from a process the harness gave a stderr to,
 > and on 2026-08-19 that turned out to hide a defect that made the installed application
@@ -1170,52 +1082,33 @@ nothing, since `release` needs `gates` and the release is created as a **draft**
 > harness that captures output has by that act created a stdout and a stderr. Nothing has
 > been re-measured from Explorer. The trap index has the entry.
 
-**Windows runs the viewer, and is contained.** On 2026-07-29 a Windows build opened documents
-and passed `viewer_check.py` on four corpora --- **86 check names** on each, which was the
-invariant *then*, with ran/skipped splits inside the ranges `BUILD.md` records; re-run on
-2026-07-30 with pre-spawning live and still green.
+**Windows runs the viewer, and is contained.** A Windows build opens documents and passes
+`viewer_check.py`, and the invariant is the check-name **set** rather than any total: name sets
+diffed pairwise are byte-identical across corpora and across both platforms, with every
+ran/skipped split matching `BUILD.md`'s table, which is where those numbers belong. A count
+written into prose goes stale the next time a check is added.
 
-The invariant is **109 names** now, and both platforms hold to it: Windows measured 109 across
-six corpora on 2026-07-30, and macOS confirmed 109 on **all seven** on 2026-07-31 --- name sets
-diffed pairwise and byte-identical, with every ran/skipped split matching `BUILD.md`'s table
-exactly, from the fixed bundle. So the table needed no correction and the only stale numbers
-were the ones in this file. A count written into prose goes stale the next time a check is
-added, which is why the table is the one place it belongs; these two paragraphs are dated
-statements about dated runs.
+This section said the opposite until 2026-07-30 --- "the platform is unsandboxed", "it fails
+open" --- while the constraints section above had the corrected version the whole time, so a
+reader who happened to start here would have concluded that hostile input is parsed in the app
+process. **A document with two accounts of the same fact is worse than one with none**, and the
+failure mode is that whichever section a reader reaches first wins.
 
-This paragraph said the opposite until 2026-07-30 --- "the platform is unsandboxed", "it fails
-open" --- which had been true and was fixed the day before by the commit that selects workers
-there. It is left recorded rather than quietly deleted, because it is the file contradicting
-itself: the constraints section above had the corrected version the whole time, and a reader
-who happened to start here would have concluded that hostile input is parsed in the app
-process. **A document with two accounts of the same fact is worse than one with none**, and
-the failure mode is that whichever section a reader reaches first wins.
+**Nothing measurable is missing here as of 2026-07-31.** Of `worker-bench`'s seven POSIX modes,
+only `latency`'s per-tile overhead decomposition measured anything no other harness covers, and
+`latency-bench` covers it on both platforms through the production worker rather than a private
+POSIX one (`docs/PLAN.md` §0, `BUILD.md`). `worker-bench` still refuses to run here, which is
+correct: a POSIX harness not running on Windows was never the gap, only the measurement it held
+exclusively.
 
-**Nothing measurable is missing here as of 2026-07-31.** This sentence named `worker-bench`'s
-seven POSIX modes, and only one of them --- `latency`'s per-tile overhead decomposition ---
-measured anything no other harness covers. `latency-bench` covers it now, on both platforms,
-through the production worker rather than a private POSIX one; see `docs/PLAN.md` §0 and
-`BUILD.md`. `worker-bench` still refuses to run here, which is correct: a POSIX harness not
-running on Windows was never the gap, only the measurement it held exclusively.
-
-**The cross-check that portability was for has now run, and it paid.** `latency-bench`
-executed on macOS 2026-07-31 (3/3, 3/3, 3/4+1 skip, exit 0; four mutations re-proved 4/4;
-no sandbox font substitution) and was compared against `worker-bench --mode latency`, which
-shares no worker code with it. They disagreed by an order of magnitude on the same quantity,
-and the older harness was the wrong one: it baselines on a variant that never renders, so its
-residual --- 46.7 ms on `vector-heavy`, against a printed 46.6 ms --- stays in the answer.
-`worker-bench` now prints that residual and warns when it dominates, which is on every fixture
-measured. The production worker's per-tile cost is **0.071--0.103 ms** on macOS, ~10x the
-prototype's and still ~30x under the webview hand-off, so no conclusion moves. Two agreeing
-harnesses would have proved less than these two disagreeing did.
-
-The same sentence also claimed *"two `open_check.py`
-phases whose route does not exist here"*, and both halves were wrong by 2026-07-31 --- the count
-is **one**, and it is a decision rather than a gap, since Explorer hands the path over in `argv`
-and the `argv` phase already covers it. The paragraph 290 lines above says exactly that (*"runs
-five of six"*, *"the one phase that stays macOS-only"*), and `docs/PLAN.md` §0 agrees with it ---
-so this was the same document contradicting itself that the paragraph immediately above warns
-about, three paragraphs later, on a different fact.
+**The cross-check that portability was for has now run, and it paid.** `latency-bench` on macOS
+was compared against `worker-bench --mode latency`, which shares no worker code with it. They
+disagreed by an order of magnitude on the same quantity, and the older harness was the wrong one:
+it baselines on a variant that never renders, so its residual --- 46.7 ms on `vector-heavy`,
+against a printed 46.6 ms --- stays in the answer. `worker-bench` now prints that residual and
+warns when it dominates, which is on every fixture measured. The production worker's per-tile cost
+is **0.071--0.103 ms** on macOS, ~30x under the webview hand-off, so no conclusion moves. Two
+agreeing harnesses would have proved less than these two disagreeing did.
 
 Two things a green sweep still does not say, both learned the same day. `scripts/gates.py`
 reported 7/7 while `npm run tauri build` failed, because nothing in the list linked a
@@ -1227,20 +1120,16 @@ Every *measurement* in this file is macOS arm64 unless it says otherwise --- the
 figures above are the first Windows ones, and they are labelled. The two platforms differ enough
 on that measurement that carrying a macOS number over is a guess rather than an estimate.
 
-**And the render constants are now measured on both.** `tile-bench` runs on Windows since
-2026-07-30, and `docs/PLAN.md` §4's four architectural consequences reproduce there against the
-same generated A0 fixture: spatial culling intact (a 256² tile is 3.8% of a full render, against
-4.3% on macOS), a real per-render floor of **~1.3 s** against ~1 s, and a full page at **35.1 s /
-88.3 s** for 1× / 2× against 22.8 s / 48.4 s. The ratios that drove the architecture hold; every
-absolute number is **1.5--1.8× worse**, so a latency budget written against the macOS figures is
-optimistic here by about a third. `BUILD.md` has the table, the caveats and the independent
-cross-check that says the numbers are the document's rather than the harness's.
-
-**So does the reason to have a pool.** `pool-bench` on the same page: **3.6× on six workers** and
-nothing at eight, against 3.22× and nothing on macOS --- the same shape, the ceiling doing its job,
-and six stable to 0.01× across two runs. The intermediate sizes are *not* stable enough to read
-(pool 4 moved 1.99× → 2.29× between identical runs, and the per-round warm figures span ±20%), so
-only the six and the flat eight are conclusions. `BUILD.md` says which is which.
+**And the render constants are now measured on both.** `tile-bench` runs on Windows, and
+`docs/PLAN.md` §4's four architectural consequences reproduce there against the same generated A0
+fixture: spatial culling intact, a real per-render floor, and a full page in tens of seconds at 1x
+and at 2x. The ratios that drove the architecture hold; every absolute number is **1.5--1.8x
+worse** than macOS, so a latency budget written against the macOS figures is optimistic here by
+about a third. **So does the reason to have a pool** --- `pool-bench` on the same page reaches
+**3.6x on six workers** and nothing at eight, against 3.22x and nothing on macOS: the same shape,
+with the ceiling doing its job. The intermediate sizes are not stable enough to read. `BUILD.md`
+has both tables, the caveats, the independent cross-check that says the numbers are the
+document's rather than the harness's, and which figures are conclusions.
 
 ---
 
@@ -1249,34 +1138,24 @@ only the six and the flat eight are conclusions. `BUILD.md` says which is which.
 Things already paid for once, or verified before writing code. Add to the list rather
 than rediscovering.
 
-**The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 469 of them and the full text
-was 93% of this file --- an instruction budget spent on the 460 traps that are not
-the one in front of you. Keep both numbers in this section current when adding an entry;
-they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
-which is how a count in prose fails, and why the authority is
-`grep -c '^### ' docs/TRAPS.md` rather than this sentence. The *titles* have their own
-authority now, and it is mechanical rather than prose: `scripts/check_trap_index.py`
-diffs the set both ways and is one of the gates, so an entry added to one file and not
-the other goes red instead of going unnoticed.
-What the index has to preserve is knowing that a trap *exists*;
-the paragraphs matter once you are in that area.
+**The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact titles.
+Only the titles are here, because the full text was 93% of this file --- an instruction budget
+spent on the several hundred traps that are not the one in front of you. What the index has to
+preserve is knowing that a trap *exists*; the paragraphs matter once you are in that area.
 
-So: **before working in any area named below, read its entry.** A title is a claim, not
-the lesson --- several of them are the opposite of what they sound like, which is why they
-were written down. Grep the title in `docs/TRAPS.md`.
+So: **before working in any area named below, read its entry.** A title is a claim, not the
+lesson --- several of them are the opposite of what they sound like, which is why they were
+written down. Grep the title in `docs/TRAPS.md`.
 
-New traps go in `docs/TRAPS.md` with a line added here, in the same commit. That is a rule
-with a gate behind it since 2026-08-02: `traps` in `scripts/gates.py` diffs the two as
-**sets** and fails on either side having something the other lacks. The prose count above
-still has to be moved by hand --- a number in a sentence is exactly what the gate does not
-depend on.
+New traps go in `docs/TRAPS.md` with a line added here, in the same commit. That rule has a gate
+behind it: `traps` in `scripts/gates.py` diffs the two as **sets**, both ways, and fails on
+either side having something the other lacks.
 
-**Code comments and the other documents say "`AGENTS.md` records ..." in about a hundred
-places, and those references are still good** --- they were written when the entries lived
-here, and they were left alone rather than rewritten, because a hundred-file mechanical
-diff over prose carries more risk than the one hop it saves. Read them as naming the trap
-index; the paragraph is in `docs/TRAPS.md` under the title.
+**Code comments and the other documents say "`AGENTS.md` records ..." in about a hundred places,
+and those references are still good** --- they were written when the entries lived here, and they
+were left alone rather than rewritten, because a hundred-file mechanical diff over prose carries
+more risk than the one hop it saves. Read them as naming the trap index; the paragraph is in
+`docs/TRAPS.md` under the title.
 
 ### PDFium: rendering, mutation and page state
 - PDFium: removed objects come back unless you regenerate the content stream
@@ -1768,7 +1647,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A checklist step nothing can perform, and a comment promising a mechanism that does not exist (both said the version was reachable in-app; nothing in the application reported one at all)
 - The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
 - A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
-- The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated) (false for two days, read while ranking what to build, and recommended --- a claim of *absence* has no test, no gate and no reader who would notice)
+- The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale, false for two days and read while ranking what to build; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated)
 - A gate over claimed absences only catches the name the claim guessed (green while the README said stamps could not be made, one commit after they shipped as four differently-named commands; the invariant that would hold runs the other way)
 - A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
 - An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing (twelve lines arguing against the feature being built, attached to nothing; a scan is two lines of Python and found 26, and it over-reports on purpose --- a section header is the same shape)
