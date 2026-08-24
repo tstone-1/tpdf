@@ -2566,6 +2566,33 @@ MUTATIONS = [
         "        std::fs::metadata(source).map_or(0, |m| m.len()),",
         "a_document_whose_size_cannot_be_read_is_rewritten",
     ),
+    Mutation(
+        # Point the hook at a file that is not there, which is what a rename
+        # that forgets the config looks like. NOT spelled as a mistyped key:
+        # `installerHooksTypo` is rejected by the build script's own schema
+        # ("unknown field ... expected one of ... installerHooks"), so that
+        # mutation never reaches a test and reports as a build failure.
+        #
+        # The bundler refuses this one too -- "failed to resolve `bundle >
+        # windows > nsis > installerHooks`" -- but only when a bundle is
+        # actually built, which is a CI leg and not a gate. The test answers in
+        # seconds, on every machine.
+        "installer: point the NSIS hook at a file that is not there",
+        "tauri.windows.conf.json",
+        '"installerHooks": "installer-hooks.nsh"',
+        '"installerHooks": "installer-hooks-gone.nsh"',
+        "the_windows_installer_clears_the_way_for_the_pdfium_directory",
+    ),
+    Mutation(
+        # Leave the hook wired and take out the only thing it does. Everything
+        # that can be checked from outside the installer -- the config, the
+        # include, the macro definition -- still looks right.
+        "installer: keep the hook but remove the deletion",
+        "installer-hooks.nsh",
+        '    Delete "$INSTDIR\\pdfium"',
+        '    DetailPrint "$INSTDIR\\pdfium"',
+        "the_windows_installer_clears_the_way_for_the_pdfium_directory",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.

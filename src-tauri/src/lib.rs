@@ -2637,6 +2637,75 @@ mod tests {
             );
         }
     }
+
+    /// The Windows installer is told to clear the way for that directory.
+    ///
+    /// The fix above changed what the bundle *contains*; it could not change
+    /// what a machine already has. 26.8.8 installed the engine as a file named
+    /// `pdfium`, and the generated `installer.nsi` copies resources with
+    /// `CreateDirectory "$INSTDIR\pdfium"` followed by a `File` into it ---
+    /// `CreateDirectory` against an existing file fails and says nothing, so
+    /// the `File` reports `Error opening file for writing` and offers Abort,
+    /// Retry, Ignore. Under `/S`, which is how `tauri-plugin-updater` runs it,
+    /// that becomes Ignore: the installer skips the payload, writes everything
+    /// else, registers itself and **exits 0**. An install that looks complete
+    /// from every angle a caller can see, with no PDF engine in it.
+    ///
+    /// `NSIS_HOOK_PREINSTALL` is inserted immediately after `SetOutPath
+    /// $INSTDIR` and before the resource copies, which is the one place the
+    /// leftover can be removed in time.
+    ///
+    /// **Two of the three ways to get this wrong are loud, and the third is
+    /// not.** Measured on 2026-08-24 rather than assumed. A mistyped key is
+    /// refused by the build script's own schema (*"unknown field
+    /// `installerHooksTypo`, expected one of ... `installerHooks`"*). A path
+    /// naming a file that is not there is refused by the bundler (*"failed to
+    /// resolve `bundle > windows > nsis > installerHooks`"*), though only at
+    /// bundle time, which is a CI leg rather than a gate. But a file that
+    /// exists and defines nothing, or defines a macro under another name, is
+    /// swallowed: the generated script guards the call with `!ifmacrodef
+    /// NSIS_HOOK_PREINSTALL`, so the bundle builds, the installer runs, and the
+    /// step simply does not happen. That last one is what the two `contains`
+    /// assertions below are for; the config check above them is cheap
+    /// belt-and-braces that fails earlier than the bundler would.
+    ///
+    /// **And this is a source-level assertion, which cannot see behaviour.** It
+    /// says the config names the file and the file says what it should; it
+    /// cannot say Tauri included it, or that NSIS ran it, or that it ran early
+    /// enough. `BUILD.md`'s release checklist carries the A/B that can --- the
+    /// released previous installer against the new one, over the same planted
+    /// stray, reading the answer off the filesystem rather than off the exit
+    /// code.
+    #[test]
+    fn the_windows_installer_clears_the_way_for_the_pdfium_directory() {
+        const HOOKS: &str = "installer-hooks.nsh";
+
+        let source = include_str!("../tauri.windows.conf.json");
+        let parsed: serde_json::Value = serde_json::from_str(source)
+            .unwrap_or_else(|e| panic!("tauri.windows.conf.json is not JSON: {e}"));
+        let declared = parsed
+            .get("bundle")
+            .and_then(|b| b.get("windows"))
+            .and_then(|w| w.get("nsis"))
+            .and_then(|n| n.get("installerHooks"))
+            .and_then(serde_json::Value::as_str)
+            .expect("tauri.windows.conf.json declares no bundle.windows.nsis.installerHooks");
+        assert_eq!(
+            declared, HOOKS,
+            "the config must name the hook file this test reads, or the two can drift apart"
+        );
+
+        let hooks = include_str!("../installer-hooks.nsh");
+        assert!(
+            hooks.contains("!macro NSIS_HOOK_PREINSTALL"),
+            "{HOOKS} defines no NSIS_HOOK_PREINSTALL, so !ifmacrodef skips it in silence"
+        );
+        assert!(
+            hooks.contains("Delete \"$INSTDIR\\pdfium\""),
+            "{HOOKS} does not remove the stray file, which is the whole reason it exists"
+        );
+    }
+
     use crate::{session, startup};
     use std::cell::RefCell;
     use tauri::async_runtime::block_on;

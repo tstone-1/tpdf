@@ -19,6 +19,28 @@ have the binary.)
 
 ## [26.8.10] - Unreleased
 
+### Fixed: upgrading from 26.8.8 on Windows stopped with an error, or installed a broken app
+
+If you are on 26.8.8, installing anything newer walked into a wall: an
+`Error opening file for writing` box naming `pdfium\pdfium.dll`, with Abort,
+Retry and Ignore. Retry could not help. Ignore was the worst of the three ---
+the installer reported success and left an application that could open no
+document at all, which is the very defect 26.8.9 was released to fix.
+
+The cause is 26.8.8's own packaging. It wrote its copy of the PDF engine to a
+*file* named `pdfium`, with no extension, which nothing loads --- that is why
+26.8.8 could open nothing. 26.8.9 corrected the path, and now needs a
+*directory* of that name, which cannot be created while the old file is sitting
+there.
+
+This release's installer removes that leftover before it copies anything, so
+the upgrade runs through without a prompt. There is nothing to do by hand, and
+nothing to do at all if you have never run 26.8.8.
+
+The step is only ever needed once, and only by machines that have run 26.8.8;
+it is written down in the installer's own comments so it can be deleted when
+that stops being a supported starting point.
+
 ### Added: Merge documents
 
 Pick any number of PDFs and get one file holding this document followed by all

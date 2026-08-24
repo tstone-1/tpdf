@@ -9157,6 +9157,75 @@ own the second file's identity across undo, and a save has to import the graph
 this module already knows how to import. The importer is the piece that carries
 over; nothing else does.
 
+#### Upgrading from 26.8.8 on Windows --- done 2026-08-24
+
+26.8.9 fixed what the bundle *contains*. It could not fix what a machine already
+has, and that turned out to be the larger half.
+
+26.8.8 installed the engine as a file named `pdfium` (the trailing-slash trap,
+recorded from both sides in `docs/TRAPS.md`). 26.8.9 needs a directory of that
+name. The generated `installer.nsi` does `CreateDirectory "$INSTDIR\pdfium"`
+and then `File /a "/oname=pdfium\pdfium.dll"` --- `CreateDirectory` against an
+existing file fails and sets an error flag nothing reads, so the `File` reports
+`Error opening file for writing` and offers Abort, Retry, Ignore.
+
+**Retry cannot work**, which is not something the box tells you: it re-attempts
+the `File`, not the `CreateDirectory` that already failed, so the parent
+directory is still absent on every press. Deleting the stray from outside does
+not help either. The only way through on the day was to create the directory by
+hand, from another process, with the dialog still up.
+
+**Ignore is worse than Abort, and a silent install is Ignore.** That is the part
+that made this urgent rather than annoying: `tauri-plugin-updater` runs the
+installer with no dialogs, so a reader on 26.8.8 who accepted an in-app update
+got a success and an application that opens nothing.
+
+**The fix and its control.** `src-tauri/installer-hooks.nsh` defines
+`NSIS_HOOK_PREINSTALL`, which Tauri inserts immediately after `SetOutPath
+$INSTDIR` and before the resource copies --- the one place the leftover can be
+removed in time. Four legs, each into a scratch directory with `/S /D=`, the
+first two starting from a byte-identical planted stray:
+
+```
+shipped 26.8.9 setup                  exit 0   pdfium\pdfium.dll  ABSENT
+26.8.10 setup with the hook           exit 0   pdfium\pdfium.dll  present, digest matches vendor/
+26.8.10 setup, empty directory        exit 0   pdfium\pdfium.dll  present
+26.8.10 setup, pdfium/ already a dir  exit 0   pdfium\pdfium.dll  present, replaced
+```
+
+The failing leg is the **released** `tpdf_26.8.9_x64-setup.exe`, not a rebuild
+with the hook taken out: a rebuild would test the hook, and only the released
+binary tests the upgrade. It wrote every other file, registered itself in
+`HKCU\...\Uninstall`, created the shortcut and the file association, and
+returned **0** --- so the answer has to be read off the filesystem, never off the
+exit code. The last two legs are the hook's other branches, and they are what
+says the fix costs nothing on a machine that never ran the broken build.
+
+**Which mis-wirings are loud, measured rather than reasoned about.** The
+temptation was to write "an unwired hook is silent" from `!ifmacrodef` alone,
+and two thirds of that is wrong. A mistyped key is refused by the build script's
+schema. A path naming a file that is not there is refused by the bundler, though
+only when a bundle is built --- a CI leg, not a gate, and `npm run tauri build |
+tail` exits 0 there regardless, because a pipeline's status is the last
+command's. Only a file that exists and defines the macro under another name is
+swallowed. `the_windows_installer_clears_the_way_for_the_pdfium_directory`
+covers that case in seconds on every machine, with two mutations behind it.
+
+**What no check here can reach.** The test is a source-level assertion: it says
+the config names the file and the file says what it should, and it cannot say
+NSIS ran it or ran it early enough. The A/B is what says that, and it needs a
+Windows machine, two installers and a scratch directory --- so it lives in
+`BUILD.md`'s release checklist as a step, beside the bundle check it belongs
+with. Installing writes registry keys and a Start Menu shortcut on the machine
+running it, so that step also says which three keys to export first and how to
+put the machine back.
+
+**And it is dead code with an expiry condition, stated where it lives.** The
+hook does nothing on a machine that never ran 26.8.8 and nothing on a second
+run. Its own comments say when it can be deleted --- when no supported upgrade
+path starts at 26.8.8 --- and that the file and the `installerHooks` line go
+together.
+
 #### Ranked: the append's read-back parses in the coordinator, on the async runtime
 
 Found by step 6 of the release checklist while cutting `26.8.8`, by reading

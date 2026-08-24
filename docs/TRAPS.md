@@ -4731,6 +4731,81 @@ immediately fine. Worth knowing because the reflex on `os error 183` is to suspe
 a stale lock, and it is neither: it is the previous release's artifact sitting where the current
 one needs a directory.
 
+### A silent installer skips the file it cannot write, and exits 0
+
+The sequel to the entry above, and the half it did not predict: the fix for a packaging
+mistake does not reach a machine that still has the mistake on it.
+
+26.8.8 wrote the engine to a **file** named `pdfium`. 26.8.9 corrected the map and needs a
+**directory** of that name. The generated `installer.nsi` copies resources with
+
+```
+CreateDirectory "$INSTDIR\pdfium"
+File /a "/oname=pdfium\pdfium.dll" "...\vendor\pdfium\bin\pdfium.dll"
+```
+
+`CreateDirectory` against an existing file fails and says nothing --- it sets the error flag,
+which nothing reads --- so the `File` that follows reports
+`Error opening file for writing: ...\pdfium\pdfium.dll` and offers Abort, Retry, Ignore.
+
+**Retry cannot work, and that is not obvious from the box.** It re-attempts the `File`
+instruction, not the `CreateDirectory` that already failed, so the parent directory is still
+absent on every press. Deleting the stray file from outside does not help either, for the same
+reason: something has to create the directory, and nothing will. On 2026-08-24 the only way
+through was to create `$INSTDIR\pdfium` by hand from another process, mid-dialog.
+
+**Ignore is worse than Abort, and the silent install is Ignore.** Measured, A/B, both legs
+starting from a byte-identical planted stray:
+
+| leg | `pdfium` before | exit | `pdfium\pdfium.dll` after |
+|-----|-----------------|------|---------------------------|
+| shipped 26.8.9 setup, `/S` | 7,211,520-byte file | **0** | **absent** |
+| 26.8.10 setup with the hook, `/S` | 7,211,520-byte file | 0 | present, digest matches `vendor/` |
+| 26.8.10 setup, `/S`, empty directory | --- | 0 | present |
+| 26.8.10 setup, `/S`, `pdfium/` already a directory | older copy | 0 | present, replaced |
+
+The control leg wrote `tpdf.exe`, `uninstall.exe` and the notices, registered itself in
+`HKCU\...\Uninstall`, created the Start Menu shortcut and the file association, **and returned
+0** --- an install that looks complete from every angle a caller can see, with no PDF engine in
+it. `pdfium_library_dir` then misses both bundled candidates and the application opens no
+document at all, which is exactly the defect 26.8.9 was released to fix.
+
+That matters because of who runs the installer silently: `tauri-plugin-updater` does. A reader
+on 26.8.8 who accepted an in-app update got a success and a broken application, with no dialog
+anywhere.
+
+**The fix is `NSIS_HOOK_PREINSTALL`** (`src-tauri/installer-hooks.nsh`, wired through
+`bundle.windows.nsis.installerHooks`). Tauri inserts it immediately after `SetOutPath $INSTDIR`
+and before the resource copies, which is the one place a stray can be removed before
+`CreateDirectory` meets it.
+
+Three things worth carrying:
+
+- **Two of the three ways to mis-wire a hook are loud, and the third is not.** This bullet
+  first said all three were silent, which was reasoning from `!ifmacrodef` rather than
+  measuring; each was then tried. A **mistyped key** is refused by the build script's schema
+  (*"unknown field `installerHooksTypo`, expected one of ... `installerHooks`"*), so it never
+  reaches a test. A **path naming a file that is not there** is refused by the bundler
+  (*"failed to resolve `bundle > windows > nsis > installerHooks`"*) --- but only when a bundle
+  is built, which is a CI leg rather than a gate, and note `npm run tauri build | tail` still
+  exits 0 there, because a pipeline's status is the last command's. A **file that exists and
+  defines nothing**, or defines the macro under another name, is the one nothing catches: the
+  `!ifmacrodef` guard skips it, the bundle builds, the installer runs, and the step does not
+  happen. `the_windows_installer_clears_the_way_for_the_pdfium_directory` asserts the macro
+  and the `Delete` are in the file for exactly that case --- a source-level assertion, which
+  is why the A/B above exists as well.
+- **The control has to be the artifact that is actually out there.** The failing leg is the
+  released `tpdf_26.8.9_x64-setup.exe`, downloaded with `gh release download`, not a rebuild
+  with the hook removed. A rebuild would have tested the hook; only the released binary tests
+  the upgrade.
+- **A test that installs writes registry keys and shortcuts on the machine running it.** Three
+  keys here --- `Uninstall\tpdf`, `Software\Timo Stein\tpdf` and `Classes\.pdf`, the last of
+  which holds the *backup* of whatever handled PDFs before. Export all three with `reg export`
+  first, run the legs into scratch directories with `/S /D=<path>` (last argument, unquoted, no
+  spaces), then put the machine back by re-running the **shipped** installer into the real
+  location and diffing the exports. Restoring by re-running the new build would leave an
+  unreleased version installed.
+
 ### An interpolated status label is two columns narrower when it passes
 
 `backend-probe` and `worker-probe` printed their verdicts as `"[{}] {name:56} {}"` with `OK`
