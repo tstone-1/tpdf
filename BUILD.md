@@ -3919,6 +3919,58 @@ starts at 0 and increments within the month.
    The failing run before the fix is the negative control, and it is what makes the pass mean
    anything --- the same `.app`, the same command, the only difference being where the library
    sits. Keep both halves when repeating this.
+   **On Windows, verify the UPGRADE and not only the install --- with the released
+   installer as the failing leg.** A first install is the case every local build exercises
+   by accident; an upgrade is the one nobody sees until a reader has it. 26.8.9 could not
+   install over 26.8.8 at all (`docs/TRAPS.md`, *A silent installer skips the file it cannot
+   write, and exits 0*), and no check here could have said so, because every check started
+   from an empty directory.
+
+   The shape, and each leg takes about ten seconds:
+
+   ```
+   # The control is the artifact that is actually out there, not a rebuild.
+   gh release download v<previous> --repo tstone-1/tpdf --pattern '*_x64-setup.exe' --dir <scratch>
+
+   # Reproduce whatever the previous release leaves behind, in a scratch directory,
+   # then run BOTH installers over it with /S /D=<dir> -- last argument, unquoted, no spaces.
+   ```
+
+   Read the answer off the *filesystem* (is the payload where `pdfium_library_dir` looks?),
+   never off the exit code: the failing leg exits **0**, writes every other file, registers
+   itself and creates the shortcut. Silent mode turns the Abort/Retry/Ignore box into Ignore,
+   and Ignore reports success.
+
+   Measured 2026-08-24, planting 26.8.8's stray `pdfium` file in both legs:
+
+   ```
+   shipped 26.8.9 setup, /S      exit 0   pdfium\pdfium.dll  ABSENT
+   26.8.10 setup, /S             exit 0   pdfium\pdfium.dll  present, digest matches vendor/
+   26.8.10 setup, /S, clean dir  exit 0   pdfium\pdfium.dll  present
+   26.8.10 setup, /S, pdfium/    exit 0   pdfium\pdfium.dll  present, replaced
+   ```
+
+   The last two are the hook's other branches --- a first install and an ordinary upgrade ---
+   and they are what says the fix costs nothing on a machine that never ran the broken build.
+
+   **Installing writes to the machine you are testing on.** Three keys: `Uninstall\tpdf`,
+   `Software\Timo Stein\tpdf`, and `Classes\.pdf`, whose `..._backup` value holds whatever
+   handled PDFs before tpdf did. `reg export` all three first; afterwards put the machine
+   back by re-running the **shipped** installer into the real location and diffing the
+   exports, since re-running the new build would leave an unreleased version installed.
+
+   **If the release adds or changes an NSIS hook, prove it was wired.** A mistyped key and a
+   path naming a missing file are both refused --- by the build script's schema and by the
+   bundler --- but a file that exists and defines the macro under another name is skipped in
+   silence by the generated script's `!ifmacrodef` guard, and the bundle builds green:
+
+   ```
+   grep -n 'installer-hooks' src-tauri/target/release/nsis/x64/installer.nsi
+   ```
+
+   That is a source-level assertion and does not replace the A/B above; it is what tells you
+   *why* the A/B failed when it does.
+
 9. Commit as `Release vYY.M.MICRO: <summary>` and push it.
 
 10. **Rehearse on a throwaway tag, then tag for real.** This list ended at step 9 until

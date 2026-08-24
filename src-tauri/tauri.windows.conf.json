@@ -4,6 +4,11 @@
     "resources": {
       "../vendor/pdfium/bin/pdfium.dll": "pdfium/pdfium.dll",
       "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
     }
   }
 }
