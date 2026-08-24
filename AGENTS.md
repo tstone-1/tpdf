@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 468 entries
+The one thing this file does *not* carry in full is the trap list --- 469 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -1250,7 +1250,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 468 of them and the full text
+titles. Only the titles are here, because there are 469 of them and the full text
 was 93% of this file --- an instruction budget spent on the 460 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1591,6 +1591,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mock's default return value decides whether a mutation fails or hangs (`vi.fn()` resolves `undefined`, which is neither answer, so the loop spun until the runner died and the diagnosis read as broken vitest)
 - A check reported `[OK]` with the reason it should have failed printed beside it (the detail line was built from more state than the verdict read; the check's own name was the tell, and a control went red about the same event)
 - A check read the palette's rendered rows, which are capped at 64 (three commands fell off the bottom of a list and were reported as withheld from the reader; a bound a growing population approaches is a defect on a timer, and nothing distinguishes 63 from 5)
+- A correction that changed the direction of a movement that was never happening (the mutation edited `/Rect` while the ink comes from the quads, so neither direction could reach the control it named; it survived twice, and the control it exists to prove had therefore only ever passed)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

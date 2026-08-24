@@ -178,22 +178,53 @@ MUTATIONS = [
     Mutation(
         # Every annotation's rectangle padded 120 points down the page, which is
         # the shape of a real defect --- `docs/TRAPS.md` has an entry about a
-        # rectangle padded to make one refusal legal. Ink then lands outside the
-        # rectangle the mark was made from and reaches the bare band the
-        # untouched control reads, which is the one failure that makes every
-        # other reading in the phase meaningless: a difference between the two
-        # renders that is not about the marks at all.
+        # rectangle padded to make one refusal legal.
         #
-        # **Down the page, not up.** The first version of this mutation replaced
-        # the whole rectangle with the page and SURVIVED --- it reddened two
-        # other checks and not this one, because `bounds` works in the page's own
-        # space where y grows upward, so growing the box moved the ink *away*
-        # from the band below. The survivor was a statement about the mutation
-        # rather than about the control.
+        # **It names the coverage check, and twice it named the untouched control
+        # instead.** Both times the reasoning was that a padded rectangle puts
+        # ink where no mark was placed, and both times the mutation SURVIVED. It
+        # does not: `bounds` feeds `/Rect` and nothing else, while the ink comes
+        # from `appearance_stream`, which is built from the quads. So the box
+        # grows and the ink stays exactly where it was --- the bare band renders
+        # identically and the control is right not to fire. What moves is
+        # coverage, which read 83.0% on screen against 0.0% in the file the last
+        # time this survived, and that is the reading this now expects.
+        #
+        # The first version had padded *up* and was corrected to pad down, on the
+        # same wrong premise --- so the correction changed the direction of a
+        # movement that was never happening. Two wrong mechanisms for one
+        # mutation is why the entry below exists at all: the control it was
+        # written for is proved by `save: drop every mark's lower edge to the
+        # page origin`, which mutates the quads and therefore moves ink.
         "save: pad every mark's rectangle down the page",
         "src-tauri/src/save.rs",
         "                acc[1].min(q[1]),",
         "                acc[1].min(q[1]) - 120.0,",
+        "each mark covers as much of its rectangle in the file as on screen",
+        runner="viewer",
+    ),
+    Mutation(
+        # Every mark's lower edge lost to the page origin, which is the shape of
+        # a mapping that dropped its flip: the quad then runs from the bottom of
+        # the page up to wherever the mark really ends, so a highlight's wash
+        # covers everything beneath it --- including the eleventh band, which the
+        # phase leaves bare on purpose.
+        #
+        # **This is the mutation the untouched control needed, and it is aimed at
+        # `user_quads` for the reason the entry above records.** That function
+        # feeds `appearance_stream` *and* `mark_dictionary`, so mutating it moves
+        # the ink; `bounds` feeds only `/Rect`, so mutating that moves nothing a
+        # renderer draws. A control with nothing able to redden it is a control
+        # that has only ever passed, which is the whole subject of this harness.
+        #
+        # No magic constant, deliberately. The bare band's position is a fraction
+        # of the page, so any fixed offset is right for one page size --- 120
+        # points lands two bands down on A4 and somewhere else on anything else.
+        # Reaching the page origin is true at every size.
+        "save: drop every mark's lower edge to the page origin",
+        "src-tauri/src/save.rs",
+        "            [page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy]",
+        "            [page[0] + ox, 0.0, page[2] + ox, page[3] + oy]",
         "control: paper no mark was placed on renders identically",
         runner="viewer",
     ),

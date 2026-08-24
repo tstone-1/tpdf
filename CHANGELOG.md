@@ -19,6 +19,22 @@ have the binary.)
 
 ## [26.8.9] - Unreleased
 
+### Fixed: a control that could not be broken by the one mutation aimed at it
+
+`control: paper no mark was placed on renders identically` is what makes every
+coverage reading in the mark-agreement phase mean anything: it reads a band of
+the page no mark was placed on and requires it to be identical, so that a render
+differing everywhere cannot pass as agreement. One mutation named it, and that
+mutation could not redden it --- it padded `/Rect`, while the ink is drawn from
+the quads, so the box moved and no pixel did. It had survived twice, and the
+correction between the two attempts changed the direction of a movement that was
+never happening.
+
+A second mutation now drops every quad's lower edge to the page origin, which
+moves the ink with the box and reddens the control --- measured, `-> 2 red`. The
+first is re-aimed at the check it does redden, the coverage reading that had been
+reporting 83.0% on screen against 0.0% in the file all along.
+
 ### Added: a gate that refuses a front-end mutation which cannot go red
 
 `mutate_frontend.py` runs vitest over a hand-kept `TEST_FILES`, and a suite

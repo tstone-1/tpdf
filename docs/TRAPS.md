@@ -13943,3 +13943,64 @@ it will read.
 
 Paid for on 2026-08-24, while automating the check that would have caught the
 twelve `TEST_FILES` omissions before their runs.
+
+### A correction that changed the direction of a movement that was never happening
+
+`save: pad every mark's rectangle down the page` exists to prove that
+`control: paper no mark was placed on renders identically` can go red. It pads
+every annotation's `/Rect` 120 points toward the foot of the page, so that ink
+lands in the eleventh band the phase deliberately leaves bare.
+
+It has now SURVIVED twice, and the second time is the interesting one.
+
+**The first survival was diagnosed and corrected, plausibly and wrongly.** That
+version replaced the whole rectangle with the page box, and the note written at
+the time reads: *"`bounds` works in the page's own space where y grows upward, so
+growing the box moved the ink away from the band below."* Every clause of that is
+true about coordinate spaces. The correction --- pad *down* instead of up ---
+followed from it, and the mutation survived again.
+
+**Neither direction could ever have worked, because the edit is on the wrong
+side of a boundary.** `bounds()` feeds `/Rect` and nothing else. The ink comes
+from `appearance_stream(doc, mark, &quads, &strokes, rect)`, which draws from the
+**quads**. So padding the rectangle grows the box and leaves every drawn pixel
+exactly where it was: the bare band renders identically, and the control is right
+not to fire. The correction changed the direction of a movement that was not
+happening in either direction.
+
+**The evidence was in the harness's own output both times.** It prints the checks
+that *did* go red, and one of them read `83.0% on screen against 0.0% in the file
+(207.4x)` --- a mark whose ink covers none of its own rectangle, which is a
+one-line description of "the rectangle moved and the ink did not". It was read as
+a detail of a failing mutation rather than as the diagnosis, because attention
+was on the check that stayed green.
+
+**What it cost.** Exactly one mutation named that control, and it could not redden
+it. So `control: paper no mark was placed on renders identically` --- the control
+that makes every coverage reading in the phase meaningful, by refusing a render
+that differs everywhere --- had only ever passed, for as long as it has existed.
+A control with nothing able to break it is the exact thing this harness is for.
+
+**The fix, and why it carries no constant.** A second mutation aimed at
+`user_quads`, which feeds the appearance stream *and* the dictionary, so the ink
+moves with the box: every quad's lower edge dropped to the page origin, which is
+the shape of a mapping that lost its flip. Not an offset --- the bare band's
+position is a *fraction* of the page, so 120 points lands two bands down on A4 and
+somewhere else on anything taller. Reaching the origin is true at every page size.
+Measured red, not argued: `-> 2 red`, the named control among them.
+
+**The question to ask of any surviving mutation**, and it is not "is my
+assertion strong enough": **which output of the code am I actually on?** A
+function that fills a metadata field and a function that produces the drawn
+pixels are different sides of a boundary, and a check that reads pixels can only
+see the second. The trap index already carries *A mutation that survives may be a
+variant, not a gap* and *A mutation that survived, a comment that claimed a
+behaviour, and no test to add*; this is the third shape, where the mutation and
+the check were never connected at all.
+
+And the corollary that made this expensive: **a correction derived from the same
+wrong premise inherits it.** Up-to-down was a real change to a real quantity that
+nothing downstream reads, and it looked like progress because the mutation was
+different afterwards.
+
+Paid for on 2026-08-24, in the window-mutation pass after `26.8.8`.
