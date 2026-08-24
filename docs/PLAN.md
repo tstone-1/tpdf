@@ -9170,31 +9170,125 @@ to 271/272 with 71** --- twelve checks became applicable because the page finall
 has its own shape. And `merge-probe` went from 27/27 with 3 skipped to **30/30
 with none**: the skip existed because PDFium mis-read the source page.
 
-##### Ranked: the overlay stops drawing a text box well before the file does
+##### A mark on a turned page is drawn the reader's way --- done 2026-08-24
 
-The one check that keeps `inherited.pdf` out of the window sweep, and it is not
-about geometry.
+The ranked entry this replaces asked one question and the measurement answered a
+different, larger one. It read: *a text box too short for its words shows nothing
+while the document is open and shows them after saving*, ranked because the two
+renderers disagreeing is a defect whichever of them is right.
 
-`viewer_check.py`'s agree phase lays ten synthetic marks in bands down the page,
-so their height scales with the paper. A text box's *type* does not --- 11 points
-by design, since nothing about how large a reader dragged the rectangle says how
-large they want the words. On this fixture's 400-point pages, the shortest in the
-corpus, the synthetic box comes out **8.5 pt** against the 17.2 one line needs:
-the overlay draws nothing and the saved file draws 11%, so the comparison reports
-27x against a 4x bound.
+**That claim is false, and it was never about the box being short.** Measured
+first, as the entry asked: a text box was written at eighteen heights on
+`text-base14`, `columns` and `rotated`, and the file draws nothing below **13.0
+points** and one line at and above it --- the same rule `viewer.ts` applies, to
+the point. The two renderers had agreed all along.
 
-**Not a cliff, which is what rules out a precondition guard.** `columns`
-(16.8 pt) and `rotated-90` (13.0 pt) are also under a line and both pass, so the
-two renderers degrade together and only come apart somewhere below 13. A guard
-keyed on "one line of type" would skip two corpora that give real coverage
-today; one keyed at 8.5 would be tuned to the symptom.
+What the fixture that produced the red check has, and the three above do not, is
+`/Rotate 90`.
 
-What is unresolved is the behaviour underneath, and it is reader-visible if it is
-real: a text box too short for its words shows nothing while the document is open
-and shows them after saving. Which of the two is right is a decision --- clipping
-to the rectangle is defensible and so is letting the words overflow --- but the
-two renderers disagreeing is not. Measuring where they part company is a morning
-with `crop-probe`'s shape, and it wants doing before either is called correct.
+###### What was actually wrong
+
+`save::user_quads` maps a mark out of the reader's frame and into the page's own.
+That is right for the rectangle --- a set of points --- and wrong for everything
+drawn inside it that has a direction. A box the reader dragged 300 wide and 40
+tall arrives 40 wide and 300 tall, and four of the seven kinds read those sides
+as the reader's:
+
+| kind | upright | turned |
+|------|---------|--------|
+| underline | a band at y 0.93..0.99 | a rule down the left edge, x 0.00..0.07 |
+| strikeout | y 0.46..0.53 | a vertical line, x 0.46..0.53 |
+| squiggly | y 0.81..0.99 | x 0.00..0.15 |
+| text box | x 0.01..0.34 | a column at x 0.82..0.98 |
+| stamp | 25,011 px | 11,024 px, sideways |
+| highlight | the whole box | the whole box |
+| box | its four edges | its four edges |
+
+`/Rotate 90` is what a scanner writes, so this is where a reader meets it: a
+scanned contract, underlined, comes back with a vertical line down the left of
+the words. The text box fails twice over --- `textbox::wrap` was handed 40 points
+where the reader had dragged 300, so the model made **one** line of four words
+and the writer made **eighteen**, two glyphs across, each drawn along the page's
+own axis. Its `/BBox` came out `[80 72 84 528]`.
+
+###### The repair
+
+`save::Upright` is the mark's box as the reader saw it, plus the map back into
+the page: two sides, a corner and two directions. `Paint::Line`, `Paint::Wave`,
+`Paint::Text` and `Paint::Stamp` all lay out in it; `Paint::Wash`,
+`Paint::Outline`, `Paint::Ellipse` and `Paint::Path` are untouched, the first
+three because their shape is symmetric under a quarter turn and the fourth
+because `user_strokes` already maps every point.
+
+Type is set on a `Tm` rather than the `Td` chain it replaced, and that is forced
+rather than tidier: `Td` can only move an origin, so it cannot say which way the
+glyphs face, and a text box wrapped to the right width would still come out
+sideways. It also removes the relative-offset trap the old comment there warned
+about.
+
+`Upright` is a free function's worth of arithmetic in a struct rather than a
+branch beside the four arms, so the rule has somewhere to be tested; it is
+asserted against `text::from_device` at all four quarters rather than derived
+beside it, which is the drift the trap index warns about.
+
+###### Why nothing caught it
+
+The two kinds that survived are exactly the two whose shape is symmetric under a
+quarter turn. That is not a coincidence, it is the reason:
+
+- the window sweep's agreement check compares **coverage fractions**, and a band
+  turned through a right angle covers the same fraction of the same rectangle;
+- `annot-probe --mode rule` and `--mode wave` **refuse a rotated page outright**,
+  in their own words, because the strip they measure is not horizontal there.
+
+So every instrument aimed at these marks was either blind to rotation or excused
+from it. The one check that did fire was the text box's, at 27x, on the corpus's
+only rotated fixture --- and the diagnosis written down at the time named that
+fixture's most conspicuous property, its short pages, which was not the cause.
+
+###### Evidence
+
+`examples/turned_probe.rs` places one mark of each kind on each of
+`testdata/rotated.pdf`'s four pages, which its own generator says *"carry
+identical content and differ only in /Rotate"*. Page 0's reading is the
+reference and the other three must match it, so nothing is predicted and no
+expected number is written down. **29/29**, with four mutations behind it --- and
+it is the only check on the squiggle anywhere, that being a stroked path with no
+operand a source-level assertion can read.
+
+Five unit tests and seven mutations cover the rest. One of them was written
+wrong and the harness said so: the first assertion for the rule read "long the
+way the words run and thin across them", a proportion measured along the axis the
+defect is on, and a mutation taking the *thickness* from the page's box survived
+it --- a rule 7.5 times too thick is still thinner than the box. What replaced it
+is the differential: the same box on an upright page and a turned one, read back
+through `text::to_device` and compared as fractions of the box, all four edges,
+with a control that the band is thin in the first place.
+
+###### And `inherited.pdf` is a window corpus now
+
+It had been excluded because its 400-point pages put the agree phase's synthetic
+text box at 8.5 pt against the 13.0 a first baseline needs, and the two renderers
+then disagreed 27x. They agree now --- both draw nothing --- so the phase leaves
+the text box out on a page too short to hold a line, with the measurement in its
+detail line, and the corpus runs **272/272**.
+
+The exclusion was argued against in this document on the grounds that it would
+skip two corpora giving real coverage. That was reasoning from the wrong
+diagnosis: keyed at one line of type it skips only `inherited`. The band is
+`height_pt * 0.78 / 11 * 0.3`, so `columns` gives **17.91** at 842 points,
+`rotated-90` **13.02** at 612, and `inherited` **8.51** at 400.
+
+(This document said `columns` gives 16.8. It does not, and the number had been
+carried from entry to entry without anyone deriving it. The three above are the
+formula applied to the three fixtures' displayed heights, and 8.51 is what the
+harness prints for `inherited` in its own detail line.)
+
+**`rotated-90` has been passing by two hundredths of a point all along**, which
+is the other thing worth recording: 13.02 against the 13.00 a first baseline
+needs. Any change to `TEXT_SIZE`, `TEXT_INSET` or the band fractions flips it
+from a comparison to a skip. The exclusion makes that margin visible instead of
+leaving it to a rounding.
 
 ##### Not done: inserting pages into the open document
 

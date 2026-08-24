@@ -9601,22 +9601,48 @@ async function markAgreementChecks(
     `${(spare.covered * 100).toFixed(2)}% of the bare band moved`,
   );
 
-  const readings = placed.map((mark, at) => ({
-    kind: mark.kind,
-    file: inFile(mark.quads),
-    // The overlay is read only where the model also took the mark, so a
-    // coverage comparison is always between two renderings of one mark rather
-    // than between a drawing and an absence.
-    screen: ids[at] === undefined ? null : onScreen(mark.id),
-  }));
+  // **A text box's type is a fixed 11 points and these bands scale with the
+  // paper**, so on a short page the phase's own mark has no room for a line and
+  // both renderers correctly draw nothing. That is agreement, not a
+  // disagreement, and it is excluded here rather than reported: `changed` would
+  // otherwise call it a kind that put no ink in the file, which is true and is
+  // a fact about this harness's rectangle.
+  //
+  // The band is `height_pt * 0.78 / 11 * 0.3`, so across the corpus it is 17.91
+  // on `columns` at 842 points, **13.02** on `rotated-90` at 612, and 8.51 on
+  // `inherited` at 400 --- against the 13.00 a first baseline needs. So this is
+  // not a guard for one odd fixture: `rotated-90` has been passing by two
+  // hundredths of a point, and any change to `TEXT_SIZE`, `TEXT_INSET` or the
+  // band fractions flips it. This makes that margin visible rather than leaving
+  // it to a rounding.
+  //
+  // The check *names* are untouched, which matters: `viewer_sweep.py` diffs
+  // them across corpora as sets, and a phase that dropped a name on a short
+  // page would read as a check that had stopped existing.
+  const typeFits = tall >= TEXT_INSET + TEXT_SIZE;
+  const readings = placed
+    .map((mark, at) => ({
+      kind: mark.kind,
+      file: inFile(mark.quads),
+      // The overlay is read only where the model also took the mark, so a
+      // coverage comparison is always between two renderings of one mark rather
+      // than between a drawing and an absence.
+      screen: ids[at] === undefined ? null : onScreen(mark.id),
+    }))
+    .filter((read) => typeFits || read.kind !== "textbox");
+  const shortPage = typeFits
+    ? ""
+    : `; the text box is left out, its band being ${tall.toFixed(1)} pt against the ${(
+        TEXT_INSET + TEXT_SIZE
+      ).toFixed(1)} one baseline needs`;
   const measured = readings.filter((r) => r.screen !== null);
   const somethingMoved = readings.filter((r) => r.file.covered > 0.01);
   check(
     AGREE_CHECK.changed,
     somethingMoved.length === readings.length,
     somethingMoved.length === readings.length
-      ? `all ${readings.length} kinds put ink in the file`
-      : `only ${somethingMoved.map((r) => r.kind).join(", ") || "none"} did`,
+      ? `all ${readings.length} kinds put ink in the file${shortPage}`
+      : `only ${somethingMoved.map((r) => r.kind).join(", ") || "none"} did${shortPage}`,
   );
 
   if (measured.length === 0) {

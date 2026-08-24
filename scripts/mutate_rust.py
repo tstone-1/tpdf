@@ -2638,6 +2638,78 @@ MUTATIONS = [
         "        let (width, height) = (self.width, self.height);",
         "the_pages_own_box_is_the_same_rectangle_at_every_turn",
     ),
+    # --------------------------------------------------------------
+    # A mark on a page the document says is turned
+    # --------------------------------------------------------------
+    Mutation(
+        # Stop swapping the box's sides at an odd quarter. This is the defect
+        # itself, one level up from where it shipped: `wrap` is then handed the
+        # box's height, which is what broke four words into eighteen lines.
+        "turned marks: the reader's box keeps the page's own sides",
+        "src/save.rs",
+        "            1 => Self {\n                width: h,\n                height: w,\n                origin: (quad[0], quad[1]),",
+        "            1 => Self {\n                width: w,\n                height: h,\n                origin: (quad[0], quad[1]),",
+        "an_upright_box_is_the_rectangle_the_reader_dragged",
+    ),
+    Mutation(
+        # Anchor the reader's top-left at the wrong corner of the page-space
+        # quad. Every size stays right and every mark moves by its own width,
+        # which no size assertion can see -- the reason that test reads the
+        # corners as well.
+        "turned marks: the reader's corner is the page's",
+        "src/save.rs",
+        "                origin: (quad[0], quad[1]),\n                right: (0.0, 1.0),",
+        "                origin: (quad[0], quad[3]),\n                right: (0.0, 1.0),",
+        "an_upright_box_is_the_rectangle_the_reader_dragged",
+    ),
+    Mutation(
+        # Wrap to the page's width again, which is what shipped.
+        "turned marks: a text box wraps to the page's width",
+        "src/save.rs",
+        "                let width = seen.width - textbox::INSET * 2.0;",
+        "                let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
+        "a_text_box_wraps_to_the_width_the_reader_dragged_however_the_page_is_turned",
+    ),
+    Mutation(
+        # Keep the right lines and set them along the page's axis. The other
+        # half of the same defect, and the half a line count cannot reach.
+        "turned marks: type is set on the identity whatever the turn",
+        "src/save.rs",
+        '            "{} {} {} {} {x} {y} Tm",\n            flat(self.right.0),\n            flat(self.right.1),\n            flat(-self.down.0),\n            flat(-self.down.1)',
+        '            "{} {} {} {} {x} {y} Tm",\n            flat(1.0),\n            flat(0.0),\n            flat(0.0),\n            flat(1.0)',
+        "type_runs_the_readers_way_on_a_turned_page",
+    ),
+    Mutation(
+        # Stop normalising `-0.0`. The stream is still correct arithmetic and
+        # the identity now prints as `1 0 -0 1`, which is the operator a reader
+        # of the file has to squint at -- caught by the upright control rather
+        # than by the turned assertion, which is why that control reads the
+        # coefficients rather than merely counting them.
+        "turned marks: a negated zero reaches the content stream",
+        "src/save.rs",
+        "        let flat = |value: f64| if value == 0.0 { 0.0 } else { value };",
+        "        let flat = |value: f64| value;",
+        "type_runs_the_readers_way_on_a_turned_page",
+    ),
+    Mutation(
+        # Put the rule back on the page's bottom edge. On a turned page that is
+        # the left edge of the words.
+        "turned marks: a rule sits on the page's bottom edge",
+        "src/save.rs",
+        "                let (base, band) = line_rect(mark.kind, 0.0, seen.height);\n                let [x, y, width, height] = seen.rect(",
+        "                let (base, band) = line_rect(mark.kind, 0.0, quad[3] - quad[1]);\n                let [x, y, width, height] = seen.rect(",
+        "a_rule_sits_under_the_words_however_the_page_is_turned",
+    ),
+    Mutation(
+        # Size a stamp's word from the page's box. The word is then set for a
+        # rectangle of the other shape, which is a size error rather than a
+        # placement one.
+        "turned marks: a stamp is sized by the page's box",
+        "src/save.rs",
+        "                let inner_w = seen.width - STAMP_INSET * 2.0;\n                let inner_h = seen.height - STAMP_INSET * 2.0;",
+        "                let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;\n                let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;",
+        "a_stamps_word_is_sized_by_the_box_the_reader_dragged",
+    ),
 ]
 
 #: libtest prints `test <name> ... FAILED` per failure and a `test result:` line.
