@@ -1756,6 +1756,17 @@ which is what makes it evidence rather than a milestone.
     its children's pipes and re-emitting what arrives — a change to the boundary rather than
     to the logging, and still future work. A crash of the coordinator itself logs nothing
     either, by construction: the process that would write the line is the one that died.
+
+    **One class of them stopped evaporating on 2026-08-24, and by a different mechanism.** A
+    worker that cannot load PDFium at all used to return `Err` and exit 1, so the only thing
+    that reached a reader was the coordinator's epitaph --- `worker stopped answering (exited
+    with 1 (0x00000001))` --- for every document, by every route. It now answers requests with
+    the reason instead, over the reply pipe the protocol already has, which is not a logging
+    channel and needs no writable path. The coordinator's open path also notes the failure
+    through `diag::note`, which it did not before: a session in which nothing could be opened
+    left an empty log, byte-identical to a session with nothing wrong. What is unchanged is
+    the general case above --- a worker that *crashes*, or dies after the document is open,
+    still says nothing a reader can send back.
 13. **`save_copy` writes a PDF anywhere the reader can write** (§T6.1), added 2026-08-16 ---
     the first command on this surface that creates a file, and its authority is the app
     process's rather than a panel's. The path comes from the frontend, so a native save panel

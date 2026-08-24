@@ -17,7 +17,40 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.9] - Unreleased
+## [26.8.9] - 2026-08-24
+
+### Fixed: the installed Windows build could not open any document
+
+The bundler shipped PDFium under the wrong name. `tauri.windows.conf.json` mapped
+`vendor/pdfium/bin/pdfium.dll` to `"pdfium/"`, and a trailing slash there is a
+**rename**, not a directory --- so the install directory held one file called
+`pdfium`, with no extension, and `pdfium_library_dir` found no `pdfium.dll` in
+either place it looks. The worker's bind failed, the worker exited 1, and every
+document --- by every route --- reported `worker stopped answering (exited with 1
+(0x00000001))`.
+
+It was invisible from this repository because the first place the app looks is the
+dev tree, baked in at compile time: an installer built on the development machine
+finds the repository's own library and works, while the released binary carries the
+CI runner's path, which exists on no machine that installs it. The macOS half of
+the same map had been fixed on 2026-07-31 and the Windows half deliberately left
+alone, on a prediction that Windows survived it. It does not.
+
+Three changes, and only the first is the bug:
+
+- The Windows map names the file, exactly as the macOS one does.
+- A test pins both maps against the name the app looks for, reading both configs
+  from whichever host runs --- a Mac never parses the Windows config, which is how
+  one twin kept a bug the other had fixed. Proved by mutation in both directions.
+- A worker that cannot load PDFium now **answers** requests with a sentence a
+  reader can act on instead of exiting. Its own message goes to stderr, which a
+  GUI process does not have, so the exit code was all anybody could see. The open
+  path also records the failure in the diagnostics log, which until now stayed
+  empty through a session in which nothing could be opened --- indistinguishable
+  from a session with nothing wrong.
+
+Anyone already on 26.8.8 can unstick it without waiting for a release: copy
+`pdfium` to `pdfium.dll` beside `tpdf.exe` in the install directory and restart.
 
 ### Fixed: a control that could not be broken by the one mutation aimed at it
 

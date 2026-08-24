@@ -1606,6 +1606,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A refusal the reader needs, reported on a channel that does not exist (the four good messages existed, were correct, and reached nobody; the branch that would have carried them was unreachable, and it was never a Windows defect)
 - Three ways to look for a macOS recent-documents list, and all three say nothing is there (one real absence, one hung tool, and one permission error that `2>/dev/null` turned into `total 0` --- and the wrong conclusion they supported was the MODEST one)
 - Moving a binary out of the installer moves it out of the gate that links it
+- The same trailing slash on the other platform, left there by a prediction that it was survivable (the shipped 26.8.8 could open no document at all on Windows; a locally built installer is rescued by the dev tree baked in at compile time, and a CI-built one carries the runner's path)
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it (15/15 green for sixteen commits while an example did not compile; one type error reads as four broken gates)
 - A gate that refuses on a precondition of running is red on every machine that is not running (the gate demanded fixtures the repository had already written down as deliberately absent --- and again in three unit tests, unpushed, where `examined > 0` would have reddened CI the day the signature work landed; ask what a guard says on the machine with the fewest inputs)

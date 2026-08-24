@@ -1472,13 +1472,23 @@ impl Engine for Workers {
         let (response, killed) = self.watched(&mut worker, |worker| {
             worker.call(&Request::Open { lazy_geometry })
         });
-        let response = response.map_err(|e| {
-            if killed {
-                format!("{e} --- the document did not open within the deadline")
-            } else {
-                e
+        let response = match response {
+            Ok(response) => response,
+            Err(e) => {
+                let e = if killed {
+                    format!("{e} --- the document did not open within the deadline")
+                } else {
+                    e
+                };
+                // Said out loud, because this is the failure a reader reports and
+                // the worker's own account of it goes to a stderr a GUI process
+                // does not have. Until this line the log of a session in which no
+                // document could be opened at all was empty --- which is what a
+                // session with nothing wrong looks like, and it cost a diagnosis.
+                crate::diag::note(&format!("[render] opening {}: {e}", path.display()));
+                return Err(e.into());
             }
-        })?;
+        };
         if !response.ok {
             return Err(refusal_of(response));
         }
