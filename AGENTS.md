@@ -1522,6 +1522,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A snapshot taken after the first mutation restores the mutation, and verifies itself clean
 - A `|` in the data split my own mutation in half, and the run reported a pass (a fourth mechanism for a mutation that never landed --- the delimiter inside the payload, which quoting cannot fix)
 - Three near-copies of a command made an existing mutation's anchor ambiguous (a gate written for code that is gone, firing for code that was duplicated --- and the anchor is the lesser half of the fix)
+- The mutation that proves a guard is the one that performs the write it prevents (the forbidden destination was a shared fixture, so deleting the guard merged four pages into `testdata/links.pdf`, twice; the harness reported the mutation caught and the suite stayed green, because it derives what it expects from the file)
 - `--only "text: "` runs every `context:` mutation too (a substring filter, and two false diagnoses from harnesses overlapping each other and a test run)
 - A rewritten line leaves a mutation aimed at nothing, and only the harness says so
 - A stream split done for the failing direction leaves the passing one where it was

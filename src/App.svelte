@@ -30,6 +30,7 @@
   } from "./lib/markcolors";
   import {
     afterCopy,
+    afterMerge,
     afterFailedSave,
     beforeReload,
     type Offer,
@@ -335,6 +336,7 @@
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
     extractPages: (slots) => void extractPages(slots),
+    mergeDocuments: () => void mergeDocuments(),
     showProperties: () => void showProperties(),
   };
 
@@ -921,7 +923,58 @@
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
       if (!chosen) return;
-      await edits.extractPages(openPathName, chosen, slots);
+      // The same report `saveCopy` gives, and it was missing until 2026-08-24
+      // while `lib.rs`'s comment on `extract_pages` said "the reader is told the
+      // same way". An extract from a file that changed underneath is built from
+      // the newer version exactly as a copy is; saying nothing left that to be
+      // discovered.
+      const said = afterCopy(
+        await edits.extractPages(openPathName, chosen, slots),
+      );
+      if (said) say(said);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /**
+   * Combines this document with others into a new file.
+   *
+   * Two dialogs, in this order: what to merge in, then where to write it. The
+   * order is the reader's sentence rather than a convenience --- the default
+   * name offered by the second one could depend on what was picked in the first,
+   * and asking for a destination before knowing what goes in it is a question
+   * out of order.
+   *
+   * **Nothing happens to the open document**, which is why there is no
+   * `applyEdit` here and no state to adopt. It is `extractPages`' shape: a read
+   * of the working document, producing a file somewhere else.
+   *
+   * A cancelled dialog returns without a word, at either step. `openDialog` with
+   * `multiple` answers an array, a bare string or `null` depending on the
+   * platform and on what was chosen, so all three are handled rather than the
+   * one this machine happens to give.
+   */
+  async function mergeDocuments(): Promise<void> {
+    if (!edits || !openPathName) return;
+    try {
+      const picked = await openDialog({
+        multiple: true,
+        directory: false,
+        title: "Choose documents to merge into this one",
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      const others =
+        typeof picked === "string" ? [picked] : (picked ?? []);
+      if (others.length === 0) return;
+      const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+      const chosen = await saveDialog({
+        title: "Save the merged document",
+        defaultPath: `${suggested} merged.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!chosen) return;
+      say(afterMerge(await edits.mergeDocuments(openPathName, chosen, others)));
     } catch (e) {
       say(String(e));
     }

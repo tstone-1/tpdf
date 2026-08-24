@@ -1798,7 +1798,7 @@ which is what makes it evidence rather than a milestone.
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
 
-17. **A rewriting save, Save a copy and Extract parse the document inside the coordinator**
+17. **A rewriting save, Save a copy, Extract and Merge parse documents inside the coordinator**
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
     day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).
@@ -1829,6 +1829,22 @@ which is what makes it evidence rather than a milestone.
     The general shape is the one this entry already records --- **a mitigation that moved
     half a path reads exactly like one that moved the path**, and the half that stayed is
     the one nobody writes down.
+
+    ⚠ **Merge documents widens this, on purpose, and by a different axis: it parses files
+    the reader chose that tpdf never opened.** Added 2026-08-24. Every other writer on this
+    list reads the *open* document --- one file, already parsed by a worker, already
+    rendered on screen. `save::write_merged` loads each incoming file with `lopdf` in the
+    coordinator, before anything about it is known, so a merge of four documents is four
+    coordinator-side parses of bytes the application has never seen. Each is bounded by the
+    same `MAX_DECODE`, the graph walk in `merge.rs` uses `sweep::MAX_NESTING`, and the whole
+    command is on the blocking pool --- so what it adds is exposure to more attacker-chosen
+    input on the existing path, not a new kind of access.
+
+    It is worth stating separately because the mitigation that would close it is a
+    *different* one. The append's fix is an output channel; a merge's inputs could go
+    through a worker on the way in, since what has to come back per file is a page count and
+    an object graph --- which is the whole file, so it has the rewrite's problem after all.
+    Nothing here is closed; this is the disclosure.
 
     Decompression is bounded at
     `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather

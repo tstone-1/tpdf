@@ -8965,6 +8965,142 @@ and would need a journal command that groups; and reaching a comment the file
 arrived with, which is deliberate --- the model has no command that names one,
 which is the same reason editing one is still on the *Not built yet* list.
 
+#### Merging documents --- done 2026-08-24
+
+The first write path that reads more than one file, and the first that produces a
+page tpdf did not open. Everything before it --- rotate, delete, move, extract,
+crop --- is a subset or a permutation of **one** object graph, so `save.rs`'s whole
+vocabulary is positions into a single document and `pagetree.rs`'s is surgery
+within one tree. A merge has two graphs and has to make them one.
+
+##### It is not an edit, which is what keeps it small
+
+The working document is untouched: nothing is journalled, `dirty` does not move,
+and undo has nothing to undo. That is `plan_subset`'s argument for extract
+arriving at the other end of the same path --- extract reads part of one file,
+merge reads all of several, and neither changes what is on screen.
+
+So the model did not have to learn about foreign pages, and that is the whole
+reason this increment is one module rather than a rewrite. `Page::source` still
+names a baseline page of the one open document, because no page of another file
+is ever in the working document. **Insert is the increment where that stops being
+true**, and it is the harder half: a reader who inserts pages expects to see them,
+turn them, undo them and save. See below.
+
+##### The open document goes in edited, the others go in as they are
+
+`write_merged` builds the base through `planned_bytes` --- the same function
+`write_copy` and the print path use --- so the reader's turns, crops, deletions,
+reordering and marks are all in the merged file. The others are not open, so
+there is no working document for them to have and nothing to apply.
+
+That asymmetry is asserted rather than described: `the_open_documents_edits_reach_the_merge`
+uses a plan that keeps two of `rotated.pdf`'s four pages and turns one of them, so
+a merge that read the file instead of the plan comes out two pages longer. The
+mutation aimed at it is the whole shape of the mistake --- `Document::load_mem_with_options(&base.bytes, ..)`
+becomes `Document::load_with_options(source, ..)`, which compiles, and which every
+other check in the file is blind to because a plan that keeps every page agrees
+with the file about the count.
+
+##### Three ways the obvious version is silently wrong
+
+`merge.rs`'s module note has these in full; they are worth naming here because
+each fails by producing a plausible document rather than by failing.
+
+- **Object numbers collide.** Both documents number from 1. A reference that is
+  not shifted with its object does not dangle --- it *resolves*, to whatever the
+  destination happens to hold at that number, which is a page's font becoming
+  another document's content stream. The shift is read off the objects rather
+  than from `max_id`, because `lopdf` takes `max_id` from the cross-reference
+  table's `/Size` and a producer is free to understate it.
+- **A page inherits from the node it hangs under.** `reorder_pages` states this
+  for a permutation within one file; across files it is worse, because the two
+  trees are unrelated and no value the destination's root carries could happen to
+  be right. `pagetree::detached_page` is the fix and it materialises
+  unconditionally, where `reorder_pages` compares against the new root and leaves
+  the key off when they agree --- that comparison is between two unrelated trees
+  here, and agreeing would be a coincidence that stops holding the moment either
+  is edited.
+- **`/Parent` points up.** A walk that collects what a page needs by following
+  its references reaches the tree above it, then the catalog, then every other
+  page, the outline and the form fields --- the whole file, for any page of it.
+  The walk starts from page dictionaries whose `/Parent` has already been
+  removed, and that substitution *is* the bound: the only way out of an orphaned
+  page is downward.
+
+##### What a merge loses, and why that is the boundary rather than a to-do
+
+The incoming documents' outlines, named destinations, `/AcroForm`, attachments
+and metadata do not come across. The destination's outline survives, because its
+destinations name its own page objects and those are untouched.
+
+**Intra-document links do survive**, which is the part that is not obvious: a
+`/Link` whose `/Dest` names a page object keeps working, because every page of
+the incoming file comes across and the reference is shifted with everything else.
+What breaks is a destination reached *by name* --- and that is the honest edge of
+what "merge" can mean without a name-resolution pass. An outline entry, a link
+and a named destination each address a page through one of four shapes
+(`links.rs`'s resolver enumerates them), two files are free to use the same name
+for different pages, and reconciling that is its own piece of work.
+`pagetree::drop_outline` takes the same position for a deletion.
+
+The README says so in the same words a reader would use, rather than leaving it
+to be discovered.
+
+##### The report is not silent, and that is a deliberate break with the copy path
+
+`afterCopy` returns `null` for an ordinary copy: the file appearing where the
+reader put it is the acknowledgement. `afterMerge` always speaks. A copy and an
+extract produce what the reader named --- a file here, these three pages --- and a
+merge produces however many pages the documents it was given happened to hold, so
+a reader who picked four files cannot tell from the destination that all four
+were read without opening it and counting.
+
+That is also why `save::Merged` carries `pages` and `files` at all. A field
+describing what the caller could not otherwise check, with no caller reading it,
+is the shape `docs/TRAPS.md` has an entry about.
+
+##### One defect found on the way past, in code that shipped weeks ago
+
+`extract_pages`' doc comment in `lib.rs` said an extract from a changed source
+tells the reader "the same way" a copy does. It did not: `App.svelte` awaited
+`edits.extractPages(...)` and discarded the answer, so an extract built from a
+newer file said nothing at all. One line, and it is `afterCopy`'s whole reason
+for existing. The message's first noun moved from "The copy" to "The file" in the
+same edit --- three commands reach it now, and a sentence naming one caller is how
+that stays wrong when somebody fixes it.
+
+##### Evidence
+
+- 11 unit tests over `merge::append`, all six mutations of the importer caught by
+  the test declared for them --- including the two whose *predicted* red set was
+  wrong, which is how `an_incoming_page_hangs_off_the_destinations_root` was found
+  to pass vacuously: with the graft deleted the tree yields one page, whose parent
+  is already the root, so the loop had nothing to look at. It asserts the page
+  count first now.
+- 5 tests over `write_merged` and 5 mutations, each caught by its own test:
+  reading the source instead of the plan, accepting an encrypted input, merging
+  nothing, guarding the destination against the source alone, and reporting the
+  plan's page count as the merge's.
+- 4 tests over `afterMerge` and the command's registration, 4 mutations, each
+  caught.
+- The `anchors` gate caught the one real hazard in the diff before any of that
+  ran: `write_merged` had copied `write_copy`'s `if same_file(source, out) {`
+  verbatim, which made the existing mutation aimed at that line ambiguous --- and
+  an ambiguous anchor is refused, so that mutation would have stopped being able
+  to fail. The fix is the one the trap prescribes: stop having two near-copies.
+  The source and every incoming file are now one loop over one rule.
+
+##### Not done: inserting pages into the open document
+
+The other half of the README bullet, and it is not a smaller version of this. A
+merge produces a file; an insert produces a *working document* holding pages tpdf
+did not open --- which means `Page::source` has to name a document as well as a
+page, the render path has to ask some other worker for a tile, the model has to
+own the second file's identity across undo, and a save has to import the graph
+this module already knows how to import. The importer is the piece that carries
+over; nothing else does.
+
 #### Ranked: the append's read-back parses in the coordinator, on the async runtime
 
 Found by step 6 of the release checklist while cutting `26.8.8`, by reading

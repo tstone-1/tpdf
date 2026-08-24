@@ -113,7 +113,47 @@ export function beforeReload(dirty: boolean): Prompt | null {
 export function afterCopy(copied: { changed?: boolean }): string | null {
   if (!copied.changed) return null;
   return (
-    "The copy was written, but the original changed on disk while you had it open, " +
+    // "The file", not "the copy": three commands reach this --- Save a copy,
+    // Extract pages and Merge documents --- and the second of them was not
+    // calling it at all until 2026-08-24, while `lib.rs`'s own comment on
+    // `extract_pages` said the reader "is told the same way". A sentence naming
+    // one caller is how that stays wrong when it is fixed.
+    "The file was written, but the original changed on disk while you had it open, " +
     "so your edits were applied to the newer version. Check it before relying on it."
+  );
+}
+
+/**
+ * What to say after a merge, which is always something.
+ *
+ * The one write path whose success is **not** silent, and the exception is
+ * deliberate rather than an inconsistency with {@link afterCopy}. A copy and an
+ * extract produce what the reader asked for by name --- a file here, these three
+ * pages --- so the file appearing is the acknowledgement. A merge produces
+ * however many pages the documents it was given happened to hold, and a reader
+ * who picked four files cannot tell from the destination that all four went in
+ * without opening it and counting.
+ *
+ * So the counts are the report, and they are the reason `save::Merged` carries
+ * them at all: a field describing what the caller could not otherwise check,
+ * with no caller reading it, is the shape this repository has a trap about.
+ *
+ * A source that changed under the reader is appended rather than replacing the
+ * counts. Both facts are true and the reader needs both --- the merge happened,
+ * and it was built from a document that is no longer the one on screen.
+ */
+export function afterMerge(merged: {
+  changed?: boolean;
+  pages: number;
+  files: number;
+}): string {
+  const others =
+    merged.files === 1 ? "1 other document" : `${merged.files} other documents`;
+  const pages = merged.pages === 1 ? "1 page" : `${merged.pages} pages`;
+  const said = `Merged this document with ${others} --- ${pages} in all.`;
+  if (!merged.changed) return said;
+  return (
+    `${said} The original changed on disk while you had it open, ` +
+    "so your edits were applied to the newer version."
   );
 }

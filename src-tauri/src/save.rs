@@ -293,6 +293,162 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<Copied, Refu
     })
 }
 
+/// A merge that was written: what it holds, and whether its source had changed.
+///
+/// `changed` is [`Copied`]'s field and carries that type's whole argument ---
+/// the file is on disk and was built from a document that is no longer the one
+/// the reader opened, which is a fact to be told rather than a failure.
+///
+/// `pages` and `files` are here because a merge is the one write path whose
+/// result a reader cannot check by looking at what they asked for. An extract of
+/// "1-3" produces three pages and they know it; a merge of four documents
+/// produces however many pages those documents had, and the number is the only
+/// evidence that each of them was really read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Merged {
+    /// The source changed since it was opened, and the merge was written anyway.
+    pub changed: bool,
+    /// How many pages the written file holds, the reader's own document
+    /// included.
+    pub pages: u32,
+    /// How many documents were merged in, not counting the open one.
+    pub files: u32,
+}
+
+/// Writes the working document followed by every page of `others`, to `out`.
+///
+/// The open document goes in **as the reader has it** --- turned, cropped,
+/// reordered, marked up, with deleted pages gone --- because it is built through
+/// [`planned_bytes`], the same function `write_copy` and the print path use. The
+/// other files go in **as they are on disk**: they are not open, so there is no
+/// working document for them and nothing to apply.
+///
+/// That asymmetry is worth stating because it is the whole shape of the command.
+/// A merge is not an edit: the working document is untouched, nothing is
+/// journalled, and undo has nothing to undo --- which is `plan_subset`'s
+/// argument for extract, arriving at the other end of the same write path.
+///
+/// **Every refusal `write_copy` states applies to the open document**, and is
+/// not restated: an encrypted source, a page count that disagrees with the
+/// baseline, a page the plan names that the file does not have. What is added
+/// here is the same encryption refusal for each incoming file, and it is the
+/// same refusal for the same reason --- a merged file is one file, and there is
+/// no way to write it that preserves two documents' encryption, so silently
+/// dropping one document's restrictions is the outcome to refuse.
+///
+/// # Errors
+///
+/// `others` is empty; `out` is the source or any file being merged in; anything
+/// [`planned_bytes`] refuses about the open document; an incoming file that
+/// cannot be parsed, is encrypted, or has no pages; or the write fails.
+pub fn write_merged(
+    source: &Path,
+    plan: &Plan,
+    others: &[PathBuf],
+    out: &Path,
+) -> Result<Merged, Refusal> {
+    if others.is_empty() {
+        return Err("choose at least one document to merge in".into());
+    }
+    // The open document and every file going in, against the one destination.
+    // A merge reads several files and writes one, so "do not write over an
+    // input" is a claim about a *set* rather than about a single path --- and
+    // written as a loop rather than as `write_copy`'s check plus a copy of it,
+    // which is the second reason: a second `if same_file(source, out) {` in
+    // this file makes the mutation aimed at that line ambiguous, and an
+    // ambiguous anchor is refused, so the mutation stops being able to fail.
+    // `docs/TRAPS.md` has the entry, and it says the fix is to stop having two
+    // near-copies rather than to lengthen the anchor.
+    //
+    // Before anything is parsed, so a reader who picked the destination by
+    // mistake is told rather than kept waiting for work that will be thrown
+    // away.
+    for input in [source]
+        .into_iter()
+        .chain(others.iter().map(PathBuf::as_path))
+    {
+        if !same_file(input, out) {
+            continue;
+        }
+        return Err(if input == source {
+            // `write_copy`'s wording, deliberately: it is the same refusal
+            // about the same file, and a reader who meets it in two commands
+            // should not have to work out whether they are the same rule.
+            Refusal::from(
+                "tpdf cannot save over the document it is reading --- choose another name",
+            )
+        } else {
+            Refusal::from(format!(
+                "tpdf cannot write the merge over {}, which is one of the documents going into it",
+                name_of(input)
+            ))
+        });
+    }
+
+    let base = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;
+    let mut merged = Document::load_mem_with_options(
+        &base.bytes,
+        lopdf::LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            ..Default::default()
+        },
+    )
+    // Not a refusal a reader can act on, and it should be unreachable: these
+    // are bytes this module wrote a line ago. Said plainly rather than dressed
+    // up, because a message suggesting the reader do something about it would
+    // be a wrong diagnosis.
+    .map_err(|e| format!("tpdf could not read back the document it just built: {e}"))?;
+
+    for other in others {
+        let incoming = Document::load_with_options(
+            other,
+            lopdf::LoadOptions {
+                max_decompressed_size: Some(MAX_DECODE),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("could not read {}: {e}", name_of(other)))?;
+        // Both shapes, for `planned_bytes`' reason: `lopdf` removes the trailer
+        // entry the moment it authenticates -- and it tries the empty password
+        // unprompted -- so asking whether the trailer says `/Encrypt` reports a
+        // permission-restricted document as plain.
+        if incoming.was_encrypted() || incoming.is_encrypted() {
+            return Err(format!(
+                "{} is encrypted, and merging rewrites it --- which would silently remove \
+                 that. Leave it out, or save an unencrypted copy of it first.",
+                name_of(other)
+            )
+            .into());
+        }
+        crate::merge::append(&mut merged, &incoming)
+            .map_err(|why| format!("could not merge {}: {why}", name_of(other)))?;
+    }
+
+    let mut bytes = Vec::new();
+    merged
+        .save_to(&mut bytes)
+        .map_err(|e| format!("could not serialise the merged document: {e}"))?;
+    write_atomically(out, &bytes)?;
+    Ok(Merged {
+        changed: base.changed,
+        pages: merged.get_pages().len() as u32,
+        files: others.len() as u32,
+    })
+}
+
+/// A path as it should appear in a message to the reader.
+///
+/// The file name rather than the whole path. Two files with one name are
+/// possible and the reader chose both of them a moment ago; a message carrying
+/// two absolute paths is one nobody reads.
+fn name_of(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Writes the working document beside `source`, ready to be put in its place.
 ///
 /// The first half of saving over the open file, and the half that can still be
@@ -3151,6 +3307,229 @@ mod tests {
             examined > 0,
             "no fixture was examined --- generate testdata/ (BUILD.md, Test fixtures)"
         );
+    }
+
+    /// Both documents' pages come out, in the order they were given.
+    ///
+    /// The page count is the assertion, and it is not a formality: a merge that
+    /// dropped the incoming file, or wrote it twice, or lost the open one, is
+    /// wrong in the count and in nothing else a smaller check would see.
+    #[test]
+    fn a_merge_holds_every_page_of_every_document() {
+        let (Some(source), Some(other)) = (fixture("rotated.pdf"), fixture("links.pdf")) else {
+            println!("[SKIP] a_merge_holds_every_page: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let scratch = Scratch::new("merge-both");
+        let out = scratch.join("merged.pdf");
+        let mine = page_count(&source);
+        let theirs = page_count(&other);
+        let merged =
+            write_merged(&source, &plan_of(&vec![0u8; mine]), &[other], &out).expect("merge");
+        // **The independent reader answers first, and the order is the point.**
+        // Every other assertion here is `lopdf` reading back what `lopdf` wrote,
+        // which agrees with itself about a page tree no shipping reader would
+        // accept. The OS parser --- PDFKit on macOS, `Windows.Data.Pdf` on
+        // Windows --- shares no code with the writer and none with PDFium either.
+        //
+        // Written before the `lopdf` count rather than after it because a check
+        // that sits behind an assertion measuring the same quantity can never
+        // go red: the one in front fires first, and the independent reader's
+        // answer is never reached. This way a graft that added nothing reddens
+        // the line that is evidence about *readers* rather than about us.
+        //
+        // Lenient, as every shipping parser is, so this says the file is
+        // *readable* rather than well formed. A refusal is reported rather than
+        // waved through: a merge the platform cannot open at all is the failure
+        // this is here for.
+        let written = std::fs::read(&out).expect("read the merge back");
+        let read = os_pdf::read(&written).expect("the OS parser reads the merged document");
+        assert_eq!(
+            read.pages.len(),
+            mine + theirs,
+            "the OS parser counts every page of both documents"
+        );
+        assert_eq!(
+            page_count(&out),
+            mine + theirs,
+            "and so does the parser that wrote it"
+        );
+        assert_eq!(merged.pages as usize, mine + theirs, "and it says so");
+        assert_eq!(merged.files, 1);
+        println!(
+            "[OK] merged {mine} pages with {theirs} --- {} in all, {} to the OS parser",
+            merged.pages,
+            read.pages.len()
+        );
+    }
+
+    /// The open document goes in **as the reader has it**, not as it is on disk.
+    ///
+    /// The one property that says the merge really goes through `planned_bytes`
+    /// rather than reading the source file again. A plan that keeps two of four
+    /// pages produces a merge two pages shorter than the file would --- and the
+    /// turn is asserted beside it, because a count alone cannot tell a plan that
+    /// was honoured in part from one that was honoured whole.
+    #[test]
+    fn the_open_documents_edits_reach_the_merge() {
+        let (Some(source), Some(other)) = (fixture("rotated.pdf"), fixture("links.pdf")) else {
+            println!("[SKIP] the_open_documents_edits: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let scratch = Scratch::new("merge-edited");
+        let out = scratch.join("merged.pdf");
+        let whole = page_count(&source);
+        assert!(whole >= 2, "the fixture must have pages to drop");
+        // Page 0 kept unturned, page 1 kept and turned a quarter. Both survive,
+        // so a merge that dropped the plan and read the file would come out
+        // `whole` pages rather than two.
+        let plan = keeping(whole as u32, &[(0, 0), (1, 1)]);
+        write_merged(&source, &plan, std::slice::from_ref(&other), &out).expect("merge");
+        assert_eq!(
+            page_count(&out),
+            2 + page_count(&other),
+            "the plan decided what went in, not the file"
+        );
+        let merged = Document::load(&out).expect("load");
+        let pages: Vec<_> = merged.get_pages().into_values().collect();
+        let source_doc = Document::load(&source).expect("load source");
+        let before: Vec<_> = source_doc.get_pages().into_values().collect();
+        let was = crate::pagetree::effective_rotation(&source_doc, before[1]);
+        let now = crate::pagetree::effective_rotation(&merged, pages[1]);
+        assert_eq!(
+            now.rem_euclid(360),
+            (was + 90).rem_euclid(360),
+            "the reader's turn is in the merged file"
+        );
+        println!(
+            "[OK] merged 2 edited pages of {whole} with {} others",
+            page_count(&other)
+        );
+    }
+
+    #[test]
+    fn a_merge_of_no_documents_is_refused() {
+        // Not a defensive check. The command's dialog can be dismissed, and a
+        // merge of nothing that quietly wrote a copy would be a Save a copy the
+        // reader did not ask for, under a name they chose for something else.
+        let Some(source) = fixture("rotated.pdf") else {
+            println!("[SKIP] a_merge_of_no_documents: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let scratch = Scratch::new("merge-empty");
+        let out = scratch.join("merged.pdf");
+        let why = write_merged(&source, &plan_of(&[0, 0, 0, 0]), &[], &out)
+            .expect_err("nothing to merge");
+        assert!(why.message.contains("at least one"), "{why}");
+        assert!(!out.exists(), "and nothing was written");
+    }
+
+    #[test]
+    fn a_merge_will_not_be_written_over_any_document_going_into_it() {
+        // Two directions, one rule --- the open document and each incoming file.
+        // The second is the one a single check would miss, and it is the easier
+        // mistake for a reader to make: the file chooser they picked the inputs
+        // in remembers the directory the save dialog then opens in.
+        let (Some(source), Some(fixture_other)) = (fixture("rotated.pdf"), fixture("links.pdf"))
+        else {
+            println!("[SKIP] a_merge_will_not_be_written_over: generate testdata/ (BUILD.md)");
+            return;
+        };
+        // **Both files are copied into the scratch directory first, and that is
+        // not tidiness.** This test proves a guard by aiming a write at a file
+        // that must not be written, so the mutation that deletes the guard makes
+        // it *perform that write* --- and it did, twice, over `testdata/links.pdf`
+        // itself, which grew from 8 pages to 12 and then to 16. Nothing said so:
+        // the mutation was correctly reported as caught, the harness restores the
+        // source file it edited and knows nothing about fixtures, and every later
+        // run simply read a longer document. `docs/TRAPS.md` has the entry.
+        //
+        // `rotated.pdf` is copied for the same reason: the first assertion aims
+        // at the *source*, so a broken guard rewrites that one instead.
+        let scratch = Scratch::new("merge-elsewhere");
+        let source = {
+            let copy = scratch.join("open.pdf");
+            std::fs::copy(&source, &copy).expect("copy the open document");
+            copy
+        };
+        let other = {
+            let copy = scratch.join("incoming.pdf");
+            std::fs::copy(&fixture_other, &copy).expect("copy the incoming document");
+            copy
+        };
+        let plan = plan_of(&vec![0u8; page_count(&source)]);
+        let over_source = write_merged(&source, &plan, std::slice::from_ref(&other), &source)
+            .expect_err("over the open document");
+        assert!(over_source.message.contains("reading"), "{over_source}");
+        let over_input = write_merged(&source, &plan, std::slice::from_ref(&other), &other)
+            .expect_err("over a document going in");
+        assert!(over_input.message.contains("going into it"), "{over_input}");
+        // Neither file moved. Without this the two refusals above are the only
+        // evidence, and a guard that reported a refusal *after* writing would
+        // satisfy both --- which is the shape of the accident this test caused.
+        assert_eq!(
+            page_count(&source),
+            page_count(&fixture_other.with_file_name("rotated.pdf")),
+            "the open document was not written"
+        );
+        assert_eq!(
+            page_count(&other),
+            page_count(&fixture_other),
+            "and neither was the document going in"
+        );
+        // The control: the same two files with a destination that is neither are
+        // written. Without it both assertions above are satisfied by a function
+        // that refuses everything.
+        let out = scratch.join("merged.pdf");
+        write_merged(&source, &plan, &[other], &out).expect("somewhere else is fine");
+    }
+
+    /// An encrypted document cannot be merged in, and is named.
+    ///
+    /// The same refusal `planned_bytes` states for the open document, for the
+    /// same reason: `lopdf`'s serialiser writes plaintext and drops the
+    /// dictionary, so a merged file would silently carry a
+    /// permission-restricted document's pages with the restrictions gone.
+    ///
+    /// **No `examined > 0` control**, unlike its neighbours. This fixture needs
+    /// pyhanko, which the plain fixture run does not install --- so a checkout
+    /// that generated `testdata/` the ordinary way has every other fixture and
+    /// not this one, and a hard assertion here would be red on the machine with
+    /// the fewest inputs rather than on the machine with a defect.
+    #[test]
+    fn an_encrypted_document_cannot_be_merged_in() {
+        let (Some(source), Some(locked)) =
+            (fixture("rotated.pdf"), fixture("incr-encrypted-open.pdf"))
+        else {
+            println!(
+                "[SKIP] an_encrypted_document: needs testdata/incr-encrypted-open.pdf (pyhanko)"
+            );
+            return;
+        };
+        let scratch = Scratch::new("merge-encrypted");
+        let out = scratch.join("merged.pdf");
+        let plan = plan_of(&vec![0u8; page_count(&source)]);
+        let why = write_merged(&source, &plan, std::slice::from_ref(&locked), &out)
+            .expect_err("encrypted");
+        assert!(why.message.contains("encrypted"), "{why}");
+        assert!(
+            why.message.contains("incr-encrypted-open.pdf"),
+            "the refusal has to name which of the files it was: {why}"
+        );
+        assert!(!out.exists(), "and nothing was written");
+        // The sentence a reader gets, as a sentence. Every assertion above is
+        // satisfied by a message with a hole in it, and this one shipped with
+        // eighteen spaces in the middle of it: a `\` line continuation inside
+        // the Rust literal was eaten in transport, so the wrapped line arrived
+        // as its own indentation. `cargo fmt` joining the line is what made it
+        // visible, an hour after five mutations and the whole suite had passed
+        // over it. A word check is the cheap general guard --- it does not
+        // pin the wording, and it catches every member of that family.
+        assert!(
+            !why.message.contains("  "),
+            "a refusal a reader reads must not carry the source's own wrapping: {why}"
+        );
+        println!("[OK] an encrypted document is refused by name");
     }
 
     /// A plan over `n` pages, cropping the page at `at` to `box_pt`.
@@ -6945,7 +7324,8 @@ mod tests {
         let (_, wave) = line_rect(MarkKind::Squiggly, 0.0, 100.0);
         assert!(
             wave > rule * 2.0,
-            "a squiggle's band ({wave}) must clear a rule's ({rule}) by enough to             read between them"
+            "a squiggle's band ({wave}) must clear a rule's ({rule}) by enough to \
+             read between them"
         );
         // And both start at the same edge, which is what makes the gap a strip
         // above the rule rather than two bands somewhere else.

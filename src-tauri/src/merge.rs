@@ -1,0 +1,638 @@
+//! Bringing another document's pages into this one.
+//!
+//! One operation: take every page of a second [`Document`] and add it to the end
+//! of the first, so that the result renders both. It is what *Merge documents*
+//! is made of, and it is the piece nothing else here does --- every write path
+//! before it produces a subset or a permutation of **one** file's pages, so
+//! `save.rs`'s whole vocabulary is positions into a single object graph and
+//! `pagetree.rs`'s is surgery within one tree.
+//!
+//! Three things make it more than a copy of a `BTreeMap`, and each is a way the
+//! obvious version is silently wrong rather than a way it fails.
+//!
+//! **Object numbers collide.** Both documents number from 1, so every id of the
+//! incoming one is shifted past the highest the destination holds, and every
+//! reference inside every incoming object is shifted with it. A reference that
+//! is missed does not dangle --- it resolves, to whatever the destination
+//! happens to have at that number, which is a page's font becoming another
+//! document's content stream.
+//!
+//! **A page inherits from the node it hangs under**, and it is about to hang
+//! somewhere else. [`pagetree::reorder_pages`] states the same problem for a
+//! permutation within one file; across files it is worse, because the two trees
+//! are unrelated and there is no value the destination's root could be carrying
+//! that would happen to be right. [`pagetree::detached_page`] is that half.
+//!
+//! **`/Parent` points up**, so a walk that collects what a page needs by
+//! following its references reaches the tree above it, then the catalog, then
+//! every other page, the outline and the form fields --- the whole file, by
+//! definition, for any page of it. The walk here starts from page dictionaries
+//! whose `/Parent` has already been removed, which is what bounds it: the only
+//! way out of an orphaned page is downward.
+//!
+//! ## What is left behind, and why it is not a defect to be fixed later
+//!
+//! The incoming document's catalog, page tree nodes, outline, named
+//! destinations, `/AcroForm`, attachments and metadata are not imported. A
+//! merged file keeps the **destination's** outline, which still names its own
+//! pages, and gains none from the files merged into it.
+//!
+//! That is a real loss and the command's own description says so rather than
+//! leaving a reader to find out. It is also the honest boundary of what "merge"
+//! can mean without a name-resolution pass: an outline entry, a link and a
+//! named destination all address a page through one of four shapes
+//! (`links.rs`'s resolver enumerates them), and carrying them across would mean
+//! rewriting each into the merged file's own name space --- with two files
+//! free to use the same name for different pages. `pagetree::drop_outline`
+//! takes the same position for a deletion and for the same reason.
+//!
+//! **Intra-document links survive**, which is the part that is not obvious: a
+//! `/Link` annotation whose `/Dest` names a page object keeps working, because
+//! every page of the incoming file comes across and the reference is shifted
+//! with everything else. What breaks is a destination reached *by name*.
+
+use std::collections::{BTreeMap, HashSet};
+
+use lopdf::{Dictionary, Document, Object, ObjectId};
+
+use crate::pagetree;
+use crate::sweep;
+
+/// Adds every page of `from` to the end of `into`, and says how many.
+///
+/// `into` is left holding both documents' pages in one tree; `from` is not
+/// touched. Nothing about the destination's own pages changes --- not their
+/// object numbers, not their order, not what they inherit --- which is what
+/// makes this safe to run against bytes that some other part of the write path
+/// has already produced.
+///
+/// The incoming pages are grafted directly onto the destination's root, beside
+/// whatever nodes are already there. A tree whose `/Kids` mixes `/Page` and
+/// `/Pages` entries is ordinary structure, so there is nothing to flatten and
+/// the destination's own pages keep inheriting exactly what they did.
+///
+/// **`/Count` is set to the tree's own answer** rather than incremented. The
+/// count a reader acts on is the number of leaves under the root, and adding to
+/// a value that was already wrong preserves the error into a file that has just
+/// been rewritten. `pagetree::drop_pages` decrements instead, and correctly: it
+/// walks per page *number*, so the counts it adjusts are the ones it followed.
+///
+/// # Errors
+///
+/// `into` has no catalog or no page tree; `from` has no pages; an object nests
+/// deeper than [`sweep::MAX_NESTING`]; or an object number would overflow.
+pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
+    let root = into
+        .catalog()
+        .map_err(|e| format!("no document catalog: {e}"))?
+        .get(b"Pages")
+        .and_then(Object::as_reference)
+        .map_err(|e| format!("no page tree: {e}"))?;
+
+    let pages = pagetree::ordered_pages(from);
+    if pages.is_empty() {
+        return Err("it has no pages".into());
+    }
+
+    // Every page, orphaned, before anything is walked or written. `detached` is
+    // what the walk below reads instead of `from.objects` for these ids, and
+    // that substitution *is* the bound on the walk --- see the module note.
+    let mut detached: BTreeMap<ObjectId, Dictionary> = BTreeMap::new();
+    for &page in &pages {
+        detached.insert(page, pagetree::detached_page(from, page)?);
+    }
+
+    // Read off the objects rather than taken from `max_id`, and the two can
+    // differ: `lopdf` sets `max_id` from the cross-reference table's `/Size`,
+    // which a producer is free to understate. A shift that is one too small
+    // does not fail --- it overwrites a destination object with an incoming
+    // one, which is the collision this whole function is arranged to avoid.
+    let by = highest(into);
+
+    // Sorted, so that a document with two objects that both refuse produces the
+    // same message twice running. A `HashSet`'s order is not a fact about the
+    // input, and a failure that moves is one nobody can reproduce.
+    let mut needed: Vec<ObjectId> = needed(from, &detached)?.into_iter().collect();
+    needed.sort_unstable();
+
+    for id in needed {
+        let object = match detached.get(&id) {
+            Some(dictionary) => {
+                let mut dictionary = shifted_dictionary(dictionary, by, 0)?;
+                // The destination's root, not the shifted source's: the tree
+                // above this page is not coming with it.
+                dictionary.set("Parent", Object::Reference(root));
+                Object::Dictionary(dictionary)
+            }
+            None => match from.objects.get(&id) {
+                Some(object) => shifted(object, by, 0)?,
+                // A dangling reference, which `sweep::reachable` also steps
+                // over: it names no object, so it carries no content. Left
+                // dangling rather than repaired --- shifting it would be a
+                // guess, and dropping the reference that names it would mean
+                // editing an object the reader did not ask to change.
+                None => continue,
+            },
+        };
+        into.objects.insert(shifted_id(id, by)?, object);
+    }
+
+    into.max_id = highest(into);
+
+    let kids: Vec<ObjectId> = pages
+        .iter()
+        .map(|&id| shifted_id(id, by))
+        .collect::<Result<_, _>>()?;
+    graft(into, root, &kids)?;
+    Ok(pages.len())
+}
+
+/// The highest object number `doc` holds, or claims to.
+///
+/// Both, deliberately: the objects are what a collision would be with, and
+/// `max_id` is what `/Size` is written from, so a shift that respects only one
+/// of them is wrong in one of the two directions.
+fn highest(doc: &Document) -> u32 {
+    doc.objects
+        .keys()
+        .map(|id| id.0)
+        .max()
+        .unwrap_or(0)
+        .max(doc.max_id)
+}
+
+/// Every object of `from` that the detached pages reach.
+///
+/// [`sweep::reachable`]'s shape, with one substitution that changes what it
+/// means: an id in `detached` is walked as the **orphaned** dictionary rather
+/// than as the one in the document, so the `/Parent` that would lead up out of
+/// the page is not there to follow. Every page is a seed, so a `/Dest` naming
+/// another page of the same file finds it --- and finds the orphan, so it
+/// cannot escape that way either.
+///
+/// # Errors
+///
+/// As [`sweep::references`]: an object nesting deeper than
+/// [`sweep::MAX_NESTING`].
+fn needed(
+    from: &Document,
+    detached: &BTreeMap<ObjectId, Dictionary>,
+) -> Result<HashSet<ObjectId>, String> {
+    let mut seen: HashSet<ObjectId> = detached.keys().copied().collect();
+    let mut queue: Vec<ObjectId> = seen.iter().copied().collect();
+    while let Some(id) = queue.pop() {
+        let mut referenced = Vec::new();
+        match detached.get(&id) {
+            // Cloned into an `Object` rather than iterated, so that the depth
+            // this walk counts is the depth `sweep::reachable` counts for the
+            // trailer --- which it clones for the same reason. A dictionary
+            // walked value by value is one level shallower, and a bound that
+            // differs between two walks of the same graph is a bound nobody can
+            // reason about.
+            Some(dictionary) => {
+                sweep::references(&Object::Dictionary(dictionary.clone()), &mut referenced)?;
+            }
+            None => match from.objects.get(&id) {
+                Some(object) => sweep::references(object, &mut referenced)?,
+                None => continue,
+            },
+        }
+        for id in referenced {
+            if seen.insert(id) {
+                queue.push(id);
+            }
+        }
+    }
+    Ok(seen)
+}
+
+/// An object number moved past everything the destination holds.
+///
+/// The generation is kept rather than zeroed. Two objects may share a number and
+/// differ in generation, and collapsing them would silently make one of them the
+/// other --- the same collision this shift exists to prevent, arriving from
+/// inside.
+///
+/// # Errors
+///
+/// The number would overflow `u32`, which means one of the two documents is
+/// numbered near the top of the range. Refused rather than wrapped: a wrapped
+/// number is a collision with a low-numbered object, i.e. the catalog.
+fn shifted_id(id: ObjectId, by: u32) -> Result<ObjectId, String> {
+    match id.0.checked_add(by) {
+        Some(number) => Ok((number, id.1)),
+        None => Err(format!(
+            "object {} cannot be renumbered past {by} without overflowing",
+            id.0
+        )),
+    }
+}
+
+/// `object` with every reference in it shifted by `by`.
+///
+/// Depth-bounded for [`sweep::descend`]'s reason and against the same constant:
+/// this runs in the app process on a graph we did not write, and it is
+/// recursive. A document `lopdf` will load cannot reach the bound --- its own
+/// parser stops at 100 levels --- so this guards a change to that constant
+/// rather than any input.
+fn shifted(object: &Object, by: u32, depth: usize) -> Result<Object, String> {
+    if depth > sweep::MAX_NESTING {
+        return Err(format!(
+            "an object nests deeper than {} levels",
+            sweep::MAX_NESTING
+        ));
+    }
+    Ok(match object {
+        Object::Reference(id) => Object::Reference(shifted_id(*id, by)?),
+        Object::Array(items) => Object::Array(
+            items
+                .iter()
+                .map(|item| shifted(item, by, depth + 1))
+                .collect::<Result<_, _>>()?,
+        ),
+        Object::Dictionary(dictionary) => {
+            Object::Dictionary(shifted_dictionary(dictionary, by, depth + 1)?)
+        }
+        Object::Stream(stream) => {
+            // Cloned whole and then rewritten, so that everything a stream
+            // carries beside its dictionary comes with it --- the bytes, and
+            // `allows_compression`, which decides whether a font stream survives
+            // a later `compress()`.
+            let mut stream = stream.clone();
+            stream.dict = shifted_dictionary(&stream.dict, by, depth + 1)?;
+            // The position it was parsed from, which is a fact about the file it
+            // came out of and is about to be false. `lopdf` reads it back when
+            // it decodes a stream whose `/Length` is an indirect reference.
+            stream.start_position = None;
+            Object::Stream(stream)
+        }
+        other => other.clone(),
+    })
+}
+
+/// [`shifted`] for a dictionary, which is the only shape with two callers.
+fn shifted_dictionary(
+    dictionary: &Dictionary,
+    by: u32,
+    depth: usize,
+) -> Result<Dictionary, String> {
+    let mut out = Dictionary::new();
+    for (key, value) in dictionary.iter() {
+        out.set(key.to_vec(), shifted(value, by, depth + 1)?);
+    }
+    Ok(out)
+}
+
+/// Hangs `kids` off the end of the page tree root.
+///
+/// # Errors
+///
+/// The root is not a dictionary, or its `/Kids` is missing or not an array ---
+/// which is a document with no pages, and the destination always has some.
+fn graft(into: &mut Document, root: ObjectId, kids: &[ObjectId]) -> Result<(), String> {
+    let tree = into
+        .get_object_mut(root)
+        .and_then(Object::as_dict_mut)
+        .map_err(|e| format!("the page tree root is not a dictionary: {e}"))?;
+    let mut order = tree
+        .get(b"Kids")
+        .and_then(Object::as_array)
+        .map_err(|e| format!("the page tree root has no kids: {e}"))?
+        .clone();
+    order.extend(kids.iter().map(|&id| Object::Reference(id)));
+    tree.set("Kids", order);
+    // After the graft, and from the tree rather than from the old value --- see
+    // the note on `append`.
+    let count = into.get_pages().len() as i64;
+    into.get_object_mut(root)
+        .and_then(Object::as_dict_mut)
+        .map_err(|e| format!("the page tree root is not a dictionary: {e}"))?
+        .set("Count", count);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{append, highest, needed, shifted, shifted_id};
+    use lopdf::{dictionary, Document, Object, Stream};
+    use std::collections::BTreeMap;
+
+    /// A one-page document whose page states everything itself.
+    ///
+    /// Built rather than parsed, for the reason `sweep.rs`'s nesting test gives:
+    /// what is under test is the graph arithmetic, and a fixture read off disk
+    /// would put a parser between the assertion and the thing it is about.
+    fn flat(text: &str) -> Document {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+        let content = doc.add_object(Stream::new(dictionary! {}, text.as_bytes().to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "Resources" => resources,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        doc
+    }
+
+    /// A one-page document whose page inherits its box and resources.
+    ///
+    /// The discriminating fixture: everything the page needs to lay out is
+    /// stated on the tree node above it, so a copy that takes the page alone
+    /// produces a page with no size. Nothing else in this module can tell the
+    /// two apart.
+    fn inheriting() -> Document {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier",
+        });
+        let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F9" => font } });
+        let content = doc.add_object(Stream::new(dictionary! {}, b"inherited".to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => content,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+                "Resources" => resources,
+                "MediaBox" => vec![0.into(), 0.into(), 200.into(), 400.into()],
+                "Rotate" => 90,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        doc
+    }
+
+    #[test]
+    fn a_merge_holds_both_documents_pages_in_order() {
+        let mut into = flat("first");
+        let added = append(&mut into, &flat("second")).expect("append");
+        assert_eq!(added, 1);
+        let pages: Vec<_> = into.get_pages().into_values().collect();
+        assert_eq!(pages.len(), 2, "both documents' pages");
+        let text = |at: usize| {
+            let page = into.get_dictionary(pages[at]).expect("page");
+            let stream = page
+                .get(b"Contents")
+                .and_then(Object::as_reference)
+                .expect("contents");
+            String::from_utf8(
+                into.get_object(stream)
+                    .and_then(Object::as_stream)
+                    .expect("stream")
+                    .content
+                    .clone(),
+            )
+            .expect("utf-8")
+        };
+        assert_eq!(text(0), "first", "the destination's page stays first");
+        assert_eq!(text(1), "second", "and the incoming one lands after it");
+    }
+
+    #[test]
+    fn the_destinations_own_objects_are_untouched() {
+        // The property that lets this run against bytes another path produced:
+        // a merge adds, and a reference in the destination that moved would be
+        // a defect no page count could see.
+        let mut into = flat("first");
+        let before = into.objects.clone();
+        append(&mut into, &flat("second")).expect("append");
+        for (id, object) in &before {
+            // The page tree root is the one object a graft edits, by design.
+            let root = into
+                .catalog()
+                .expect("catalog")
+                .get(b"Pages")
+                .and_then(Object::as_reference)
+                .expect("tree");
+            if *id == root {
+                continue;
+            }
+            assert_eq!(
+                into.objects.get(id),
+                Some(object),
+                "object {id:?} changed under the merge"
+            );
+        }
+    }
+
+    #[test]
+    fn an_incoming_page_takes_what_it_inherited_with_it() {
+        // The whole reason `detached_page` exists. Without it the merged page
+        // has no `/MediaBox`, no `/Resources` and no `/Rotate` --- and inherits
+        // the *destination's*, so it lays out at A4 with the wrong fonts rather
+        // than failing.
+        let mut into = flat("first");
+        append(&mut into, &inheriting()).expect("append");
+        let pages: Vec<_> = into.get_pages().into_values().collect();
+        let page = into.get_dictionary(pages[1]).expect("page");
+        assert_eq!(
+            page.get(b"MediaBox")
+                .and_then(Object::as_array)
+                .expect("box")
+                .len(),
+            4,
+            "the incoming page states its own box"
+        );
+        let box_pt: Vec<i64> = page
+            .get(b"MediaBox")
+            .and_then(Object::as_array)
+            .expect("box")
+            .iter()
+            .map(|value| value.as_i64().expect("number"))
+            .collect();
+        assert_eq!(
+            box_pt,
+            vec![0, 0, 200, 400],
+            "its own, not the destination's"
+        );
+        assert_eq!(
+            page.get(b"Rotate")
+                .and_then(Object::as_i64)
+                .expect("rotate"),
+            90
+        );
+        assert!(
+            page.has(b"Resources"),
+            "and the resources it was laid out with"
+        );
+    }
+
+    #[test]
+    fn an_incoming_page_hangs_off_the_destinations_root() {
+        let mut into = flat("first");
+        append(&mut into, &flat("second")).expect("append");
+        let root = into
+            .catalog()
+            .expect("catalog")
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .expect("tree");
+        let pages: Vec<_> = into.get_pages().into_values().collect();
+        // Before the loop, or the loop has nothing to look at. A merge that
+        // grafts nothing leaves one page whose parent is already the root, so
+        // this passed with the graft deleted --- a check whose domain is "the
+        // pages the tree yields" cannot see a page that never joined it.
+        assert_eq!(
+            pages.len(),
+            2,
+            "both pages are in the tree to be asked about"
+        );
+        for page in pages {
+            let parent = into
+                .get_dictionary(page)
+                .expect("page")
+                .get(b"Parent")
+                .and_then(Object::as_reference)
+                .expect("parent");
+            assert_eq!(parent, root, "every page hangs off the one root");
+        }
+    }
+
+    #[test]
+    fn the_count_is_the_trees_own_answer() {
+        let mut into = flat("first");
+        // A destination whose count is already wrong. Incrementing would carry
+        // the error into a file that has just been rewritten.
+        let root = into
+            .catalog()
+            .expect("catalog")
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .expect("tree");
+        into.get_object_mut(root)
+            .and_then(Object::as_dict_mut)
+            .expect("tree")
+            .set("Count", 7);
+        append(&mut into, &flat("second")).expect("append");
+        let count = into
+            .get_dictionary(root)
+            .expect("tree")
+            .get(b"Count")
+            .and_then(Object::as_i64)
+            .expect("count");
+        assert_eq!(count, 2, "the leaves under the root, not 7 plus one");
+    }
+
+    #[test]
+    fn a_document_with_no_pages_is_refused() {
+        let mut into = flat("first");
+        let empty = Document::with_version("1.7");
+        let why = append(&mut into, &empty).expect_err("nothing to merge");
+        assert!(why.contains("no pages"), "{why}");
+    }
+
+    #[test]
+    fn shifting_moves_every_reference_by_the_same_amount() {
+        let object = Object::Array(vec![
+            Object::Reference((1, 0)),
+            Object::Dictionary(dictionary! { "K" => Object::Reference((2, 5)) }),
+        ]);
+        let moved = shifted(&object, 40, 0).expect("shift");
+        let items = moved.as_array().expect("array");
+        assert_eq!(items[0].as_reference().expect("reference"), (41, 0));
+        assert_eq!(
+            items[1]
+                .as_dict()
+                .expect("dictionary")
+                .get(b"K")
+                .and_then(Object::as_reference)
+                .expect("reference"),
+            (42, 5),
+            "the generation is kept, so two objects sharing a number stay two"
+        );
+    }
+
+    #[test]
+    fn a_number_that_would_overflow_is_refused_rather_than_wrapped() {
+        // Wrapping lands on a low number, which is the catalog.
+        let why = shifted_id((u32::MAX, 0), 1).expect_err("overflow");
+        assert!(why.contains("overflow"), "{why}");
+    }
+
+    #[test]
+    fn the_shift_clears_a_streams_recorded_position() {
+        let stream = Object::Stream(Stream::new(dictionary! { "Length" => 4 }, b"data".to_vec()));
+        let moved = shifted(&stream, 10, 0).expect("shift");
+        assert!(
+            moved.as_stream().expect("stream").start_position.is_none(),
+            "a position in the file it came from is about to be false"
+        );
+    }
+
+    #[test]
+    fn the_walk_does_not_leave_the_page_it_started_from() {
+        // The bound, stated as what it excludes. `from`'s catalog and tree node
+        // are reachable from the page through `/Parent` and are not in the set
+        // --- if they were, every page of every merged file would come with its
+        // whole document behind it.
+        let from = inheriting();
+        let pages = crate::pagetree::ordered_pages(&from);
+        let mut detached = BTreeMap::new();
+        for &page in &pages {
+            detached.insert(
+                page,
+                crate::pagetree::detached_page(&from, page).expect("detach"),
+            );
+        }
+        let reached = needed(&from, &detached).expect("walk");
+        let catalog = from
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .expect("root");
+        let tree = from
+            .catalog()
+            .expect("catalog")
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .expect("tree");
+        assert!(!reached.contains(&catalog), "the catalog is not the page's");
+        assert!(!reached.contains(&tree), "nor is the node it hung under");
+        assert!(reached.contains(&pages[0]), "the page itself is");
+        // And the control: the walk is not simply empty. The font is three
+        // references down --- page, resources, font --- so reaching it says the
+        // descent works rather than that it refused everything.
+        let resources = crate::pagetree::detached_page(&from, pages[0])
+            .expect("detach")
+            .get(b"Resources")
+            .and_then(Object::as_reference)
+            .expect("resources");
+        assert!(reached.contains(&resources), "what it does need is reached");
+    }
+
+    #[test]
+    fn the_shift_clears_the_destination_by_the_number_it_actually_holds() {
+        // `max_id` understated, which a producer is free to do. A shift that
+        // trusted it would overwrite live objects rather than fail.
+        let mut into = flat("first");
+        let real = into.objects.keys().map(|id| id.0).max().expect("objects");
+        into.max_id = 1;
+        assert_eq!(highest(&into), real, "the objects decide, not the claim");
+        let before = into.objects.len();
+        append(&mut into, &flat("second")).expect("append");
+        assert!(
+            into.objects.len() > before,
+            "nothing was overwritten on the way in"
+        );
+        assert_eq!(into.get_pages().len(), 2);
+    }
+}

@@ -118,6 +118,7 @@ function harness(
     isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    mergeDocuments: () => fired.push("mergeDocuments"),
     showProperties: () => fired.push("showProperties"),
   };
   const registry = new CommandRegistry();
@@ -402,6 +403,27 @@ describe("the page operations", () => {
     // refused, and this test would then be asserting the refusal.
     expect(registry.run("file.extractPages", "1,3")).toBe(true);
     expect(fired).toEqual(["extractPages:0+2"]);
+  });
+
+  it("merge documents through the command, with no value to carry", () => {
+    // Registered, guarded on a document, and reaching its action. The last of
+    // those is the half that shipped inert once before, when a callback was
+    // declared and fired and never wired into the literal that joins the viewer
+    // to the model.
+    const { registry, fired } = harness();
+    expect(registry.run("file.mergeDocuments")).toBe(true);
+    expect(fired).toEqual(["mergeDocuments"]);
+  });
+
+  it("take no argument for a merge, because a dialog supplies the files", () => {
+    // The distinction from `file.extractPages`, which is otherwise its twin.
+    // An `argument` here would put a palette text field in front of a command
+    // whose input is a list of paths --- and the palette would then refuse to
+    // run it until something was typed.
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.mergeDocuments");
+    expect(command).toBeDefined();
+    expect(command?.argument).toBeUndefined();
   });
 
   it("refuse to extract what does not parse, and reach no action", () => {
@@ -724,6 +746,7 @@ describe("the window shortcuts for editing", () => {
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    mergeDocuments: () => fired.push("mergeDocuments"),
     showProperties: () => fired.push("showProperties"),
     };
     return { fired, actions };

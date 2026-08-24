@@ -17,6 +17,55 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.10] - Unreleased
+
+### Added: Merge documents
+
+Pick any number of PDFs and get one file holding this document followed by all
+of them. `Merge documents...` in the palette and in the File menu, beside
+`Extract pages...`, whose shape it borrows: it reads the working document and
+writes elsewhere, so nothing is journalled, nothing is dirty and there is
+nothing to undo.
+
+The open document goes in **as you have it** --- edited, marked up, with deleted
+pages gone --- because it is built through the same writer `Save a copy` uses. The
+other files go in as they are on disk, because they are not open and there is no
+working document for them to have.
+
+Three things a merge has to get right, none of which fails loudly when it is
+wrong:
+
+- **Every incoming page takes its size, box, resources and rotation with it**,
+  even where the file states those on the group of pages rather than on the page.
+  A merge that copies the page alone produces one that inherits the *destination's*
+  size instead --- so it lays out at the wrong paper with the wrong fonts rather
+  than failing.
+- **Object numbers are renumbered past the destination's.** Both files number
+  from 1, and a reference that is not moved with its object does not break: it
+  resolves to whatever the destination holds at that number.
+- **A page is copied without the tree above it.** Following a page's references
+  reaches its parent, then the catalog, then the whole file, which is every other
+  page and the form fields with it.
+
+What does not come across: the merged-in documents' bookmarks, named
+destinations, form fields, attachments and metadata. This document's own
+bookmarks survive. Links *inside* a merged document keep working --- every page
+of it comes across, so a link that names one still finds it --- and a link that
+addresses a page by name does not.
+
+A merge is refused rather than written when it would silently lose something: an
+encrypted document among the inputs, which a rewrite cannot keep encrypted and
+which is named in the refusal, or a destination that is one of the files going
+in. It reports how many pages it wrote and how many documents went into them,
+because unlike a copy there is no other way to see that every file was read.
+
+### Fixed: an extract from a file that changed said nothing
+
+`Save a copy` tells you when the file underneath moved while you had it open, so
+that you know the copy was built from the newer version. `Extract pages` did the
+same work and discarded the answer --- while the code's own comment said the
+reader "is told the same way". They are now.
+
 ## [26.8.9] - 2026-08-24
 
 ### Fixed: the installed Windows build could not open any document

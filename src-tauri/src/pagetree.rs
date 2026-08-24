@@ -549,6 +549,56 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
     Ok(())
 }
 
+/// A page dictionary that no longer needs the tree it hangs under.
+///
+/// The four attributes it may be inheriting are written onto it, and `/Parent`
+/// is removed. What comes back is a dictionary, not an edit: nothing in `doc`
+/// changes, because the caller for this is copying the page into a *different*
+/// document and the source is read-only there.
+///
+/// **Removing `/Parent` is the half that is not cosmetic.** A walk that collects
+/// what a page needs by following its references reaches the tree above it, then
+/// the catalog, then every other page, the outline and the form fields --- so a
+/// page that has been orphaned is the only kind whose reachable set is the page.
+/// [`reorder_pages`] does not need that because it moves a page within the
+/// document that already holds it; an import does, and it is the difference
+/// between copying a page and copying a file.
+///
+/// **The four attributes are written unconditionally where an ancestor supplies
+/// them**, which is where this differs from [`reorder_pages`]'s otherwise
+/// identical loop. That one compares against what the destination root would
+/// supply and leaves the key off when they agree, so an untouched page comes out
+/// byte-identical to its source. Here the destination is another document
+/// entirely: agreeing with its root would be a coincidence between two unrelated
+/// trees, and one that stops holding the moment either is edited. The page takes
+/// its size, box, resources and rotation with it.
+///
+/// A page that has no value for a key anywhere above it is left without one, and
+/// will inherit whatever its new root supplies. That is a change, and it is only
+/// reachable on a document that never stated the key at all --- which for
+/// `/MediaBox` means a file no reader can lay out.
+///
+/// # Errors
+///
+/// `page` is not a dictionary.
+pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, String> {
+    let mut dictionary = doc
+        .get_object(page)
+        .and_then(Object::as_dict)
+        .map_err(|e| format!("page {page:?} is not a dictionary: {e}"))?
+        .clone();
+    for key in INHERITABLE {
+        if dictionary.has(key) {
+            continue;
+        }
+        if let Some(value) = inherited(doc, page, key) {
+            dictionary.set(key.to_vec(), value);
+        }
+    }
+    dictionary.remove(b"Parent");
+    Ok(dictionary)
+}
+
 /// Drops the outline of a document that has lost pages.
 ///
 /// Its destinations name pages that are no longer in the file, and a table of

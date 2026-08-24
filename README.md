@@ -93,6 +93,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.
+- **Merge documents**: pick any number of PDFs and get one file holding this document
+  followed by all of them. The open document goes in as you have it --- edited, marked up,
+  with deleted pages gone --- and the others go in as they are on disk. Each incoming page
+  takes its own size, box and rotation with it even where the file states those on the
+  group the page sits in rather than on the page, which is where a naive merge silently
+  resizes half a document. Links inside a merged document keep working; its bookmarks and
+  named destinations do not come across, and neither do form fields. Like extract, it
+  writes elsewhere and changes nothing about what you have open.
 - **Save**, over the open file or to a copy. A save is refused outright if the file changed
   on disk since you opened it --- length, modification time and a digest of every byte,
   taken at open and checked again before anything is written. Deleting a page drops the
@@ -127,8 +135,8 @@ stamps went on being listed here after shipping as `edit.stamp.approved` and thr
 because the bullet had guessed `edit.addStamp`. When a bullet leaves this list, check that
 the id it named is the id that shipped.
 
-- The rest of the page operations: insert, split, merge
-  <!-- not-built: edit.insertPages edit.splitDocument edit.mergeDocuments -->
+- The rest of the page operations: insert and split
+  <!-- not-built: edit.insertPages edit.splitDocument -->
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->

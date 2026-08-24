@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { afterCopy, afterFailedSave, beforeReload } from "./recovery";
+import { afterCopy, afterFailedSave, afterMerge, beforeReload } from "./recovery";
 
 describe("afterFailedSave", () => {
   it("offers a copy and a reload when the file changed and the document survived", () => {
@@ -73,6 +73,41 @@ describe("beforeReload", () => {
     const prompt = beforeReload(true);
     expect(prompt?.message).toContain("discards");
     expect(prompt?.message).toContain("not saved");
+  });
+});
+
+describe("afterMerge", () => {
+  it("says how many documents went in and how many pages came out", () => {
+    // The counts are the whole point: a reader who picked three files cannot
+    // tell from the destination that all three were read.
+    const said = afterMerge({ changed: false, pages: 47, files: 3 });
+    expect(said).toContain("3 other documents");
+    expect(said).toContain("47 pages");
+  });
+
+  it("says it in the singular for one document and one page", () => {
+    // Not decoration. "1 other documents" is the shape a reader reads as a
+    // defect in everything else on screen.
+    const said = afterMerge({ changed: false, pages: 1, files: 1 });
+    expect(said).toContain("1 other document ");
+    expect(said).toContain("1 page ");
+    expect(said).not.toContain("documents");
+    expect(said).not.toContain("pages");
+  });
+
+  it("is never silent, unlike a copy", () => {
+    // The deliberate asymmetry with `afterCopy`, pinned so that making the two
+    // consistent later is a decision rather than a tidy-up.
+    expect(afterMerge({ pages: 2, files: 1 })).not.toBe("");
+    expect(afterCopy({ changed: false })).toBeNull();
+  });
+
+  it("adds the changed-source warning without dropping the counts", () => {
+    // Both facts are true and the reader needs both. An early return for the
+    // changed case would keep the sentence and lose the evidence.
+    const said = afterMerge({ changed: true, pages: 9, files: 2 });
+    expect(said).toContain("9 pages");
+    expect(said).toContain("changed on disk");
   });
 });
 

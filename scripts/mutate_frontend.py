@@ -77,6 +77,46 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Drop the counts and keep only the warning. A merge whose report says
+        # nothing about how much went in is a copy's report on an operation the
+        # reader cannot check by looking at what they asked for.
+        "recovery: report a merge without saying what it merged",
+        "src/lib/recovery.ts",
+        "  const said = `Merged this document with ${others} --- ${pages} in all.`;",
+        '  const said = "The merge was written.";',
+        "says how many documents went in and how many pages came out",
+    ),
+    Mutation(
+        # Always plural. "1 other documents" reads as a defect in everything
+        # else on screen, which is why the singular is asserted rather than
+        # left to taste.
+        "recovery: pluralise a merge of one document",
+        "src/lib/recovery.ts",
+        '    merged.files === 1 ? "1 other document" : `${merged.files} other documents`;',
+        "    `${merged.files} other documents`;",
+        "says it in the singular for one document and one page",
+    ),
+    Mutation(
+        # Return before the warning. The counts survive and the fact that the
+        # file underneath moved does not --- the direction that looks like a
+        # working report.
+        "recovery: drop the changed-source warning from a merge",
+        "src/lib/recovery.ts",
+        "  if (!merged.changed) return said;",
+        "  if (merged.changed || !merged.changed) return said;",
+        "adds the changed-source warning without dropping the counts",
+    ),
+    Mutation(
+        # A registered command that reaches no action. This is the shape that
+        # shipped inert once before, and no type error and no registry sweep
+        # can see it: the command has a `run`, and the `run` does nothing.
+        "appcommands: register Merge documents without reaching its action",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.mergeDocuments(),",
+        "      run: () => {},",
+        "merge documents through the command, with no value to carry",
+    ),
+    Mutation(
         # Prompt for every refusal, not only the answerable one. A password
         # dialog in front of a corrupt file asks a reader for something that
         # cannot help, and no answer ends it.

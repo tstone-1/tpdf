@@ -270,6 +270,8 @@ export interface AppActions {
   saveCopy(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
   extractPages(slots: number[]): void;
+  /** Ask for documents to combine with this one, and for a name to write to. */
+  mergeDocuments(): void;
   /** Show what the document says about itself. */
   showProperties(): void;
 }
@@ -922,6 +924,25 @@ export function registerAppCommands(
           actions.extractPages(range.slots);
         },
       },
+    },
+    {
+      // The mirror of `file.extractPages`, and grouped with it rather than
+      // under an edit prefix for the reason that one is a `file.` command:
+      // neither changes the open document. Extract reads part of one file,
+      // merge reads all of several, and both produce a file somewhere else.
+      //
+      // **No argument**, where extract takes a page range. What a merge needs
+      // is a list of files, and the palette's argument is a line of text ---
+      // paths typed into it would be a second file chooser that cannot
+      // complete, cannot browse and cannot say whether what was typed exists.
+      // So the picking happens in the platform's own dialog, which is also
+      // where `file.open` sends the reader.
+      id: "file.mergeDocuments",
+      title: "Merge documents...",
+      // No shortcut, for `file.extractPages`' reason: no chord reads as
+      // "merge", and this is reached deliberately rather than by reflex.
+      enabled: withDocument,
+      run: () => actions.mergeDocuments(),
     },
     {
       id: "nav.nextPage",
