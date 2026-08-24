@@ -83,6 +83,12 @@ FIXTURES: list[tuple[str, list[str]]] = [
     # its presence is a check for the file rather than for its sibling.
     ("testdata/comments-rotated.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
     ("testdata/links.pdf", ["testdata/make_links_pdf.py", "testdata"]),
+    # A page tree that states the four inheritable attributes on the node above
+    # its pages rather than on them. Nothing else in the corpus does, so every
+    # other fixture is blind to a copy that lifts a page out of the tree that
+    # supplies its size --- which is what `merge-probe` measures and what a
+    # mutation of `pagetree::detached_page` could not fail against before it.
+    ("testdata/inherited.pdf", ["testdata/make_inherited_pdf.py", "testdata"]),
     # Written by the same run as the line above; listed so a check for its
     # presence is a check for the file rather than for its sibling.
     ("testdata/links-rotated.pdf", ["testdata/make_links_pdf.py", "testdata"]),

@@ -9091,6 +9091,62 @@ that stays wrong when somebody fixes it.
   to fail. The fix is the one the trap prescribes: stop having two near-copies.
   The source and every incoming file are now one loop over one rule.
 
+##### `merge-probe`, and the defect the fixture for it found --- 2026-08-24
+
+The checks above are `lopdf` reading back what `lopdf` wrote, plus a page count
+from the OS parser. Both say the *tree* is right. Neither says PDFium --- the
+engine tpdf renders with --- draws page seven, or that the page it draws is the
+page that was merged in.
+
+`examples/merge_probe.rs` compares the merged file against its **sources**,
+through PDFium, three ways per page: it renders with ink, it keeps the size it
+had, and it reads back the same code points. The third is the one that needs the
+fonts as well as the stream --- a page whose `/Font` went missing still renders,
+because PDFium substitutes, and then extracts the wrong code points. 50/50 on
+`rotated.pdf` + `links.pdf`; the mutations that break the shift and the graft
+take it to 7/23 and 16/21.
+
+**The fixture had to be built, and building it is what found the defect below.**
+Mutating `pagetree::detached_page` to materialise nothing left the probe at 38/38,
+because no page of any existing fixture inherits anything --- the check that is
+the entire point of that function could not fail. `testdata/inherited.pdf` is
+three pages that state nothing and take their box, resources and rotation from
+the node above them. With it, the same mutation reddens six checks, including
+`612.0x792.0 against 600.0x400.0`: the page falls back to US Letter, which is
+what losing an inherited `/MediaBox` looks like from the outside.
+
+##### Ranked: the viewer lays out a rotated inherited-box page at the wrong size
+
+Found by the fixture above, and it is not about merging at all.
+
+**PDFium answers `width x width` for a page that inherits its `/MediaBox` and
+carries a quarter turn.** Measured across all four rotations and with the two
+attributes crossed both ways: it inherits `/Rotate` correctly, inherits
+`/MediaBox` correctly on an upright page, and gets the combination wrong at 90
+and 270. `docs/TRAPS.md` has the tables.
+
+`RawPage::width_pt` is `FPDF_GetPageWidthF` directly, and the scroller lays out
+from it, so **a document like that renders wrong in tpdf today**: the page is
+square, at an aspect nothing on it matches, and the content is clipped to a box
+smaller than the sheet --- 0, 1 and 3 inked pixels on the three pages of the
+fixture, against 1013, 1062 and 1317 once the same attributes are on the page.
+
+tpdf already owns the right answer. `pagetree::displayed_page` walks `/Parent`
+with `lopdf` and says 600x400 for every case, which is why `save.rs` writes such
+a document correctly and why `merge-probe` uses it as its oracle rather than
+PDFium's reading of the source.
+
+**What the fix is, and why it is not in this increment.** Prefer
+`pagetree::displayed_page` on the render path wherever it disagrees with PDFium.
+That changes how every page's geometry is obtained --- the tile request, the text
+layer's flip, the scroller's layout and every coordinate derived from them --- so
+it deserves its own increment with its own before and after, and a measurement of
+what it costs to parse the page tree on the open path for documents that do not
+need it. The regression test is already in the tree: `testdata/inherited.pdf` is
+excluded from the window sweep *because* the viewer is wrong about it, and
+`scripts/viewer_sweep.py` says so in the exclusion, so promoting it to a corpus
+is how that change proves itself.
+
 ##### Not done: inserting pages into the open document
 
 The other half of the README bullet, and it is not a smaller version of this. A

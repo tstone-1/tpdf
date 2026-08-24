@@ -1170,6 +1170,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - `PdfiumLibraryBindingsAlreadyInitialized` — a helper that binds its own library works alone and fails in company (the error names the library path, and neither the path nor the pin is wrong)
 - A wash that reads as zero everywhere: PDFium's buffer is RGBA, not BGRA (a count of zero cannot say where to look; a bounding box can)
 - PDFium's render rotation composes with `/Rotate`, and wants the turned size
+- A rotated page whose box it inherited comes back `width x width` (the box's inheritance does it, not the rotation's: crossed both ways, and PDFium is right on three of the four; the page then renders nearly blank because the content is outside a box smaller than the sheet, and the viewer still lays out from that number)
 - PDFium accepting a file is not evidence the file is well formed
 - An error message that names no cause is not vague, it is a wrong diagnosis
 - A fallback is in the coordinate system of whoever wrote it (PDFium was right and the first write-up of this entry blamed it; the corner survived for months and the size did not)

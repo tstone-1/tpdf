@@ -2161,6 +2161,67 @@ Two things follow. The bound belongs on the *rewriter*, not only on the verifier
 resource limit expressed in memory would have caught none of this: the attack here is
 600x amplification in time.
 
+### A rotated page whose box it inherited comes back `width x width`
+
+PDFium reports the wrong displayed size for a page that inherits its `/MediaBox`
+from an ancestor **and** carries a quarter turn. Measured 2026-08-24 on a page
+that is 400x600 in its own space, with the box on the `/Pages` node above it:
+
+| `/Rotate` | correct | `FPDF_GetPageWidthF` x `GetPageHeightF` |
+|-----------|---------|------------------------------------------|
+| 0         | 400x600 | 400x600 |
+| 90        | 600x400 | **400x400** |
+| 180       | 400x600 | 400x600 |
+| 270       | 600x400 | **400x400** |
+
+The width is right and the height is the width again. It is the **box's**
+inheritance that does it, not the rotation's --- crossed both ways, with the same
+page and the same content:
+
+| `/MediaBox` | `/Rotate` | reported |
+|-------------|-----------|----------|
+| page        | page      | 600x400 |
+| page        | node      | 600x400 |
+| node        | page      | **400x400** |
+| node        | node      | **400x400** |
+
+So PDFium inherits `/Rotate` correctly, inherits `/MediaBox` correctly on an
+upright page, and gets the combination wrong. `testdata/inherited.pdf` is that
+document, and `testdata/make_inherited_pdf.py` explains why the corpus needed
+one.
+
+**What it does downstream is not a failure.** The page lays out square, at an
+aspect nothing on it matches, and every coordinate derived from the page size is
+off: the render is clipped to a box smaller than the content, so a page of text
+comes out nearly blank --- 0, 1 and 3 inked pixels on the three pages of that
+fixture, against 1013, 1062 and 1317 for the same pages once their attributes are
+written onto them. Nothing errors.
+
+**tpdf already owns a correct implementation**, and it is not the one the render
+path uses. `pagetree::displayed_page` walks `/Parent` with `lopdf` and answers
+600x400 for every row above. It is what `save.rs` writes from, which is why a
+*merge* of such a document comes out right --- and it is what `merge-probe` uses
+as its oracle, because comparing a merged page against PDFium's reading of the
+source would demand that a merge reproduce this defect.
+
+Two things follow, and the second is the open one:
+
+- **A check that baselines on PDFium's render of a source page is only a check
+  where PDFium reads that page correctly.** `merge-probe` skips its ink
+  comparison with the reason printed, rather than failing a correct merge or
+  passing quietly.
+- **The viewer still lays such a page out from PDFium's number.** `RawPage::width_pt`
+  is `FPDF_GetPageWidthF` directly, so a document with an inherited box and a
+  rotated page renders wrong in tpdf today. Not fixed here: the repair is to
+  prefer `pagetree::displayed_page` on the render path, which is a change to how
+  every page's geometry is obtained and deserves its own increment with its own
+  before-and-after. `docs/PLAN.md` ranks it.
+
+Worth knowing that this is not an exotic document. A producer that writes one
+`/MediaBox` on the page tree root rather than on every page is ordinary --- it is
+what a tool emitting uniform pages does --- and `/Rotate 90` is what a scanner
+writes.
+
 ### PDFium accepting a file is not evidence the file is well formed
 
 PDFium is deliberately lenient — that is why it is the right renderer for real-world PDFs —

@@ -534,6 +534,66 @@ done
 #     above was found. Not a dependency and not on every machine: a spike tool,
 #     not a gate.
 
+# merge-probe: a merged document against the two that went into it.
+#
+# `save::write_merged`'s unit tests are lopdf reading back what lopdf wrote, plus
+# a page count from the OS parser. Both say the tree is right. Neither says
+# PDFium -- the engine tpdf renders with -- draws page seven, or that the page it
+# draws is the page that was merged in. So this compares the merge against its
+# SOURCES, per page, three ways:
+#
+#   size    the page keeps the size it had in its own file. The oracle is
+#           `pagetree::displayed_page` reading the source's object graph, NOT
+#           PDFium's reading of it -- see the trap about a rotated page whose box
+#           is inherited, which PDFium answers `width x width` for. PDFium's own
+#           reading is printed beside it so a disagreement is visible.
+#   ink     the merged page draws something at all, which is what a lost
+#           resource dictionary looks like from outside. A second check compares
+#           it against the source's render, and SKIPS with the reason where
+#           PDFium reads that source page at the wrong size, since its render is
+#           then not a baseline.
+#   text    the same code points come back. The one check that needs the fonts
+#           as well as the stream: a page whose /Font went missing still renders,
+#           because PDFium substitutes, and extracts the wrong code points.
+#
+cargo run --release --manifest-path src-tauri/Cargo.toml --example merge-probe -- \
+    testdata/rotated.pdf testdata/links.pdf --lib vendor/pdfium/lib
+cargo run --release --manifest-path src-tauri/Cargo.toml --example merge-probe -- \
+    testdata/rotated.pdf testdata/inherited.pdf --lib vendor/pdfium/lib
+#
+# Measured 2026-08-24 on Windows (`--lib vendor/pdfium/bin` there): 50/50 on the
+# first, 27/27 with 3 skipped on the second. Four mutations, and the two that
+# survive are as informative as the two that do not:
+#
+#   merge::append shifting by 0                   7/23   caught
+#   merge::append grafting nothing                16/21  caught
+#   pagetree::detached_page materialising nothing 21/27  caught -- ONLY on the
+#                                                 second run; the first stays at
+#                                                 38/38, because no page of
+#                                                 rotated.pdf or links.pdf
+#                                                 inherits anything. That is why
+#                                                 `testdata/inherited.pdf` exists.
+#   detached_page keeping /Parent                 27/27  SURVIVES, correctly: it
+#                                                 drags the source tree in as
+#                                                 unreferenced objects and
+#                                                 changes nothing a renderer can
+#                                                 see. The unit test
+#                                                 `the_walk_does_not_leave_the_page_it_started_from`
+#                                                 is what covers it.
+#
+# `--emit PATH` keeps the merged file instead of deleting it, which is how you
+# hand one to `backend-probe` (40/43, 3 skipped, through the sandboxed pool) or
+# open it in the viewer by hand.
+#
+# A merged document is NOT a window-sweep corpus, and that was measured rather
+# than assumed: `viewer_check.py` over a merge of rotated.pdf and links.pdf is
+# 297/300, and the three are the mixed-page-size checks -- "the page is laid out
+# sideways: wanted 0.8312 for a 612x792 page" -- which derive what they expect
+# from page 1's aspect ratio. That is the documented reason `links-rotated` and
+# `comments-rotated` are excluded from the sweep. Merging two documents of ONE
+# page size would pass, and would have removed the only property that makes a
+# merged document different from either input.
+
 # crop-probe: the crop the reader sets, against PDFium rather than against us.
 #
 # Four modes, and the first is the one the whole design rests on:

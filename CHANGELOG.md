@@ -59,6 +59,25 @@ which is named in the refusal, or a destination that is one of the files going
 in. It reports how many pages it wrote and how many documents went into them,
 because unlike a copy there is no other way to see that every file was read.
 
+### Known: a rotated page whose size comes from the page tree is laid out wrong
+
+Found while building the checks for the merge, and it is not about merging.
+
+A PDF lets a page take its size from the group it sits in rather than stating it
+itself, which is what a producer does when every page is the same size. PDFium ---
+the engine tpdf renders with --- reports the wrong size for such a page when it
+is also turned a quarter: it gives the width twice instead of the height and the
+width. It is right when the page states its own size, right when the page is
+upright, and wrong only for the combination.
+
+What you see is a page laid out square, at a shape nothing on it matches, with
+most of the content clipped off the sheet. Nothing reports an error.
+
+tpdf already computes the right answer elsewhere --- it is why saving, printing
+and merging such a document all come out correct --- so the repair is to use that
+number on the viewing path too. That changes how every page's geometry is
+obtained and is its own piece of work; it is written down rather than started.
+
 ### Fixed: an extract from a file that changed said nothing
 
 `Save a copy` tells you when the file underneath moved while you had it open, so

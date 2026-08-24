@@ -123,6 +123,27 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "same split as links-rotated: the mapping it tests is a property of the "
         "scan, which comments-probe reads directly",
     ),
+    (
+        "inherited",
+        # **Excluded because the viewer is currently wrong about it, and that is
+        # a statement with a date on it.** Its pages inherit `/MediaBox` from the
+        # node above them and carry `/Rotate 90`, and PDFium answers
+        # `width x width` for exactly that combination (see the trap). The
+        # scroller lays out from `RawPage::width_pt`, which is that number, so a
+        # window run over this document would be red for a reason no check here
+        # is about --- a check that cannot pass, which this project has its own
+        # entry about.
+        #
+        # It is a merge input in the meantime: `merge-probe` reads it through
+        # `pagetree::displayed_page`, which is right.
+        #
+        # **The day the render path prefers that function, this becomes a corpus
+        # rather than an exclusion**, and it is the natural regression test for
+        # that change. Nothing else in the tree can tell whether it landed.
+        "the viewer lays its pages out at PDFium's size, which is wrong for a "
+        "rotated page whose box is inherited --- it becomes a corpus when the "
+        "render path takes its geometry from pagetree::displayed_page instead",
+    ),
     ("hostile-*", "sanitation fixtures, read by sanitize-* rather than opened"),
     (
         "incr-signed",
