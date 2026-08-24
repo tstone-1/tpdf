@@ -583,12 +583,51 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example geometry-prob
 # pass on that page, so it is a font on this machine and not a box. The probe's
 # own header says why no guard is written for it.
 #
-# **`inherited.pdf` is deliberately NOT a window corpus**, and the reason is in
-# `scripts/viewer_sweep.py` rather than here. Short version: with the repair a
-# window run is 271/272 (from 257/260 before it), and the one failure is the
-# agree phase's synthetic text box coming out at half the height one line of
-# type needs on the shortest pages in the corpus. That is a text-box question,
-# not a geometry one; `docs/PLAN.md` ranks it.
+# **`inherited.pdf` became a window corpus on 2026-08-24**, at 272/272. This
+# said it was deliberately not one, on the strength of a single red check the
+# agree phase reported at 27x; that turned out to be the turned-mark defect
+# `turned-probe` covers, not a text-box one. What is left is a skip rather than
+# a failure: on a 400-point page the phase's synthetic text box has no room for
+# a line and both renderers correctly draw nothing, so it is left out of the
+# comparison with the measurement in its detail line.
+
+# turned-probe: does a mark land where the reader put it, on a turned page?
+#
+# `save::user_quads` maps a mark out of the reader's frame and into the page's
+# own, which is right for the rectangle and wrong for anything drawn inside it
+# that has a direction. On `/Rotate 90` an underline came out as a rule down the
+# LEFT edge of the words, a strikeout as a vertical line, a squiggle down the
+# left, a text box as a column wrapped to the box's height, and a stamp
+# sideways at the wrong size. `/Rotate 90` is what a scanner writes.
+#
+# One mark of each kind on each page of a document whose four pages carry
+# `/Rotate 0`, `90`, `180`, `270` and are otherwise identical -- its generator
+# says so in as many words, which is the whole design: page 0's reading is the
+# reference and the other three must match it, so nothing is predicted and no
+# expected number is written down. Each page is rendered before the mark and
+# after it, and the pixels that moved are reduced to a coverage and an ink box,
+# both as fractions of the box the reader dragged.
+#
+cargo run --release --manifest-path src-tauri/Cargo.toml --example turned-probe -- \\
+    testdata/rotated.pdf --lib vendor/pdfium/lib
+#
+# 29/29 as measured 2026-08-24 on Windows (`--lib vendor/pdfium/bin` there).
+# Four mutations in `scripts/mutate_viewer.py` under `turned:`, all caught;
+# seven more against the unit tests in `scripts/mutate_rust.py` under
+# `turned marks:`.
+#
+# **It is the only check on the squiggle anywhere**, that kind being a stroked
+# zigzag: there is no `re` operand for a unit test to read and no line count
+# that moves, so what it looks like is a question about pixels.
+#
+# Two things in the output that are not defects. A highlight's COVERAGE differs
+# across turns and is deliberately not compared -- `/BM /Multiply` leaves a
+# pixel alone wherever the paper is already dark, so its coverage is a reading
+# about the page's content, and this fixture's type is in a different part of
+# the display at every turn. Its extent is compared instead. And the last check
+# is about the whole set rather than one kind: two kinds drawn differently have
+# to READ differently, or a run in which every kind drew the same thing would be
+# entirely green.
 
 # merge-probe: a merged document against the two that went into it.
 #
@@ -2458,27 +2497,43 @@ the only fixture in the tree with a `/Fit` entry. `links-cropped.pdf` caught two
 control could not be established on a document with a single link, because the check before
 them follows it.
 
+**Re-run 2026-08-24 on Windows**, with `inherited.pdf` promoted from an exclusion to a corpus:
+**343** names, no failing check anywhere, 731 s. `text-heavy.pdf` is not on this machine ---
+no script writes it, it is a real document supplied by hand --- so the run covered **14 of the
+15** and its row below is the earlier macOS reading, marked as such. The sweep refuses a
+missing fixture outright rather than skipping it, which is why the run had to name the other
+fourteen.
+
 | fixture | ran | skipped | what it is there for |
 |---|---|---|---|
-| `text-heavy.pdf` | 292 | 50 | the dense case, and search across 775 pages |
-| `outline-simple.pdf` | 300 | 42 | the only fixture with an ordinary outline |
-| `outline-hostile.pdf` | 300 | 42 | the only one with a `/Launch` entry to refuse |
-| `vector-heavy.pdf` | 198 | 144 | one page, no extractable text, and no white paper to invert |
-| `vector-multi.pdf` | 238 | 104 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
-| `rotated-90.pdf` | 285 | 57 | every page at `/Rotate 90`, which nothing else in the corpus has |
-| `columns.pdf` | 289 | 53 | the only one whose content-stream order is not its reading order |
-| `tagged.pdf` | 264 | 78 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
-| `multilingual.pdf` | 281 | 61 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
-| `encodings.pdf` | 282 | 60 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
-| `mixed.pdf` | 289 | 53 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
-| `comments.pdf` | 307 | 35 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
-| `links.pdf` | 309 | 33 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
-| `links-cropped.pdf` | 244 | 98 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `text-heavy.pdf` | 292 | 50 | *(2026-08-23, macOS --- not on the machine that ran the rest)* the dense case, and search across 775 pages |
+| `outline-simple.pdf` | 299 | 44 | the only fixture with an ordinary outline |
+| `outline-hostile.pdf` | 299 | 44 | the only one with a `/Launch` entry to refuse |
+| `vector-heavy.pdf` | 198 | 145 | one page, no extractable text, and no white paper to invert |
+| `vector-multi.pdf` | 238 | 105 | twelve A0 pages: the only one where a thumbnail is slow enough to collide with the viewer |
+| `rotated-90.pdf` | 278 | 65 | every page at `/Rotate 90`, which nothing else in the corpus has |
+| `columns.pdf` | 288 | 55 | the only one whose content-stream order is not its reading order |
+| `tagged.pdf` | 263 | 80 | the only one carrying a `/StructTreeRoot`, and the only two-page one |
+| `multilingual.pdf` | 280 | 63 | the only one whose text is not Latin: CJK with no word separators, Arabic right-to-left, a decomposed accent, and a code point above the BMP |
+| `encodings.pdf` | 281 | 62 | the only one whose character mappings are absent, broken or predefined --- and the only fixture that reaches the replacement-character path at all |
+| `mixed.pdf` | 282 | 61 | the only one whose pages are not all the same size, and the only one that exercises the three layout checks at all |
+| `comments.pdf` | 306 | 37 | the only one carrying annotations: notes, a reply, a highlight, three text-string encodings, an indirect `/Annots` array and 1,200 marks on one page --- the only corpus where all eight comment checks run |
+| `links.pdf` | 308 | 35 | the only one with link annotations, and the only one whose outline is deliberately not in page order --- which is what let it catch a destination landing on the page before the one it named |
+| `links-cropped.pdf` | 245 | 98 | the only one whose `/CropBox` is not its `/MediaBox`, so a rectangle placed in media space lands visibly wrong |
+| `inherited.pdf` | 272 | 71 | the only one whose pages take their `/MediaBox` from an ancestor while carrying a quarter turn, and the shortest displayed page in the corpus at 400 points |
 
-**The rows above are the 2026-08-23 sweep's own output**, pasted: **342** names on all
-fourteen, 721 s in total, no failing check anywhere, and `vector-multi` and `vector-heavy` are
-73% of the time between them. Five of those names are the overlay-against-the-file phase, six
-are cropping by dragging, and two are the eraser taking a mark whole.
+**The 2026-08-23 sweep read 342 names on macOS, and the difference is not one number.** The
+one new name is `file.mergeDocuments runs from the palette`, checked against the run's own
+name list rather than inferred from the total. Every row's ran/skipped split also moved by one
+or two, and **that is not attributed here**: this run is a different platform *and* four
+commits later, so a per-row difference between the two is two variables at once --- the trap of
+that name. The invariant the sweep asserts is none of these totals, it is that all fourteen
+agree on the *names*, and both runs satisfy it.
+
+The 2026-08-23 run for the record: **342** names on fourteen (the same list with `inherited`
+excluded), 721 s, no failing check anywhere, and `vector-multi` and `vector-heavy` 73% of the
+time between them. Five of those names are the overlay-against-the-file phase, six are
+cropping by dragging, and two are the eraser taking a mark whole.
 
 **Re-run the same day** after the eraser and the crop drag: **329 -> 342**, every corpus
 gaining thirteen *runs* and losing none. Two sweeps in one day are worth one note --- the

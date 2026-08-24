@@ -1790,7 +1790,14 @@ fn write_marks(
         let appearance = if paint(mark.kind) == Paint::None {
             None
         } else {
-            Some(appearance_stream(doc, mark, &quads, &strokes, rect))
+            Some(appearance_stream(
+                doc,
+                mark,
+                &quads,
+                &strokes,
+                rect,
+                shown.turns,
+            ))
         };
         let dictionary = mark_dictionary(mark, page, &quads, &strokes, rect, appearance);
         let annotation = doc.add_object(dictionary);
@@ -2192,7 +2199,14 @@ fn is_text_markup(kind: MarkKind) -> bool {
 ///
 /// Derived from [`paint`] rather than matching again, so that a kind can never be
 /// a wash here and something else there. It decides the blend mode and `/CA`.
-fn is_wash(kind: MarkKind) -> bool {
+///
+/// **Public for `examples/turned_probe.rs`**, which has to know the same thing
+/// for a reason that follows from the blend mode: a multiplied mark leaves a
+/// pixel alone wherever the paper under it is already dark, so how much of its
+/// box it inks is a reading about the page's content as well as about the mark.
+/// A copy of this predicate there would be the second copy this doc comment
+/// exists to refuse.
+pub fn is_wash(kind: MarkKind) -> bool {
     paint(kind) == Paint::Wash
 }
 
@@ -2488,6 +2502,141 @@ fn text_string(value: &str) -> Object {
     Object::String(bytes, lopdf::StringFormat::Hexadecimal)
 }
 
+/// A mark's box as the reader saw it, and the map back into the page.
+///
+/// Every quad reaching [`appearance_stream`] has been through [`user_quads`],
+/// which maps the reader's rectangle into the page's own space. That is right
+/// for the rectangle, which is a set of points, and wrong for everything drawn
+/// *inside* it that has a direction: a rule belongs under the words as they are
+/// read, and a line of type runs the way they are read. On a page carrying
+/// `/Rotate 90` those two directions are a quarter turn from the page's own.
+///
+/// **Measured before this was written**, one mark of each kind on a 300 x 40
+/// box, `testdata/inherited.pdf` (`/Rotate 90`) against
+/// `testdata/text-base14.pdf`, reading where the saved file's ink landed inside
+/// the box *as displayed*:
+///
+/// | kind | upright | turned |
+/// |------|---------|--------|
+/// | underline | a band at y 0.93..0.99 | a rule down the left edge, x 0.00..0.07 |
+/// | strikeout | y 0.46..0.53 | a vertical line, x 0.46..0.53 |
+/// | squiggly | y 0.81..0.99 | x 0.00..0.15 |
+/// | text box | x 0.01..0.34 | a column at x 0.82..0.98, wrapped to the box's *height* |
+/// | stamp | 25,011 px | 11,024 px, sideways |
+///
+/// A highlight, a box and an ellipse came out right at both, and they are the
+/// three whose shape is symmetric under a quarter turn --- which is why nothing
+/// caught this: the window sweep's agreement check compares *coverage
+/// fractions*, and a band turned through a right angle covers the same
+/// fraction of the same rectangle. The text box was the one kind it did report,
+/// and the diagnosis recorded at the time was the box being too short.
+///
+/// The text box's own arithmetic says the rest: `textbox::wrap` was being given
+/// 40 points where the reader had dragged 300, so the model broke those words
+/// into one line and the file into eighteen.
+struct Upright {
+    /// The box's width as the reader saw it, in points.
+    width: f64,
+    /// Its height as the reader saw it, in points.
+    height: f64,
+    /// The page-space point the box's displayed top-left corner sits at.
+    origin: (f64, f64),
+    /// One point to the reader's right, in page space.
+    right: (f64, f64),
+    /// One point down the reader's page, in page space.
+    down: (f64, f64),
+}
+
+impl Upright {
+    /// The reader's view of a page-space quad, on a page turned `turns` quarters.
+    ///
+    /// The inverse of what [`crate::text::from_device`] applies, for corners and
+    /// directions rather than for rectangles. **Two copies of one turn is the
+    /// drift the trap index warns about**, so this is not left to agree with that
+    /// function by inspection: `an_upright_box_is_the_rectangle_the_reader_dragged`
+    /// composes the two at every quarter and asserts the round trip.
+    fn of(turns: u8, quad: [f64; 4]) -> Self {
+        let (w, h) = (quad[2] - quad[0], quad[3] - quad[1]);
+        match turns % 4 {
+            0 => Self {
+                width: w,
+                height: h,
+                origin: (quad[0], quad[3]),
+                right: (1.0, 0.0),
+                down: (0.0, -1.0),
+            },
+            1 => Self {
+                width: h,
+                height: w,
+                origin: (quad[0], quad[1]),
+                right: (0.0, 1.0),
+                down: (1.0, 0.0),
+            },
+            2 => Self {
+                width: w,
+                height: h,
+                origin: (quad[2], quad[1]),
+                right: (-1.0, 0.0),
+                down: (0.0, 1.0),
+            },
+            _ => Self {
+                width: h,
+                height: w,
+                origin: (quad[2], quad[3]),
+                right: (0.0, -1.0),
+                down: (-1.0, 0.0),
+            },
+        }
+    }
+
+    /// The page-space point `u` to the right of the box's displayed top-left
+    /// corner and `v` below it.
+    fn at(&self, u: f64, v: f64) -> (f64, f64) {
+        (
+            self.origin.0 + u * self.right.0 + v * self.down.0,
+            self.origin.1 + u * self.right.1 + v * self.down.1,
+        )
+    }
+
+    /// A `Tm` operator setting type running the reader's way, its baseline at
+    /// [`Upright::at`].
+    ///
+    /// **`Tm` rather than the `Td` this replaced**, and the reason is the turn:
+    /// `Td` can only move an origin, so it cannot say which way the glyphs face,
+    /// and every line of a turned text box would still come out along the page's
+    /// own axis. Absolute rather than relative also removes the trap the old
+    /// comment here warned about --- a `Td` chain stacks every line on the first
+    /// if one offset is written as an absolute.
+    ///
+    /// The third and fourth coefficients are the *negated* downward direction,
+    /// because text space measures up and a reader's box measures down.
+    fn text_matrix(&self, u: f64, v: f64) -> String {
+        let (x, y) = self.at(u, v);
+        // Negating a zero gives `-0.0`, which formats as `-0`: a legal number
+        // that every reader accepts and no human recognises as the identity.
+        // `v == 0.0` is true of both zeros, so this returns the positive one.
+        let flat = |value: f64| if value == 0.0 { 0.0 } else { value };
+        format!(
+            "{} {} {} {} {x} {y} Tm",
+            flat(self.right.0),
+            flat(self.right.1),
+            flat(-self.down.0),
+            flat(-self.down.1)
+        )
+    }
+
+    /// `[x, y, width, height]` for a `re`, covering the reader's `u0..u1` by
+    /// `v0..v1`.
+    ///
+    /// A quarter turn keeps a rectangle axis-aligned and swaps which corner is
+    /// which, so the two mapped corners are sorted rather than assumed.
+    fn rect(&self, u0: f64, v0: f64, u1: f64, v1: f64) -> [f64; 4] {
+        let (ax, ay) = self.at(u0, v0);
+        let (bx, by) = self.at(u1, v1);
+        [ax.min(bx), ay.min(by), (bx - ax).abs(), (by - ay).abs()]
+    }
+}
+
 /// The appearance stream a reader draws when it does not generate its own.
 ///
 /// **Not optional, even though both PDFKit and PDFium generate one.** Measured
@@ -2512,6 +2661,7 @@ fn appearance_stream(
     quads: &[[f64; 4]],
     strokes: &[Vec<(f64, f64)>],
     rect: [f64; 4],
+    turns: u8,
 ) -> ObjectId {
     let style = paint(mark.kind);
     let mut state = Dictionary::new();
@@ -2593,10 +2743,22 @@ fn appearance_stream(
             }
         }
         // A band inside it, filled. Same operator, different rectangle.
+        //
+        // **Measured in the reader's frame, not the page's**, because "the
+        // bottom of the quad" is where a rule goes and a turned page has two
+        // bottoms. `line_rect` answers in a y-up frame, so it is handed the
+        // reader's box and its answer read back as a distance from the reader's
+        // own bottom edge.
         Paint::Line => {
             for quad in quads {
-                let (x, width) = (quad[0], quad[2] - quad[0]);
-                let (y, height) = line_rect(mark.kind, quad[1], quad[3]);
+                let seen = Upright::of(turns, *quad);
+                let (base, band) = line_rect(mark.kind, 0.0, seen.height);
+                let [x, y, width, height] = seen.rect(
+                    0.0,
+                    seen.height - base - band,
+                    seen.width,
+                    seen.height - base,
+                );
                 content.push_str(&format!("{x} {y} {width} {height} re f\n"));
             }
         }
@@ -2610,40 +2772,40 @@ fn appearance_stream(
         }
         // The reader's words, one `Tj` per line, from the top of the box down.
         //
-        // **`Td` is relative to the previous text object's origin**, so each
-        // line's offset is the leading rather than an absolute y --- which is
-        // why this is one `BT`/`ET` pair with several `Td`/`Tj` and not one pair
-        // per line. Getting that wrong stacks every line on the first.
+        // **The whole layout is in the reader's frame**, which is what the box's
+        // width has to be: `wrap` decides where the lines break, and handing it
+        // the page's width breaks them against the box's *height* on a turned
+        // page --- eighteen lines two glyphs wide where the model, which works in
+        // the reader's frame throughout, had made one. `Upright` records the
+        // measurement.
         //
         // Lines that would fall below the box are dropped rather than drawn: the
         // /BBox clips them anyway, and emitting ink nobody can see makes the
-        // stream disagree with what the overlay shows.
+        // stream disagree with what the overlay shows. The rule is
+        // `viewer.ts`'s exactly --- a line is drawn while its baseline is still
+        // inside the box --- so the two renderers stop at the same line.
         Paint::Text => {
             for quad in quads {
-                let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;
+                let seen = Upright::of(turns, *quad);
+                let width = seen.width - textbox::INSET * 2.0;
                 let lines = textbox::wrap(&mark.note, textbox::SIZE, width.max(1.0));
                 if lines.is_empty() {
                     continue;
                 }
                 let leading = textbox::SIZE * textbox::LEADING;
-                // The first baseline sits one ascent below the top inset, not at
-                // it: `Td` places a baseline, and a line placed *at* the top edge
-                // hangs its whole body above the box.
-                let first = quad[3] - textbox::INSET - textbox::SIZE;
                 content.push_str(&format!(
                     "BT /{TEXT_FONT} {size} Tf\n",
                     size = textbox::SIZE
                 ));
-                content.push_str(&format!("{} {first} Td\n", quad[0] + textbox::INSET));
                 for (index, line) in lines.iter().enumerate() {
-                    if index > 0 {
-                        content.push_str(&format!("0 {} Td\n", -leading));
-                    }
-                    let baseline =
-                        quad[3] - textbox::INSET - textbox::SIZE - leading * (index as f64);
-                    if baseline < quad[1] {
+                    // The baseline sits one ascent below the top inset, not at
+                    // it: a line placed *at* the top edge hangs its whole body
+                    // above the box.
+                    let down = textbox::INSET + textbox::SIZE + leading * (index as f64);
+                    if down > seen.height {
                         break;
                     }
+                    content.push_str(&format!("{}\n", seen.text_matrix(textbox::INSET, down)));
                     content.push_str(&format!("<{}> Tj\n", winansi_hex(line)));
                 }
                 content.push_str("ET\n");
@@ -2670,8 +2832,15 @@ fn appearance_stream(
                     continue;
                 };
                 let word = name.word();
-                let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;
-                let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;
+                // The reader's box, for `Paint::Text`'s reason and one of its
+                // own: the size is a ratio of width to height, so on a turned
+                // page the page's own box does not merely rotate the word, it
+                // sets it at the size a rectangle of the other shape would take.
+                // The border is unaffected and stays in page space --- a
+                // rectangle is the same set of points at every quarter.
+                let seen = Upright::of(turns, *quad);
+                let inner_w = seen.width - STAMP_INSET * 2.0;
+                let inner_h = seen.height - STAMP_INSET * 2.0;
                 let [x, y, width, height] = outline_path(*quad);
                 content.push_str(&format!("{x} {y} {width} {height} re S\n"));
                 if inner_w <= 0.0 || inner_h <= 0.0 {
@@ -2684,13 +2853,13 @@ fn appearance_stream(
                 let unit = textbox::advance(word, 1.0).max(f64::EPSILON);
                 let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);
                 // Centred both ways. The baseline sits half a cap height below
-                // the middle, because `Td` places a baseline and a word centred
-                // *on* it hangs half its body below the box's middle.
+                // the middle, because a word centred *on* the middle hangs half
+                // its body below it.
                 let drawn = textbox::advance(word, size);
-                let left = quad[0] + ((quad[2] - quad[0]) - drawn) / 2.0;
-                let baseline = quad[1] + ((quad[3] - quad[1]) - size * STAMP_CAP) / 2.0;
+                let across = (seen.width - drawn) / 2.0;
+                let down = (seen.height + size * STAMP_CAP) / 2.0;
                 content.push_str(&format!("BT /{TEXT_FONT} {size} Tf\n"));
-                content.push_str(&format!("{left} {baseline} Td\n"));
+                content.push_str(&format!("{}\n", seen.text_matrix(across, down)));
                 content.push_str(&format!("<{}> Tj\n", winansi_hex(word)));
                 content.push_str("ET\n");
             }
@@ -2714,9 +2883,12 @@ fn appearance_stream(
         // in every reader -- which reads as a thinner wave rather than as a bug.
         Paint::Wave => {
             for quad in quads {
-                let full = quad[3] - quad[1];
-                let thickness = full * LINE_FRACTION;
-                let (base, band) = line_rect(mark.kind, quad[1], quad[3]);
+                // The reader's frame, for the rule's reason: a wave runs along
+                // the words and climbs away from them, and both of those are
+                // directions rather than page axes.
+                let seen = Upright::of(turns, *quad);
+                let thickness = seen.height * LINE_FRACTION;
+                let (base, band) = line_rect(mark.kind, 0.0, seen.height);
                 let low = base + thickness / 2.0;
                 let high = base + band - thickness / 2.0;
                 let half = band * SQUIGGLE_PERIOD / 2.0;
@@ -2727,23 +2899,27 @@ fn appearance_stream(
                 if half <= 0.0 || high <= low {
                     continue;
                 }
+                // `across` runs the way the words do and `up` measures from the
+                // reader's bottom edge, which is what `line_rect` answered in.
+                let point = |across: f64, up: f64| seen.at(across, seen.height - up);
                 content.push_str(&format!("{thickness} w\n"));
-                content.push_str(&format!("{} {low} m\n", quad[0]));
-                let mut x = quad[0];
-                let mut up = true;
-                while x < quad[2] {
-                    let next = (x + half).min(quad[2]);
+                let (mx, my) = point(0.0, low);
+                content.push_str(&format!("{mx} {my} m\n"));
+                let mut along = 0.0;
+                let mut climbing = true;
+                while along < seen.width {
+                    let next = (along + half).min(seen.width);
                     // The last segment is clipped to the quad's right edge, so
                     // it ends part-way up its climb rather than overshooting.
                     // Interpolated rather than snapped to the peak: a wave that
                     // jumped to full height in a tenth of a period ends on a
                     // near-vertical stroke, which looks like a stray tick.
-                    let reached = (next - x) / half;
-                    let (from, to) = if up { (low, high) } else { (high, low) };
-                    let y = from + (to - from) * reached;
-                    content.push_str(&format!("{next} {y} l\n"));
-                    x = next;
-                    up = !up;
+                    let reached = (next - along) / half;
+                    let (from, to) = if climbing { (low, high) } else { (high, low) };
+                    let (lx, ly) = point(next, from + (to - from) * reached);
+                    content.push_str(&format!("{lx} {ly} l\n"));
+                    along = next;
+                    climbing = !climbing;
                 }
                 content.push_str("S\n");
             }
@@ -7279,6 +7455,327 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    // -----------------------------------------------------------------
+    // A mark on a page the document says is turned
+    // -----------------------------------------------------------------
+
+    /// The appearance stream one mark writes over a caller's fixture.
+    ///
+    /// [`written_appearance_of`]'s shape, with the source document as an
+    /// argument: every test below is a comparison between the same mark on an
+    /// upright page and on a turned one, which needs two fixtures rather than
+    /// the one that helper hard-codes.
+    fn appearance_over(source_bytes: Vec<u8>, plan: &Plan, scratch: &Scratch) -> String {
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        std::fs::write(&source, source_bytes).expect("write fixture");
+        write_copy(&source, plan, &out).expect("save");
+        let doc = Document::load(&out).expect("reopen");
+        let stream = doc
+            .objects
+            .values()
+            .find_map(|object| match object {
+                Object::Stream(stream)
+                    if stream.dict.get(b"Subtype").and_then(Object::as_name).ok()
+                        == Some(b"Form".as_slice()) =>
+                {
+                    Some(stream.clone())
+                }
+                _ => None,
+            })
+            .expect("the mark has an appearance stream");
+        String::from_utf8(
+            stream
+                .decompressed_content()
+                .unwrap_or(stream.content.clone()),
+        )
+        .expect("the appearance stream is text")
+    }
+
+    /// A plan over `pages` untouched pages, carrying one mark of `kind` on the
+    /// first.
+    ///
+    /// The count is an argument because the two fixtures differ: a plan naming
+    /// fewer pages than the file has is a page deletion, which would put the
+    /// rewrite path under a test about geometry, and `write_copy` refuses one
+    /// naming more.
+    fn one_mark_over(pages: usize, kind: MarkKind, quad: crate::docmodel::Quad) -> Plan {
+        let mut plan = plan_of(&vec![0u8; pages]);
+        plan.marks.push(PlannedMark {
+            kind,
+            stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+            source: 0,
+            quads: vec![quad],
+            strokes: Vec::new(),
+            color: [1.0, 0.9, 0.2],
+            author: "a reader".to_string(),
+            note: "the reader typed this".to_string(),
+            made: "D:20260824120000Z".to_string(),
+        });
+        plan
+    }
+
+    /// The box every comparison below uses, in the space the reader drags in.
+    ///
+    /// 300 by 40 points, which both fixtures hold with room to spare: one is
+    /// 612 x 792 displayed and the other 792 x 612, and a box that fitted only
+    /// one of them would make the comparison a statement about clipping.
+    fn readers_box() -> crate::docmodel::Quad {
+        crate::docmodel::Quad {
+            left: 72.0,
+            top: 100.0,
+            right: 372.0,
+            bottom: 140.0,
+        }
+    }
+
+    #[test]
+    fn an_upright_box_is_the_rectangle_the_reader_dragged() {
+        // `Upright` and `text::from_device` are two statements of one turn, and
+        // the trap index has what happens to two copies of a distinction. This
+        // is the one test that pins them together, so it runs the pair rather
+        // than restating either: map a reader's rectangle into the page with
+        // `from_device`, ask `Upright` what the reader saw, and require the
+        // answer back.
+        let (w, h) = (792.0f32, 612.0f32);
+        let device = [72.0f32, 100.0, 372.0, 140.0];
+        let (dragged_w, dragged_h) = (
+            (device[2] - device[0]) as f64,
+            (device[3] - device[1]) as f64,
+        );
+        for turns in 0..4u8 {
+            // The displayed size swaps with the page's own at odd quarters,
+            // exactly as both functions expect it to.
+            let (dw, dh) = if turns % 2 == 0 { (w, h) } else { (h, w) };
+            let quad = crate::text::from_device(turns, dw, dh, device);
+            let seen = Upright::of(turns, quad);
+            assert!(
+                (seen.width - dragged_w).abs() < 0.01 && (seen.height - dragged_h).abs() < 0.01,
+                "at {turns} quarters the reader's 300 x 40 came back {} x {}",
+                seen.width,
+                seen.height
+            );
+            // The corners, which the size alone cannot pin: a box the right
+            // shape anchored at the wrong corner puts every mark somewhere else
+            // on the page, and three of the four turns move which corner of the
+            // page-space quad the reader's top-left is.
+            let top_left = seen.at(0.0, 0.0);
+            let bottom_right = seen.at(seen.width, seen.height);
+            let xs = [top_left.0, bottom_right.0];
+            let ys = [top_left.1, bottom_right.1];
+            assert!(
+                (xs[0].min(xs[1]) - quad[0]).abs() < 0.01
+                    && (ys[0].min(ys[1]) - quad[1]).abs() < 0.01
+                    && (xs[0].max(xs[1]) - quad[2]).abs() < 0.01
+                    && (ys[0].max(ys[1]) - quad[3]).abs() < 0.01,
+                "at {turns} quarters the two corners span {top_left:?}..{bottom_right:?}, \
+                 not the quad {quad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_text_box_wraps_to_the_width_the_reader_dragged_however_the_page_is_turned() {
+        // **The defect this is written for, and it shipped.** `user_quads` maps
+        // the reader's rectangle into the page's own space, so on a page
+        // carrying `/Rotate 90` a box dragged 300 wide and 40 tall arrives 40
+        // wide. `wrap` was given that 40, and broke these four words into
+        // eighteen lines two glyphs across, drawn down the page --- against the
+        // one line the model made from the same box, which is what the overlay
+        // draws. Measured on `testdata/inherited.pdf` before the repair.
+        //
+        // Stated as a comparison between the two pages rather than against a
+        // number, because the number is `wrap`'s own answer: asserting it here
+        // would be this file agreeing with the function it calls, and would pass
+        // just as well if both were given the wrong width.
+        let upright = appearance_over(
+            document_with_annots(AnnotShape::Absent),
+            &one_mark_over(1, MarkKind::TextBox, readers_box()),
+            &Scratch::new("turned-text-upright"),
+        );
+        let turned = appearance_over(
+            inheriting_document(),
+            &one_mark_over(2, MarkKind::TextBox, readers_box()),
+            &Scratch::new("turned-text-turned"),
+        );
+        let words = |content: &str| {
+            content
+                .lines()
+                .filter(|line| line.ends_with("Tj"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            !words(&upright).is_empty(),
+            "the control drew nothing, so the comparison is between two absences: {upright}"
+        );
+        assert_eq!(
+            words(&turned),
+            words(&upright),
+            "one box, one string, two pages: the same words in the same lines"
+        );
+    }
+
+    #[test]
+    fn type_runs_the_readers_way_on_a_turned_page() {
+        // The other half, and the half the line count cannot reach: wrapping to
+        // the right width still draws each line along the *page's* axis unless
+        // the text matrix says otherwise, so a text box on a turned page came
+        // out sideways with exactly the right number of lines in it.
+        //
+        // `0 1 -1 0` is a quarter turn anticlockwise in page space, which is
+        // what a page displayed a quarter clockwise needs to read upright.
+        let turned = appearance_over(
+            inheriting_document(),
+            &one_mark_over(2, MarkKind::TextBox, readers_box()),
+            &Scratch::new("turned-text-matrix"),
+        );
+        assert!(
+            turned.contains("0 1 -1 0 "),
+            "type on a page turned one quarter is set on a turned matrix: {turned}"
+        );
+        // The control, and it is what makes the assertion above about the turn
+        // rather than about `Tm` being emitted at all: an upright page gets the
+        // identity, so a matrix hard-coded to the quarter would fail here.
+        let upright = appearance_over(
+            document_with_annots(AnnotShape::Absent),
+            &one_mark_over(1, MarkKind::TextBox, readers_box()),
+            &Scratch::new("upright-text-matrix"),
+        );
+        assert!(
+            upright.contains("1 0 0 1 ") && !upright.contains("0 1 -1 0 "),
+            "an upright page is set on the identity: {upright}"
+        );
+    }
+
+    #[test]
+    fn a_rule_sits_under_the_words_however_the_page_is_turned() {
+        // An underline's band is `LINE_FRACTION` of the quad's height, at the
+        // quad's bottom, and on a turned page both of those were the page's
+        // rather than the reader's: the rule came out down the left edge of the
+        // words. Measured at x 0.00..0.07 against the upright y 0.93..0.99.
+        //
+        // **Read back in the reader's frame through `text::to_device`**, which
+        // is the independent half: `Upright` is the code under test, and asking
+        // it where its own rectangle went would be the writer agreeing with
+        // itself. The band is then a fraction of the box the reader dragged,
+        // and the two pages must give the same four numbers.
+        //
+        // Written first as "long the way the words run, thin across them",
+        // which is the axis the defect is on --- and a mutation taking the
+        // thickness from the page's box survived it, because a rule 7.5 times
+        // too thick is still thinner than the box. A proportion measured along
+        // the axis it is policing cannot see a magnitude; the differential can.
+        let band_in_the_box = |content: &str, turns: u8| {
+            let [x, y, w, h] = only_rectangle(content);
+            // The fixtures are one page each, 612 x 792 before the turn.
+            let (dw, dh) = if turns % 2 == 0 {
+                (612.0, 792.0)
+            } else {
+                (792.0, 612.0)
+            };
+            let shown = crate::text::to_device(turns, dw, dh, [x, y, x + w, y + h]);
+            let box_pt = readers_box();
+            [
+                (shown[0] - box_pt.left) / (box_pt.right - box_pt.left),
+                (shown[1] - box_pt.top) / (box_pt.bottom - box_pt.top),
+                (shown[2] - box_pt.left) / (box_pt.right - box_pt.left),
+                (shown[3] - box_pt.top) / (box_pt.bottom - box_pt.top),
+            ]
+        };
+        for kind in [MarkKind::Underline, MarkKind::StrikeOut] {
+            let upright = band_in_the_box(
+                &appearance_over(
+                    document_with_annots(AnnotShape::Absent),
+                    &one_mark_over(1, kind, readers_box()),
+                    &Scratch::new("upright-rule"),
+                ),
+                0,
+            );
+            let turned = band_in_the_box(
+                &appearance_over(
+                    inheriting_document(),
+                    &one_mark_over(2, kind, readers_box()),
+                    &Scratch::new("turned-rule"),
+                ),
+                1,
+            );
+            // The control, and it is not decoration: a band that came back
+            // spanning the whole box in both readings would satisfy the
+            // comparison below while telling nothing apart. A rule is thin.
+            assert!(
+                upright[3] - upright[1] < 0.25,
+                "{kind:?} upright covers {:.2} of the box's height, which is not a rule",
+                upright[3] - upright[1]
+            );
+            for (at, (a, b)) in upright.iter().zip(turned.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 0.01,
+                    "{kind:?} edge {at}: {a:.3} of the box upright against {b:.3} turned"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_stamps_word_is_sized_by_the_box_the_reader_dragged() {
+        // A stamp's size is a ratio of the box's width to its height, so a
+        // turned page did not merely rotate the word: it set it at the size a
+        // 40 x 300 rectangle would take. Measured as 11,024 inked pixels
+        // against the upright 25,011 for one box.
+        let size_of = |content: &str| {
+            content
+                .lines()
+                .find_map(|line| line.strip_prefix(&format!("BT /{TEXT_FONT} ")))
+                .and_then(|rest| rest.strip_suffix(" Tf"))
+                .and_then(|size| size.parse::<f64>().ok())
+                .unwrap_or_else(|| panic!("no font size in {content}"))
+        };
+        let upright = appearance_over(
+            document_with_annots(AnnotShape::Absent),
+            &one_mark_over(1, MarkKind::Stamp, readers_box()),
+            &Scratch::new("upright-stamp"),
+        );
+        let turned = appearance_over(
+            inheriting_document(),
+            &one_mark_over(2, MarkKind::Stamp, readers_box()),
+            &Scratch::new("turned-stamp"),
+        );
+        assert!(
+            (size_of(&turned) - size_of(&upright)).abs() < 0.01,
+            "one box dragged to one shape: {} turned against {} upright",
+            size_of(&turned),
+            size_of(&upright)
+        );
+        assert!(
+            turned.contains("0 1 -1 0 "),
+            "and the word is set the reader's way: {turned}"
+        );
+    }
+
+    /// The `[x, y, width, height]` of the one `re` in a content stream.
+    ///
+    /// Panics on none and on more than one, which is what makes it usable as a
+    /// reader: a stream with two rectangles in it is a different mark from the
+    /// one the caller thinks it is measuring.
+    fn only_rectangle(content: &str) -> [f64; 4] {
+        let found: Vec<[f64; 4]> = content
+            .lines()
+            .filter_map(|line| {
+                let rest = line
+                    .strip_suffix(" re f")
+                    .or_else(|| line.strip_suffix(" re S"))?;
+                let numbers: Vec<f64> = rest
+                    .split_whitespace()
+                    .filter_map(|n| n.parse().ok())
+                    .collect();
+                <[f64; 4]>::try_from(numbers).ok()
+            })
+            .collect();
+        assert_eq!(found.len(), 1, "one rectangle, not {found:?}, in {content}");
+        found[0]
     }
 
     #[test]

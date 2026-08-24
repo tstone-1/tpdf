@@ -1294,6 +1294,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - The guard that could not fire, because the library removes the evidence first (four weeks of refusing encrypted documents while the commonest one was reserialised in the clear; the fixture's own comment argued the missing test was redundant, and every clause of it was backwards)
 - A field with no reachable `true`, guarded by a comment about the wrong call (the ordering it protected was correct and had stopped mattering; nothing renders the field, so the wrong value had no screen to be wrong on)
 - The same silent decryption, on the path whose output a reader keeps (`print::build` had no guard at all, and `is_passthrough`'s comment is why it looked covered; found by grepping for the predicate the first fix had just taught, which is the cheapest moment to look)
+- A mark's rectangle survives a quarter turn and everything drawn inside it does not (four kinds of the seven wrong on a scanner's `/Rotate 90`, and the two that survived are the two whose shape is symmetric under one; every instrument aimed at them was blind to rotation or excused from it, and the one red check was diagnosed from its fixture's most conspicuous property, which was not the cause)
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1363,6 +1364,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - PDFKit reports an annotation's bounds rotated and renders the page unrotated (a cross-check read in the wrong convention produced a confident wrong conclusion)
 - Reading the code predicted four call sites, and there were eleven (the finding was right and its scope was not; grep the symbol, not the shape of the call you have in mind)
 - The delta was the wrong term, because the mapping was already absent from both numbers (the argument's one checkable step was right, and the term it removed was in neither number)
+- A multiplied mark's coverage is a reading about the page, not only about the mark (a fixture whose four pages are identical by construction gave a highlight 0.933 and 1.000; the generator's claim is true and is about the page's own space, and the reading was taken in display space)
 
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration

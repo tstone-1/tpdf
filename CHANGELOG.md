@@ -41,6 +41,24 @@ The step is only ever needed once, and only by machines that have run 26.8.8;
 it is written down in the installer's own comments so it can be deleted when
 that stops being a supported starting point.
 
+### Fixed: marks on a turned page were drawn sideways in the saved file
+
+Underline a line on a scanned page and the file you saved had a vertical rule
+down the left of the words instead of a line under them. A strikeout crossed the
+page the wrong way, a squiggle ran down the side, a stamp came out sideways at
+the wrong size, and a text box was broken into a narrow column of one- and
+two-letter lines. What you saw while the document was open was right; the file
+was wrong.
+
+It applied to any page the document says is turned, which is what a scanner
+writes on nearly every page it produces. A highlight and a rectangle were
+unaffected, being the same shape whichever way round they are.
+
+The saved file now draws every mark the way you drew it, at every quarter turn.
+Files already saved are not changed by this --- the marks in them were written
+sideways and are still sideways; drawing them again on the repaired build
+produces the right file.
+
 ### Added: Merge documents
 
 Pick any number of PDFs and get one file holding this document followed by all

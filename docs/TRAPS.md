@@ -14288,3 +14288,92 @@ nothing downstream reads, and it looked like progress because the mutation was
 different afterwards.
 
 Paid for on 2026-08-24, in the window-mutation pass after `26.8.8`.
+
+### A mark's rectangle survives a quarter turn and everything drawn inside it does not
+
+`save::user_quads` maps a mark out of the reader's frame and into the page's own,
+which is right for the rectangle and wrong for every direction inside it. On a
+page carrying `/Rotate 90` a box the reader dragged 300 wide and 40 tall arrives
+40 wide and 300 tall --- the same set of points, with its sides swapped --- and
+every arm of `appearance_stream` that draws something with a *direction* was
+reading those sides as the reader's.
+
+Measured 2026-08-24, one mark of each kind on one box, `testdata/inherited.pdf`
+against `testdata/text-base14.pdf`, reading where the ink landed inside the box
+as displayed:
+
+| kind | upright | turned |
+|------|---------|--------|
+| underline | a band at y 0.93..0.99 | a rule down the left edge, x 0.00..0.07 |
+| strikeout | y 0.46..0.53 | a vertical line, x 0.46..0.53 |
+| squiggly | y 0.81..0.99 | x 0.00..0.15 |
+| text box | x 0.01..0.34 | a column at x 0.82..0.98 |
+| stamp | 25,011 px | 11,024 px, sideways |
+| highlight | the whole box | the whole box |
+| box | its four edges | its four edges |
+
+**Four kinds wrong, and a scanner's output is where a reader meets it.** `/Rotate
+90` is what a scanner writes; a reader underlining a scanned contract got a
+vertical line down the left of the words.
+
+The text box is the worst of the four because two things go wrong at once.
+`textbox::wrap` was handed 40 points where the reader had dragged 300, so the
+model --- which works in the reader's frame throughout --- broke four words into
+**one** line and the writer broke them into **eighteen**, two glyphs across; and
+each of those eighteen was then drawn along the page's own axis. Its appearance
+`/BBox` came out `[80 72 84 528]`: four points wide and 456 tall.
+
+**Why nothing caught it, and this is the reusable half.** The two kinds that came
+out right are exactly the two whose shape is symmetric under a quarter turn. The
+window sweep's agreement check compares *coverage fractions*, and a band turned
+through a right angle covers the same fraction of the same rectangle --- so three
+of the four defects were invisible to it by construction. `annot-probe --mode
+rule` and `--mode wave` refuse a rotated page outright, in their own words,
+because the strip they measure is not horizontal there. **Every instrument aimed
+at these marks was either blind to rotation or excused from it.**
+
+The one check that did fire was the text box's, at 27x, on the one rotated
+fixture in the corpus --- and the diagnosis written down at the time was that the
+fixture's pages were short. That was the fixture's most conspicuous property and
+it was not the cause: measured across three unrotated fixtures afterwards, the
+overlay and the file agree exactly, both drawing nothing below **13.0 pt** and
+one line at and above it. **A red check on a single fixture is evidence about
+that fixture; which of its properties is doing the work is a separate
+measurement, and the conspicuous one is the tempting answer.**
+
+The repair is `save::Upright`: the box as the reader saw it, plus the map back
+into the page. Text is set on a `Tm` rather than a `Td`, because `Td` can only
+move an origin and cannot say which way the glyphs face.
+
+**And the first assertion written for the rule could not fail.** It said the band
+comes out "long the way the words run and thin across them" --- a proportion,
+measured along the axis the defect is on. A mutation taking the *thickness* from
+the page's box survived it, because a rule 7.5 times too thick is still thinner
+than the box. The assertion that works is the differential: the same box on an
+upright page and a turned one, read back through `text::to_device` and compared
+as fractions of the box, all four edges.
+
+### A multiplied mark's coverage is a reading about the page, not only about the mark
+
+`examples/turned_probe.rs` compares one mark across the four pages of
+`testdata/rotated.pdf`, whose own generator says they *"carry identical content
+and differ only in /Rotate, so any difference the probe reports is the rotation
+and nothing else"*. A highlight reported 0.933 of its box inked on page 0 and
+1.000 at a half turn.
+
+Nothing about the mark had moved: its ink bounding box read 0.00..1.00 by
+0.00..0.99 on all four pages. A highlight is drawn with `/BM /Multiply` so the
+words stay readable underneath, and multiply leaves a pixel where it is wherever
+the paper is already dark --- so the pixels that did *not* move were the glyphs
+under the box. The fixture confines its type to the upper part of the **page**,
+which is a different part of the **display** at every turn.
+
+So the generator's claim is true and does not say what it is quoted as saying: it
+is about the page's own space. A reading taken in display space over a
+content-sensitive blend mode is a reading about the content.
+
+The probe compares the ink's extent for a wash and its coverage for everything
+else, using `save::is_wash` rather than a copy --- and the exclusion can only
+shrink coverage, never grow it silently: a kind that *became* a wash would still
+have its coverage compared until that line was changed, so the run would go red
+rather than pass in silence.

@@ -115,6 +115,13 @@ MIXED_FIXTURE = ROOT / "testdata/mixed.pdf"
 #: above exist.
 COMMENTS_FIXTURE = ROOT / "testdata/comments.pdf"
 
+#: The shortest displayed page in the corpus, at 400 points. That is what makes
+#: the agree phase's own text box too short for one line of 11-point type, which
+#: is the one condition under which that phase leaves a kind out. On every other
+#: fixture the exclusion is not taken and a mutation aimed at it would be aimed
+#: at a branch nothing reaches --- the same reason the four constants above exist.
+INHERITED_FIXTURE = ROOT / "testdata/inherited.pdf"
+
 
 @dataclass(frozen=True)
 class Mutation:
@@ -994,6 +1001,70 @@ MUTATIONS = [
         "geometry-inherited",
     ),
     Mutation(
+        # Compare the text box on a page too short to hold one line of type.
+        # The exclusion is the one judgement call in the agree phase and it has
+        # to have a failing case: without it the line that makes it is
+        # indistinguishable from one that excludes nothing, and the phase would
+        # go back to calling two renderers that correctly agree on drawing
+        # nothing a kind that put no ink in the file.
+        #
+        # Its own runner, on the only corpus short enough to take the branch.
+        # Everywhere else this edit changes nothing, so a mutation aimed at it
+        # on any other fixture would report SURVIVED.
+        "agree: compare a text box on a page too short for one line",
+        "src/lib/viewercheck.ts",
+        "  const typeFits = tall >= TEXT_INSET + TEXT_SIZE;",
+        "  const typeFits = true;",
+        "control: saving the marks changed what the file renders",
+        "viewer-inherited",
+    ),
+    Mutation(
+        # Wave along the page's own axis. **The only check on this anywhere**:
+        # a squiggle is a stroked zigzag, so there is no `re` for a unit test to
+        # read and no line count that moves --- what changes is where the ink is,
+        # which is a picture.
+        "turned: a squiggle waves along the page's axis",
+        "src-tauri/src/save.rs",
+        "                let point = |across: f64, up: f64| seen.at(across, seen.height - up);",
+        "                let point = |across: f64, up: f64| (quad[0] + across, quad[1] + up);",
+        "Squiggly: page 1 reads as page 0 does",
+        "turned",
+    ),
+    Mutation(
+        # The rule, measured in pixels rather than in operands. Its unit test
+        # reads the `re` rectangle; this reads what a reader would see, and the
+        # two failing together is what says the operand and the picture agree.
+        "turned: a rule sits on the page's bottom edge",
+        "src-tauri/src/save.rs",
+        "                let (base, band) = line_rect(mark.kind, 0.0, seen.height);\n                let [x, y, width, height] = seen.rect(",
+        "                let (base, band) = line_rect(mark.kind, 0.0, quad[3] - quad[1]);\n                let [x, y, width, height] = seen.rect(",
+        "Underline: page 1 reads as page 0 does",
+        "turned",
+    ),
+    Mutation(
+        # Wrap to the page's width again. The shipped defect, read as the
+        # picture it produced: a column of type two glyphs wide down the side of
+        # the box.
+        "turned: a text box wraps to the page's width",
+        "src-tauri/src/save.rs",
+        "                let width = seen.width - textbox::INSET * 2.0;",
+        "                let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
+        "TextBox: page 1 reads as page 0 does",
+        "turned",
+    ),
+    Mutation(
+        # Compare a wash's coverage across turns after all. This is aimed at the
+        # probe rather than at the writer: the exclusion is the one judgement
+        # call in it, and without a failing case the line that makes it is
+        # indistinguishable from one that excludes nothing.
+        "turned: a multiplied mark's coverage is compared across turns",
+        "src-tauri/examples/turned_probe.rs",
+        "        let coverage = !save::is_wash(kind);",
+        "        let coverage = true;",
+        "Highlight: page 1 reads as page 0 does",
+        "turned",
+    ),
+    Mutation(
         # Hand back the DISPLAYED rectangle rather than the page's own. Every
         # dimension is right and the two are transposed, so the size check --
         # which reads width and height after `/Rotate` -- still passes on a page
@@ -1299,6 +1370,10 @@ RUNNERS = {
         "build": APP_BUILD,
         "run": None,
     },
+    "viewer-inherited": {
+        "build": APP_BUILD,
+        "run": None,
+    },
     "search": {
         "build": [
             "cargo",
@@ -1379,6 +1454,27 @@ RUNNERS = {
     # The one fixture in the corpus whose pages state nothing and inherit
     # everything, which is the only document PDFium has no `/MediaBox` for and
     # therefore the only one where the repair does anything at all.
+    # One document, four pages, identical but for `/Rotate`. What a mark looks
+    # like on a turned page is a question about pixels, which is why the
+    # squiggle -- a stroked path with no operand a source-level assertion can
+    # read -- is covered here and nowhere else.
+    "turned": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "turned-probe",
+        ],
+        "run": [
+            probe_exe("turned-probe"),
+            "testdata/rotated.pdf",
+            "--lib",
+            PDFIUM_DIR,
+        ],
+    },
     "geometry-inherited": {
         "build": [
             "cargo",
@@ -1559,6 +1655,8 @@ def execute(runner: str) -> tuple[list[str], str, str]:
         return run_check(MIXED_FIXTURE)
     if runner == "viewer-comments":
         return run_check(COMMENTS_FIXTURE)
+    if runner == "viewer-inherited":
+        return run_check(INHERITED_FIXTURE)
     return run_probe(runner)
 
 
@@ -1642,6 +1740,7 @@ def main() -> int:
         "viewer-encodings": ENCODINGS_FIXTURE,
         "viewer-mixed": MIXED_FIXTURE,
         "viewer-comments": COMMENTS_FIXTURE,
+        "viewer-inherited": INHERITED_FIXTURE,
     }
     for needed in {fixtures[m.runner] for m in chosen if m.runner in fixtures}:
         if not needed.exists():
