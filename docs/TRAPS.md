@@ -13898,3 +13898,48 @@ on one of them. Enumerate the calls, not the feature.
 Found in step 6 of the checklist while cutting `26.8.8`, three days after the
 narrowing was written, by the session that had just written a different half of
 the same document.
+
+### An option whose value is optional swallows the next argument, and `vitest list --json` overwrote a test file
+
+Building the gate that reads `mutate_frontend.py`'s `TEST_FILES`, the obvious
+first step is to ask vitest which tests exist in those files:
+
+```bash
+npx vitest list --json src/lib/text.test.ts
+```
+
+That does not filter by file. **`--json` takes an optional path**, so the
+argument after it is a destination: vitest wrote its listing *over*
+`src/lib/text.test.ts`, replacing 598 lines of assertions with a JSON array.
+Exit status 0, stdout empty, nothing on stderr.
+
+**Every reading afterwards was consistent with a filter that had matched
+nothing.** An empty stdout is exactly what `list` prints for a filter naming no
+file, and the next command in the session --- a full `vitest list --json`
+redirected properly to a scratch file --- reported **50 files collected against
+51 on disk**, which reads as a vitest quirk worth investigating rather than as
+damage already done. It took `head` on the file itself to see the JSON in it.
+The tell nobody looks at in a probe loop was `git status`, which said `M
+src/lib/text.test.ts` the whole time.
+
+Recovery was one command, `git checkout -- src/lib/text.test.ts`, and it was
+available only because the worktree had been clean when the session started ---
+the file was tracked and unmodified, so the working copy was the only casualty.
+Had the same probe been run mid-increment against a file with uncommitted work
+in it, the content would have been gone.
+
+**The class, which is larger than this flag.** An option with an optional value
+cannot distinguish "the value" from "the next positional argument", so the
+argument grammar decides, and for `--json` it decides *destination*. `--reporter`,
+`--outputFile` and `git`'s own `--output` are the same shape. Two habits close
+it: put a value on the option with an `=` when you mean one (`--json=/tmp/x`) and
+nothing at all when you do not, and **never let a path you care about be a bare
+positional after a flag that writes**. Collect everything and filter in the
+caller, which is what `check_mutation_test_files.py` does.
+
+The gate that came out of this now carries the warning in its own docstring,
+beside the call it applies to --- which is the only place someone about to repeat
+it will read.
+
+Paid for on 2026-08-24, while automating the check that would have caught the
+twelve `TEST_FILES` omissions before their runs.

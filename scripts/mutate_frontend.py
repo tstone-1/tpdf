@@ -3634,6 +3634,12 @@ TEST_FILES = [
     "src/lib/commentlist.test.ts",
     "src/lib/commentpopup.test.ts",
     "src/lib/links.test.ts",
+    # The window reads `ViewerStatus` and the other viewer tests read the
+    # accessors, so this is the only file where a mutation to `report`'s own
+    # summary can go red. It was listed a second time lower down on 2026-08-22,
+    # beside `viewermove.test.ts`, by somebody who needed it for exactly that and
+    # did not notice it was already here --- harmless to vitest, invisible in a
+    # diff of 400 mutations, and the reason the gate below refuses a repeat.
     "src/lib/viewer.test.ts",
     "src/lib/edits.test.ts",
     "src/lib/scroller.test.ts",
@@ -3723,10 +3729,6 @@ TEST_FILES = [
     # Eleventh time this list has grown, and the guard has caught the omission
     # every time.
     "src/lib/viewermove.test.ts",
-    # Beside it for the two status assertions the comment tool needed: the window
-    # reads `ViewerStatus` and the other viewer tests read the accessors, so this
-    # is the only file where a mutation to `report`'s own summary can go red.
-    "src/lib/viewer.test.ts",
     # Added 2026-08-23 while cutting 26.8.8, and *after* the mutations: the run
     # refused all seven of them --- three under `unlock.ts` and four under
     # `passworddialog.ts` --- with "no test here is named ...", for tests both
@@ -3740,6 +3742,50 @@ TEST_FILES = [
     "src/lib/unlock.test.ts",
     "src/lib/passworddialog.test.ts",
 ]
+
+#: The suites this harness deliberately does NOT run, and why for each.
+#:
+#: `TEST_FILES` above is short on purpose --- every entry is paid for on every
+#: one of the ~400 mutations below, so listing the whole tree would slow each
+#: run to prove nothing about modules no mutation touches. The cost of keeping
+#: it short is that it drifts, and the entries above record twelve times it did:
+#: the tests are written first and this list is edited only by whoever writes
+#: the mutations, so a new module's suite arrives here a step late.
+#:
+#: Twelve times the harness's own guard caught it, correctly, and each catch
+#: cost a run that had already started. `scripts/check_mutation_test_files.py`
+#: is what makes that a gate instead: it asks the same question against the
+#: same source of names, in seconds, before anything is mutated. This table is
+#: the other half --- a suite is either run or excluded *with a reason*, so a
+#: file that is neither is a finding rather than an omission nobody can see.
+#:
+#: The last entry above argued for deriving `TEST_FILES` from a glob instead,
+#: and deferred it because widening the name set can surface a duplicate test
+#: name and refuse a run for an unrelated reason. That objection still holds and
+#: this does not touch it: the gate changes what is *checked*, never what runs.
+UNMUTATED = {
+    # Its own assertions are never mutated. The three mutations aimed at
+    # `rowline.ts` expect tests in `marklist.test.ts`, which is listed, so they
+    # can go red --- this file is the one place where a defect in `rowline.ts`
+    # would be caught by an assertion no mutation has ever broken.
+    "src/lib/rowline.test.ts": "no mutation aims at src/lib/rowline.ts's own suite",
+    # The ten below are the same shape as each other: the module has tests and
+    # no mutation is aimed at it, so running its suite would cost time in every
+    # mutation run and prove nothing. Writing one is what moves the entry --- and
+    # the moment a mutation names a test in one of these files, the gate refuses
+    # it, which is the twelve-times failure caught before the run rather than
+    # twenty minutes into it.
+    "src/lib/backoff.test.ts": "no mutation aims at src/lib/backoff.ts",
+    "src/lib/contextmenu.test.ts": "no mutation aims at src/lib/contextmenu.ts",
+    "src/lib/degraded.test.ts": "no mutation aims at src/lib/degraded.ts",
+    "src/lib/lifetime.test.ts": "no mutation aims at src/lib/lifetime.ts",
+    "src/lib/outline.test.ts": "no mutation aims at src/lib/outline.ts",
+    "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
+    "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
+    "src/lib/session.test.ts": "no mutation aims at src/lib/session.ts",
+    "src/lib/sidebar.test.ts": "no mutation aims at src/lib/sidebar.ts",
+    "src/lib/tiles.test.ts": "no mutation aims at src/lib/tiles.ts",
+}
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
 TEST_NAME = re.compile(r"^\s*[✓x×]\s+(\S+\.test\.ts)\s*>\s*(.*?)(?:\s+\d+ms)?$", re.M)

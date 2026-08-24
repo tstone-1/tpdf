@@ -7,7 +7,7 @@ Personal cross-repo policy (git workflow, account enforcement, quality gates, pe
 notes) lives in `tstone-1/agent-memory` and is **not** repeated here. This file records
 only what is true of tpdf specifically.
 
-The one thing this file does *not* carry in full is the trap list --- 467 entries
+The one thing this file does *not* carry in full is the trap list --- 468 entries
 in [`docs/TRAPS.md`](docs/TRAPS.md), indexed by title below. That file is **not**
 auto-loaded, on purpose, and the index exists so that the decision to read an entry is an
 informed one rather than a guess.
@@ -775,9 +775,9 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently eighteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
-workflow-parity check, a mutation-anchor check, a README-claim check, a corpus-classification
-check, `cargo fmt --check`,
+Currently nineteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+workflow-parity check, a mutation-anchor check, a mutation-suite check, a README-claim check, a
+corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
 doc-comment check, `npm run check`, `npm run test`, `npm run build`, and a
@@ -786,7 +786,7 @@ ordered rather than merely present: `toolchain` runs **first**, because every re
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
-**All eighteen can be green on a Mac while the Windows tree does not compile**, and that is not
+**All nineteen can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
@@ -829,6 +829,42 @@ anything. The gate locates the `fn`, finds its enclosing gated module, and requi
 platform, which is what `resolved` has --- needs no declaration. Proved three ways: a missing
 declaration fails, a wrong one fails, and a scan finding no gated module anywhere fails
 rather than passing everything in silence.
+
+**`mutations` exists because a guard that works can still answer too late.**
+`mutate_frontend.py` runs vitest over `TEST_FILES`, a hand-kept list, and a suite absent from
+it still resolves as a name on disk --- it simply never runs, so a mutation aimed at it can
+only report SURVIVED, which reads as a gap in the tests rather than a mistake in the harness.
+The harness refuses to start when a mutation names a test its control run did not see, and
+that guard has a perfect record: **twelve** omissions between 2026-08-17 and 2026-08-23,
+twelve refusals, no false SURVIVED. What it cannot do is answer before a full control pass, so
+each catch costs a run that had already started --- on 2026-08-23 that was seven mutations
+refused while `26.8.8` was being cut. This asks the same question, against the same source of
+names, in about twelve seconds.
+
+The names come from `vitest list --json`, which collects without executing, rather than from a
+regex over the sources. That is not fastidiousness: a name built in a loop
+(`... at ${turns} turns`) is a literal nowhere on disk, and a static scan reports three
+failures that are not. It also removes the second parser this repository keeps finding in
+other forms.
+
+The second half is `UNMUTATED`, beside `TEST_FILES`: every suite vitest collects is either run
+or excluded **with a reason**, so a file that is neither is a finding rather than an omission
+nobody can see. Eleven are excluded today, ten of them because no mutation aims at the module
+at all --- and the coupling is what makes that safe, since writing one immediately reddens the
+first check. The exception is `rowline.test.ts`, whose module *is* mutated while the
+expectations live in `marklist.test.ts`; that entry says so.
+
+Nine failure modes, all proved by mutation before the gate was trusted, and the last three are
+the ones that matter: a collection that came back empty, a non-JSON stdout, and a non-zero exit
+each **refuse** rather than passing quietly, because a broken collector agrees with a clean
+tree about everything. A `TEST_FILES` entry vitest cannot collect fails --- that is what a
+clobbered or renamed suite looks like. An `UNMUTATED` entry naming nothing is a `[WARN]`,
+following the exemption tables in `sinks` and `wiring`.
+
+The last `TEST_FILES` comment had argued for deriving the list from a glob and deferred it,
+because widening the name set can surface a duplicate test name and refuse a run for an
+unrelated reason. That objection still holds and this does not touch it: the gate changes what
+is *checked*, never what runs. Its first run found `viewer.test.ts` listed twice.
 
 **`readme` exists because the public README described an older product for weeks and
 nothing could see it.** An outside review compared it with the command registry on
@@ -1214,7 +1250,7 @@ Things already paid for once, or verified before writing code. Add to the list r
 than rediscovering.
 
 **The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact
-titles. Only the titles are here, because there are 467 of them and the full text
+titles. Only the titles are here, because there are 468 of them and the full text
 was 93% of this file --- an instruction budget spent on the 460 traps that are not
 the one in front of you. Keep both numbers in this section current when adding an entry;
 they have been two and then six behind before now, on 2026-07-28 and 2026-07-31 ---
@@ -1641,6 +1677,7 @@ index; the paragraph is in `docs/TRAPS.md` under the title.
 - A mutation block below the `__main__` guard is counted by the gate and run by nothing (251 anchors green, 241 registered, ten new mutations silently absent; the gate imports and a run executes, and undoing the control with `git checkout` discarded them a second time)
 - Narrowing a run made a shape the output parser had assumed away (with one file in the run nothing passed, and `Tests 2 failed (2)` read as a run that never finished)
 - A capability nobody could use is invisible to every check, including the mutation harness (four sibling readers, the identical one-line change, and only three had an observable; a mutation that reddens nothing indicts the harness)
+- An option whose value is optional swallows the next argument, and `vitest list --json` overwrote a test file (a filter that matched nothing and a destructive write look identical from stdout; `git status` was the only witness, and 50 files collected against 51 on disk read as a vitest quirk)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail

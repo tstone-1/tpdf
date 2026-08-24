@@ -158,6 +158,15 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a mutation is aimed at code that is gone, or a killed harness left its edit behind",
         ),
         (
+            # Out of cheapest-first order on purpose: it runs `vitest list`,
+            # which costs ~12 s against `anchors`'s 0.3 s. Answering early is
+            # the whole point of it -- the question it asks used to be answered
+            # by the mutation harness itself, twenty minutes into a run.
+            "mutations",
+            [sys.executable, str(REPO / "scripts" / "check_mutation_test_files.py")],
+            "a front-end mutation names a test the harness does not run, or a suite is in neither table",
+        ),
+        (
             "readme",
             [sys.executable, str(REPO / "scripts" / "check_readme_claims.py")],
             "README.md says a registered command is not built",
