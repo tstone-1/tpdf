@@ -13079,9 +13079,11 @@ whether to download this was being told it was materially less capable than the 
 **Prose is not checkable, but one shape of claim is: an assertion of absence.** "This
 feature exists and works as described" has no mechanical test. "This feature does not exist"
 does, provided the claim names the thing whose existence can be looked up. So every bullet
-under *Not built yet* now carries `<!-- not-built: edit.foo -->`, and `check_readme_claims.py`
-refuses any of those that is registered. Claiming a feature is missing costs you naming its
-absence in a form the registry can contradict.
+under *Not built yet* now carries `<!-- not-built: edit.foo -->`, and a check refuses any of
+those that is registered. Claiming a feature is missing costs you naming its absence in a form
+the registry can contradict. (That check was `scripts/gates.py`'s `readme` gate until
+2026-08-24 and is `src/lib/readme.test.ts` since; the two entries below are why it moved and
+what it grew.)
 
 Two things to copy rather than the specific mechanism.
 
@@ -14002,6 +14004,56 @@ name. The stronger invariant, and the one to build if this happens a third time,
 way --- every *registered* command must appear in the README's built prose or in an allowlist
 with a reason, which is the shape `viewer_sweep.py` and `viewercheck`'s command classification
 already use, and which a new command cannot escape by being named something unexpected.
+
+**Built 2026-08-24, and the paragraph above is exactly what it does.** Every registered command
+is claimed by a `<!-- built: id -->` marker in the README's own prose or excluded in
+`readme.test.ts`'s `UNLISTED` with a reason, and there is no third state to arrive in. The
+first thing it found was not a stale bullet: it was that the README said nothing at all about
+choosing a colour, following a link, or the panel listing your own marks --- three shipped
+capabilities that had never been claimed and so could never have gone stale. **An absence
+check can only be wrong about what somebody thought to mention.** The forward direction makes
+the omissions countable, which is the whole of what it buys.
+
+### A regex over the source could not see eleven of the seventy-seven commands, four of them the ones the check was written for
+
+The entry above says the `readme` gate "would still catch the four features it was written
+for". Measured on 2026-08-24, it would not have caught them under the names they shipped, and
+not for the reason that entry gives.
+
+`check_readme_claims.py` found registered commands with `id:\s*"([^"]+)"` over
+`src/lib/appcommands.ts`. Eleven of the seventy-seven are registered from a loop:
+
+```ts
+...PALETTE.map((entry) => ({ id: `edit.color.${entry.id}`, ... })),
+...(["approved", "confidential", "draft", "final"] as const).map((name) => ({
+  id: `edit.stamp.${name}`, ...
+})),
+```
+
+Their ids are literals **nowhere on disk**, so the scan saw 66 commands and reported the count
+in its own output, where it read as a healthy population rather than as a shortfall. Planting
+`<!-- not-built: edit.stamp.approved -->` in the README produced
+`[OK] none of the 8 unbuilt commands it names is registered`, exit 0 --- a green verdict on a
+claim that the one capability the entry above is about does not exist.
+
+So the gate had two independent holes and the entry above found the wrong one first. Guessing
+the name was the visible failure; **being structurally unable to read the name even when it is
+guessed right** is the one that makes the check's `[OK]` mean nothing about the family of
+commands most likely to escape it. Both were closed together by importing the registry instead
+of scanning it, which is why the check is now a vitest suite: a name built in a loop is
+reachable by running the code and by nothing else.
+
+The generalisation is one this repository had already written down in another gate's docstring
+--- `check_mutation_test_files.py` takes test names from `vitest list --json` rather than a
+regex "because a name built in a loop is a literal nowhere on disk" --- and it did not transfer,
+because the two checks look nothing alike. **When a scan's population can be derived by running
+something, a regex over the source is a second implementation of that derivation, and it is
+wrong in the direction that reports fewer subjects than exist.** Fewer subjects is always the
+quiet direction: a missing row cannot fail, and the count beside it looks like evidence.
+
+The cheapest control is the one that took two minutes here: plant a claim the check must
+refuse, and confirm it refuses. A check written for a case that has already happened should be
+run against that case at least once.
 
 ### Two constants in different units, and the comment comparing them was false at every zoom a reader uses
 

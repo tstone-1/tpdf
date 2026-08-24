@@ -59,6 +59,27 @@ Files already saved are not changed by this --- the marks in them were written
 sideways and are still sideways; drawing them again on the repaired build
 produces the right file.
 
+### Fixed: the README never mentioned three things this can do
+
+Choosing a colour for a mark, following a link and coming back, and the sidebar
+tab that lists your own marks: all three shipped, and the README described none
+of them. They are described now.
+
+They had gone unmentioned rather than gone stale, which is why nothing found
+them. The check on that document could only refuse a claim that a feature is
+*missing* --- so a capability nobody thought to write down was invisible to it.
+It now runs the other way as well: every command the application offers is
+either described in the README or listed, by name and with a reason, as
+deliberately left out. A capability added tomorrow turns that red until somebody
+decides which it is.
+
+The check that was there could not see eleven of the seventy-seven commands at
+all, including all four stamps --- it looked for their names in the source, and
+those eleven names are assembled while the application runs. It reported a clean
+result on a planted claim that stamps do not exist, which is the exact mistake it
+had been written for a fortnight earlier. It asks the application now instead of
+reading the code.
+
 ### Added: Merge documents
 
 Pick any number of PDFs and get one file holding this document followed by all

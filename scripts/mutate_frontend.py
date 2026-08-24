@@ -3650,6 +3650,71 @@ MUTATIONS += [
         '    this.input.value = "";',
         "reports which mark the box is on, including that it is on none",
     ),
+    # The six below mutate `README.md` rather than a module, and that is the
+    # point: the README is the one document a stranger reads, and the drift it
+    # has actually suffered is a bullet going stale rather than a function going
+    # wrong. `src/lib/readme.test.ts` is what reads it.
+    Mutation(
+        # The error the whole check exists for, and the one its Python
+        # predecessor could not see: `edit.stamp.approved` is built in a loop, so
+        # a regex over `appcommands.ts` finds no such literal and reports the
+        # claim clean. Measured green there on 2026-08-24 before this replaced
+        # it.
+        "readme: say a shipped command is not built",
+        "README.md",
+        "  <!-- not-built: edit.editText -->",
+        "  <!-- not-built: edit.stamp.approved -->",
+        "claims nothing absent that the application registers",
+    ),
+    Mutation(
+        # A capability that ships and is never mentioned. This is the direction
+        # the first check could not reach at all: nothing in the README claims
+        # anything about stamps, so there is nothing to contradict.
+        "readme: stop saying the stamps exist",
+        "README.md",
+        "  <!-- built: edit.stamp.approved edit.stamp.confidential edit.stamp.draft edit.stamp.final -->",
+        "  <!-- built: edit.stamp.approved -->",
+        "classifies every registered command",
+    ),
+    Mutation(
+        # A renamed command leaves its marker pointing at nothing, and a bullet
+        # whose id no longer exists is a bullet that has quietly stopped being
+        # checked.
+        "readme: claim a command that is not registered",
+        "README.md",
+        "  <!-- built: file.print -->",
+        "  <!-- built: file.printDocument -->",
+        "claims nothing built that the application does not register",
+    ),
+    Mutation(
+        # Two bullets claiming one command is one of them saying nothing, and it
+        # is how a bullet comes to look covered while its own claim went missing.
+        "readme: claim one command in two bullets",
+        "README.md",
+        "  <!-- built: file.properties -->",
+        "  <!-- built: file.properties file.print -->",
+        "claims each command once, in one direction",
+    ),
+    Mutation(
+        # A `built:` marker under "Not built yet" says the opposite of the prose
+        # around it. Inserted rather than moved, so the id stays claimed in the
+        # prose too and this is the only check that can go red.
+        "readme: claim a command as built inside the not-built list",
+        "README.md",
+        "- **True redaction** with an automatic post-save verification pass",
+        "- **True redaction** <!-- built: file.print --> with an automatic post-save verification pass",
+        "keeps the absence claims out of the prose and the built claims out of the list",
+    ),
+    Mutation(
+        # Claim a command in the README that is also excluded from it. Both
+        # tables then describe the same id, and whichever is read second is
+        # wrong; the id is registered and claimed once, so nothing else fires.
+        "readme: claim a command that is also excluded by name",
+        "README.md",
+        "  <!-- built: view.zoomIn",
+        "  <!-- built: file.open view.zoomIn",
+        "does not both claim and exclude a command",
+    ),
 ]
 
 TEST_FILES = [
@@ -3781,6 +3846,10 @@ TEST_FILES = [
     # surface a duplicate test name and refuse the run for an unrelated reason.
     "src/lib/unlock.test.ts",
     "src/lib/passworddialog.test.ts",
+    # Added 2026-08-24 with the six README mutations above, in the same edit
+    # rather than after them --- which is the thirteenth time this list has been
+    # the thing that was forgotten, and the first time it was not.
+    "src/lib/readme.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.

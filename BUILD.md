@@ -3583,15 +3583,21 @@ starts at 0 and increments within the month.
    PDFium bump). The half no probe covers is reading each claim and naming the line that
    keeps it. Anything that turns out not to be wired gets wired or gets marked, never left.
 
-   **And re-read `README.md` against `src/lib/appcommands.ts`**, which is the same job on
-   the document a stranger reads. The `readme` gate covers exactly one claim --- a bullet
-   under *Not built yet* naming a command that turns out to be registered --- and cannot
-   touch the status paragraph, which is where the worst of it was: on 2026-08-22 that
-   paragraph said editing had just begun and that *the open file is never modified in
-   place*, six weeks and one shipped Save-in-place after either was true, while four
-   shipped tools sat under *Not built yet*. Read the registry, then read the first three
-   paragraphs, then the two feature lists. Do not put a count in the prose: every one that
-   was there had drifted, and the files they describe carry their own.
+   **And re-read `README.md`**, which is the same job on the document a stranger reads.
+   Since 2026-08-24 `src/lib/readme.test.ts` does the mechanical half in both directions:
+   nothing under *Not built yet* may be registered, and every registered command is either
+   claimed by a `<!-- built: -->` marker in the prose or excluded there with a reason. So a
+   new command can no longer arrive unmentioned, and this step no longer has to diff the
+   registry by eye.
+
+   **What it still cannot touch is the status paragraph, which is where the worst of it
+   was**: on 2026-08-22 that paragraph said editing had just begun and that *the open file
+   is never modified in place*, six weeks and one shipped Save-in-place after either was
+   true. Nor does a `built:` marker say the prose beside it is accurate --- only that the
+   command is claimed somewhere a reader will look, so a bullet describing a command wrongly
+   passes exactly like one describing it well. Read the first three paragraphs, then the two
+   feature lists, against what you know shipped this cycle. Do not put a count in the prose:
+   every one that was there had drifted, and the files they describe carry their own.
 7. Re-run the mutation harnesses. They are not gates --- they rebuild per mutation and two of
    them need a window --- and they are the only thing that says the tests can fail.
 

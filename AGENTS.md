@@ -718,8 +718,8 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently nineteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
-workflow-parity check, a mutation-anchor check, a mutation-suite check, a README-claim check, a
+Currently eighteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+workflow-parity check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
@@ -729,7 +729,7 @@ ordered rather than merely present: `toolchain` runs **first**, because every re
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
-**All nineteen can be green on a Mac while the Windows tree does not compile**, and that is not
+**All eighteen can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
@@ -804,25 +804,44 @@ because widening the name set can surface a duplicate test name and refuse a run
 unrelated reason. That objection still holds and this does not touch it: the gate changes what
 is *checked*, never what runs. Its first run found `viewer.test.ts` listed twice.
 
-**`readme` exists because the public README described an older product for weeks and nothing
-could see it.** An outside review compared it with the command registry on 2026-08-22: it said
-editing had just begun, it said *the open file is never modified in place* --- false since Save
-in place shipped in `26.8.5` --- and its *Not built yet* list still named four commands that were
-registered and had shortcuts. A prospective user was being told the product was materially less
-capable than the binary.
+**The README is checked against the command registry, and since 2026-08-24 that check is
+`src/lib/readme.test.ts` rather than a gate of its own.** It exists because the public README
+described an older product for weeks and nothing could see it: an outside review compared it
+with the registry on 2026-08-22 and found it saying editing had just begun, saying *the open
+file is never modified in place* --- false since Save in place shipped in `26.8.5` --- and
+listing four registered commands with shortcuts under *Not built yet*. A prospective user was
+being told the product was materially less capable than the binary.
 
-The gate is deliberately one narrow claim rather than an attempt on the whole document.
-Each *Not built yet* bullet carries an HTML comment naming the command that would exist if
-it were built, and none of those may be registered --- so claiming a feature is absent means
-stating the absence in a form the registry can contradict. It refuses an empty scan on
-either side and a command claimed twice, and all four failure modes were proved before it
-was trusted, including a renamed section heading.
+**Both directions are checked, and the first one alone was measurably not enough.** A bullet
+under *Not built yet* carries `<!-- not-built: id -->` and none of those may be registered, so
+claiming a feature is absent means stating the absence in a form the registry can contradict.
+That catches a bullet whose command ships *under the name the bullet guessed* and nothing
+else --- which is why stamps went on being listed as absent after shipping as
+`edit.stamp.approved` and three siblings. The other direction closes it: every registered
+command is either named in a `<!-- built: -->` marker in the README's prose or excluded in the
+test's `UNLISTED` table **with a reason**, so a capability cannot arrive unmentioned by being
+called something nobody predicted. Same shape as `viewer_sweep.py`'s fixtures and
+`viewercheck.ts`'s command audit. Every check was proved red by a control before it was
+trusted, the three refusals included, and six of them are permanent mutations in
+`mutate_frontend.py` aimed at `README.md` itself.
+
+**It moved out of Python because a regex over `appcommands.ts` could not see eleven of the
+seventy-seven commands.** Seven colours from `PALETTE` and four stamps from an inline array
+are mapped into template-literal ids, so those ids are literals nowhere on disk. Measured on the day it moved:
+`check_readme_claims.py` reported `[OK]` on a README claiming `edit.stamp.approved` was not
+built --- the exact error it was written for --- and counted 66 registered commands against a
+registry holding 77. Importing the registry removes the second parser rather than improving
+it, which is the reasoning `check_mutation_test_files.py` already records for taking test
+names from `vitest list --json`. The README arrives through Vite's `?raw`, so neither half
+needs a filesystem and the project keeps having no Node type declarations.
 
 What it does **not** check is everything else, including the status paragraph, which was the
 sentence most wrong. There is no honest mechanical test for "does this paragraph describe
 the product", and a keyword list approximating one would be a second inventory to drift.
-`BUILD.md`'s release checklist carries that half and is a checklist rather than a gate on
-purpose --- naming which half is weak beats implying both are strong. The volatile counts
+Nor does a `built:` marker say the prose beside it is accurate --- only that the command is
+claimed somewhere a reader will look. `BUILD.md`'s release checklist carries that half and is
+a checklist rather than a check on purpose --- naming which half is weak beats implying both
+are strong. The volatile counts
 went out with the same commit: the README quoted 325 crates, four npm packages, fourteen
 PDFium libraries, 531 cargo packages and "over two hundred" traps against a tree holding
 382, 4, 16, 572 and 425. `THIRD-PARTY-NOTICES.md` is generated and carries its own.
@@ -1654,7 +1673,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - The plan said the words had to be extracted, and the model had never let them be lost (a *Not done* line names the outcome and guesses the method; second time in two increments, both wrong the same way, and one signature settled it)
 - A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
 - The only document nobody re-reads is the one strangers read (four shipped tools listed as absent and a data-safety claim six weeks stale, false for two days and read while ranking what to build; an assertion of ABSENCE is the one shape of prose a registry can contradict, and the half that cannot be checked is named rather than approximated)
-- A gate over claimed absences only catches the name the claim guessed (green while the README said stamps could not be made, one commit after they shipped as four differently-named commands; the invariant that would hold runs the other way)
+- A gate over claimed absences only catches the name the claim guessed (green while the README said stamps could not be made, one commit after they shipped as four differently-named commands; the invariant that would hold runs the other way --- built 2026-08-24, and the first thing it found was three shipped capabilities the README had never mentioned at all)
+- A regex over the source could not see eleven of the seventy-seven commands, four of them the ones the check was written for (a green `[OK]` on a planted claim that stamps do not exist; the ids are built in a `map`, so they are literals nowhere on disk, and the count printed beside the verdict read as a healthy population --- the same lesson another gate's docstring already carried, which did not transfer because the two checks look nothing alike)
 - A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
 - An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing (twelve lines arguing against the feature being built, attached to nothing; a scan is two lines of Python and found 26, and it over-reports on purpose --- a section header is the same shape)
 - A comment defending a name can become an argument for the opposite name, with no word of it changing (every clause stayed true and the conclusion inverted; a premise becoming TRUE is the direction that flips it, and there is no disagreement for a reader to stop at)
