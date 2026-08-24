@@ -112,6 +112,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.save",
       "file.saveCopy",
       "file.extractPages",
+      "file.mergeDocuments",
       SEPARATOR,
       "file.print",
       SEPARATOR,

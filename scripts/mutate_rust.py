@@ -173,6 +173,61 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # Merge the file on disk rather than the working document. Every edit
+        # the reader made -- deleted pages, turns, crops, marks -- is silently
+        # absent from the result, and the page count agrees with itself for any
+        # plan that keeps every page. Only a plan that drops one can tell.
+        "merge: read the source file instead of the document the reader has",
+        "src/save.rs",
+        "    let mut merged = Document::load_mem_with_options(\n        &base.bytes,",
+        "    let mut merged = Document::load_with_options(\n        source,",
+        "the_open_documents_edits_reach_the_merge",
+    ),
+    Mutation(
+        # Let an encrypted document be merged in. `lopdf` writes plaintext and
+        # drops the dictionary, so the merged file carries a
+        # permission-restricted document's pages with the restrictions gone --
+        # and nothing in the result says so.
+        "merge: accept an encrypted document as an input",
+        "src/save.rs",
+        "        if incoming.was_encrypted() || incoming.is_encrypted() {",
+        "        if false {",
+        "an_encrypted_document_cannot_be_merged_in",
+    ),
+    Mutation(
+        # Write a merge of nothing, which is a Save a copy the reader did not
+        # ask for, under a name they chose for something else.
+        "merge: allow a merge with no documents to merge in",
+        "src/save.rs",
+        "    if others.is_empty() {",
+        "    if false {",
+        "a_merge_of_no_documents_is_refused",
+    ),
+    Mutation(
+        # Check only the open document, not the files going in. The destination
+        # is the easier of the two for a reader to get wrong: the save dialog
+        # opens in the directory they just picked the inputs from.
+        "merge: guard the destination against the source alone",
+        "src/save.rs",
+        # Re-aimed after `cargo fmt` broke the call across three lines, which is
+        # why the anchor is the multi-line form: a one-line anchor here was
+        # correct when it was written and matched nothing an hour later.
+        "    for input in [source]\n        .into_iter()\n        .chain(others.iter().map(PathBuf::as_path))\n    {",
+        "    for input in [source].into_iter()\n    {",
+        "a_merge_will_not_be_written_over_any_document_going_into_it",
+    ),
+    Mutation(
+        # Report the plan's page count rather than the merged file's. The number
+        # a reader is shown then describes what they had, not what was written
+        # -- so a merge that dropped every incoming page reports success with a
+        # plausible figure.
+        "merge: report the open document's page count as the merge's",
+        "src/save.rs",
+        "        pages: merged.get_pages().len() as u32,",
+        "        pages: plan.pages.len() as u32,",
+        "a_merge_holds_every_page_of_every_document",
+    ),
+    Mutation(
         # Remove the CALL, not the guard. `fingerprint.rs`'s own tests prove the
         # comparison works and say nothing about whether anything asks it --- the
         # trap is "a guard is only covered when a mutation removes the call", and

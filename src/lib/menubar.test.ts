@@ -221,6 +221,7 @@ describe("buildMenu", () => {
       "command",
       "command",
       "command",
+      "command",
       "separator",
       "command",
       "separator",

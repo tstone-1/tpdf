@@ -24,6 +24,7 @@ pub mod launch;
 pub mod links;
 #[cfg(target_os = "macos")]
 pub mod menu;
+pub mod merge;
 pub mod ocr;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
@@ -1192,6 +1193,45 @@ async fn extract_pages(
     })
     .await
     .map_err(|e| format!("the extract did not run: {e}"))?
+    .map_err(|why| why.message)
+}
+
+/// Writes the working document followed by other files' pages, to a new file.
+///
+/// The open document goes in as the reader has it and the others go in as they
+/// are on disk --- `save::write_merged` holds that asymmetry and the reason for
+/// it. Everything [`save_copy`] refuses about the open document is refused here
+/// unchanged and is not restated.
+///
+/// **Changes nothing about the open document.** No command is journalled, the
+/// order is untouched and there is nothing to undo, which is [`extract_pages`]'s
+/// property arriving from the other direction: extract reads some of one file,
+/// merge reads all of several, and neither is an edit.
+///
+/// `others` are paths the reader chose in a file dialog. They are opened here,
+/// in the coordinator, which is where every other `lopdf` parse on a save path
+/// runs --- see `docs/THREAT-MODEL.md` residual risk 17, which this widens by
+/// one file per merge rather than by a new kind of access.
+///
+/// On the blocking pool for [`save_copy`]'s reason, and rather more so: this one
+/// parses every file it was given.
+#[tauri::command]
+async fn merge_documents(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    source: String,
+    path: String,
+    others: Vec<String>,
+) -> Result<save::Merged, String> {
+    // Out of the model before the move onto the pool, as `save_copy` does and
+    // for the same reason.
+    let plan = edits.plan(doc)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let others: Vec<std::path::PathBuf> = others.into_iter().map(Into::into).collect();
+        save::write_merged(Path::new(&source), &plan, &others, Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("the merge did not run: {e}"))?
     .map_err(|why| why.message)
 }
 
@@ -2369,6 +2409,7 @@ pub fn run() {
             save_document,
             save_copy,
             extract_pages,
+            merge_documents,
             keyboard_positions,
             set_menu,
             set_menu_enabled,

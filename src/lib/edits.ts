@@ -46,6 +46,25 @@ export interface Copied {
   changed: boolean;
 }
 
+/**
+ * What `merge_documents` reports about the file it wrote.
+ *
+ * `changed` is {@link Copied}'s field and means the same thing. The two counts
+ * are what a merge has that a copy does not: the reader asked for "these files,
+ * combined" rather than for a named result, so the number of pages is the only
+ * evidence that each document was really read. `recovery.ts`'s `afterMerge`
+ * turns them into the sentence, and is the reason they are not carried for
+ * nobody.
+ */
+export interface Merged {
+  /** The open document changed on disk since it was opened, and this was written anyway. */
+  changed: boolean;
+  /** How many pages the written file holds, this document's included. */
+  pages: number;
+  /** How many documents were merged in, not counting this one. */
+  files: number;
+}
+
 /** Mirrors `edits::EditState`. */
 export interface EditState {
   pages: PageView[];
@@ -451,6 +470,31 @@ export class Edits {
       source,
       path,
       slots,
+    });
+  }
+
+  /**
+   * Writes this document followed by every page of `others`, to `path`.
+   *
+   * Changes nothing about this document, exactly as {@link extractPages} does
+   * not --- no command is journalled and {@link dirty} is untouched, so there is
+   * no state to adopt. A merge reads; what it produces is somewhere else.
+   *
+   * This document goes in **as it stands**, with its edits and marks applied.
+   * The others go in as they are on disk: they are not open, so there is no
+   * working document for them to have. `save::write_merged` holds that
+   * asymmetry.
+   */
+  async mergeDocuments(
+    source: string,
+    path: string,
+    others: string[],
+  ): Promise<Merged> {
+    return await invoke<Merged>("merge_documents", {
+      doc: this.doc,
+      source,
+      path,
+      others,
     });
   }
 

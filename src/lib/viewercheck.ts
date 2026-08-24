@@ -3119,6 +3119,7 @@ async function appCommandChecks(
     isDirty: () => false,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    mergeDocuments: () => fired.push("mergeDocuments"),
     showProperties: () => fired.push("showProperties"),
   };
 
@@ -3866,6 +3867,21 @@ async function appCommandChecks(
       ...shell("extractPages:0+1"),
       read: () => fired.join(","),
       unless: twoPages,
+    },
+    {
+      // Driven rather than excused, for `file.saveCopy`'s reason: the action is
+      // a recorder here, so the platform's file chooser is never opened and
+      // nothing is written. What this covers is that the command reaches its
+      // action --- which is the half that shipped broken once already, when a
+      // callback was declared, fired and never wired into the object literal
+      // that joins the two.
+      //
+      // **No argument**, unlike its neighbour above, and that is the command
+      // rather than a shortcut: a merge is given files by a dialog, so there is
+      // no value for the palette to carry and nothing for a probe to put in it.
+      id: "file.mergeDocuments",
+      ...shell("mergeDocuments"),
+      read: () => fired.join(","),
     },
     {
       // Both journal commands are withheld unless there is something to act on,

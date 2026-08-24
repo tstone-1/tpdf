@@ -3960,8 +3960,20 @@ starts at 0 and increments within the month.
     draft at all, so neither of the two obvious instruments reports it. The GraphQL query
     above prints `tagName` beside the asset count, which is why it is the one to use.
 
+    **Put `tag_name` inside the JSON, because `--input` discards every `-f` beside it.**
+    This block carried `-f tag_name=vYY.M.MICRO --input body.json` until 2026-08-24, and
+    that command does exactly what the paragraph above warns against: `--input` supplies
+    the *whole* request body, so the `-f` never reaches GitHub and the PATCH is a body-only
+    one. Measured on `26.8.9` --- the reply came back `"tag_name":
+    "untagged-bb1e54625d56b97bbd57"` from a command written to prevent that. The repair is
+    one line of `json` and a second PATCH, and it is only cheap because the GraphQL query
+    above is run either side of the edit; the two commands `gh release view` and `gh release
+    list` both report the release by name in that state.
+
     ```
-    gh api -X PATCH repos/tstone-1/tpdf/releases/<id> -f tag_name=vYY.M.MICRO --input body.json
+    python -c "import json,sys; d=json.load(open('body.json')); d['tag_name']='vYY.M.MICRO'; \
+      json.dump(d, open('body.json','w'))"
+    gh api -X PATCH repos/tstone-1/tpdf/releases/<id> --input body.json    # tag_name is IN the file
     gh api -X PATCH repos/tstone-1/tpdf/releases/<id> -f tag_name=vYY.M.MICRO -F draft=false
     ```
 
