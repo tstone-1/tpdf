@@ -8797,13 +8797,16 @@ a string chosen later, written at the moment least able to predict it. Both
 bullets are corrected and the README now states what that check reaches.
 `docs/TRAPS.md` has the entry.
 
-**The invariant that would hold runs the other way, and it is the ranked next
+**The invariant that would hold runs the other way, and it was the ranked next
 step for this**: every *registered* command must appear in the README's built
 prose or in an allowlist with a reason. That is the shape `viewer_sweep.py` uses
 for fixtures and `viewercheck` uses for commands, and a new command cannot escape
-it by being named something unexpected. It is not built here because classifying
+it by being named something unexpected. It was not built here because classifying
 every command is its own increment, and doing it badly inside a crop increment
-would be a second list to drift.
+would be a second list to drift. **Built 2026-08-24** --- see *Every command
+classified against the README* at the end of this phase, which also records that
+the check being extended could not see eleven of the seventy-seven commands at
+all, four of them the stamps this paragraph is about.
 
 **Not done:** cropping several pages at once, which is a selection question
 rather than a new mechanism; and adjusting a crop by dragging its edge, which
@@ -9501,7 +9504,10 @@ the feature being built, attached to nothing, in the file where somebody would g
 looking for exactly that reasoning.
 
 A scan found **31** across twelve files, all repaired.
-`scripts/check_doc_comments.py` is the eighteenth gate.
+`scripts/check_doc_comments.py` is the gate. (It was described here as "the
+eighteenth" until 2026-08-24, when the `readme` gate moved into vitest and the
+total went back to eighteen --- an ordinal is a count in prose with nothing
+behind it, which is the drift this file has been caught by three times.)
 
 ##### The rule is total because of a spelling, not an allowlist
 
@@ -9530,6 +9536,81 @@ merge into one block, so the failure mode does not exist. And a doc comment on
 the *wrong* declaration, one that binds and describes something else: nothing
 mechanical can see that, and the script says so rather than leaving it to be
 discovered.
+
+#### Every command classified against the README --- done 2026-08-24
+
+The ranked next step recorded under the crop increment, built. It said: *every
+registered command must appear in the README's built prose or in an allowlist
+with a reason*, which is the shape `viewer_sweep.py` uses for fixtures and
+`viewercheck.ts` uses for commands, and which a new command cannot escape by
+being named something unexpected.
+
+##### The check it replaces was blind to eleven of the seventy-seven commands
+
+Measured first, and the measurement changed the shape of the work.
+`scripts/check_readme_claims.py` found registered commands by scanning
+`appcommands.ts` for `id: "..."`. Seven colours and four stamps are registered
+from a `map`, so their ids are template literals that appear nowhere on disk.
+Planting `<!-- not-built: edit.stamp.approved -->` in the README produced
+
+```
+[OK]   README.md: none of the 8 unbuilt commands it names is registered
+       (checked against 66 registered commands)
+```
+
+--- exit 0, on the exact error the check exists for, with the shortfall printed
+beside the verdict as though 66 were the population. The registry holds **77**.
+
+So the fix was not a better regex. `src/lib/readme.test.ts` **imports the
+registry** and reads the README through Vite's `?raw`, which removes the second
+parser rather than improving it --- the reasoning
+`scripts/check_mutation_test_files.py` already records for taking test names from
+`vitest list --json`, and which did not transfer because the two checks look
+nothing alike. `?raw` matters for a smaller reason worth stating: this project
+deliberately has no Node type declarations, and a test reading `README.md` from
+the filesystem would have added `@types/node` to get one string.
+
+`scripts/gates.py` is eighteen gates rather than nineteen. The check did not
+weaken by moving --- it runs under `vitest`, which is a gate, beside
+`appcommands.test.ts`, which is already where registry invariants live.
+
+##### What the forward direction found on its first run
+
+Not a stale bullet. Three shipped capabilities the README had **never mentioned**:
+choosing a colour for a mark, following a link and coming back, and the sidebar
+tab listing your own marks. An absence check can only be wrong about what
+somebody thought to mention; the forward direction makes the omissions countable,
+which is the whole of what it buys. All three are described now.
+
+Sixty-six commands are claimed by `<!-- built: -->` markers in the two prose
+sections. The other eleven are in `UNLISTED` with a reason each --- opening and
+reloading a file, three update and about items, five ways of moving about a
+document, and dropping a selection. A reason per command rather than per group,
+because the groups are the part that changes.
+
+##### Every check proved red by a control
+
+Including the three refusals, which read exactly like a clean run if they are
+allowed to pass quietly: an empty registry, a missing section heading, and a scan
+that found no markers of either kind. Six are permanent mutations in
+`mutate_frontend.py` aimed at `README.md` itself, which is a first for that
+harness and is the right target --- the drift the README has actually suffered is
+a bullet going stale, not a function going wrong.
+
+One assertion **cannot be the only red**, and that was measured rather than
+reasoned: an id claimed built *and* absent is either registered, in which case
+the absence check fires beside it, or not, in which case the stale-marker check
+does. Both were run. It stays because its message names the mistake --- a bullet
+copied from one section to the other --- while the two that fire with it name only
+the symptom.
+
+**Not done:** anything in the README that is not a command. The status paragraph
+was the sentence most wrong in the original review and still has no mechanical
+test; a keyword list approximating one would be a second inventory to drift. Nor
+does a `built:` marker say the prose beside it is *accurate* --- a bullet
+describing a command wrongly passes exactly like one describing it well. Both
+limits are stated in the test rather than left to be discovered, and
+`BUILD.md`'s release checklist carries that half.
 
 ### Phase 3 --- Redaction
 

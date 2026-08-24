@@ -25,10 +25,18 @@ project conventions.
 - Every document is parsed and rendered in **sandboxed worker processes** with no
   filesystem or network authority --- a pool per document, and a worker that dies is
   replaced and its request retried.
-- Tiled rendering behind a virtual scroller, zoom, view rotation, and page inversion for
-  reading on a dark screen.
-- Text selection and copy, find-in-document, an outline sidebar, a page-thumbnail strip,
-  and a text layer for screen readers.
+- Tiled rendering behind a virtual scroller; zoom --- in, out, actual size, fit-width,
+  fit-page, or a figure you type; view rotation; and page inversion for reading on a dark
+  screen.
+  <!-- built: view.zoomIn view.zoomOut view.zoomTo view.actualSize view.fitWidth view.fitPage view.rotateClockwise view.rotateCounterClockwise view.invertPages -->
+- Text selection and copy; find-in-document, with case, whole-word, regular-expression and
+  within-the-selection options; a sidebar carrying the outline, a page-thumbnail strip and
+  your own marks; and a text layer for screen readers.
+  <!-- built: edit.selectAll edit.copy find.open find.next find.previous find.matchCase find.wholeWord find.regex find.inSelection view.toggleSidebar view.showOutline view.showThumbnails view.showMarks -->
+- **Links are followable**, and so is the way back: Back and Forward walk the jumps you have
+  made, and Next link / Previous link reach one without the pointer. Back and Forward grey out
+  when there is nowhere to go.
+  <!-- built: nav.back nav.forward nav.nextLink nav.previousLink -->
 - Session restore: the document, page, zoom and rotation you left on.
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for
   as long as the document is open, because every worker that renders it meets the same
@@ -38,11 +46,13 @@ project conventions.
   certificate, its issuer and its validity, read out of the signature itself. Reading only:
   there is no trust store here, no chain is built, and nothing shown to you has been
   verified.
+  <!-- built: file.properties -->
 - Printing through the system print panel, on both platforms — and every print job is read
   back through the operating system's own PDF parser before the panel opens, which is a
   parser independent of the one that wrote the job and the one that drew what you saw.
   macOS prints vectors; Windows has no in-box "print this PDF" API at any layer, so it
   rasterises at 300 dpi like every other Windows PDF viewer does.
+  <!-- built: file.print -->
 - Every command reachable from the command palette, which renders each shortcut from the
   same table the key handler matches against, so a label cannot advertise a chord that
   does nothing.
@@ -56,13 +66,16 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 - **Turn a page in the document**, not only in the view --- with undo and redo, and a
   history that survives any number of turns because it is replayed rather than reversed.
+  <!-- built: edit.rotatePageClockwise edit.rotatePageCounterClockwise edit.undo edit.redo -->
 - **Delete a page**, from the command palette. Undo puts it back where it was, with its own
   rotation. It has no keyboard shortcut on purpose: it is the one command that removes
   something you can see.
+  <!-- built: edit.deletePage -->
 - **Move a page** by dragging its thumbnail in the page strip, or one slot at a time from
   the palette. A moved page takes its size, its crop and its rotation with it even where the
   file states none of them on the page itself --- a PDF lets a page inherit those from the
   group it sits in, and that is where moving one silently changes it.
+  <!-- built: edit.movePageUp edit.movePageDown -->
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
   file on disk.
@@ -70,18 +83,28 @@ measured the Windows render constants come out 1.5–1.8x worse.
   annotation, not a rectangle drawn over the page, so Acrobat and Preview show it as what
   it is. Each mark takes a note, and **Next mark** / **Previous mark** walk them from the
   keyboard: the pointer is not the only way to reach one.
+  <!-- built: edit.highlightSelection edit.underlineSelection edit.strikeoutSelection edit.squigglySelection nav.nextMark nav.previousMark -->
 - **Draw on a page** --- freehand ink, a box, an ellipse, a text box, or a comment placed
   where you press. Each is a real annotation of its own kind rather than ink pretending to
   be one, so another reader gets a comment they can open and a shape they can select. What
   you have drawn can be dragged to somewhere else on its page afterwards.
+  <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
+- **Choose a colour** for a mark --- seven of them, the default among them. Chosen with a
+  note open it recolours that mark; chosen with none open it sets what the next one will
+  be, which is the commoner of the two and is why it is offered either way.
+  <!-- built: edit.color.default edit.color.yellow edit.color.green edit.color.blue edit.color.pink edit.color.orange edit.color.red -->
 - **Stamp a document** APPROVED, CONFIDENTIAL, DRAFT or FINAL, dragged out like a box. The
   word is set to fill the rectangle you dragged, and it is written as a real `/Stamp`
   annotation carrying the standard name as well as the picture --- so another reader gets a
   stamp rather than a drawing that looks like one.
+  <!-- built: edit.stamp.approved edit.stamp.confidential edit.stamp.draft edit.stamp.final -->
 - **Erase what you marked** by dragging across it. The nib takes strokes out of a drawing
   and leaves the rest of it; every other kind has no parts to lose, so it goes whole ---
   which is the only way to take a highlight off without opening its note first. It reaches
-  your own marks and nothing else: a comment the file arrived with is never touched.
+  your own marks and nothing else: a comment the file arrived with is never touched. A
+  mark whose note you have opened can be removed from the note box instead, which is how
+  you take off the one you have named rather than the ones you cross.
+  <!-- built: edit.erase edit.removeMark -->
 - **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
   content measures where the ink actually is rather than reading the page's objects, so it
   works on a scan --- where every object union is the whole sheet --- as well as on a page of
@@ -90,9 +113,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   rectangle is darkened, so what stays bright is what the page becomes. The crop is part of the document: undoable, carried when the page moves,
   and written into a saved copy as a real `/CropBox`, so another reader opens the file
   cropped the way you left it.
+  <!-- built: edit.cropToDrag edit.cropToContent edit.resetCrop -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.
+  <!-- built: file.extractPages -->
 - **Merge documents**: pick any number of PDFs and get one file holding this document
   followed by all of them. The open document goes in as you have it --- edited, marked up,
   with deleted pages gone --- and the others go in as they are on disk. Each incoming page
@@ -101,12 +126,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   resizes half a document. Links inside a merged document keep working; its bookmarks and
   named destinations do not come across, and neither do form fields. Like extract, it
   writes elsewhere and changes nothing about what you have open.
+  <!-- built: file.mergeDocuments -->
 - **Save**, over the open file or to a copy. A save is refused outright if the file changed
   on disk since you opened it --- length, modification time and a digest of every byte,
   taken at open and checked again before anything is written. Deleting a page drops the
   document's bookmarks, because their destinations name pages that are no longer in the
   file --- repairing them one by one is its own piece of work. Moving a page keeps them,
   because a bookmark names a page rather than a position.
+  <!-- built: file.save file.saveCopy -->
 
   A save that only *adds* marks is written as a PDF incremental update: the previous
   revision is left exactly where it is and a few hundred bytes go on the end. Everything
@@ -125,15 +152,24 @@ measured the Windows render constants come out 1.5–1.8x worse.
 ## Not built yet
 
 This list is checked rather than remembered: each bullet carries the command that would
-exist if it were built, and a gate refuses any of them the application actually registers.
-It is here because the list went on naming drawing, shapes, text boxes and squiggly for
-weeks after all four shipped.
+exist if it were built, and `src/lib/readme.test.ts` refuses any of them the application
+actually registers. It is here because the list went on naming drawing, shapes, text boxes
+and squiggly for weeks after all four shipped.
 
-The check is narrower than it sounds, and both halves of that are worth knowing. It catches
-a bullet whose command ships **under the name the bullet guessed**, and nothing else --- so
-stamps went on being listed here after shipping as `edit.stamp.approved` and three siblings,
-because the bullet had guessed `edit.addStamp`. When a bullet leaves this list, check that
-the id it named is the id that shipped.
+**That direction alone was not enough, and the shortfall was countable.** It catches a
+bullet whose command ships under the name the bullet guessed, and nothing else --- so stamps
+went on being listed here after shipping as `edit.stamp.approved` and three siblings,
+because the bullet had guessed `edit.addStamp`. The check now runs the other way as well:
+every command the application registers is either named in the two sections above or
+excluded by name with a reason, so a capability cannot arrive unmentioned by being called
+something nobody predicted. What is excluded is opening a file, checking for an update and
+moving about a document; the reasons are in the test rather than here, one per command.
+
+The ids come from the registry itself rather than from a scan of the source, and that is
+not fastidiousness: the colour commands and the stamps are built in a loop, so their ids
+are literals nowhere on disk. The scan this replaced was blind to all eleven of them ---
+including the four stamps the paragraph above is about, which it would have passed as
+unbuilt while they shipped.
 
 - The rest of the page operations: insert and split
   <!-- not-built: edit.insertPages edit.splitDocument -->
