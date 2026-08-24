@@ -227,6 +227,10 @@ name = "crop-probe"
 path = "examples/crop_probe.rs"
 
 [[example]]
+name = "geometry-probe"
+path = "examples/geometry_probe.rs"
+
+[[example]]
 name = "merge-probe"
 path = "examples/merge_probe.rs"
 

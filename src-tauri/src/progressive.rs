@@ -45,6 +45,7 @@ use crate::annots::{self, Comments};
 use crate::docinfo::{self, Properties};
 use crate::encoding::{self, PageMapping};
 use crate::links::{self, Links};
+use crate::pagetree;
 
 /// `pdfium-render`'s `bindgen` module is private; only the handle *types* are
 /// `pub use`d out of it, so these values are restated rather than imported.
@@ -236,6 +237,52 @@ pub struct RawDocument {
     /// three: nothing asks for this until a reader opens the properties dialog,
     /// which most never will.
     properties: OnceCell<Result<Properties, String>>,
+    /// The box each page is displayed from, per the page tree, read at most once.
+    ///
+    /// **Only consulted for a page PDFium has no `/MediaBox` for**, which is the
+    /// tell that the page inherits one --- `FPDFPage_GetMediaBox` does not walk
+    /// `/Parent`. So this is another whole-file `lopdf` parse, and on the
+    /// overwhelming majority of documents it never happens at all: a page that
+    /// states its own box never asks.
+    ///
+    /// Lazy and cached like [`RawDocument::comments`], and for one more reason
+    /// than the others: it is read on the path that loads a page, which is a
+    /// path a reader waits on. A document that needs it pays once.
+    sheets: OnceCell<Result<Vec<[f32; 4]>, String>>,
+}
+
+/// Which box to lay a page out from, given both readings of it.
+///
+/// **PDFium wins wherever it answers.** It is the engine that renders, so a box
+/// it already agrees with makes every downstream number consistent by
+/// construction, and preferring a second opinion there could only introduce a
+/// disagreement between the size a page reports and the pixels it produces.
+///
+/// `media` is PDFium's `/MediaBox` reading and is the *discriminator*, not the
+/// answer: `FPDFPage_GetMediaBox` does not walk `/Parent`, so `None` means the
+/// page inherits its box from an ancestor --- and that is exactly the page
+/// `FPDF_GetPageWidthF` reports `width x width` for when it also carries a
+/// quarter turn. The answer is `crop`, which is the crop box intersected with
+/// the media box and the rectangle everything downstream is measured from.
+///
+/// A free function, and small enough that the reason is worth stating: as a
+/// branch inside the method it would sit beside two FFI calls, where no test can
+/// reach it --- which this project records as a guard written inline with an FFI
+/// call being reachable by nothing.
+pub(crate) fn box_to_use(
+    media: Option<[f32; 4]>,
+    crop: [f32; 4],
+    tree: Option<[f32; 4]>,
+) -> [f32; 4] {
+    match (media, tree) {
+        // PDFium has no sheet for this page and the page tree does. The only
+        // case where anything changes.
+        (None, Some(from_tree)) => from_tree,
+        // Either PDFium answered, or nothing did. `crop` is PDFium's own
+        // reading in both, which leaves a document whose bytes could not be
+        // re-read exactly as it was rather than refused.
+        _ => crop,
+    }
 }
 
 /// `FPDF_ERR_*` codes from `fpdfview.h`.
@@ -461,6 +508,7 @@ impl RawDocument {
             comments: OnceCell::new(),
             links: OnceCell::new(),
             properties: OnceCell::new(),
+            sheets: OnceCell::new(),
         })
     }
 
@@ -518,6 +566,7 @@ impl RawDocument {
             comments: OnceCell::new(),
             links: OnceCell::new(),
             properties: OnceCell::new(),
+            sheets: OnceCell::new(),
         })
     }
 
@@ -654,6 +703,70 @@ impl RawDocument {
             .clone()
     }
 
+    /// The box a page is displayed from: PDFium's reading, or the page tree's.
+    ///
+    /// **PDFium is asked first and believed wherever it answers.** It is the
+    /// engine that renders, so a box it agrees with is a box every downstream
+    /// number is already consistent with, and a second opinion could only
+    /// introduce a disagreement. The page tree is consulted for exactly one
+    /// case: a page PDFium has no `/MediaBox` for.
+    ///
+    /// That case is not obscure and it is not benign. `FPDFPage_GetMediaBox`
+    /// does not walk `/Parent`, so a page inheriting its box from an ancestor
+    /// --- what any producer emitting uniform pages writes --- gets no answer;
+    /// `FPDF_GetPageWidthF` then reports `width x width` for one that also
+    /// carries a quarter turn, which is what a scanner writes. `docs/TRAPS.md`
+    /// has the crossed measurements.
+    ///
+    /// The fallback is `crop_pt` again rather than a refusal, which is
+    /// deliberate: a document whose bytes cannot be re-read, or which `lopdf`
+    /// and PDFium disagree about the length of, is a document this makes no
+    /// worse than it was. Nothing here can *fail*; it can only decline to
+    /// improve.
+    fn original_box(&self, page: &RawPage<'_>, index: u32) -> [f32; 4] {
+        let media = page.media_pt();
+        // The short-circuit, and it is the whole cost story: a document every
+        // page of which states its own box never parses anything here. Asking
+        // `sheet` first would be the same answer for a whole `lopdf` parse of
+        // every file opened. `consulted_page_tree` is what makes that
+        // observable, and `geometry-probe` reads it in both directions.
+        let tree = if media.is_none() {
+            self.sheet(index)
+        } else {
+            None
+        };
+        box_to_use(media, page.crop_pt(), tree)
+    }
+
+    /// Whether the page tree has been parsed for this document yet.
+    ///
+    /// **An accounting observable.** [`original_box`](Self::original_box) is
+    /// meant to reach `lopdf` only for a document PDFium cannot give a
+    /// `/MediaBox` for, and "it never happened" is invisible from outside ---
+    /// every number a caller can see is identical either way, because the two
+    /// agree wherever both answer. So the property that would silently be lost
+    /// is the one this exists to let a check assert.
+    pub fn consulted_page_tree(&self) -> bool {
+        self.sheets.get().is_some()
+    }
+
+    /// One page's box out of the page tree, parsing the document at most once.
+    ///
+    /// See [`RawDocument::sheets`] for why this is lazy and why most documents
+    /// never reach it.
+    fn sheet(&self, index: u32) -> Option<[f32; 4]> {
+        self.sheets
+            .get_or_init(|| {
+                let bytes = self
+                    .source_bytes()
+                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                pagetree::displayed_boxes(&bytes, self.page_count() as usize, self.password())
+            })
+            .as_ref()
+            .ok()
+            .and_then(|boxes| boxes.get(index as usize).copied())
+    }
+
     /// The password this document was opened with, for a parser that needs it.
     ///
     /// Every caller is a `lopdf` parse of the same bytes PDFium already holds
@@ -750,9 +863,8 @@ impl RawDocument {
         if !known {
             // Read on the first load of this page and never again --- after an
             // override there is nothing left to read.
-            self.original_crops
-                .borrow_mut()
-                .insert(index, page.crop_pt());
+            let original = self.original_box(&page, index);
+            self.original_crops.borrow_mut().insert(index, original);
         }
         let want = match to {
             Some(box_pt) if box_pt.iter().all(|value| value.is_finite()) => box_pt,
@@ -1500,6 +1612,39 @@ pub fn render_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The page tree is preferred exactly where PDFium has no sheet to offer.
+    ///
+    /// Three cases and each is a different decision, which is why this is a
+    /// function rather than a branch beside two FFI calls: as written inline it
+    /// would sit where `media_pt` and `crop_pt` are called, and no test can
+    /// reach that without a loaded PDFium.
+    ///
+    /// The middle case is the one with teeth. PDFium answered, so its reading
+    /// wins **even though** the page tree also has one --- it is the engine that
+    /// renders, and overriding a box it already agrees with could only make the
+    /// size a page reports disagree with the pixels it produces.
+    #[test]
+    fn the_page_tree_decides_only_where_pdfium_has_no_media_box() {
+        let crop = [0.0, 0.0, 612.0, 792.0];
+        let tree = [10.0, 20.0, 410.0, 620.0];
+
+        assert_eq!(
+            box_to_use(None, crop, Some(tree)),
+            tree,
+            "an inherited box is the one case the page tree answers"
+        );
+        assert_eq!(
+            box_to_use(Some(crop), crop, Some(tree)),
+            crop,
+            "PDFium answered, so its own reading wins over a second opinion"
+        );
+        assert_eq!(
+            box_to_use(None, crop, None),
+            crop,
+            "nothing answered, so the document is left exactly as it was"
+        );
+    }
 
     /// A crop box written corner-first is normalised before its corner is taken.
     ///

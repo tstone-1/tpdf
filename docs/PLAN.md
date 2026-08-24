@@ -9107,45 +9107,94 @@ because PDFium substitutes, and then extracts the wrong code points. 50/50 on
 take it to 7/23 and 16/21.
 
 **The fixture had to be built, and building it is what found the defect below.**
-Mutating `pagetree::detached_page` to materialise nothing left the probe at 38/38,
-because no page of any existing fixture inherits anything --- the check that is
-the entire point of that function could not fail. `testdata/inherited.pdf` is
+Mutating `pagetree::detached_page` to materialise nothing left the probe **green
+on `rotated.pdf` + `links.pdf`** (38/38 as measured that morning, 50/50 when
+re-measured after the geometry repair below --- the verdict is what matters and
+the denominator is recorded in `BUILD.md` rather than explained), because no page
+of any existing fixture inherits anything --- the check that is the entire point
+of that function could not fail. `testdata/inherited.pdf` is
 three pages that state nothing and take their box, resources and rotation from
 the node above them. With it, the same mutation reddens six checks, including
 `612.0x792.0 against 600.0x400.0`: the page falls back to US Letter, which is
 what losing an inherited `/MediaBox` looks like from the outside.
 
-##### Ranked: the viewer lays out a rotated inherited-box page at the wrong size
+##### The viewer lays out a rotated inherited-box page correctly --- done 2026-08-24
 
-Found by the fixture above, and it is not about merging at all.
+Found by `testdata/inherited.pdf`, which was built for the merge checks and had
+nothing to do with the viewer.
 
 **PDFium answers `width x width` for a page that inherits its `/MediaBox` and
-carries a quarter turn.** Measured across all four rotations and with the two
-attributes crossed both ways: it inherits `/Rotate` correctly, inherits
-`/MediaBox` correctly on an upright page, and gets the combination wrong at 90
-and 270. `docs/TRAPS.md` has the tables.
+carries a quarter turn.** `docs/TRAPS.md` has the crossed measurements. The
+scroller laid out from that number, so such a document rendered square, at an
+aspect nothing on it matched, with the content clipped to a sheet smaller than
+itself --- 0, 1 and 3 inked pixels on the three pages of the fixture. Not an
+exotic document: one `/MediaBox` on the page-tree root is what any producer
+emitting uniform pages writes, and `/Rotate 90` is what a scanner writes.
 
-`RawPage::width_pt` is `FPDF_GetPageWidthF` directly, and the scroller lays out
-from it, so **a document like that renders wrong in tpdf today**: the page is
-square, at an aspect nothing on it matches, and the content is clipped to a box
-smaller than the sheet --- 0, 1 and 3 inked pixels on the three pages of the
-fixture, against 1013, 1062 and 1317 once the same attributes are on the page.
+**The repair is not the one the entry predicted, and the difference matters.**
+It said to prefer `pagetree::displayed_page` over `RawPage::width_pt` on the
+render path. That corrects the *number* and leaves the *render*: PDFium draws
+from its own idea of the sheet, so the page would report 600x400 and still come
+out clipped. What works is to give PDFium the box --- `RawDocument::page_cropped`
+already records each page's own box on first load and sets it, for the crop
+tool, so the whole change is *which* box it records. The reported size, the
+origin, the render and the character boxes all follow, which is the mechanism
+`set_crop_pt`'s own doc comment describes.
 
-tpdf already owns the right answer. `pagetree::displayed_page` walks `/Parent`
-with `lopdf` and says 600x400 for every case, which is why `save.rs` writes such
-a document correctly and why `merge-probe` uses it as its oracle rather than
-PDFium's reading of the source.
+Three things came out of building it that reading could not have given:
 
-**What the fix is, and why it is not in this increment.** Prefer
-`pagetree::displayed_page` on the render path wherever it disagrees with PDFium.
-That changes how every page's geometry is obtained --- the tile request, the text
-layer's flip, the scroller's layout and every coordinate derived from them --- so
-it deserves its own increment with its own before and after, and a measurement of
-what it costs to parse the page tree on the open path for documents that do not
-need it. The regression test is already in the tree: `testdata/inherited.pdf` is
-excluded from the window sweep *because* the viewer is wrong about it, and
-`scripts/viewer_sweep.py` says so in the exclusion, so promoting it to a corpus
-is how that change proves itself.
+- **`FPDFPage_GetMediaBox` answering `None` is the discriminator.** That API
+  does not walk `/Parent` either, so "PDFium has no sheet for this page" *is*
+  "this page inherits one". A document that states its own boxes therefore never
+  reaches `lopdf` at all --- the cost is nil on the overwhelming majority of
+  files, rather than a page-tree parse on every open, which is what the ranked
+  entry had worried about.
+- **`FPDFPage_GetCropBox` does answer on such a page, in a different
+  convention**: `[0 0 600 400]`, the displayed shape, where every ordinary page
+  gives the unrotated box. So it is not usable as the second opinion, and a
+  repair built on it would have been right on this fixture by accident.
+- **PDFium wins wherever it answers.** It is the engine that renders, so a box
+  it already agrees with makes every downstream number consistent by
+  construction; overriding it could only make the size a page reports disagree
+  with the pixels it produces. `box_to_use` is a free function so that rule has
+  somewhere to be tested --- as a branch beside the two FFI calls it would be
+  reachable by nothing.
+
+**The evidence, and three observables moved.** `examples/geometry_probe.rs`
+checks the displayed size, the box every coordinate is measured from, and the
+ink, per page, with a fourth check on cost: the page tree must be parsed **iff**
+some page needed it, which is the only thing that can see a repair that parses
+every document. Three mutations against it and four against the unit tests, all
+caught. A window run over the fixture went from **257/260 with 83 not applicable
+to 271/272 with 71** --- twelve checks became applicable because the page finally
+has its own shape. And `merge-probe` went from 27/27 with 3 skipped to **30/30
+with none**: the skip existed because PDFium mis-read the source page.
+
+##### Ranked: the overlay stops drawing a text box well before the file does
+
+The one check that keeps `inherited.pdf` out of the window sweep, and it is not
+about geometry.
+
+`viewer_check.py`'s agree phase lays ten synthetic marks in bands down the page,
+so their height scales with the paper. A text box's *type* does not --- 11 points
+by design, since nothing about how large a reader dragged the rectangle says how
+large they want the words. On this fixture's 400-point pages, the shortest in the
+corpus, the synthetic box comes out **8.5 pt** against the 17.2 one line needs:
+the overlay draws nothing and the saved file draws 11%, so the comparison reports
+27x against a 4x bound.
+
+**Not a cliff, which is what rules out a precondition guard.** `columns`
+(16.8 pt) and `rotated-90` (13.0 pt) are also under a line and both pass, so the
+two renderers degrade together and only come apart somewhere below 13. A guard
+keyed on "one line of type" would skip two corpora that give real coverage
+today; one keyed at 8.5 would be tuned to the symptom.
+
+What is unresolved is the behaviour underneath, and it is reader-visible if it is
+real: a text box too short for its words shows nothing while the document is open
+and shows them after saving. Which of the two is right is a decision --- clipping
+to the rectangle is defensible and so is letting the words overflow --- but the
+two renderers disagreeing is not. Measuring where they part company is a morning
+with `crop-probe`'s shape, and it wants doing before either is called correct.
 
 ##### Not done: inserting pages into the open document
 

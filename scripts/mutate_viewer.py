@@ -976,6 +976,50 @@ MUTATIONS = [
         "crop-rotated",
     ),
     Mutation(
+        # Undo the repair: never take the page tree's box, which is what the
+        # renderer did until 2026-08-24. A page inheriting its `/MediaBox` and
+        # carrying a quarter turn then lays out `width x width`, and the render
+        # is clipped to a sheet smaller than the content.
+        #
+        # Aimed at the size check, which is the claim. It reddens the box and
+        # ink checks too, and that is the point of having all three: they fail
+        # for one cause here and are not the same assertion -- an origin can be
+        # wrong with both dimensions right, and neither says whether anything
+        # was drawn.
+        "geometry: never prefer the page tree's box",
+        "src-tauri/src/progressive.rs",
+        "        (None, Some(from_tree)) => from_tree,",
+        "        (None, Some(_)) => crop,",
+        "page 0: the displayed size is the page tree's",
+        "geometry-inherited",
+    ),
+    Mutation(
+        # Hand back the DISPLAYED rectangle rather than the page's own. Every
+        # dimension is right and the two are transposed, so the size check --
+        # which reads width and height after `/Rotate` -- still passes on a page
+        # PDFium has now been told is 400 wide and 600 tall. Only a check that
+        # reads the box itself can see it.
+        "geometry: give PDFium the displayed rectangle, not the page's own",
+        "src-tauri/src/pagetree.rs",
+        "        let (width, height) = if self.turns % 2 == 1 {\n            (self.height, self.width)\n        } else {\n            (self.width, self.height)\n        };",
+        "        let (width, height) = (self.width, self.height);",
+        "page 0: coordinates are measured from that box",
+        "geometry-inherited",
+    ),
+    Mutation(
+        # Ask the page tree for every page rather than only for one PDFium has
+        # no sheet for. Nothing a caller can see moves -- the two agree wherever
+        # both answer -- so every other check in this probe passes, on a change
+        # that puts a whole `lopdf` parse of the file on the path a reader waits
+        # on. The accounting check is the only thing that can fail.
+        "geometry: parse the page tree for every document",
+        "src-tauri/src/progressive.rs",
+        "        let tree = if media.is_none() {\n            self.sheet(index)\n        } else {\n            None\n        };",
+        "        let tree = self.sheet(index);",
+        "the page tree was parsed only because a page needed it",
+        "geometry-plain",
+    ),
+    Mutation(
         # Measure the content box on the page as the reader sees it turned rather
         # than as the document has it. The crop then depends on which way the
         # window was rotated when the command was pressed.
@@ -1330,6 +1374,47 @@ RUNNERS = {
             PDFIUM_DIR,
             "--mode",
             "ink",
+        ],
+    },
+    # The one fixture in the corpus whose pages state nothing and inherit
+    # everything, which is the only document PDFium has no `/MediaBox` for and
+    # therefore the only one where the repair does anything at all.
+    "geometry-inherited": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "geometry-probe",
+        ],
+        "run": [
+            probe_exe("geometry-probe"),
+            "testdata/inherited.pdf",
+            "--lib",
+            PDFIUM_DIR,
+        ],
+    },
+    # Its control, and not a duplicate: a document every page of which states
+    # its own box is where the repair must cost nothing, and the cost check is
+    # the only one in the probe that can tell the difference. Aimed at with
+    # `--only "geometry: cost"`.
+    "geometry-plain": {
+        "build": [
+            "cargo",
+            "build",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--example",
+            "geometry-probe",
+        ],
+        "run": [
+            probe_exe("geometry-probe"),
+            "testdata/links.pdf",
+            "--lib",
+            PDFIUM_DIR,
         ],
     },
     "structure": {

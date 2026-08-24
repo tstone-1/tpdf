@@ -125,24 +125,44 @@ NOT_WINDOW: list[tuple[str, str]] = [
     ),
     (
         "inherited",
-        # **Excluded because the viewer is currently wrong about it, and that is
-        # a statement with a date on it.** Its pages inherit `/MediaBox` from the
-        # node above them and carry `/Rotate 90`, and PDFium answers
-        # `width x width` for exactly that combination (see the trap). The
-        # scroller lays out from `RawPage::width_pt`, which is that number, so a
-        # window run over this document would be red for a reason no check here
-        # is about --- a check that cannot pass, which this project has its own
-        # entry about.
+        # **The reason changed on 2026-08-24, and the old one is worth keeping
+        # in view because it was a prediction that turned out wrong.** It read:
+        # the viewer lays out from `RawPage::width_pt`, PDFium answers
+        # `width x width` for a rotated page whose box is inherited, so a window
+        # run here would be red for a reason no check is about --- *and the day
+        # the render path takes its geometry from the page tree, this becomes a
+        # corpus rather than an exclusion*.
         #
-        # It is a merge input in the meantime: `merge-probe` reads it through
-        # `pagetree::displayed_page`, which is right.
+        # That day came and the promise did not hold. The geometry defect is
+        # fixed: `RawDocument::page` hands PDFium the box
+        # `pagetree::displayed_boxes` derived, and a window run went from
+        # **257/260 with 83 not applicable to 271/272 with 71** -- twelve checks
+        # became applicable, because the page finally has its own shape.
         #
-        # **The day the render path prefers that function, this becomes a corpus
-        # rather than an exclusion**, and it is the natural regression test for
-        # that change. Nothing else in the tree can tell whether it landed.
-        "the viewer lays its pages out at PDFium's size, which is wrong for a "
-        "rotated page whose box is inherited --- it becomes a corpus when the "
-        "render path takes its geometry from pagetree::displayed_page instead",
+        # What is left is one check and it is not about geometry. The agree
+        # phase lays ten synthetic marks in bands down the page, so their height
+        # scales with the paper; a text box's *type* does not, being a fixed 11
+        # points. These pages are 400 points tall displayed, the shortest in the
+        # corpus, which puts the synthetic text box at **8.5 pt** -- half of the
+        # 17.2 one line needs. The overlay draws nothing there and the saved file
+        # draws 11%, so the comparison reports 27x.
+        #
+        # **Not a cliff, and that is what rules out a precondition guard.**
+        # `columns` (16.8 pt) and `rotated-90` (13.0 pt) are also under a line
+        # and both pass, so the two renderers degrade together and only come
+        # apart somewhere below 13. A guard keyed on "one line of type" would
+        # skip two corpora that currently give real coverage; one keyed at 8.5
+        # would be tuned to the symptom. `docs/PLAN.md` ranks the underlying
+        # question rather than either.
+        #
+        # **The geometry claim did not need this corpus in the end.**
+        # `examples/geometry_probe.rs` asserts the displayed size, the box every
+        # coordinate is measured from, and the ink, directly and per page, with
+        # three mutations behind it -- which is a better instrument for it than
+        # a window run that reaches it through the scroller.
+        "its 400-point pages are the shortest in the corpus, which puts the "
+        "agree phase's synthetic text box at half the height one line of type "
+        "needs --- geometry-probe is what covers this document instead",
     ),
     ("hostile-*", "sanitation fixtures, read by sanitize-* rather than opened"),
     (
