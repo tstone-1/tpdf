@@ -1644,6 +1644,18 @@ rung with a job is refused with `1455` (`ERROR_COMMITMENT_LIMIT`) and `1816`
 (`ERROR_NOT_ENOUGH_QUOTA`). `KILL_ON_JOB_CLOSE` is still only claimed — testing it means
 killing the probe itself.
 
+⚠ **And on 2026-08-25 the outcome it is supposed to prevent was observed.** A viewer
+mutation run stalled on a live `tpdf.exe --render-worker --prespawn --tile-handle 2028`
+whose parent pid had nothing behind it: the app had exited and the warmed pre-spawn was
+still there twenty-nine minutes later, idle, holding the stdout and stderr it had
+inherited. What that establishes is the *outcome*, not the mechanism — whether the job
+object was assigned to that worker at all, whether its handle was closed early, or
+whether the exit path leaks a handle that keeps the job alive, is **not established**,
+and no probe here can currently say. Read the row above as: memory and process creation
+are measured, orphan cleanup is intended and has one counterexample. The probe that
+would settle it does not need to kill itself after all — spawn the pre-spawn from a
+*child*, kill the child, and look. `docs/TRAPS.md` carries the entry.
+
 **Evidence that the whole path works, not just the pieces**: `worker-probe` passed 11/11 on
 2026-07-29 on `text-base14`, `text-cid`, `vector-heavy` and `rotated`, including
 **pixel-identical** tiles

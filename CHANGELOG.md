@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.10] - Unreleased
+## [26.8.10] - 2026-08-25
 
 ### Fixed: upgrading from 26.8.8 on Windows stopped with an error, or installed a broken app
 
@@ -219,6 +219,73 @@ none.
   into the middle of a page's drawing instructions. Refused now rather than
   clamped, for the reason a moved mark is already refused: a mark quietly put
   somewhere else is not the mark that was drawn.
+
+### Fixed: the second of those bounds made the test for the first one unable to fail
+
+The cap on a signature's `/Contents` --- the most attacker-chosen bytes in a PDF,
+handed straight to a certificate parser --- had a test written for exactly the
+case of somebody deleting it. Putting the new bound in front of the walk made
+that test unable to notice: the two refuse in the same way, returning nothing
+and counting the same limit, and the size the test asked about is caught by the
+new one first. So the guard was still there, still correct, and no longer
+covered by anything.
+
+Nothing about the shipped behaviour changed and nothing was ever wrong for a
+reader. It is recorded because of how it was found: the mutation table, which
+breaks the code on purpose and asks whether the tests notice, is the only
+instrument in this repository that could have said so --- a green suite says the
+same thing either way. It is also the second time a change that only made things
+stricter has quietly removed the cover from the check beside it.
+
+### Fixed: the window check for how a comment is drawn had never once run
+
+The check that says a comment is painted as a bubble inside its own box, rather
+than as a plain filled rectangle, reported *not applicable* on every document it
+was ever pointed at. It asked for a sample of the middle tenth of the mark's
+height, and it gave that mark a box twenty points tall --- two points to sample,
+where the sampler refuses anything under about two pixels. So it declined, on
+every fixture, at every zoom.
+
+The name was still in the list of checks, which is what made it invisible: the
+run compares the *set* of names it reports across documents, and a check that
+skips is in that set. It was found by aiming a mutation at the thing it watches
+--- the harness refused to start rather than report the mutation as uncaught,
+which is the verdict that would have read as a gap in the tests instead of a
+gap in this one check.
+
+The box is ninety points now, which is what the text box beside it uses and for
+the same stated reason. The check runs and passes on `outline-simple.pdf`,
+`comments.pdf` and `multilingual.pdf`, and a second check came back with it ---
+*no two kinds look the same* needs every kind sampled, so the comment's skip had
+been switching that off too. Two more checks now run on each of those documents
+than did before.
+
+Nothing a reader sees changed. What changed is that if a comment ever starts
+drawing as a red block, something will now say so.
+
+### Fixed: a check that timed out could then wait forever anyway
+
+Internal, and it cost an hour of a release to find. The window check bounds each
+run at seven minutes so that a hang ends as a failure rather than as a wait
+nobody is watching. The bound fired exactly on time and the run still sat for
+twenty-nine minutes, because of what happens *after* it fires: the code kills
+the application and then waits to collect its output, and that second wait had
+no bound of its own.
+
+Waiting for output is not waiting for a process. A pipe stays open as long as
+anything that inherited it is alive, and tpdf's worker processes inherit theirs
+from the application --- so a worker that outlives the application holds the pipe
+open, and a wait with no limit waits for it. That is what happened: the
+application had exited and one of its warmed-up workers had not.
+
+The wait is bounded now and gives up on the output when it elapses, which loses
+nothing --- the partial transcript is captured before any of it. What the fix
+deliberately does not do is close every tpdf on the machine, which would
+certainly have caught it and would also have shut a reader's own open document.
+
+The worker outliving its parent is the other half, and it is a claim in
+`docs/THREAT-MODEL.md` that now has a counterexample rather than a measurement.
+Both are written up.
 
 ### Changed: one home for each thing that was written out several times
 

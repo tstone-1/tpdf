@@ -163,6 +163,14 @@ process; every rung with a job is refused with **1455** (commit charge) and **18
 quota). The third, an orphan outliving the parent, is `KILL_ON_JOB_CLOSE` and is still only
 claimed: testing it means killing the probe itself.
 
+⚠ **And it has one counterexample, found by accident on 2026-08-25**: a live
+`--render-worker --prespawn` with a dead parent, idle twenty-nine minutes after the app
+that started it had gone, holding the pipes it inherited and stalling a mutation run.
+That establishes the outcome and not the mechanism, and the row above should be read as
+memory and process creation measured, orphan cleanup intended. The probe does *not* need
+to kill itself — spawn the pre-spawn from a child and kill the child. Both halves are in
+the trap index, and `docs/THREAT-MODEL.md` carries the same correction.
+
 Worth knowing rather than inferring, because it is a real asymmetry with macOS: the Windows
 bound is on **committed** memory, which the kernel charges at `VirtualAlloc` time, so a
 decompression bomb is refused *before* a byte of it exists. macOS bounds *resident* memory, so
@@ -1261,6 +1269,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Two mechanisms with the same limit make one of them untestable
 - FIFO dequeue is not FIFO completion
 - A worker killed a moment ago still says it is running
+- A pre-spawned worker outlived its parent, and the claim that it cannot is untested by design (the one job-object denial nobody measured, observed by accident after twenty-nine minutes; the probe the original entry called impossible needs a child process to kill, not itself)
 - The cleanup after an fd shuffle can close what it just installed
 - A per-page invalidation counter is not the same as a generation
 - State keyed by a slot belongs to whatever moves into that slot (three honest answers, and the third is right for exactly one of the ten things on the list)
@@ -1518,6 +1527,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A harness that prints stderr only on failure hides what a passing run said
 - A wrapper's own verdicts are on the other stream, in the same shape as a check's
 - A mutation aimed at a check that skips reports SURVIVED
+- A timeout whose failure path has no timeout is not a bound (a 420-second bound fired correctly and the run still sat for twenty-nine minutes; the `kill()` then `communicate()` idiom waits on the PIPES, which anything that inherited them holds open — and the obvious POSIX fix kills the harness that called it)
 - A mutation caught by an access violation produces no test results at all
 - An unguarded `invoke` for a command that is not registered ends the run, and the harness calls it SURVIVED (the defect was detected and the verdict was wrong; read the evidence line, not the verdict)
 - A guard that also guarantees termination fails as a hang, not as a red test

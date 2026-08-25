@@ -268,6 +268,29 @@ function key(root: HTMLElement, k: string, accel = false): void {
 }
 
 /**
+ * What was thrown, in a form that names it.
+ *
+ * `String(e)` was here, and for the two things this actually catches it says
+ * nothing: a Tauri `invoke` rejects with a plain object, so the whole run's
+ * only line read `[FAIL] run completed  [object Object]`. That is a diagnostic
+ * that names no cause, which sends a reader to bisect their own change --- and
+ * the one that produced it was a rejection from a command, which the object
+ * carries and `String` throws away.
+ *
+ * An `Error` keeps its stack, because when the throw is ours rather than the
+ * backend's the line number is the whole answer.
+ */
+function describeThrown(e: unknown): string {
+  if (e instanceof Error) return e.stack ?? `${e.name}: ${e.message}`;
+  if (typeof e === "string") return e;
+  try {
+    return JSON.stringify(e) ?? String(e);
+  } catch {
+    return String(e);
+  }
+}
+
+/**
  * Runs the check if `TPDF_VIEWERCHECK` is set, then exits the process.
  *
  * Returns `false` when it was not requested, so the caller carries on into the
@@ -280,7 +303,7 @@ export async function runViewerCheckIfRequested(): Promise<boolean> {
   try {
     await run(path);
   } catch (e) {
-    check("run completed", false, String(e));
+    check("run completed", false, describeThrown(e));
   }
 
   // Prints the `N/M checks passed` summary, waits for the last line to land,
@@ -8789,9 +8812,39 @@ async function overlayInkChecks(
       width: Math.min(TEXT_BOX_PT.width, size.width_pt * 0.5),
       height: Math.min(TEXT_BOX_PT.height, size.height_pt * 0.2),
     };
+    // **A comment's box needs the same floor the text box's does, and it was
+    // 20 points square until 2026-08-25.** `core` reads the middle tenth of the
+    // height, so a 20-point box asks the sampler for two points of it, and
+    // `inked` refuses a region under two pixels --- which it is at every scale
+    // in the corpus, not merely at the smallest. So this check reported
+    // `[SKIP] the mark's rectangle is off screen or too small to sample` on
+    // every fixture, measured on `outline-simple.pdf` and `comments.pdf`
+    // before the change: it was in the name set, so the pairwise name diff saw
+    // nothing missing, and it could not go red. A mutation aimed at it is what
+    // found it --- the harness refused to start rather than reporting SURVIVED,
+    // which is the verdict that would have read as a gap in the checks.
+    //
+    // Square rather than the text box's 260x90, because a bubble is drawn from
+    // both of its dimensions: `drawBubble` takes the body as 78% of the height
+    // and the corner radius from `min(width, body)`, so a wide short box would
+    // change the shape being read rather than only its size. 90 points is the
+    // text box's height and carries its argument verbatim --- an A0 page in a
+    // 900-pixel window is 0.37 pixels per point, where a tenth of 90 is 3.3
+    // pixels against the floor of two. Clamped the same way, and no corpus
+    // clamps below 80.
+    const NOTE_BOX_PT = 90;
+    const notePt = {
+      width: Math.min(NOTE_BOX_PT, size.width_pt * 0.5),
+      height: Math.min(NOTE_BOX_PT, size.height_pt * 0.2),
+    };
     const quad =
       kind === "note"
-        ? [size.width_pt * 0.2, size.height_pt * 0.08, size.width_pt * 0.2 + 20, size.height_pt * 0.08 + 20]
+        ? [
+            size.width_pt * 0.2,
+            size.height_pt * 0.08,
+            size.width_pt * 0.2 + notePt.width,
+            size.height_pt * 0.08 + notePt.height,
+          ]
         : kind === "textbox"
           ? [
               size.width_pt * 0.15,
