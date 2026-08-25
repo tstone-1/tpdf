@@ -15058,3 +15058,61 @@ The result is worth stating, because it is what says the split is complete rathe
 than merely moved: `progressive.rs` now has **no `use crate::` line at all**. The
 module that said *"the RAII types below are that ownership, and nothing more"*
 depends on nothing else in the crate.
+
+### Twelve tests for marks and not one of them turned a page
+
+`planned_bytes` carried this, above two of its four rewrite steps:
+
+> Before `apply_turns`, and the order is load-bearing rather than tidy: a mark
+> was made against the rotation the file had when it was opened, and the mapping
+> below reads the rotation the file has *now*. Turn the page first and every quad
+> is a quarter turn out, on exactly the pages a reader rotated.
+
+The comment is right, specific, and names the consequence. An outside review's
+complaint about the function was exactly this shape --- *"217 lines of surgery
+whose correctness is sentence order; nothing structural enforces it"*.
+
+**What is worth writing down is not the finding, it is what the tests were
+doing.** `save.rs` has twelve tests with `mark` in the name. They cover an
+annotation reaching the page's own `/Annots`, an `/Annots` of every shape, a mark
+on a page two numbers share, a mark whose quads collapse, a marked document still
+refusing what it refused before. **Not one of them rotates a page.** The
+constraint the comment calls load-bearing had no test at all, and the reason is
+visible in the list: every one of those tests is about *marks*, and the defect
+lives in the interaction between marks and something else.
+
+Two fixes, and they do different jobs.
+
+**The ordering is now a value.** `write_marks` returns a `MarksWritten`, and the
+turn and crop steps require one. Calling them first stops being a mistake to
+catch in review and becomes a value that does not exist yet. It carries nothing:
+anything it carried would be a second reason to hold it.
+
+**And the behaviour has a test**, because the type does not cover a restructuring
+that keeps the token and moves the work. The assertion avoids transcribing a
+coordinate --- a mark's position in the page's own space does not depend on how
+the reader later turned the *view*, so the same mark saved with a turn and
+without one must produce identical `/QuadPoints`, and the test is an equality
+between two saves.
+
+**Proved by inverting it, which is possible from inside the module and not from
+outside** --- `MarksWritten` is constructible in `save.rs`, so the guarantee is
+*you cannot call these in the wrong order by accident*, not *it is impossible*.
+Forcing the inversion turns the test red with exactly the predicted numbers:
+
+    right (correct):  [72, 692, 300, 692,  72, 674, 300, 674]
+    left  (inverted): [100, 300, 118, 300, 100,  72, 118,  72]
+
+Transposed. The comment said a quarter turn out; that is a quarter turn out.
+
+**One more thing fell out, and it is the split proving itself.** Separating the
+guards from the rewrite made `let mut doc` in the guards half stop needing `mut`
+--- every refusal reads the document and none of them writes to it. The compiler
+now says what the comments used to, and it could not while the two halves were
+one function.
+
+Sizes, for whether this was worth it: 217 lines became 177 (refuses, writes
+nothing), 73 (writes, cannot refuse for a reason the caller could have known) and
+8 that compose them. The 177 is still long and is long-and-linear --- a list of
+independent refusals --- which is the shape the review explicitly did not object
+to.

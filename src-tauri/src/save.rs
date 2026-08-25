@@ -959,7 +959,13 @@ pub fn append_update(
         }
     }
 
-    write_marks(&mut incremental.new_document, &plan.marks, &sites)?;
+    // The proof is discarded here, and that is the honest thing to do rather
+    // than a leak: an append writes marks and *nothing else*. There is no
+    // rotation and no crop on this path --- `append_ready` refuses a plan
+    // carrying either --- so there is no later step for the token to gate. The
+    // binding says so out loud, because `#[must_use]` is right to ask.
+    let _marks_are_all_this_path_writes =
+        write_marks(&mut incremental.new_document, &plan.marks, &sites)?;
 
     // **The previous revision is thrown away as it is written**, which is the
     // point: `IncrementalDocument::save_to` writes the whole prior file through
@@ -1343,12 +1349,70 @@ pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
     commit(staged, source)
 }
 
+/// A plan checked against the document on disk, and everything the rewrite needs.
+///
+/// The output of [`checked`] and the whole input to [`rewrite`], which is why it
+/// exists: those two used to be one 217-line function whose first half refuses
+/// and whose second half mutates, with nothing but blank lines between them. An
+/// outside review scored it *"surgery whose correctness is sentence order"*.
+///
+/// Splitting on that line is worth more than the length is. Everything above it
+/// can refuse and has written nothing; everything below it has changed the object
+/// graph, so a refusal there costs a cleanup. That is a real property of the code
+/// and it was readable only by reading all 217 lines in order.
+struct Checked {
+    /// The parsed document, not yet touched.
+    doc: Document,
+    /// Every page object, in document order, as the file has them.
+    pages: Vec<lopdf::ObjectId>,
+    /// One-based numbers of the pages the plan keeps, in the reader's order.
+    kept: Vec<u32>,
+    /// One-based numbers of the pages the plan drops, empty for a plan that
+    /// keeps everything --- which is what the rewrite branches on.
+    dropped: Vec<u32>,
+    /// Each kept page's object and the quarter turns it should end up with.
+    turns: Vec<(lopdf::ObjectId, u8)>,
+    /// Whether the reader moved anything, so the page tree has to be rebuilt.
+    moved: bool,
+    /// What the source fingerprinted as, where that was checked.
+    verified: Option<Fingerprint>,
+    /// The source had changed and [`OnChange::Proceed`] let it through.
+    changed: bool,
+}
+
+/// Proof that everything expressed in the document's *opened* geometry has been
+/// written, so the geometry may now move.
+///
+/// **The ordering constraint, as a value.** Two steps in [`rewrite`] must precede
+/// two others, for one fact stated twice: a mark's quads are in the space the
+/// file had when the reader made them. `mark_sites` reads the rotation the file
+/// has *now*, so turning first puts every quad a quarter turn out --- on exactly
+/// the pages a reader rotated. Cropping first moves the origin those quads were
+/// measured from.
+///
+/// Both were held by comments, and those comments say so themselves: *"the order
+/// is load-bearing rather than tidy"*. A comment cannot be violated in a way
+/// anything notices, and `docmodel.rs` records that page insertion is the next
+/// step to be added here --- by somebody deciding where it goes.
+///
+/// So [`write_marks`] hands this back and the geometry steps require it. Calling
+/// them first stops being a mistake to catch in review and becomes a value that
+/// does not exist yet.
+///
+/// It carries nothing, deliberately: anything it carried would be a second reason
+/// to hold it, and the reason to hold it is the ordering.
+#[must_use]
+struct MarksWritten;
+
 /// The bytes of the working document, ready to be written somewhere.
 ///
 /// Everything both save paths share: the parse, the three refusals, the page
 /// tree, the marks, the turns and the crops. Neither path names a destination
 /// here --- a copy and a save in place differ in where the bytes go and in what
 /// has to happen around the write, never in what is written.
+///
+/// Two phases, and the split is the one that matters rather than a tidy one ---
+/// see [`Checked`].
 ///
 /// # Errors
 ///
@@ -1363,6 +1427,18 @@ fn planned_bytes(
     on_change: OnChange,
     view: u8,
 ) -> Result<Planned, Refusal> {
+    rewrite(plan, checked(source, plan, on_change, view)?)
+}
+
+/// Checks a plan against the document on disk, writing nothing.
+///
+/// Every refusal a save can make lives here. See [`Checked`] for why that is a
+/// boundary rather than a convenience.
+///
+/// # Errors
+///
+/// As [`planned_bytes`], minus the serialisation.
+fn checked(source: &Path, plan: &Plan, on_change: OnChange, view: u8) -> Result<Checked, Refusal> {
     if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
@@ -1396,7 +1472,11 @@ fn planned_bytes(
         (None, _) => None,
     };
 
-    let mut doc = Document::load_with_options(
+    // Not `mut`, and that is the split proving itself rather than a tidy-up:
+    // every refusal below reads the document and none of them writes to it, so
+    // the compiler now says what the comments used to. It went `mut` the moment
+    // the two halves were one function.
+    let doc = Document::load_with_options(
         source,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
@@ -1509,11 +1589,59 @@ fn planned_bytes(
         })
         .collect();
 
-    if kept.len() != pages.len() {
+    // The last thing that can refuse, and it belongs on this side rather than
+    // beside the deletion it guards: `unshared` rejects a plan that keeps and
+    // drops one object at once, which is a fact about the plan and the file and
+    // is knowable before anything is written. Below the split it would be a
+    // refusal in the half that has already changed the graph.
+    let dropped: Vec<u32> = if kept.len() == pages.len() {
+        Vec::new()
+    } else {
         let dropped: Vec<u32> = (1..=pages.len() as u32)
             .filter(|number| !kept.contains(number))
             .collect();
         unshared(&pages, &kept, &dropped)?;
+        dropped
+    };
+
+    Ok(Checked {
+        doc,
+        pages,
+        kept,
+        dropped,
+        turns,
+        moved,
+        verified,
+        changed,
+    })
+}
+
+/// Applies a checked plan and serialises the result.
+///
+/// Everything here has changed the object graph by the time it returns, which is
+/// what separates it from [`checked`]: a refusal above this point costs nothing,
+/// and one below it leaves a half-rewritten document to abandon.
+///
+/// **The order of the steps is enforced by [`MarksWritten`] rather than by the
+/// comments beside them.** See that type.
+///
+/// # Errors
+///
+/// A page tree that cannot be rebuilt, a mark that maps to nothing, two pages
+/// that are one object and disagree, or a document `lopdf` will not serialise.
+fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
+    let Checked {
+        mut doc,
+        pages,
+        kept,
+        dropped,
+        turns,
+        moved,
+        verified,
+        changed,
+    } = checked;
+
+    if !dropped.is_empty() {
         drop_pages(&mut doc, &dropped)?;
         // Its destinations name pages that are no longer in the file. Dropped
         // whole rather than repaired --- `pagetree::drop_outline` carries what
@@ -1540,12 +1668,12 @@ fn planned_bytes(
     // over --- the borrow checker will not have it both ways, and the append
     // genuinely needs two. See `mark_sites`.
     let sites = mark_sites(&doc, &pages, &kept, &plan.marks)?;
-    write_marks(&mut doc, &plan.marks, &sites)?;
+    let written = write_marks(&mut doc, &plan.marks, &sites)?;
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
     // rotation written onto a page that is about to go is work thrown away. The
     // ids are unaffected --- the survivors are the same objects they were.
-    apply_turns(&mut doc, &agreed_turns(&turns)?)?;
+    turn_pages(&mut doc, &agreed_turns(&turns)?, &written)?;
 
     // After `write_marks` for the same reason `apply_turns` is: a mark's quads
     // are in the display space the file had when it was opened, and cropping
@@ -1562,7 +1690,7 @@ fn planned_bytes(
         .into_iter()
         .filter_map(|(source, box_pt)| Some((*pages.get(source as usize)?, box_pt)))
         .collect();
-    apply_crops(&mut doc, &crops)?;
+    crop_pages(&mut doc, &crops, &written)?;
 
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes)
@@ -1754,7 +1882,7 @@ fn write_marks(
     doc: &mut Document,
     marks: &[PlannedMark],
     sites: &[MarkSite],
-) -> Result<(), String> {
+) -> Result<MarksWritten, String> {
     for (mark, site) in marks.iter().zip(sites) {
         let MarkSite {
             page,
@@ -1804,7 +1932,35 @@ fn write_marks(
         let annotation = doc.add_object(dictionary);
         attach(doc, page, annots, annotation)?;
     }
-    Ok(())
+    Ok(MarksWritten)
+}
+
+/// [`pagetree::apply_turns`], once the marks are written.
+///
+/// A wrapper for exactly one reason, and it is not indirection for its own sake:
+/// `apply_turns` is general --- `print.rs` calls it too, and there no mark has
+/// been made --- so the ordering token belongs *here*, where the ordering is,
+/// rather than on a page-tree function whose other callers have other orders.
+///
+/// See [`MarksWritten`] for what the order is and what going the other way costs.
+fn turn_pages(
+    doc: &mut Document,
+    turns: &[(lopdf::ObjectId, u8)],
+    _written: &MarksWritten,
+) -> Result<(), String> {
+    apply_turns(doc, turns)
+}
+
+/// [`pagetree::apply_crops`], once the marks are written.
+///
+/// Here for the reason [`turn_pages`] is, and for the same constraint: a crop
+/// moves the origin a mark's quads were measured from.
+fn crop_pages(
+    doc: &mut Document,
+    crops: &[(lopdf::ObjectId, [f64; 4])],
+    _written: &MarksWritten,
+) -> Result<(), String> {
+    apply_crops(doc, crops)
 }
 
 /// A mark's quads in the page's own space, `[llx, lly, urx, ury]` each.
@@ -6705,6 +6861,82 @@ mod tests {
             other => panic!("/Annots is neither an array nor a reference: {other:?}"),
         };
         assert_eq!(array.len(), 1);
+    }
+
+    /// A mark on a page the reader also rotated lands where they put it.
+    ///
+    /// **The behaviour [`MarksWritten`] protects, and nothing covered it.** The
+    /// ordering in [`rewrite`] carried a comment saying *"the order is
+    /// load-bearing rather than tidy: a mark was made against the rotation the
+    /// file had when it was opened, and the mapping below reads the rotation the
+    /// file has now. Turn the page first and every quad is a quarter turn out, on
+    /// exactly the pages a reader rotated."* Twelve mark tests, and not one of
+    /// them turned a page.
+    ///
+    /// The type now makes the inversion unwriteable, so there is no mutation to
+    /// pair with this --- `docs/TRAPS.md` records that a guard the type system
+    /// makes unexpressible has no mutation to write, and that weakening the code
+    /// to have one is the wrong trade. What a test can still do is pin the
+    /// *behaviour*, so a future restructuring that keeps the token and moves the
+    /// work is caught.
+    ///
+    /// **The assertion is an equality between two saves, not a transcribed
+    /// number.** A mark's position in page space does not depend on how the
+    /// reader later turned the view: the page's content did not move, only the
+    /// angle it is displayed at. So the same mark saved with a turn and without
+    /// one must produce the same `/QuadPoints`, and no coordinate has to be
+    /// written down here --- which matters, because a transcribed coordinate is
+    /// how this repository has already had a test pin a value it could not
+    /// justify.
+    #[test]
+    fn a_mark_on_a_page_the_reader_turned_is_placed_by_the_rotation_they_made_it_against() {
+        let quads = |source: &std::path::Path, out: &std::path::Path, turns: u8| -> Vec<f32> {
+            let mut plan = plan_with_mark(one_quad());
+            plan.pages[0].turns = turns;
+            write_copy(source, &plan, out).expect("save");
+            let doc = Document::load(out).expect("reopen");
+            let page = ordered_pages(&doc)[0];
+            let annots = doc
+                .get_object(page)
+                .and_then(Object::as_dict)
+                .and_then(|d| d.get(b"Annots"))
+                .cloned()
+                .expect("the page has an /Annots");
+            let array = match annots {
+                Object::Array(array) => array,
+                Object::Reference(id) => doc
+                    .get_object(id)
+                    .and_then(Object::as_array)
+                    .expect("an /Annots reference points at an array")
+                    .clone(),
+                other => panic!("/Annots is neither an array nor a reference: {other:?}"),
+            };
+            let mark = array[0].as_reference().expect("an annotation reference");
+            doc.get_object(mark)
+                .and_then(Object::as_dict)
+                .and_then(|d| d.get(b"QuadPoints"))
+                .and_then(Object::as_array)
+                .expect("a highlight states its quads")
+                .iter()
+                .filter_map(|value| value.as_float().ok())
+                .collect::<Vec<f32>>()
+        };
+
+        let scratch = Scratch::new("mark-on-turned-page");
+        let source = scratch.join("in.pdf");
+        std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
+
+        let straight = quads(&source, &scratch.join("straight.pdf"), 0);
+        let turned = quads(&source, &scratch.join("turned.pdf"), 1);
+
+        // The control on the reading itself: an empty list would compare equal to
+        // an empty list, and this assertion would hold on a save that wrote no
+        // quads at all.
+        assert_eq!(straight.len(), 8, "a highlight has one quad of four points");
+        assert_eq!(
+            turned, straight,
+            "a quarter turn of the view must not move the mark in the page's own space"
+        );
     }
 
     #[test]

@@ -718,8 +718,8 @@ MUTATIONS = [
         # second visit reads the 90 the first wrote and leaves 180.
         "save: turn a shared page once per page number rather than once per object",
         "src/save.rs",
-        "    apply_turns(&mut doc, &agreed_turns(&turns)?)?;",
-        "    apply_turns(&mut doc, &turns)?;",
+        "    turn_pages(&mut doc, &agreed_turns(&turns)?, &written)?;",
+        "    turn_pages(&mut doc, &turns, &written)?;",
         "a_page_reached_twice_is_turned_once",
     ),
     Mutation(
