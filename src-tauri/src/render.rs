@@ -468,6 +468,13 @@ pub(crate) enum Job {
         doc: u32,
         reply: Reply<()>,
     },
+    /// Close every open document, and say how many there were.
+    ///
+    /// **For a webview that has just started**, which by definition holds no
+    /// document id. See [`RenderService::release_all`].
+    ReleaseAll {
+        reply: Reply<usize>,
+    },
 }
 
 /// Handle to the render thread. Cheap to clone.
@@ -970,6 +977,20 @@ impl RenderService {
     /// drain. Anything arriving after the close is answered "has been closed"
     /// rather than from another document, because the id leaves a hole rather
     /// than being removed.
+    /// Closes every open document, on a service thread.
+    ///
+    /// **For a webview that has just started.** Nothing else may call it: a
+    /// running page holds document ids, and this invalidates all of them.
+    ///
+    /// The reply is a count rather than `()` because a caller cannot see the
+    /// table --- without it, *nothing was open* and *everything was released*
+    /// arrive as the same answer, and one of those is the interesting one.
+    pub fn release_all(&self, reply: Reply<usize>) {
+        if self.tx.send(Job::ReleaseAll { reply }).is_err() {
+            // Render thread is gone; every document went with it.
+        }
+    }
+
     pub fn close(&self, doc: u32, reply: Reply<()>) {
         if self.tx.send(Job::Close { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with, and every
@@ -1017,6 +1038,14 @@ pub(crate) trait Engine {
     fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String>;
     fn password(&self, doc: u32) -> Result<Option<String>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
+
+    /// Closes every open document, returning how many were closed.
+    ///
+    /// Separate from calling [`Engine::close`] in a loop by the caller, because
+    /// the caller cannot see which slots are filled --- ids leave holes rather
+    /// than being removed, so "every id below the highest" is neither the set of
+    /// open documents nor knowable from outside.
+    fn release_all(&self) -> Result<usize, String>;
 }
 
 /// Serves one job and answers it.
@@ -1064,6 +1093,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
         Job::Password { doc, reply } => reply(engine.password(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
+        Job::ReleaseAll { reply } => reply(engine.release_all()),
     }
 }
 
@@ -1098,6 +1128,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Append { reply, .. } => reply(Err(error.to_string())),
             Job::Password { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
+            Job::ReleaseAll { reply } => reply(Err(error.to_string())),
         }
     }
 }
@@ -1294,6 +1325,23 @@ impl Engine for InProcess {
         open_slot_mut(&mut docs, doc)?;
         docs[doc as usize] = None;
         Ok(())
+    }
+
+    fn release_all(&self) -> Result<usize, String> {
+        let mut docs = self.docs.borrow_mut();
+        // Counted before they go, because `Option::take` on an empty slot is
+        // indistinguishable from one on a full slot afterwards --- and the count
+        // is the whole reply: a caller cannot see this table, so a bare `Ok(())`
+        // would leave "nothing was open" and "everything was released" identical.
+        let held = docs.iter().filter(|slot| slot.is_some()).count();
+        // Cleared rather than emptied. A `Vec::clear` renumbers, and an id that
+        // arrives late from a webview that has not stopped talking would then
+        // name whatever opened next --- which is the reason a close leaves a hole
+        // rather than removing the entry.
+        for slot in docs.iter_mut() {
+            *slot = None;
+        }
+        Ok(held)
     }
 }
 

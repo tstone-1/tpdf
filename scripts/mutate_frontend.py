@@ -3776,6 +3776,27 @@ MUTATIONS += [
     # module that was never broken, which is what says the check covers the
     # population rather than the sample it was written from.
     Mutation(
+        # Speak on every start. This runs once per launch and the line would say
+        # that nothing happened -- which is how a reader learns to skip the line
+        # that matters, and this one exists to mean "a webview reloaded".
+        "orphans: report a start that released nothing",
+        "src/lib/orphans.ts",
+        "    if (held > 0) {",
+        "    if (held >= 0) {",
+        "says nothing when there was nothing to release",
+    ),
+    Mutation(
+        # Let a housekeeping failure reach the reader. They have just opened the
+        # application and are waiting for a page; the documents stay held either
+        # way, so this trades an invisible leak for a visible error about
+        # something nobody asked for.
+        "orphans: raise a housekeeping failure at the reader",
+        "src/lib/orphans.ts",
+        "    return -1;",
+        "    throw e;",
+        "never rejects, so a start is not blocked by housekeeping",
+    ),
+    Mutation(
         "properties: spell a signature's title with the prose dash",
         "src/lib/properties.ts",
         'const title = signature.field ? `Signature — ${signature.field}` : "Signature";',
@@ -3934,6 +3955,8 @@ TEST_FILES = [
     # Added 2026-08-25 with the three prose-dash mutations above, in the same
     # edit for the same reason as the entry above it.
     "src/lib/readertext.test.ts",
+    # Added 2026-08-25 with the two orphans mutations above, in the same edit.
+    "src/lib/orphans.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.

@@ -19,6 +19,24 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Fixed: documents stayed open after the window reloaded
+
+The backend released a document only when the reader opened another one in its
+place --- the one thing that closes a document lived in the page, and a page that
+reloads forgets everything it was holding. Every document opened before a reload
+stayed open for as long as tpdf was running, with its sandboxed worker processes
+alive, reachable by nothing.
+
+A page reloads when it crashes, and on every code change while tpdf is being
+developed. Nothing else reclaimed them: no timer, no counting, no owner on the
+backend's side.
+
+A freshly loaded page now asks the backend to release anything a previous one
+left behind, which is safe because a page that has just started holds nothing ---
+it has not opened a document yet. Nothing is reported unless something was
+actually released, since that means a reload happened and nothing else in a
+running tpdf says so.
+
 ### Added: Document properties says what was appended after a signature, not just how much
 
 The Covers row learned to report an append separately from the signature's own

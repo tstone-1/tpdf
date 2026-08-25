@@ -15170,3 +15170,56 @@ stream, decompressed, into one file: 125 lines covering all ten kinds. Run it
 before, refactor, run it again, diff. String-generating code is exactly where a
 "looks equivalent" reading is worth nothing --- the operators are the output, and
 `72 674 228 18 re f` is either identical or it is a different drawing.
+
+### A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets
+
+`close_document` has exactly one caller in the application: `App.svelte`, when a
+*successful* subsequent open replaces the current document. That is a correct
+place to close one, and it is carefully written --- released only once the
+replacement exists, not awaited, with a comment naming the stake: *"without it a
+session that opens a dozen files holds a dozen sandboxed children."*
+
+**It is also the only owner.** The backend's document table has no timer, no
+reference count and no owner of its own; a document lives until somebody names
+its id. So the table is owned entirely by webview state --- and a webview reload
+sets that state to nothing while the backend keeps everything. Every document
+opened before the reload is unreachable from then on, with its worker pool alive,
+for the life of the process.
+
+**The trigger is an ordinary event, not a bug.** Vite HMR reloads the page on
+every frontend edit in development; a webview crash does it in production.
+Neither is a fault in the code that leaks.
+
+The fix is one round trip at startup, and its whole argument is one sentence: a
+freshly loaded page holds no document id, because ids come back from
+`open_document` and it has not called it yet. So every id the backend holds at
+that moment is one nobody can name.
+
+**That argument has a dependency worth writing down where it is relied on.** It
+needs there to be one window. tpdf is single-window --- a second launch is
+forwarded by `tauri-plugin-single-instance` into the running process --- and if
+that ever changes, this becomes wrong in the worst way: one window's startup
+would close another's document out from under a reader. The fix then is a
+per-window table, not a guard here.
+
+**Two mutations belong on this and both survive for good reasons**, which is
+worth recording so the next person finds out it was measured rather than
+overlooked. Dropping the `slot.is_some()` filter that builds the id list survives
+because `close` refuses a hole anyway. Counting every id swept rather than every
+close that succeeded survives because the filter means the loop never meets a
+hole. Each is guarded by the other, and neither is reachable from the tests ---
+so the mutation that *is* registered aims at what the tests observe: sweeping
+without closing, which reddens both the count and the emptiness.
+
+**And the test that hung is the best evidence the code is right.** `held`'s second
+argument is `spawned`, not the document id, so a fixture written with `held(name,
+1)` has a worker still out --- and `close` waits on a condvar for the pool to come
+home. The first version of the test hung there. That is `release_all` reusing the
+drain rather than working around it, demonstrated by accident: a sweep that took
+the slot without waiting would have passed instantly and killed a worker mid
+render.
+
+The related hazard, avoided deliberately: `release_all` reads the open ids under
+the lock and closes them *outside* it, because `close` takes the same lock and
+then waits. Holding it across the calls deadlocks on the first document with a
+worker out --- on a path that runs while a reader is waiting for their first page.

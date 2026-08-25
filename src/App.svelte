@@ -35,6 +35,7 @@
     beforeReload,
     type Offer,
   } from "./lib/recovery";
+  import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { isOpenRefusal } from "./lib/ipc";
   import { openWithPassword } from "./lib/unlock";
@@ -1584,6 +1585,23 @@
       if (await runAutobenchIfRequested()) return;
       if (await runScrollBenchIfRequested()) return;
       if (await runViewerCheckIfRequested()) return;
+
+      // Anything a previous webview left the backend holding. This page holds no
+      // document id yet, so every id the backend has is one nobody can name ---
+      // see `orphans.ts` and `release_documents` in `lib.rs` for the whole
+      // argument, including what it assumes about there being one window.
+      //
+      // After the spike entry points and before anything opens a document. Both
+      // matter: a check harness returns above this and must not have its own
+      // documents released mid-run, and releasing after an open would drop the
+      // document this page had just been given.
+      //
+      // Not awaited. A reader who has just started the application is waiting for
+      // a page, not for housekeeping, and `releaseOrphans` never rejects.
+      void releaseOrphans(
+        () => invoke<number>("release_documents"),
+        (line) => console.info(`[open] ${line}`),
+      );
 
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.

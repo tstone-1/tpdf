@@ -486,6 +486,83 @@ async fn open_document(
     Ok(info)
 }
 
+/// Releases every document the backend still holds, for a webview that has just
+/// started.
+///
+/// ## The leak this closes
+///
+/// `close_document` has exactly one caller in the application: `App.svelte`,
+/// when a *successful* subsequent open replaces the current document. So the
+/// backend's document table is owned entirely by webview state --- and a webview
+/// reload resets that state to nothing while the backend keeps everything.
+/// Every document opened before the reload is then unreachable, with its worker
+/// pool alive, for the life of the process. `App.svelte`'s own comment names the
+/// stake: *"without it a session that opens a dozen files holds a dozen sandboxed
+/// children"*, and that reasoning holds only while the webview remembers.
+///
+/// Nothing else reclaims them. There is no timer, no backend-side owner and no
+/// reference count; a document lives until somebody names its id.
+///
+/// ## Why "the webview started" means "nothing is referenced"
+///
+/// A freshly loaded page holds no document id, by construction --- ids come back
+/// from `open_document`, and it has not called it yet. So every id the backend
+/// holds at that moment is one nobody can name.
+///
+/// **That depends on there being one window, and it is worth stating rather than
+/// assuming.** tpdf is single-window: a second launch is forwarded by
+/// `tauri-plugin-single-instance` to the running process, which opens the file in
+/// the window it already has. If tpdf ever grows a second window, this becomes
+/// wrong in the worst way --- one window's startup would close the other's
+/// document out from under a reader --- and the fix is a per-window table rather
+/// than a guard here.
+///
+/// ## Why it is not silent
+///
+/// It answers with a count, and a non-zero one is logged. Zero is the ordinary
+/// case and means the reader started the application; anything else means a
+/// webview reloaded, which is a thing that happened to somebody and which nothing
+/// else in the running system reports.
+///
+/// ## What it adds to the webview's reach: nothing
+///
+/// Worth stating rather than leaving to be worked out, because a command that
+/// closes *every* document sounds like new authority. It is not. Anything able
+/// to call this can already call `close_document` in a loop --- the ids are
+/// small integers from zero --- so what this adds is one round trip, not a
+/// capability. It writes no file, reads no path and touches no network, so it is
+/// outside the five commands `docs/THREAT-MODEL.md` §T6.1 enumerates. The worst
+/// a caller does with it is close documents, which is the same denial of service
+/// already reachable.
+///
+/// # Errors
+///
+/// The render service not answering, which is the same failure any command has.
+#[tauri::command]
+async fn release_documents(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+) -> Result<usize, String> {
+    // Before the service call, for `close_document`'s reason and with the same
+    // consequence: document numbers are reused, so a model left behind under an
+    // id the service is about to hand to another file is one document's journal
+    // applied to another's pages.
+    let models = edits.release_all();
+    let (reply, rx) = reply_channel();
+    service.release_all(reply);
+    let held = await_reply("release_documents", rx).await?;
+    if held > 0 || models > 0 {
+        // Not `[render]`: this is not a render failing, and the tag is what a
+        // reader greps for. A line here means a webview reloaded and the backend
+        // was holding documents nobody could reach.
+        crate::diag::note(&format!(
+            "[open] a new webview released {held} document(s) and {models} model(s) \
+             the previous one left behind"
+        ));
+    }
+    Ok(held)
+}
+
 /// Releases a document the reader has finished with.
 ///
 /// Called when the window moves to another file, and it matters more than it
@@ -2430,6 +2507,7 @@ pub fn run() {
             set_menu,
             set_menu_enabled,
             close_document,
+            release_documents,
             page_text,
             search_page,
             document_outline,
