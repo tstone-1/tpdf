@@ -823,7 +823,7 @@ pub struct Update {
 ///
 /// **`password` is the reader's, when the document needed one.** It is a key to
 /// bytes this process already holds rather than a new authority --- the same
-/// argument [`crate::progressive::RawDocument::open_bytes`] makes for handing it
+/// argument [`crate::progressive::OpenDocument::open_bytes`] makes for handing it
 /// to PDFium --- and it is what makes an append the *only* save an encrypted
 /// document can have: `lopdf` re-encrypts every appended object with the
 /// original key and restores the trailer's `/Encrypt`, where its full serialiser

@@ -27,9 +27,10 @@
 //! ```
 
 use std::path::PathBuf;
+use tpdf_lib::document::OpenDocument;
 
 use lopdf::{dictionary, Document, Object, Stream};
-use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
+use tpdf_lib::progressive::{self, Placement, RawBitmap};
 use tpdf_lib::textbox;
 
 /// Where the string is placed on the page, in points from the bottom-left.
@@ -127,7 +128,7 @@ fn measure(
     text: &str,
 ) -> Result<(f64, f64), String> {
     write_page(path, text)?;
-    let document = RawDocument::open(bindings, path, None)?;
+    let document = OpenDocument::open(bindings, path, None)?;
     let page = document.page(0)?;
     let width = (page.width_pt() * SCALE).round() as u16;
     let height = (page.height_pt() * SCALE).round() as u16;

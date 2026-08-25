@@ -15004,3 +15004,57 @@ The general form, which this repository keeps meeting from new directions: **a
 rule with a named command behind it is still a rule nobody runs.** If the command
 is short enough to write in a comment, it is short enough to be a test, and the
 comment should name the test instead.
+
+### The obvious name for the new type was already taken, and the error count climbed instead of falling
+
+Splitting the object graph off the PDFium handle needed a type owning both. The
+review named it, the domain names it, and there is only one sensible word:
+`Document`.
+
+`lopdf::Document` is imported in **nine** of the thirty files the split touches.
+
+The first attempt used `Document` anyway, because the collision is not visible
+from the design --- it lives in the `use` blocks of probes that parse a file *and*
+render it, which is exactly the set a document-shaped refactor reaches. What
+followed:
+
+    sweep &RawDocument -> &Document          24 files
+    compile                                  43 errors
+    add the missing imports                  ... to files whose Document is lopdf's
+    compile                                  32 errors
+    qualify ours where both are present      ... qualifying lopdf's by mistake
+    compile                                  32 errors
+
+Each mechanical pass fixed some sites and broke others, because the pattern it
+keyed on --- the bare word `Document` --- matched two unrelated types. This is the
+mechanical-edit trap already recorded for a field name, arriving at a *type*
+name, where it is worse: a field name mismatch is a compile error at the site,
+and a type name mismatch compiles wherever the wrong type happens to have a
+method of the same shape.
+
+**The tell is the error count, and it is available at every step.** 43, then 32,
+then 32. A refactor that is converging has each pass strictly smaller than the
+last; one that is not is a pass whose rule is wrong, and running it again will
+not fix it. Reverted to the last commit --- which was green, because the file
+split had been committed separately --- and redone under `OpenDocument`, a name
+nothing else in the tree uses:
+
+    sweep                                    24 files
+    compile lib                              4 errors
+    compile all targets                      6 errors
+    then 2, then 0
+
+Same edits, same order, same afternoon. The only difference is that the pattern
+now matches one type.
+
+**Two things worth taking from it.** Check what a name collides with *before*
+choosing it --- `grep -rn 'use lopdf::' src-tauri | grep Document` is one command
+and would have answered it. And commit a refactor in pieces that stand alone: the
+revert cost nothing because the file split was already in history, and a single
+commit spanning both halves would have meant either keeping the mess or losing
+the good half with it.
+
+The result is worth stating, because it is what says the split is complete rather
+than merely moved: `progressive.rs` now has **no `use crate::` line at all**. The
+module that said *"the RAII types below are that ownership, and nothing more"*
+depends on nothing else in the crate.

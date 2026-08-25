@@ -16,8 +16,9 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Reply, Request, Worker};
 
@@ -657,7 +658,7 @@ fn in_process_tile(document: &Path, library_dir: &Path) -> Result<Vec<u8>, Strin
     let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
     let bindings = progressive::bindings_of(pdfium);
 
-    let doc = RawDocument::open(bindings, document, None)?;
+    let doc = OpenDocument::open(bindings, document, None)?;
     let page = doc.page(0)?;
     let spec = progressive::TileSpec {
         scale: 1.0,

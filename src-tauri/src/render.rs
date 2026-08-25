@@ -71,6 +71,7 @@
 //! it, and the in-process control the pool is measured against --- so this file
 //! is about *what a render request is*, and that one is about where it runs.
 
+use crate::document::OpenDocument;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
@@ -83,7 +84,7 @@ use crate::docinfo::Properties;
 use crate::encoding::PageMapping;
 use crate::links::Links;
 use crate::outline::{self, Outline};
-use crate::progressive::{self, Bindings, CancelToken, Outcome, RawDocument, TileSpec};
+use crate::progressive::{self, Bindings, CancelToken, Outcome, TileSpec};
 use crate::queue::{Claim, SharedQueue};
 use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
@@ -1114,7 +1115,7 @@ struct InProcess {
     bindings: Bindings,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
-    docs: std::cell::RefCell<Vec<Option<RawDocument>>>,
+    docs: std::cell::RefCell<Vec<Option<OpenDocument>>>,
     queue: SharedQueue,
 }
 
@@ -1143,7 +1144,7 @@ impl Engine for InProcess {
         password: Option<&str>,
     ) -> Result<DocumentInfo, progressive::Refusal> {
         let t0 = Instant::now();
-        let doc = RawDocument::open(self.bindings, path, password)?;
+        let doc = OpenDocument::open(self.bindings, path, password)?;
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
@@ -1323,7 +1324,7 @@ fn bind_pdfium(library_dir: &Path) -> Result<&'static Pdfium, String> {
 /// this needing to know.
 pub(crate) fn render_tile(
     bindings: Bindings,
-    doc: &RawDocument,
+    doc: &OpenDocument,
     req: &TileRequest,
     cancel: &CancelToken,
 ) -> Result<TileOutcome, String> {
@@ -1421,7 +1422,7 @@ pub struct CropGeometry {
 /// Measures one page's content box on the render thread.
 pub(crate) fn run_content(
     bindings: Bindings,
-    document: &RawDocument,
+    document: &OpenDocument,
     page: u32,
     cancel: &CancelToken,
 ) -> Result<Option<[f64; 4]>, String> {
@@ -1442,7 +1443,7 @@ pub(crate) fn run_content(
 /// cropped and saved after the crop changed would otherwise be written where the
 /// crop was rather than where the words are.
 pub fn geometry_of(
-    document: &RawDocument,
+    document: &OpenDocument,
     page: u32,
     crop: Option<[f32; 4]>,
 ) -> Result<CropGeometry, String> {
@@ -1564,7 +1565,7 @@ pub fn crop_from_display(
 ///
 /// The document half of [`crop_from_display`]: the turn and the file's own box
 /// are the page's, and everything else is pure.
-pub fn crop_box_of(document: &RawDocument, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
+pub fn crop_box_of(document: &OpenDocument, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
     let page = document.page(page)?;
     Ok(crop_from_display(
         page.quarter_turns(),
@@ -1582,7 +1583,7 @@ pub fn crop_box_of(document: &RawDocument, page: u32, rect: [f32; 4]) -> Result<
 /// page's corner, so text extracted without the reader's crop lands every caret
 /// and every highlight out by the crop's offset.
 pub(crate) fn run_text(
-    document: &RawDocument,
+    document: &OpenDocument,
     page: u32,
     crop: Option<[f32; 4]>,
 ) -> Result<PageText, String> {
@@ -1597,7 +1598,7 @@ pub(crate) fn run_text(
 /// shipping it in order to search it would be the expensive half of a cheap
 /// operation.
 pub(crate) fn run_search(
-    document: &RawDocument,
+    document: &OpenDocument,
     page: u32,
     query: &str,
     options: search::Options,
@@ -1618,7 +1619,7 @@ pub(crate) fn run_search(
 }
 
 /// Walks a document's outline on the render thread.
-pub(crate) fn run_outline(document: &RawDocument) -> Outline {
+pub(crate) fn run_outline(document: &OpenDocument) -> Outline {
     outline::read(document)
 }
 
@@ -1627,7 +1628,7 @@ pub(crate) fn run_outline(document: &RawDocument) -> Outline {
 /// Cached inside [`crate::docgraph::DocumentGraph`], so the `lopdf` parse this costs happens at
 /// most once per open document however often the panel is opened --- the same
 /// arrangement `run_mapping` has, and `annots::scan` is what it wraps.
-pub(crate) fn run_comments(document: &RawDocument) -> Result<Comments, String> {
+pub(crate) fn run_comments(document: &OpenDocument) -> Result<Comments, String> {
     document.graph().comments(document.page_count() as usize)
 }
 
@@ -1637,7 +1638,7 @@ pub(crate) fn run_comments(document: &RawDocument) -> Result<Comments, String> {
 /// bytes destined for a file rather than a fact about the document --- see
 /// `worker_proto::Request::Append` for why that belongs here anyway.
 pub(crate) fn run_append(
-    document: &RawDocument,
+    document: &OpenDocument,
     plan: &crate::edits::Plan,
 ) -> Result<crate::save::Update, String> {
     document.graph().append(plan)
@@ -1649,7 +1650,7 @@ pub(crate) fn run_append(
 /// happens once per open document however often it is asked for --- which
 /// matters more here, because a re-open after a rotation would otherwise repeat
 /// it on a document that has not changed.
-pub(crate) fn run_links(document: &RawDocument) -> Result<Links, String> {
+pub(crate) fn run_links(document: &OpenDocument) -> Result<Links, String> {
     document.graph().links(document.page_count() as usize)
 }
 
@@ -1657,7 +1658,7 @@ pub(crate) fn run_links(document: &RawDocument) -> Result<Links, String> {
 ///
 /// Cached inside [`crate::docgraph::DocumentGraph`], so the `lopdf` parse this costs happens at most
 /// once per open document however often a reader searches.
-pub(crate) fn run_mapping(document: &RawDocument) -> Vec<PageMapping> {
+pub(crate) fn run_mapping(document: &OpenDocument) -> Vec<PageMapping> {
     document
         .graph()
         .mapping(document.page_count() as usize)
@@ -1668,7 +1669,7 @@ pub(crate) fn run_mapping(document: &RawDocument) -> Vec<PageMapping> {
 ///
 /// Cached inside [`crate::docgraph::DocumentGraph`] like the comments and the links are, so a
 /// reader who opens the properties dialog twice pays for the `lopdf` parse once.
-pub(crate) fn run_properties(document: &RawDocument) -> Result<Properties, String> {
+pub(crate) fn run_properties(document: &OpenDocument) -> Result<Properties, String> {
     document.graph().properties(document.page_count())
 }
 

@@ -37,10 +37,11 @@
 //! what makes that sound: `RawDocument` is not `Send`, and concurrent PDFium is
 //! undefined behaviour whatever the handles are (`AGENTS.md`).
 
+use crate::document::OpenDocument;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::mpsc::{channel, Sender};
 
-use crate::progressive::{self, CancelToken, RawDocument};
+use crate::progressive::{self, CancelToken};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{self, PageSize, TileFormat, TileRequest};
 #[cfg(windows)]
@@ -173,7 +174,7 @@ fn serve(args: &[String]) -> Result<(), String> {
     // here is until the process exits.
     let bytes: &'static [u8] = unsafe { doc_shm.as_static() };
     std::mem::forget(doc_shm);
-    let document = match RawDocument::open_bytes(bindings, bytes, None) {
+    let document = match OpenDocument::open_bytes(bindings, bytes, None) {
         Ok(document) => document,
         // **Asked about, not refused.** A locked document is the one refusal a
         // reader can answer, so it becomes a conversation rather than an
@@ -316,7 +317,7 @@ fn unlock(
     bindings: progressive::Bindings,
     bytes: &'static [u8],
     first: &str,
-) -> Result<RawDocument, String> {
+) -> Result<OpenDocument, String> {
     use std::io::BufRead;
 
     let mut out = std::io::stdout();
@@ -350,7 +351,7 @@ fn unlock(
             reply(&mut out, &Response::locked(&reason))?;
             continue;
         };
-        match RawDocument::open_bytes(bindings, bytes, Some(&password)) {
+        match OpenDocument::open_bytes(bindings, bytes, Some(&password)) {
             Ok(document) => {
                 reply(&mut out, &Response::reply(Reply::Unlocked))?;
                 return Ok(document);
@@ -444,7 +445,7 @@ fn spawn_reader(tx: Sender<Request>, queue: SharedQueue) {
 /// Serves one request.
 fn handle(
     bindings: progressive::Bindings,
-    document: &RawDocument,
+    document: &OpenDocument,
     queue: &SharedQueue,
     tile: &mut Shm,
     request: &Request,
@@ -515,7 +516,7 @@ fn handle(
 /// Deliberately not `render::open_document`: that one opens from a path, which
 /// is the thing this process does not have. The document is already open by the
 /// time anything is served.
-fn open(document: &RawDocument, lazy_geometry: bool) -> Response {
+fn open(document: &OpenDocument, lazy_geometry: bool) -> Response {
     let page_count = document.page_count();
 
     let size_of = |index: u32| -> Result<PageSize, String> {
@@ -551,7 +552,7 @@ fn open(document: &RawDocument, lazy_geometry: bool) -> Response {
 /// Renders one tile into the shared mapping.
 fn render(
     bindings: progressive::Bindings,
-    document: &RawDocument,
+    document: &OpenDocument,
     queue: &SharedQueue,
     tile: &mut Shm,
     request: &Request,
@@ -718,7 +719,7 @@ fn wait_for_document() -> Result<Shm, String> {
 /// effect, so a warm that silently stopped working shows up as the saving
 /// disappearing rather than as nothing at all.
 fn warm_fonts(bindings: progressive::Bindings) {
-    let Ok(document) = RawDocument::open_bytes(bindings, WARM_DOCUMENT, None) else {
+    let Ok(document) = OpenDocument::open_bytes(bindings, WARM_DOCUMENT, None) else {
         return;
     };
     // Through `render_tile`, not a bespoke render: warming has to exercise the

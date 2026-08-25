@@ -33,8 +33,9 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument, RawPage};
+use tpdf_lib::progressive::{self, Placement, RawBitmap, RawPage};
 use tpdf_lib::text;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -128,7 +129,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
 
     match args.mode {
         Mode::Align => align(args, &document, bindings),
@@ -344,7 +345,7 @@ fn viewed(extracted: &text::PageText, view_turns: u8) -> text::PageText {
 
 fn align(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     let page = document.page(args.page)?;
@@ -502,7 +503,7 @@ fn align(
 /// `linesOf` uses in the front end and is deliberately naive: on an interleaved
 /// two-column page it produces one line per *fragment*, which is exactly the
 /// output that shows the problem.
-fn order(args: &Args, document: &RawDocument) -> Result<bool, String> {
+fn order(args: &Args, document: &OpenDocument) -> Result<bool, String> {
     let page = document.page(args.page)?;
     let text = text::extract(&page)?;
 
@@ -544,7 +545,7 @@ fn order(args: &Args, document: &RawDocument) -> Result<bool, String> {
     Ok(true)
 }
 
-fn extract(args: &Args, document: &RawDocument) -> Result<bool, String> {
+fn extract(args: &Args, document: &OpenDocument) -> Result<bool, String> {
     println!(
         "{:<10} {:>10} {:>10} {:>10} {:>8}",
         "variant", "median ms", "min", "max", "chars"
@@ -579,7 +580,7 @@ fn extract(args: &Args, document: &RawDocument) -> Result<bool, String> {
         };
         cached.push(cached_ms);
 
-        document.evict_page(args.page);
+        document.pdfium().evict_page(args.page);
         let (second, uncached_ms) = {
             let started = Instant::now();
             let page = document.page(args.page)?;

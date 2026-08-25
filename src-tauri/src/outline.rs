@@ -54,12 +54,13 @@
 //! inputs --- an unpaired surrogate, an odd byte count, an embedded NUL --- are
 //! ones a fixture cannot reliably deliver through PDFium's own string parsing.
 
+use crate::document::OpenDocument;
 use std::collections::{HashMap, HashSet};
 use std::os::raw::{c_int, c_ulong, c_void};
 
 use pdfium_render::prelude::*;
 
-use crate::progressive::{Bindings, RawDocument};
+use crate::progressive::Bindings;
 
 /// Deepest nesting the walk will descend.
 ///
@@ -202,15 +203,15 @@ struct Walk<'doc> {
     turns: HashMap<u32, u8>,
     limits: Limits,
     total: usize,
-    _borrow: &'doc RawDocument,
+    _borrow: &'doc OpenDocument,
 }
 
 /// Reads a document's outline.
-pub fn read(document: &RawDocument) -> Outline {
+pub fn read(document: &OpenDocument) -> Outline {
     let started = std::time::Instant::now();
     let mut walk = Walk {
-        bindings: document.bindings(),
-        document: document.handle(),
+        bindings: document.pdfium().bindings(),
+        document: document.pdfium().handle(),
         page_count: document.page_count(),
         seen: HashSet::new(),
         sizes: HashMap::new(),

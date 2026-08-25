@@ -8,7 +8,7 @@
 //! 2. `bind()`, which opens and maps libpdfium --- **before** the sandbox, because
 //!    a policy denying file reads forbids it
 //! 3. `apply_sandbox`
-//! 4. `RawDocument::open_bytes`, and then the page-geometry walk
+//! 4. `OpenDocument::open_bytes`, and then the page-geometry walk
 //!
 //! Only step 4 needs the document. Steps 1--3 are what a worker started before any
 //! file is chosen could already have done, so **they are the ceiling on what

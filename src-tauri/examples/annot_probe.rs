@@ -71,12 +71,13 @@
 //!               [--chars N] [--scale F] [--out PATH] [--lib DIR]
 
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::annots::{self, Kind};
 use tpdf_lib::docmodel::INK_WIDTH;
 use tpdf_lib::docmodel::{MarkKind, Quad, StampName};
 use tpdf_lib::edits::{Edits, NewMark};
-use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
+use tpdf_lib::progressive::{self, Placement, RawBitmap};
 use tpdf_lib::save;
 use tpdf_lib::save::OUTLINE_WIDTH;
 use tpdf_lib::text;
@@ -249,7 +250,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = progressive::bindings_of(progressive::bind(&args.library)?);
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
 
     match args.mode {
         Mode::Roundtrip => roundtrip(args, &document),
@@ -287,7 +288,7 @@ fn run(args: &Args) -> Result<bool, String> {
 /// fraction of that, which is a poor base for a count.
 fn strokes(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     if !matches!(args.kind, MarkKind::Ink) {
@@ -503,7 +504,7 @@ fn overlap(a: Quad, b: Quad, sideways: bool) -> bool {
 
 /// Highlights a run of the page's text and writes the copy, returning its path
 /// and the quads the mark was made from.
-fn mark_and_save(args: &Args, document: &RawDocument) -> Result<(PathBuf, Vec<Quad>), String> {
+fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Quad>), String> {
     let page = document.page(args.page)?;
     let extracted = text::extract(&page)?;
     if extracted.is_empty() {
@@ -730,7 +731,7 @@ fn strip_appearances(file: &Path) -> Result<(), String> {
 }
 
 /// Writes a mark, reads it back with the comment scan, and compares geometry.
-fn roundtrip(args: &Args, document: &RawDocument) -> Result<bool, String> {
+fn roundtrip(args: &Args, document: &OpenDocument) -> Result<bool, String> {
     let (out, quads) = mark_and_save(args, document)?;
     let bytes = std::fs::read(&out).map_err(|e| format!("could not read {out:?}: {e}"))?;
     let found = annots::scan(&bytes, document.page_count() as usize, None)?;
@@ -1052,7 +1053,7 @@ fn render(
     number: u32,
     scale: f32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
-    let document = RawDocument::open(bindings, file, None)?;
+    let document = OpenDocument::open(bindings, file, None)?;
     let page = document.page(number)?;
     let width = (page.width_pt() * scale).round() as u16;
     let height = (page.height_pt() * scale).round() as u16;
@@ -1162,7 +1163,7 @@ fn count(pixels: &[u8], width: u32, height: u32, band: [f32; 4], scale: f32) -> 
 /// 0.0% for a mark that is drawn perfectly. The containment check is therefore
 /// skipped on a turned page, out loud, rather than reported as a failure.
 #[cfg(target_os = "macos")]
-fn preview(args: &Args, document: &RawDocument) -> Result<bool, String> {
+fn preview(args: &Args, document: &OpenDocument) -> Result<bool, String> {
     let (out, _) = mark_and_save(args, document)?;
     let outcome = preview_pdfkit(args, document, &out);
     if args.keep.is_none() {
@@ -1180,7 +1181,7 @@ fn preview(args: &Args, document: &RawDocument) -> Result<bool, String> {
 /// port. Said here rather than left to fail obscurely, because a mode that is
 /// absent on a platform looks exactly like one that passes.
 #[cfg(not(target_os = "macos"))]
-fn preview(_args: &Args, _document: &RawDocument) -> Result<bool, String> {
+fn preview(_args: &Args, _document: &OpenDocument) -> Result<bool, String> {
     Err(
         "--mode preview reads the saved file with PDFKit, which is macOS only. \
          Windows.Data.Pdf is the platform's own parser and the print path \
@@ -1191,7 +1192,7 @@ fn preview(_args: &Args, _document: &RawDocument) -> Result<bool, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn preview_pdfkit(args: &Args, document: &RawDocument, out: &Path) -> Result<bool, String> {
+fn preview_pdfkit(args: &Args, document: &OpenDocument, out: &Path) -> Result<bool, String> {
     let page = document.page(args.page)?;
     let turns = page.quarter_turns();
     let (width_pt, height_pt) = (page.width_pt(), page.height_pt());
@@ -1709,7 +1710,7 @@ fn rule_pixels(
 /// kinds apart --- "some red appeared" is satisfied by either one drawn wrongly.
 fn rule(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     if !matches!(
@@ -1887,7 +1888,7 @@ fn rule(
 /// underline avoids.
 fn wave(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     if !matches!(args.kind, MarkKind::Squiggly | MarkKind::Underline) {
@@ -2040,7 +2041,7 @@ fn wave(
 /// a single reading cannot catch both.
 fn stamp(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     if !matches!(args.kind, MarkKind::Stamp) {
@@ -2147,7 +2148,7 @@ fn stamp(
 
 fn outline(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     if !matches!(args.kind, MarkKind::Square | MarkKind::Ellipse) {
@@ -2304,7 +2305,7 @@ fn outline(
 /// The wash is where the words are, and the source page is the control.
 fn ink(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     let (out, quads) = mark_and_save(args, document)?;
@@ -2415,7 +2416,7 @@ fn ink(
 /// The glyphs survive the wash.
 fn legible(
     args: &Args,
-    document: &RawDocument,
+    document: &OpenDocument,
     bindings: progressive::Bindings,
 ) -> Result<bool, String> {
     let (out, quads) = mark_and_save(args, document)?;
@@ -2444,7 +2445,7 @@ fn legible(
 }
 
 /// The refusals that are not defensive.
-fn refuse(_args: &Args, document: &RawDocument) -> Result<bool, String> {
+fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
     let edits = Edits::default();
     edits.open(DOC, document.page_count(), None);
     let state = edits.state(DOC).map_err(|e| format!("no state: {e}"))?;

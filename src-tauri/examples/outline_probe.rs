@@ -28,9 +28,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::outline::{self, Limits, Outline, OutlineItem, Target};
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -94,7 +95,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
     let outline = outline::read(&document);
 
     match args.mode {

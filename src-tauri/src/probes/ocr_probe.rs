@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::ocr::{adjudicate, Control, Legibility, Options, Pixels, Recogniser};
 use tpdf_lib::ocr_vision::Vision;
@@ -142,7 +143,7 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
     let bindings = progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))));
 
-    let document = RawDocument::open(bindings, file, None)?;
+    let document = OpenDocument::open(bindings, file, None)?;
     let page = document.page(0)?;
     let sheet = render(bindings, &page, scale)?;
     let embedded = text::extract(&page)?;

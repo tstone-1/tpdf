@@ -80,8 +80,9 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Reply, Request, Worker};
 use tpdf_lib::worker_child;
@@ -242,7 +243,7 @@ fn run(document: &Path, rounds: usize, reps: usize, page: u32, scale: f32) -> Re
     // than left for a module scan to turn up as a surprise.
     let pdfium = progressive::bind(&library_dir)?;
     let bindings = progressive::bindings_of(pdfium);
-    let doc = RawDocument::open(bindings, document, None)?;
+    let doc = OpenDocument::open(bindings, document, None)?;
     let pages = doc.page_count();
     if page >= pages {
         return Err(format!("--page {page} but the document has {pages}"));

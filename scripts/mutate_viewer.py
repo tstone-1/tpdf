@@ -1087,11 +1087,11 @@ MUTATIONS = [
         "geometry: parse the page tree for every document",
         "src-tauri/src/progressive.rs",
         "        let tree = if media.is_none() {\n"
-        "            self.graph.sheet(index, self.page_count() as usize)\n"
+        "            inherited(index)\n"
         "        } else {\n"
         "            None\n"
         "        };",
-        "        let tree = self.graph.sheet(index, self.page_count() as usize);",
+        "        let tree = inherited(index);",
         "the page tree was parsed only because a page needed it",
         "geometry-plain",
     ),

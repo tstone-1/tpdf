@@ -30,8 +30,9 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 use tpdf_lib::structure::{self, PageStructure};
 use tpdf_lib::text;
 
@@ -172,7 +173,7 @@ fn run(args: &Args) -> Result<bool, String> {
         names: Vec::new(),
     };
 
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
     println!(
         "file: {} ({} pages), manifest: {}",
         args.file.display(),
@@ -192,7 +193,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // geometry" from "the document says this" by exactly that emptiness.
     match &args.untagged {
         Some(path) => {
-            let plain = RawDocument::open(bindings, path, None)?;
+            let plain = OpenDocument::open(bindings, path, None)?;
             let page = plain.page(0)?;
             let structure = structure::read(&page)?;
             report.check(

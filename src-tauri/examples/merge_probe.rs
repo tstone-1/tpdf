@@ -41,12 +41,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tpdf_lib::document::OpenDocument;
 
 use lopdf::Document;
 use pdfium_render::prelude::Pdfium;
 use tpdf_lib::edits::{PageView, Plan};
 use tpdf_lib::pagetree;
-use tpdf_lib::progressive::{self, CancelToken, RawDocument, RawPage, TileSpec};
+use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::save;
 use tpdf_lib::text;
 
@@ -310,8 +311,8 @@ fn bind(library: &Path) -> progressive::Bindings {
     progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))))
 }
 
-fn open(bindings: progressive::Bindings, path: &Path) -> Option<RawDocument> {
-    match RawDocument::open(bindings, path, None) {
+fn open(bindings: progressive::Bindings, path: &Path) -> Option<OpenDocument> {
+    match OpenDocument::open(bindings, path, None) {
         Ok(document) => Some(document),
         Err(why) => {
             println!("[FAIL] {}: {why}", path.display());

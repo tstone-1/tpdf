@@ -32,11 +32,12 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::Pdfium;
 use tpdf_lib::content::{self, MARGIN_PT};
 use tpdf_lib::pagetree;
-use tpdf_lib::progressive::{self, CancelToken, RawDocument, RawPage, TileSpec};
+use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::text;
 
 fn main() {
@@ -59,7 +60,7 @@ fn main() {
     };
 
     let bindings = bind(&library);
-    let doc = match RawDocument::open(bindings, &file, None) {
+    let doc = match OpenDocument::open(bindings, &file, None) {
         Ok(doc) => doc,
         Err(why) => {
             println!("[FAIL] {}: {why}", file.display());
@@ -160,7 +161,7 @@ fn inked(pixels: &[u8]) -> usize {
         .count()
 }
 
-fn follows(bindings: progressive::Bindings, doc: &RawDocument, file: &Path, index: u32) -> bool {
+fn follows(bindings: progressive::Bindings, doc: &OpenDocument, file: &Path, index: u32) -> bool {
     let before = read(bindings, &doc.page(index).expect("page"));
     // **The middle half of the page's OWN box**, not of its displayed size. The
     // first version of this built the inset from `width_pt`/`height_pt`, which
@@ -277,7 +278,7 @@ fn follows(bindings: progressive::Bindings, doc: &RawDocument, file: &Path, inde
     ok
 }
 
-fn content(bindings: progressive::Bindings, doc: &RawDocument, index: u32) -> bool {
+fn content(bindings: progressive::Bindings, doc: &OpenDocument, index: u32) -> bool {
     let page = doc.page_cropped(index, None).expect("page");
     let crop = page.crop_pt();
     let found = content::content_box(bindings, &page, &CancelToken::default()).expect("content");
@@ -311,7 +312,7 @@ fn content(bindings: progressive::Bindings, doc: &RawDocument, index: u32) -> bo
     ok
 }
 
-fn ink(bindings: progressive::Bindings, doc: &RawDocument, index: u32) -> bool {
+fn ink(bindings: progressive::Bindings, doc: &OpenDocument, index: u32) -> bool {
     // **Every reading of the uncropped page is taken before the crop**, and
     // that is not tidiness. `page_cropped` hands back a `RawPage` wrapping the
     // *cached* handle, so two of them for one index are aliases: cropping
@@ -370,7 +371,7 @@ fn ink(bindings: progressive::Bindings, doc: &RawDocument, index: u32) -> bool {
     )
 }
 
-fn geometry(bindings: progressive::Bindings, doc: &RawDocument, index: u32) -> bool {
+fn geometry(bindings: progressive::Bindings, doc: &OpenDocument, index: u32) -> bool {
     let none = tpdf_lib::render::geometry_of(doc, index, None).expect("geometry");
     let (whole, turns) = {
         let page = doc.page(index).expect("page");

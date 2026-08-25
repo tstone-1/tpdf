@@ -41,8 +41,6 @@ use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
 
-use crate::docgraph::{DocumentGraph, Source};
-
 /// `pdfium-render`'s `bindgen` module is private; only the handle *types* are
 /// `pub use`d out of it, so these values are restated rather than imported.
 ///
@@ -159,15 +157,6 @@ pub struct RawDocument {
     /// handle the next request gets, so a crop set once is in force until
     /// something sets it back.
     original_crops: RefCell<HashMap<u32, [f32; 4]>>,
-    /// Everything about this document that is answered by parsing it rather
-    /// than by rendering it.
-    ///
-    /// Held rather than inherited: this type owns the PDFium handle, and the
-    /// graph is a second thing the same document has. Its methods take the
-    /// page count because that is PDFium's to know --- see
-    /// [`crate::docgraph`], which records why these stopped being fields
-    /// here.
-    graph: crate::docgraph::DocumentGraph,
 }
 
 /// Which box to lay a page out from, given both readings of it.
@@ -421,10 +410,6 @@ impl RawDocument {
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             original_crops: RefCell::new(HashMap::new()),
-            graph: DocumentGraph::new(
-                Source::Path(path.to_path_buf()),
-                password.map(str::to_string),
-            ),
         })
     }
 
@@ -476,20 +461,7 @@ impl RawDocument {
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             original_crops: RefCell::new(HashMap::new()),
-            graph: DocumentGraph::new(Source::Bytes(bytes), password.map(str::to_string)),
         })
-    }
-
-    /// Everything about this document that is read rather than rendered.
-    ///
-    /// The door to [`crate::docgraph::DocumentGraph`], and the reason it is a
-    /// door rather than a set of forwarding methods: a forward here would leave
-    /// this type's public surface exactly as wide as it was, which is half of
-    /// what an outside review found wrong with it. A caller that wants the
-    /// object graph now says so.
-    #[must_use]
-    pub fn graph(&self) -> &crate::docgraph::DocumentGraph {
-        &self.graph
     }
 
     /// The bindings this document was opened through.
@@ -536,7 +508,12 @@ impl RawDocument {
     /// and PDFium disagree about the length of, is a document this makes no
     /// worse than it was. Nothing here can *fail*; it can only decline to
     /// improve.
-    fn original_box(&self, page: &RawPage<'_>, index: u32) -> [f32; 4] {
+    fn original_box(
+        &self,
+        page: &RawPage<'_>,
+        index: u32,
+        inherited: &dyn Fn(u32) -> Option<[f32; 4]>,
+    ) -> [f32; 4] {
         let media = page.media_pt();
         // The short-circuit, and it is the whole cost story: a document every
         // page of which states its own box never parses anything here. Asking
@@ -544,7 +521,7 @@ impl RawDocument {
         // every file opened. `consulted_page_tree` is what makes that
         // observable, and `geometry-probe` reads it in both directions.
         let tree = if media.is_none() {
-            self.graph.sheet(index, self.page_count() as usize)
+            inherited(index)
         } else {
             None
         };
@@ -595,20 +572,6 @@ impl RawDocument {
         Ok(self.borrow_page(handle))
     }
 
-    /// One page with the file's own crop box, whatever a previous caller set.
-    ///
-    /// The safe door, and it is the *default* one rather than the careful one on
-    /// purpose. Pages are cached (see [`PAGE_CACHE`]), so a crop set on a handle
-    /// stays set: a caller that simply took the cached page would see whichever
-    /// crop the **previous** request left --- a tile of page 3 rendered cropped
-    /// because a text extraction two seconds earlier asked for it that way.
-    /// Making that state unreachable beats writing down that callers must avoid
-    /// it, which `docs/TRAPS.md` records as a rule you wrote down and do not
-    /// enforce.
-    pub fn page(&self, index: u32) -> Result<RawPage<'_>, String> {
-        self.page_cropped(index, None)
-    }
-
     /// One page with the reader's crop applied, or with the file's own restored.
     ///
     /// `to` is `[llx, lly, urx, ury]` in the page's own space, y upwards, the
@@ -619,13 +582,18 @@ impl RawDocument {
     /// this layer's place to re-litigate that. What it does refuse is a
     /// non-finite corner, for the reason [`normalised`] gives --- a `NaN` in a
     /// crop box poisons every measurement taken from the page.
-    pub fn page_cropped(&self, index: u32, to: Option<[f32; 4]>) -> Result<RawPage<'_>, String> {
+    pub fn page_cropped(
+        &self,
+        index: u32,
+        to: Option<[f32; 4]>,
+        inherited: &dyn Fn(u32) -> Option<[f32; 4]>,
+    ) -> Result<RawPage<'_>, String> {
         let known = self.original_crops.borrow().contains_key(&index);
         let mut page = self.load_page(index)?;
         if !known {
             // Read on the first load of this page and never again --- after an
             // override there is nothing left to read.
-            let original = self.original_box(&page, index);
+            let original = self.original_box(&page, index, inherited);
             self.original_crops.borrow_mut().insert(index, original);
         }
         let want = match to {
