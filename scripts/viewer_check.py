@@ -31,6 +31,61 @@ import time
 from live_output import stream_results
 from webview_guard import diagnose_silence, require_visible_session
 
+#: How long to wait for a killed app's pipes after killing it.
+#:
+#: Short on purpose. Reaping a process that has been sent a kill is instant; if
+#: this elapses, the wait is not on the process at all but on a pipe something
+#: else inherited, and no amount of further waiting ends it.
+REAP_TIMEOUT = 10.0
+
+
+def _kill_tree(pid: int) -> None:
+    """Kills a process and everything descended from it, best effort.
+
+    `Popen.kill` reaches one process. tpdf's render workers inherit its stdout
+    and stderr, so one that outlives its parent goes on holding the write end of
+    the pipe the driver is reading --- which is a wait with no end, since the
+    process the driver knows about is already dead. The whole tree has to go.
+
+    Best effort by design: this runs on a path that has already failed, and the
+    transcript it exists to protect was captured before it. A failure here must
+    not replace a timeout report with a traceback, so everything is swallowed.
+
+    **POSIX does nothing here, deliberately.** The obvious counterpart is
+    `os.killpg(os.getpgid(pid), 9)`, and it is wrong in this program: the app is
+    launched without `start_new_session`, so it shares *this* process group ---
+    and that call would kill the driver, and `mutate_viewer.py` above it, which
+    is a far worse outcome than the wait it is trying to end. Giving the child
+    its own session would fix that and changes how the app is launched on a
+    platform this cannot be verified from, so it is not done here. The bound
+    still holds on both platforms, because what ends the wait is the timeout
+    around `communicate`, not this; on POSIX an orphan is left for the operator
+    rather than taken with the shell it was started from.
+
+    **And this is best effort in a second sense: it may not reach the orphan
+    that motivated it.** `/T` enumerates by parent pid, and the case measured on
+    2026-08-25 had a worker whose parent was *already gone* -- so whether
+    taskkill still walks to it from a dead pid is untested here, and claiming it
+    does would be the kind of unverified mechanism this repository keeps writing
+    down. What ends the wait is the timeout above, which is bounded whatever
+    this reaches. Killing by image name would certainly reach it and is not done
+    on purpose: a reader may have their own installed tpdf open, and a test
+    harness must not close somebody's document. The precise sweep -- kill tpdf
+    processes whose parent is this pid, by asking the OS rather than taskkill --
+    is the follow-up.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            timeout=REAP_TIMEOUT,
+            check=False,
+        )
+    except Exception:
+        pass
+
 
 def main() -> int:
     # Before anything prints: a redirected run is block-buffered otherwise,
@@ -153,7 +208,25 @@ def main() -> int:
         # this printed identically until now.
         silence = diagnose_silence(process.pid)
         process.kill()
-        process.communicate()
+        # **Bounded, and the reap is not what you are waiting for.** This was a
+        # bare `process.communicate()`, which waits for the pipes to reach EOF
+        # rather than for the process to die --- and a pipe is held open by
+        # everything that inherited it, not by the process it was created for.
+        # tpdf's render workers inherit stdout and stderr, and on 2026-08-25 a
+        # pre-spawned one outlived its parent: the app was already gone, the
+        # orphan held the write end, and this line blocked for 22 minutes past a
+        # 420-second bound that had fired correctly. A timeout whose failure
+        # path has no timeout is not a bound, and this one sat inside the very
+        # code written to stop a hang. See `docs/TRAPS.md`.
+        try:
+            process.communicate(timeout=REAP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # The pipe is still held by something we did not launch. Take the
+            # whole tree rather than the process, then stop waiting on the pipes
+            # altogether -- the partial transcript below comes from `expired`,
+            # which was captured before any of this, so nothing is lost by
+            # giving up on them.
+            _kill_tree(process.pid)
         # The partial transcript, not just the verdict. `viewercheck.ts` prints
         # each result as it is recorded precisely so a run that stops midway can
         # say where --- and discarding it here threw that away again, leaving a

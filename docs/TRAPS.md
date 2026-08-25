@@ -14429,3 +14429,84 @@ else, using `save::is_wash` rather than a copy --- and the exclusion can only
 shrink coverage, never grow it silently: a kind that *became* a wash would still
 have its coverage compared until that line was changed, so the run would go red
 rather than pass in silence.
+
+### A pre-spawned worker outlived its parent, and the claim that it cannot is untested by design
+
+`AGENTS.md` records three things a Windows job object denies a render worker:
+runaway memory, extra processes, and an orphan outliving the parent. The first
+two are measured --- `examples/win_sandbox_probe.rs` gets **1455** for commit
+charge and **1816** for the process quota against a `bare` control that succeeds
+at both. The third is not, and the entry says so in as many words: *"an orphan
+outliving the parent is `KILL_ON_JOB_CLOSE` and is still only claimed: testing it
+means killing the probe itself."*
+
+On 2026-08-25 it happened without anybody arranging it. A viewer mutation run
+stalled, and the process holding it up was:
+
+    tpdf.exe --render-worker --prespawn --lib ... --tile-handle 2028
+
+`MainWindowHandle=0`, `CPU=0`, `ParentProcessId=47612` --- a pid with nothing
+behind it. The app had exited; the warmed pre-spawn it had started was still
+there twenty-nine minutes later, waiting for a document that was never coming.
+
+**What this does and does not say.** It does not say `KILL_ON_JOB_CLOSE` is set
+wrongly; it says the outcome that flag is supposed to prevent was observed, and
+nothing in the repository was in a position to notice. A pre-spawn is the case
+most likely to produce it: it is created *before* a document is chosen, so it is
+the worker whose lifetime is least tied to anything the app is doing, and the
+one a hurried exit is most likely to leave behind. Whether the job object was
+ever assigned to it, or was assigned and the handle closed early, or the flag is
+right and the exit path leaks a handle that keeps the job alive, is **not
+established** --- and writing down a mechanism here without measuring it is what
+this file exists to stop.
+
+The instrument to build is the one the original entry called impossible, and it
+is not: spawn a pre-spawn from a **child** process, kill that child, and ask
+whether the worker is still there. The probe never has to kill itself, because
+the process whose death matters is not the probe.
+
+Until then the honest wording is that the job object bounds memory and process
+creation, both measured, and that orphan cleanup is intended rather than shown.
+
+### A timeout whose failure path has no timeout is not a bound
+
+`scripts/viewer_check.py` bounds one run of the window check, and
+`mutate_viewer.py` passes `CHECK_TIMEOUT = 420` for exactly the reason its own
+comment gives: *"a harness whose worst case is an unbounded wait cannot report
+anything at all, and this one is run unattended by design."*
+
+On 2026-08-25 a run sat for **twenty-nine minutes** on a 420-second bound, and
+the bound was working. The sequence:
+
+    stdout, stderr = process.communicate(timeout=args.timeout)   # fires at 420s
+    ...
+    silence = diagnose_silence(process.pid)
+    process.kill()
+    process.communicate()                                        # <- no timeout
+
+The first call raised on schedule. The app was already dead, so `kill()` did
+nothing. The second call then waited for the **pipes** to reach EOF --- and a
+pipe is held open by everything that inherited it, not by the process it was
+created for. tpdf's render workers inherit stdout and stderr; an orphaned
+pre-spawn (see the entry above) held the write end, so EOF never came and a call
+with no bound waited for it.
+
+**The shape to look for: a cleanup path reached only on failure, containing a
+wait.** It runs rarely, it runs when something is already wrong, and its own
+failure mode is silence --- so it can be broken for as long as it likes without
+producing a red anything. The idiom `kill()` then `communicate()` is the one
+CPython's own docs recommend, and it is correct only when nothing else can hold
+the descriptors.
+
+Fixed by bounding the reap (`REAP_TIMEOUT = 10`) and giving up on the pipes when
+it elapses: the partial transcript is taken from the `TimeoutExpired` exception,
+which was captured before any of this, so nothing is lost by not reading them.
+
+Two things the fix deliberately does **not** do. It does not kill by image name,
+which would certainly reach the orphan and would also close a reader's own
+installed tpdf --- a test harness must not shut somebody's document. And its
+POSIX branch does nothing at all: the obvious `os.killpg(os.getpgid(pid), 9)` is
+wrong here, because the app is launched without `start_new_session` and shares
+the driver's process group, so that call kills the driver and the mutation
+harness above it. That was written, and caught by checking whether the launch
+actually sets what the comment assumed --- which it did not.
