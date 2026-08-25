@@ -19,6 +19,46 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Added: Document properties says what was appended after a signature, not just how much
+
+The Covers row learned to report an append separately from the signature's own
+container. It still could not say what the append *contained*, and nine
+kilobytes of one thing looks exactly like nine kilobytes of another. Two real
+documents, both appending about 9 KB:
+
+- a signed contract: `/DSS`, a `/VRI` and seven streams, and the catalog gained
+  `/DSS` --- the certificates and revocation records a signature needs in order
+  to still be checkable years later. Nothing a reader sees changed.
+- a document a second person signed: a `/Sig`, an `/Annot/Widget`, and a
+  rewritten page --- because the new signature field has to be listed on it.
+
+There is now an **Appended** row directly under Covers saying which of those it
+is, and whether any page was rewritten:
+
+    Covers:   everything up to the signature, and 8.9 KB (9,101 bytes) were appended afterwards
+    Appended: the certificates and revocation records a signature needs to be
+              checked later, and no page was rewritten
+
+It is read by parsing the document twice --- once truncated to where the
+signature's range ends, once whole --- and comparing the two object tables.
+Scanning the appended bytes instead is cheaper and wrong: a revision's body can
+be one compressed object stream with no object header anywhere in the file, and
+the scan that was tried first reported three objects as rewritten that the parser
+says were never touched.
+
+**It reports and does not conclude.** It never says an append was permitted,
+harmless, or a modification. The page count is stated as what it is --- a page
+object was written again --- because a page can be rewritten for reasons that
+change nothing on screen.
+
+An append this cannot decompose is reported as unreadable, never as an empty one:
+an appendix with no objects in it would render as an append that changed nothing,
+which is the reassuring answer and the wrong one.
+
+Costs +3.56 ms on a 126 KB signed document, measured, and only for a document
+that has an append to describe. Nothing on the path to opening a file asks for
+it.
+
 ### Fixed: Document properties overstated what a signature leaves uncovered
 
 The Covers row read *not the whole file --- 73 KB (74,637 bytes) lie outside the

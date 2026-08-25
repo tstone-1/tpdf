@@ -4103,6 +4103,40 @@ MUTATIONS += [
         # Drop the warning flag on partial coverage. The row still says the
         # right words, so a check reading the text passes; what is lost is the
         # only thing that makes it visible in a list of twenty rows.
+        # Drop the Appended row from the section. The function still returns the
+        # right value and every test of `appendixRow` in isolation still passes;
+        # what is lost is the row reaching a reader, which is the shape a whole
+        # feature shipped inert in 26.8.4 and why `check_viewer_wiring.py` exists.
+        "properties: build the appendix row and never show it",
+        "src/lib/properties.ts",
+        "  if (appended) rows.push(appended);",
+        "  if (false) rows.push(appended);",
+        "sits directly under the Covers row it completes",
+    ),
+    Mutation(
+        # Read /DSS from the object list instead of from the catalog. A `/DSS`
+        # object among fifteen could be anything a file happens to carry; the
+        # catalog GAINING the key is what an LTV append is. The two agree on
+        # every real document and disagree on the one input built to separate
+        # them.
+        "properties: call any appendix holding a DSS object validation data",
+        "src/lib/properties.ts",
+        '  if (appendix.catalog_gained.includes("DSS")) {',
+        '  if (appendix.kinds.includes("DSS")) {',
+        "reads DSS from the catalog rather than from the object list",
+    ),
+    Mutation(
+        # Report an unreadable appendix as an ordinary one. It has no objects in
+        # it, so it renders as an append that changed nothing --- absence and
+        # failure collapsing into the reassuring one, which this panel refuses
+        # everywhere else.
+        "properties: read an unreadable appendix as an empty one",
+        "src/lib/properties.ts",
+        "  if (appendix.unread) {",
+        "  if (false) {",
+        "reports an appendix it could not read as unread, never as empty",
+    ),
+    Mutation(
         "properties: state partial coverage without marking it",
         "src/lib/properties.ts",
         "    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,\n    warn: true,",
