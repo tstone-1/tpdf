@@ -39,10 +39,11 @@
 //!   links-probe <file.pdf> [--mode read|check|agree|clean] [--manifest PATH] [--lib DIR]
 
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::links::Links;
 use tpdf_lib::outline::Target;
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -114,7 +115,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // comes from there. `--mode agree` needs the handle for a second reason ---
     // it is what the outline is read through.
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
     let links = document.graph().links(document.page_count() as usize)?;
 
     match args.mode {
@@ -474,7 +475,7 @@ fn check(args: &Args, links: &Links) -> Result<bool, String> {
 }
 
 /// The two destination resolvers, on one document, compared.
-fn agree(args: &Args, links: &Links, document: &RawDocument) -> Result<bool, String> {
+fn agree(args: &Args, links: &Links, document: &OpenDocument) -> Result<bool, String> {
     // **Absent is not an error here, and that is the whole point of the mode.**
     // It said so in its own doc comment while `section` still refused a document
     // the manifest does not describe --- so every real document came back

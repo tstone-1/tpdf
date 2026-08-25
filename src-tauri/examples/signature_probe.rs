@@ -79,10 +79,11 @@
 //!   signature-probe <file.pdf> [--mode read|agree|nested|clean] [--lib DIR]
 
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::{FPDF_DOCUMENT, FPDF_SIGNATURE};
 use tpdf_lib::docinfo::{self, Properties};
-use tpdf_lib::progressive::{self, Bindings, RawDocument};
+use tpdf_lib::progressive::{self, Bindings};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -147,9 +148,9 @@ fn main() {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
     let ours = document.graph().properties(document.page_count())?;
-    let theirs = pdfium_signatures(bindings, document.handle());
+    let theirs = pdfium_signatures(bindings, document.pdfium().handle());
 
     match args.mode {
         Mode::Read => {

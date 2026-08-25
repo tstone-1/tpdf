@@ -56,9 +56,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::*;
-use tpdf_lib::progressive::{self, CancelToken, Outcome, Progress, RawDocument, RawPage};
+use tpdf_lib::progressive::{self, CancelToken, Outcome, Progress, RawPage};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -135,7 +136,7 @@ fn main() {
     );
     println!();
 
-    let document = match RawDocument::open(raw, &args.file, None) {
+    let document = match OpenDocument::open(raw, &args.file, None) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("[FAIL] {e}");
@@ -590,7 +591,7 @@ fn composition(pixels: &[u8]) -> (f64, f64) {
 ///
 /// Variants are interleaved so drift cannot masquerade as a difference, and the
 /// uncached variant evicts first, which is the only reason `evict_page` exists.
-fn pageload(_raw: progressive::Bindings, document: &RawDocument, args: &Args) -> bool {
+fn pageload(_raw: progressive::Bindings, document: &OpenDocument, args: &Args) -> bool {
     let reps = args.rounds.max(20);
     let mut cached = Vec::with_capacity(reps);
     let mut uncached = Vec::with_capacity(reps);
@@ -599,7 +600,7 @@ fn pageload(_raw: progressive::Bindings, document: &RawDocument, args: &Args) ->
         // A,B,A,B within each round rather than block after block.
         for uncached_variant in [i % 2 == 0, i % 2 != 0] {
             if uncached_variant {
-                document.evict_page(args.page);
+                document.pdfium().evict_page(args.page);
             }
 
             let t0 = Instant::now();

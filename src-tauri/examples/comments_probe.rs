@@ -26,9 +26,10 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::annots::{Comment, Comments, Kind};
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -100,7 +101,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // refuses is one this answer would never be wanted for. It is also where
     // the page count comes from, which is what bounds the scan.
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
     let comments = document.graph().comments(document.page_count() as usize)?;
 
     match args.mode {

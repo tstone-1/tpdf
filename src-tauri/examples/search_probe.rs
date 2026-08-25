@@ -51,8 +51,9 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::progressive::{self, RawDocument};
+use tpdf_lib::progressive::{self};
 use tpdf_lib::search::{self, Options};
 use tpdf_lib::text::{self, PageText};
 
@@ -199,7 +200,7 @@ fn options_of(value: &serde_json::Value) -> Options {
 
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
-    let document = RawDocument::open(bindings, &args.file, None)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
     let manifest: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&args.manifest)
             .map_err(|e| format!("could not read {}: {e}", args.manifest.display()))?,

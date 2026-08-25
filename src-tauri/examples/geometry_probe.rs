@@ -57,10 +57,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::Pdfium;
 use tpdf_lib::pagetree;
-use tpdf_lib::progressive::{self, CancelToken, RawDocument, RawPage, TileSpec};
+use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 
 /// The fraction of a rendered page that has to be ink for the page to count as
 /// drawn. See the module note for where the number comes from.
@@ -82,7 +83,7 @@ fn main() {
     };
 
     let bindings = bind(&library);
-    let doc = match RawDocument::open(bindings, &file, None) {
+    let doc = match OpenDocument::open(bindings, &file, None) {
         Ok(doc) => doc,
         Err(why) => {
             println!("[FAIL] {}: {why}", file.display());

@@ -57,8 +57,9 @@ use std::io::{Read, Write};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
+use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::progressive::{self, CancelToken, RawDocument, TileSpec};
+use tpdf_lib::progressive::{self, CancelToken, TileSpec};
 // The one piece genuinely shared with the production path. The rest of the
 // Win32 below is deliberately NOT routed through `tpdf_lib::sandbox_win`:
 // this probe is the record of a measurement, and a record that changes when
@@ -272,7 +273,7 @@ fn render_bytes(lib_dir: &Path, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     // Leaked because `open_bytes` needs the buffer to outlive the document, and
     // the document lives until this process exits either way.
     let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-    let document = RawDocument::open_bytes(bindings, bytes, None).map_err(|r| r.reason)?;
+    let document = OpenDocument::open_bytes(bindings, bytes, None).map_err(|r| r.reason)?;
     let page = document.page(0)?;
     let (pixels, progress) =
         progressive::render_tile(bindings, &page, TILE, None, &CancelToken::new())?;

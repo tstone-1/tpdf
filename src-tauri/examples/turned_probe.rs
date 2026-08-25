@@ -59,11 +59,12 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::Pdfium;
 use tpdf_lib::docmodel::{MarkKind, Quad, StampName};
 use tpdf_lib::edits::{Edits, NewMark};
-use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
+use tpdf_lib::progressive::{self, Placement, RawBitmap};
 use tpdf_lib::save;
 
 const DOC: u32 = 1;
@@ -110,7 +111,7 @@ fn main() {
     };
     let bindings = progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))));
 
-    let doc = match RawDocument::open(bindings, &file, None) {
+    let doc = match OpenDocument::open(bindings, &file, None) {
         Ok(doc) => doc,
         Err(why) => {
             println!("[FAIL] {}: {why}", file.display());
@@ -403,7 +404,7 @@ fn render(
     number: u32,
     scale: f32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
-    let document = RawDocument::open(bindings, file, None)?;
+    let document = OpenDocument::open(bindings, file, None)?;
     let page = document.page(number)?;
     let width = (page.width_pt() * scale).round() as u16;
     let height = (page.height_pt() * scale).round() as u16;

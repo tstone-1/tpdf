@@ -15,6 +15,7 @@ pub mod diag;
 pub mod docgraph;
 pub mod docinfo;
 pub mod docmodel;
+pub mod document;
 pub mod edits;
 pub mod encoding;
 pub mod fingerprint;
