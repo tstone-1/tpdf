@@ -275,6 +275,25 @@
    * race, and a race is a smoke test rather than a gate.
    */
   const opens = new Serial();
+  /**
+   * Serialises edit commands. See {@link applyEdit}.
+   *
+   * The same instrument as {@link opens} and for a narrower version of the same
+   * reason. Every edit is its own `invoke`, and the Rust side takes the model
+   * lock per command --- so the *model* is ordered and the **replies are not**.
+   * Two edits issued close together (a thumbnail drag while a popup commit is
+   * still in flight, an undo followed at once by a mark) can be answered out of
+   * order, and the later-arriving older state is the one the window adopts:
+   * `Edits.adopt` and the `setPages`/`setMarks`/`dirty` calls below take
+   * whatever reply reaches them last. The document on disk stays right, because
+   * the plan is read out of the model; what goes wrong is what the reader sees,
+   * until the next edit happens to correct it.
+   *
+   * A chain rather than a flag, for the reason `serial.ts` gives about opens: a
+   * flag makes the second edit a no-op, which loses the edit the reader just
+   * made.
+   */
+  const editing = new Serial();
 
   /**
    * Every command the application has, built in `appcommands.ts`.
@@ -649,7 +668,9 @@
    * is to redraw what differs.
    */
   function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
-    pendingEdit = runEdit(run);
+    // Queued rather than started, so a reply can never be adopted after a
+    // later one. See {@link editing}.
+    pendingEdit = editing.run(() => runEdit(run));
     return pendingEdit;
   }
 

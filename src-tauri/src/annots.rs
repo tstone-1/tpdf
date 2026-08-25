@@ -71,8 +71,7 @@ use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
 use crate::encoding::resolve;
 
-/// Largest decompressed stream the scan will accept, matching [`crate::encoding`].
-const MAX_DECODE: usize = 64 * 1024 * 1024;
+use crate::encoding::MAX_DECODE;
 
 /// Deepest the `/MediaBox` and `/Rotate` inheritance walk will follow `/Parent`.
 const MAX_INHERIT: usize = 32;
@@ -688,14 +687,6 @@ fn rect_of(annot: &Dictionary, document: &Document, frame: Frame) -> [f32; 4] {
     place(frame, left, bottom, right, top)
 }
 
-/// One rectangle of the page's own space, in display space and on the page.
-///
-/// Shared by [`rect_of`] and [`quads_of`] rather than written twice, which is
-/// the whole reason it is a function: the turn, the crop shift and the clamp are
-/// one rule about where an annotation sits, and two copies of it would be free
-/// to disagree about a rotated page --- with the `/Rect` landing correctly and
-/// the words it covers landing somewhere else, on exactly the documents nobody
-/// opens twice.
 /// The page an annotation is placed against.
 ///
 /// The four values travel together through every function here and mean nothing
@@ -712,6 +703,14 @@ struct Frame {
     origin: (f32, f32),
 }
 
+/// One rectangle of the page's own space, in display space and on the page.
+///
+/// Shared by [`rect_of`] and [`quads_of`] rather than written twice, which is
+/// the whole reason it is a function: the turn, the crop shift and the clamp are
+/// one rule about where an annotation sits, and two copies of it would be free
+/// to disagree about a rotated page --- with the `/Rect` landing correctly and
+/// the words it covers landing somewhere else, on exactly the documents nobody
+/// opens twice.
 fn place(frame: Frame, left: f32, bottom: f32, right: f32, top: f32) -> [f32; 4] {
     let Frame {
         width,

@@ -1137,7 +1137,7 @@ Two of them are worth understanding rather than just running:
   emitted --- so it needs the `build` gate above it to have run. Two checks in one command:
   that `THIRD-PARTY-NOTICES.md` still matches the dependency tree, which is the
   binary-distribution obligation; and that no GPL, LGPL or AGPL licence has appeared. Its
-  third population is the one nothing else can see --- the fourteen C++ libraries inside
+  third population is the one nothing else can see --- the C++ libraries inside
   libpdfium, read from `vendor/pdfium/licenses/`, which `cargo metadata` is structurally
   blind to. Regenerate with `scripts/third_party_notices.py` and commit the result; never
   hand-edit the file. On a mismatch it prints the **diff**, not the word "stale" --- a gate
@@ -2307,7 +2307,7 @@ Run them with **`scripts/viewer_sweep.py <app-exe>`**, which is the list of corp
 the way to run them:
 
 ```bash
-scripts/viewer_sweep.py --list          # the 14 corpora, and every fixture excluded, with reasons
+scripts/viewer_sweep.py --list          # every window corpus, and every fixture excluded, with reasons
 scripts/viewer_sweep.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf
 ```
 

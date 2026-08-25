@@ -64,6 +64,13 @@ png = "0.17"
 # getrusage, for peak RSS in the tile bench. Pdfium allocates natively, so a
 # Rust allocator hook would report almost nothing.
 libc = "0.2"
+# The file-open and file-save panels. Apache-2.0 OR MIT, and it pulls
+# `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) with it. The capability
+# list in `capabilities/default.json` grants `dialog:allow-open` and
+# `dialog:allow-save`, and both only *open a panel* --- neither writes a byte.
+# What writes is `save_copy`, `save_document`, `extract_pages`,
+# `merge_documents` and `print_document`, whose authority `docs/THREAT-MODEL.md`
+# §T6.1 states.
 tauri-plugin-dialog = "2.7.2"
 
 # Unicode case folding, for search. `char::to_lowercase` is the operation for
@@ -78,10 +85,40 @@ tauri-plugin-dialog = "2.7.2"
 # the whole tree rather than read off a README, because one copyleft crate anywhere
 # removes the option of making this repository public (AGENTS.md).
 caseless = "0.2.2"
+# In-app updates. MIT OR Apache-2.0, and the **largest single addition the tree
+# has taken**: 48 crates, because it brings a TLS stack (`rustls`) and archive
+# extraction (`zip`, `tar`). It is also the only network authority in the
+# application --- one check per launch, after every check and spike entry point
+# has returned, so every harness here still runs offline. The payload's
+# signature is verified against a compiled-in public key before anything is
+# unpacked, which is what keeps those two archive parsers from ever seeing
+# attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version.
 tauri-plugin-updater = "2.10.1"
+
+# The signer's certificate out of a signature's `/Contents`: `cms` for the CMS
+# `SignedData`, `x509-cert` for the certificate inside it, `der` underneath both.
+# Nine packages between them, every one `Apache-2.0 OR MIT` except `flagset`,
+# which is `Apache-2.0` alone --- checked with `cargo metadata` over the whole
+# tree, which is the standing rule for anything the licensing constraint
+# touches.
+#
+# They matter to the threat model as much as to the licence: this is a **second
+# ASN.1 parser on attacker-chosen bytes**. `docs/THREAT-MODEL.md` §T6.8 records
+# what bounds it --- the worker, and `MAX_SIG_BLOB` applied to the blob on the
+# way *in* as well as on the way out. Parsing only: there is no trust store and
+# no chain building, and `docinfo.rs` is shaped so that no field here could
+# carry a verdict.
 cms = { version = "0.2.3", default-features = false }
 der = { version = "0.7", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
+
+# The catalog's `/Metadata` packet, for conformance claims. MIT, and it adds
+# **no package**: it was already in the tree through Tauri's `plist`, checked
+# with `cargo metadata` before and after rather than assumed. What it does add
+# is an XML parser reachable from attacker-chosen bytes --- bounded in
+# `xmp.rs`, and entity expansion is structurally impossible rather than
+# bounded, since `quick-xml` hands every `&...;` back as its own event and
+# expands nothing without a resolver, which this never supplies.
 quick-xml = "0.41"
 
 # The macOS print dialog. PDFKit paginates the document and builds the
@@ -204,6 +241,13 @@ windows = { version = "0.61", features = [
     # PrintDlgW, and the CommDlg error code that distinguishes Cancel from failure.
     "Win32_UI_Controls_Dialogs",
 ] }
+# Windows only. Apache-2.0 OR MIT. What gives this platform the document
+# handover macOS gets from `RunEvent::Opened`: a second launch forwards its
+# argv to the first process and exits, so opening a file from Explorer while
+# tpdf is running reaches the running window instead of starting a second app
+# with a second worker pool. The callback feeds the same `Launch` queue and
+# emits the same `OPEN_EVENT` as every other route in, so there is one path for
+# "open this document" rather than two that can drift.
 tauri-plugin-single-instance = "2.4.3"
 
 [[example]]

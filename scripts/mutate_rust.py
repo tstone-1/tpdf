@@ -297,8 +297,8 @@ MUTATIONS = [
         # a point that reads as a rendering fault.
         "save: leave a drawing's joins mitred, as a box's are",
         "src/save.rs",
-        '        Paint::Path => (INK_WIDTH, "1 J 1 j "),',
-        '        Paint::Path => (INK_WIDTH, ""),',
+        '        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
+        '        Paint::Path => (crate::docmodel::INK_WIDTH, ""),',
         "each_stroke_is_its_own_path_in_the_appearance_stream",
     ),
     Mutation(
@@ -338,7 +338,7 @@ MUTATIONS = [
         # down a margin is answered with "that mark covers nothing".
         "edits: take ink's rectangle tight against the strokes",
         "src/edits.rs",
-        "            quads = Stroke::bounds(&strokes, (crate::save::INK_WIDTH / 2.0) as f32)",
+        "            quads = Stroke::bounds(&strokes, (crate::docmodel::INK_WIDTH / 2.0) as f32)",
         "            quads = Stroke::bounds(&strokes, 0.0)",
         # **Not the `docmodel` test that looks like the right one.** That one
         # builds its `Mark` by hand, so it exercises `Stroke::bounds` and says
@@ -2270,7 +2270,7 @@ MUTATIONS = [
         # never existed, which is the wrong diagnosis rather than a coarse one.
         "docmodel: let a deleted page's marks go without tombstoning them",
         "src/docmodel.rs",
-        "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    self.mark_graves.insert(mark);",
+        "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    self.forget_mark(mark);",
         "                for mark in self.marks.remove(&page).unwrap_or_default() {\n                    let _ = mark;",
         "deleting_a_page_takes_its_marks_and_undo_brings_both_back",
     ),
@@ -2299,10 +2299,18 @@ MUTATIONS = [
         # every list, so nothing on screen or in a written file differs -- and
         # the note is still reachable through a mark this document no longer
         # has, which an undo then restores twice over.
+        # **Shares an anchor with the mutation below it, and that is a fact about
+        # the code rather than a duplicate entry.** Deleting a page and removing
+        # a mark were two cleanups doing different work; they are one
+        # `forget_mark` since 2026-08-24, so there is one line to break and it
+        # reddens both routes. Both entries are kept because each names a
+        # *different* test, and what a mutation certifies is that its named test
+        # can catch the loss --- folding them into one would leave one of those
+        # two tests pinned by nothing. The cost is one duplicated run.
         "docmodel: keep a note when the page it is on is deleted",
         "src/docmodel.rs",
-        "                    self.notes.remove(&mark);\n                }\n            }\n            Command::Move",
-        "                }\n            }\n            Command::Move",
+        "        self.mark_graves.insert(mark);\n        self.notes.remove(&mark);",
+        "        self.mark_graves.insert(mark);",
         "a_marks_note_goes_with_it_and_comes_back_with_it",
     ),
     Mutation(
@@ -2311,10 +2319,11 @@ MUTATIONS = [
         # exactly the live marks, and a leftover makes a document that was
         # annotated and un-annotated compare unequal to one that never was --
         # which is what a snapshot rebuild is checked against.
+        # The other half of the pair above: same anchor, different test.
         "docmodel: keep a note when its mark is taken off the page",
         "src/docmodel.rs",
-        "                self.mark_graves.insert(mark);\n                self.notes.remove(&mark);",
-        "                self.mark_graves.insert(mark);",
+        "        self.mark_graves.insert(mark);\n        self.notes.remove(&mark);",
+        "        self.mark_graves.insert(mark);",
         "a_mark_that_is_removed_says_nothing",
     ),
     Mutation(
@@ -2495,7 +2504,7 @@ MUTATIONS = [
         # and this is the second one.
         "docmodel: derive an erased drawing's rectangle from nothing",
         "src/docmodel.rs",
-        "        let quads = Stroke::bounds(&strokes, crate::save::INK_WIDTH as f32 / 2.0)",
+        "        let quads = Stroke::bounds(&strokes, INK_WIDTH as f32 / 2.0)",
         "        let quads = Stroke::bounds(&strokes, 1000.0)",
         "erasing_a_stroke_leaves_the_others_and_shrinks_the_rectangle",
     ),
@@ -2505,8 +2514,8 @@ MUTATIONS = [
         # it on rather than the one the journal says.
         "docmodel: let a removed drawing keep the version it was erased to",
         "src/docmodel.rs",
-        "                self.inks.remove(&mark);",
-        "                let _ = &mark;",
+        "        self.inks.remove(&mark);\n        self.colors.remove(&mark);",
+        "        self.colors.remove(&mark);",
         "a_removed_drawing_forgets_which_version_it_was_on",
     ),
     Mutation(
@@ -3138,10 +3147,16 @@ MUTATIONS += [
         # Leave a removed mark pointing at a colour version. Undo then brings the
         # mark back in whatever colour it had been recoloured to rather than the
         # one the journal says it was made in.
+        #
+        # Aimed at `forget_mark` since 2026-08-24, where it used to name the
+        # `Unannotate` arm. The two arms that end a mark --- removing the mark,
+        # and deleting the page it sits on --- were separate cleanups doing
+        # different amounts of work, and this mutation could only reach the one
+        # that did more. One helper is one anchor, and it now reaches both.
         "docmodel: leave a removed mark's colour behind",
         "src/docmodel.rs",
-        "                self.inks.remove(&mark);\n                self.colors.remove(&mark);",
-        "                self.inks.remove(&mark);",
+        "        self.inks.remove(&mark);\n        self.colors.remove(&mark);",
+        "        self.inks.remove(&mark);",
         "a_removed_mark_forgets_which_colour_it_was_on",
     ),
     Mutation(

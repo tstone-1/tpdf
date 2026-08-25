@@ -458,7 +458,7 @@ heavy work while the webview does the UI.
 **Since 2026-08-22 the worker also *writes* with `lopdf`.** `Request::Append` builds the update
 section for a save that only adds marks, because doing so is a pure function of the document's
 bytes and the plan --- and those bytes are the attacker's. It runs where every other parse of
-them runs, which narrowed `docs/THREAT-MODEL.md` residual risk 17 from every writing path to
+them runs, which narrowed `docs/THREAT-MODEL.md` residual risk 18 from every writing path to
 the rewriting ones. The split is by authority: `save::append_ready` asks the coordinator's
 questions about a path, `save::append_update` asks none. A rewrite has not moved, and the
 obstacle is its output rather than its input --- see `docs/PLAN.md` §3.
@@ -718,7 +718,7 @@ intent without the copy that has to be re-verified. Ask the script, not a docume
 scripts/gates.py --list
 ```
 
-Currently eighteen: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+Currently, in the order `--list` prints them: a toolchain-pin check, a PDFium pin check, a trap-index check, a
 workflow-parity check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,

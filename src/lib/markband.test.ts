@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { MarkKind } from "./pages";
+
 import {
   boxQuad,
   ERASER_RADIUS,
@@ -14,6 +16,7 @@ import {
   isWave,
   isWash,
   markBand,
+  paintOf,
   quadSwept,
   strokeSwept,
   strokeTouches,
@@ -548,5 +551,57 @@ describe("what the status line says while the eraser is armed", () => {
     // clause reporting nothing is a clause a reader has to read past.
     expect(sweepLabel({ strokes: 1, marks: 0 })).not.toContain("mark");
     expect(sweepLabel({ strokes: 0, marks: 1 })).not.toContain("stroke");
+  });
+});
+
+describe("how the overlay decides to draw a kind", () => {
+  it("answers for every kind there is", () => {
+    // The population, written out. A `MarkKind[]` the test builds from the
+    // classifier itself would be the check reading its own answer back ---
+    // `docs/TRAPS.md` records that shape --- so the list is here and a tenth
+    // kind fails to type-check against `MarkKind` rather than being skipped.
+    const kinds: MarkKind[] = [
+      "highlight",
+      "underline",
+      "strikeout",
+      "squiggly",
+      "note",
+      "square",
+      "ellipse",
+      "textbox",
+      "ink",
+      "stamp",
+    ];
+    for (const kind of kinds) {
+      expect(paintOf(kind), kind).toBeTruthy();
+    }
+  });
+
+  it("agrees with save.rs arm for arm, which is where the pair can drift", () => {
+    // **`paint()` in `save.rs`, transcribed.** The overlay and the writer draw
+    // every mark and this is the decision they must agree on; a differential
+    // between them is what found a defect neither side's own tests could. The
+    // one deliberate difference is the highlight: `Paint::Wash` there against
+    // "fill" here, because the multiply is set per mark on the context rather
+    // than being a property of the shape.
+    expect(paintOf("highlight")).toBe("fill");
+    expect(paintOf("underline")).toBe("line");
+    expect(paintOf("strikeout")).toBe("line");
+    expect(paintOf("squiggly")).toBe("wave");
+    expect(paintOf("square")).toBe("outline");
+    expect(paintOf("ellipse")).toBe("ellipse");
+    expect(paintOf("textbox")).toBe("text");
+    expect(paintOf("ink")).toBe("path");
+    expect(paintOf("note")).toBe("icon");
+    expect(paintOf("stamp")).toBe("stamp");
+  });
+
+  it("gives the two kinds that used to fall through a style of their own", () => {
+    // The painter's chain ended in a bare `else` that filled the quad, so any
+    // kind without a branch was drawn as a filled rectangle rather than not at
+    // all. Only a highlight may reach that arm now, and these two are the ones
+    // whose wrong answer would have looked most like a real mark.
+    expect(paintOf("stamp")).not.toBe("fill");
+    expect(paintOf("note")).not.toBe("fill");
   });
 });

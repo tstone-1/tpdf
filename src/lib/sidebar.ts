@@ -45,6 +45,7 @@
  * table of contents.
  */
 
+import { placeholder } from "./panelrow";
 import {
   Expansion,
   allRows,
@@ -679,12 +680,6 @@ export class Sidebar {
   }
 }
 
-function placeholder(text: string): HTMLElement {
-  const element = document.createElement("div");
-  element.style.cssText = "padding:0.5rem 0.7rem;opacity:0.55;";
-  element.textContent = text;
-  return element;
-}
 
 /** What the limits banner says, naming the bound that fired. */
 function noticeFor(limits: Outline["limits"]): string {

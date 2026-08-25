@@ -1474,16 +1474,6 @@ mod tests {
         assert_eq!(child.wait().map(describe_exit).as_deref(), Ok("0"));
     }
 
-    /// A suspended child is running; a killed one is not, and says how it died.
-    ///
-    /// The three observations a parent needs, on one child, in the order it needs
-    /// them. `try_wait` must say `None` while the child is alive --- and the child
-    /// here is *suspended*, which is the state a spawn returns and therefore the
-    /// one a mistaken "has it finished?" would be asked in first.
-    ///
-    /// `kill` goes through the job rather than the process, so this also pins
-    /// that the job really does contain the child: terminating it ends a process
-    /// the call never names.
     /// A live child's peak commit is readable, and it is the *child's*.
     ///
     /// The first assertion alone would be a tautology dressed as a test: a call
@@ -1548,6 +1538,16 @@ mod tests {
         }
     }
 
+    /// A suspended child is running; a killed one is not, and says how it died.
+    ///
+    /// The three observations a parent needs, on one child, in the order it needs
+    /// them. `try_wait` must say `None` while the child is alive --- and the child
+    /// here is *suspended*, which is the state a spawn returns and therefore the
+    /// one a mistaken "has it finished?" would be asked in first.
+    ///
+    /// `kill` goes through the job rather than the process, so this also pins
+    /// that the job really does contain the child: terminating it ends a process
+    /// the call never names.
     #[test]
     fn a_contained_child_reports_running_then_how_it_died() {
         // `pause` reads stdin and blocks, so the child stays alive on its own

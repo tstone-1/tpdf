@@ -44,14 +44,9 @@ import {
   ERASER_RADIUS,
   ICON_SIZE,
   iconQuad,
-  isEllipse,
   isMovable,
-  isIcon,
-  isOutline,
   isPath,
-  isStamp,
-  isText,
-  isWave,
+  paintOf,
   LINE_FRACTION,
   STAMP_CAP,
   STAMP_INSET,
@@ -4831,7 +4826,8 @@ export class Viewer {
       // box round the drawing, so painting it would put a filled block where a
       // reader drew a line. Same class of defect as the underline that looked
       // like a highlight, and the same tell --- the saved file would be right.
-      if (isPath(mark.kind)) {
+      const style = paintOf(mark.kind);
+      if (style === "path") {
         const inked = this.viewStrokesOf(mark);
         if (inked) {
           ctx.strokeStyle = markInk(mark.color, false);
@@ -4876,7 +4872,7 @@ export class Viewer {
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
         const width = (band.right - band.left) * this.zoom * dpr;
         const height = (band.bottom - band.top) * this.zoom * dpr;
-        if (isText(mark.kind)) {
+        if (style === "text") {
           // The reader's words, in the lines the *backend* broke them into.
           // Nothing here measures text: `ctx.measureText` would measure whatever
           // font the system resolved and the file is set in Helvetica, so two
@@ -4904,7 +4900,7 @@ export class Viewer {
             if (y > top + height) return;
             ctx.fillText(line, left + inset, y);
           });
-        } else if (isWave(mark.kind)) {
+        } else if (style === "wave") {
           // Stroked along the band rather than filling it, which is the whole
           // of what a squiggle is. Filling would draw a solid bar two and a
           // half times an underline's height and the file would stay correct --
@@ -4919,7 +4915,7 @@ export class Viewer {
           ctx.lineWidth = pen;
           traceSquiggle(ctx, left, top, width, height, pen);
           ctx.stroke();
-        } else if (isStamp(mark.kind)) {
+        } else if (style === "stamp") {
           // A border and one word, which is both of the two branches around
           // this one and neither of them alone. Drawn as a box would be, plus
           // the word a box has no room for.
@@ -4952,8 +4948,8 @@ export class Viewer {
               top + (height + size * STAMP_CAP) / 2,
             );
           }
-        } else if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);
-        else if (isOutline(mark.kind)) {
+        } else if (style === "icon") drawBubble(ctx, left, top, width, height);
+        else if (style === "outline") {
           // Stroked, not filled, which is the whole of what a box is --- and
           // the same decision `save.rs` makes with `re S` for the file. A
           // filled box hides what it was drawn around, which is the one thing
@@ -4967,14 +4963,22 @@ export class Viewer {
           ctx.strokeStyle = markInk(mark.color, false);
           ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
           ctx.strokeRect(left, top, width, height);
-        } else if (isEllipse(mark.kind)) {
+        } else if (style === "ellipse") {
           // Stroked like the box, and the same argument for it: a filled ring
           // hides what it was drawn around. What differs is only the path.
           ctx.strokeStyle = markInk(mark.color, false);
           ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
           traceEllipse(ctx, left, top, width, height);
           ctx.stroke();
-        } else ctx.fillRect(left, top, width, height);
+        } else {
+          // `fill`, and the only kind that reaches it is a highlight --- the
+          // blend was set per mark above. This was a bare `else` catching
+          // whatever the chain above had no branch for, so a kind nobody
+          // painted was drawn as a filled rectangle: a wrong picture rather
+          // than a missing one, and nothing could go red. `paintOf` is
+          // exhaustive, so a new kind is a compile error there instead.
+          ctx.fillRect(left, top, width, height);
+        }
       }
     }
     // Put back what the caller set, because the two below still rely on it.

@@ -145,6 +145,91 @@ that you know the copy was built from the newer version. `Extract pages` did the
 same work and discarded the answer --- while the code's own comment said the
 reader "is told the same way". They are now.
 
+### Fixed: two edits made close together could leave the window showing the older one
+
+Every edit is a separate request to the part of tpdf that owns the document, and
+the replies could arrive out of order --- a thumbnail dragged while a note you
+had just committed was still in flight. Whichever reply came back last is what
+the window drew, so the page list or the marks panel could go back to how it was
+one edit earlier, and stay that way until the next edit happened to correct it.
+
+The saved document was never wrong: what a save writes is read out of the model,
+which was ordered all along. Edits are queued now, so a reply cannot be adopted
+after a later one. They are queued rather than dropped, because refusing the
+second edit would lose the edit you just made.
+
+### Fixed: one very long note made every edit after it slow
+
+A note can be pasted rather than typed, and there was no limit on how long one
+could be. tpdf re-wraps every text box in the document each time the document
+changes, so a single enormous note made every later rotate, mark or undo pay for
+it again --- seconds at a time, with nothing else able to proceed while it did.
+
+Two things changed. Breaking a long unbroken word is now one pass over it rather
+than one per line, which is the same lines out of the same arithmetic and no
+longer costs the square of the note's length. And a note is refused above 65,536
+characters, with a message saying how long the one you offered is. That is a long
+chapter; nothing anyone types reaches it.
+
+### Fixed: nothing said why Save had been refused
+
+When tpdf cannot take a fingerprint of the file under an open document --- it was
+removed, or is not readable --- Save is refused for that document for the rest of
+the session, on purpose: without a fingerprint there is no way to tell whether
+the file changed underneath you.
+
+The line explaining that went to standard error, and an application started from
+Explorer, the Dock or a file association has no standard error. So the refusal
+was visible and its reason reached nobody. It goes to tpdf's log file now, which
+is the one diagnostic in the application whose absence a reader would notice.
+
+### Fixed: asking for the uncontained engine switched off the line that says so
+
+tpdf parses documents in a separate, contained process, and `TPDF_BACKEND=in-process`
+turns that off --- something to do while measuring, never otherwise. The startup
+marker and log line that record an uncontained run were emitted only where the
+platform has no contained mode to begin with. So the one route that is a
+deliberate choice, and the one that cannot be seen from inside the running
+application, was also the one that left no trace. Both routes are recorded now.
+
+### Changed: three more bounds on numbers a document, or the window, can hand us
+
+None of these has a symptom to describe: they are refusals where there had been
+none.
+
+- **Reading who signed a document** walked the form-field tree with a bound on
+  depth and none on how many entries it had visited. A file whose field arrays
+  point back at each other costs work out of all proportion to its size. It is
+  bounded by node count now.
+- **Finding where a signature's blob ends** ran before the size cap rather than
+  after it, so the cap governed the answer and not the work --- which is the
+  opposite of what the threat model said. That document is corrected too.
+- **A mark's corners and stroke points** were taken as sent. `1e40` is valid
+  JSON, is infinity by the time it is a number here, and gets written as `inf`
+  into the middle of a page's drawing instructions. Refused now rather than
+  clamped, for the reason a moved mark is already refused: a mark quietly put
+  somewhere else is not the mark that was drawn.
+
+### Changed: one home for each thing that was written out several times
+
+Internal, with nothing to see from the outside. The bound on decompressing a
+document's streams had six copies that agreed by accident; the ink width had two;
+the "nothing here yet" line the three side panels draw had three. The temporary
+directory four test modules each defined had two versions that left the process
+id out of the name, so two test binaries running at once would delete each
+other's.
+
+The overlay that draws your marks ended in a catch-all that painted any kind
+nobody had written a branch for as a plain filled rectangle --- a wrong picture
+rather than a missing one, and nothing could go red about it. It is exhaustive
+now, so a new kind of mark is a compile error there instead.
+
+Two documents were corrected against the code rather than the other way round:
+the threat model numbered two of its residual risks `13`, so every reference to
+one by number was one out, and its table of commands that write files said four
+where there are five. Four counts in prose that had drifted were removed rather
+than corrected --- each of them has a command that answers it.
+
 ## [26.8.9] - 2026-08-24
 
 ### Fixed: the installed Windows build could not open any document
@@ -1566,7 +1651,7 @@ release checklist rather than a check that pretends to more than it does.
   and its stream stays in the file as an object nothing points at, because a save is a
   serialisation rather than a sanitation --- the position `docs/THREAT-MODEL.md` already
   took, now with an operation where a reader could plausibly assume otherwise. It is
-  residual risk 15 there. Removing a page's content for real is what redaction means, and
+  residual risk 16 there. Removing a page's content for real is what redaction means, and
   redaction is not built.
 
 ### Turn a page in the document, undo it, and save a copy

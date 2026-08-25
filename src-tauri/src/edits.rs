@@ -318,10 +318,19 @@ impl Edits {
                     let taken = match Fingerprint::of(&path) {
                         Ok(print) => Some(print),
                         Err(why) => {
-                            eprintln!(
+                            // Through `diag` rather than `eprintln!`, which is
+                            // the difference between a line the reader can send
+                            // us and one that goes nowhere: a process started
+                            // from Explorer or the Dock has no stderr, and this
+                            // is the line that explains a refusal the reader
+                            // *does* see --- Save is off for this document for
+                            // the rest of the session and nothing else says why.
+                            // The sink is a `OnceLock`, so this is safe from a
+                            // detached thread.
+                            crate::diag::note(&format!(
                                 "[WARN] {} could not be fingerprinted, so Save is refused for it: {why}",
                                 path.display()
-                            );
+                            ));
                             None
                         }
                     };
@@ -513,8 +522,10 @@ impl Edits {
     ///
     /// # Errors
     ///
-    /// The handle names no open document; `quads` is not a multiple of four; the
-    /// mark covers no area; or the page does not exist or was deleted.
+    /// The handle names no open document; `quads` is not a multiple of four; a
+    /// stroke has an odd number of numbers; any coordinate is not finite; the
+    /// note is longer than [`crate::textbox::MAX_NOTE_CHARS`]; the mark covers
+    /// no area; or the page does not exist or was deleted.
     pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {
         if want.quads.len() % 4 != 0 {
             return Err(format!(
@@ -531,6 +542,29 @@ impl Edits {
                 ragged.len()
             ));
         }
+        // The third door, and it was the one left open. `channel` clamps a
+        // colour and [`displace`](Edits::displace) refuses a non-finite offset
+        // --- its doc comment is where the reasoning is written out --- while a
+        // mark's own geometry, which is the number that actually reaches
+        // `/Rect`, `/QuadPoints` and `/InkList`, was taken as sent. `1e40` is
+        // valid JSON and is `f32::INFINITY` by the time it is here;
+        // `Quad::covers_area` excludes `NaN` and not infinities, so the model
+        // accepts it; and `save.rs` writes it with `format!`, which spells it
+        // `inf` in the middle of a content stream. On an append the read-back
+        // parse fails and the write is cut back, so the reader loses the save
+        // and keeps the file; on a rewrite `verify_before_commit` compares
+        // fingerprints and cannot see it, so the malformed file is renamed over
+        // the document. Refused rather than clamped for `displace`'s reason: a
+        // mark silently moved somewhere else is not the mark the reader drew.
+        if let Some(bad) = want
+            .quads
+            .iter()
+            .chain(want.strokes.iter().flatten())
+            .find(|v| !v.is_finite())
+        {
+            return Err(format!("a mark cannot have a corner at {bad}"));
+        }
+        too_long(&want.note)?;
         let strokes: Vec<Stroke> = want
             .strokes
             .iter()
@@ -557,7 +591,7 @@ impl Edits {
         // and tight bounds would additionally refuse a straight vertical line as
         // covering no area. See `Stroke::bounds`.
         if want.kind == MarkKind::Ink {
-            quads = Stroke::bounds(&strokes, (crate::save::INK_WIDTH / 2.0) as f32)
+            quads = Stroke::bounds(&strokes, (crate::docmodel::INK_WIDTH / 2.0) as f32)
                 .into_iter()
                 .collect();
         }
@@ -676,9 +710,13 @@ impl Edits {
     /// # Errors
     ///
     /// The handle names no open document; the id names no mark, or one that has
-    /// already been removed; the mark is a text box and the note holds a
-    /// character `/WinAnsiEncoding` has no byte for.
+    /// already been removed; the note is longer than
+    /// [`crate::textbox::MAX_NOTE_CHARS`]; the mark is a text box and the note
+    /// holds a character `/WinAnsiEncoding` has no byte for.
     pub fn renote(&self, doc: u32, mark: u64, note: String) -> Result<EditState, String> {
+        // Before the lock, because it needs nothing from the model and the lock
+        // is what a long note makes expensive to hold.
+        too_long(&note)?;
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         let id = MarkId::from_raw(mark);
@@ -1115,6 +1153,31 @@ fn describe(why: Refusal) -> String {
             format!("a {kind:?} mark cannot carry the stamp name it was sent with")
         }
     }
+}
+
+/// Refuses a note past [`crate::textbox::MAX_NOTE_CHARS`].
+///
+/// One function rather than the check written at each of the two doors a note
+/// arrives through, so that the bound and its wording cannot differ between
+/// them --- `docs/TRAPS.md` records a distinction kept in two copies drifting
+/// until a mutation of one survived.
+///
+/// Counted in characters rather than bytes, because that is what the reader
+/// typed and what [`crate::textbox::wrap`] walks; a byte bound would refuse a
+/// German note a third shorter than an English one.
+///
+/// # Errors
+///
+/// The note is longer than the bound.
+fn too_long(note: &str) -> Result<(), String> {
+    let chars = note.chars().count();
+    if chars > crate::textbox::MAX_NOTE_CHARS {
+        return Err(format!(
+            "that note is {chars} characters, and a note holds at most {}",
+            crate::textbox::MAX_NOTE_CHARS
+        ));
+    }
+    Ok(())
 }
 
 fn unknown(doc: u32) -> String {
@@ -2114,7 +2177,7 @@ mod tests {
         );
         let [left, top, right, bottom] =
             [mark.quads[0], mark.quads[1], mark.quads[2], mark.quads[3]];
-        let pad = (crate::save::INK_WIDTH / 2.0) as f32;
+        let pad = (crate::docmodel::INK_WIDTH / 2.0) as f32;
         assert!(
             (left - (50.0 - pad)).abs() < 0.01 && (right - (50.0 + pad)).abs() < 0.01,
             "the rectangle is the stroke grown by half a line: {left} {right}"
@@ -2275,6 +2338,117 @@ mod tests {
         assert_eq!(moved[0], home[0] + 12.0);
         assert_eq!(moved[1], home[1] - 3.0);
         assert!(moved.iter().all(|v| v.is_finite()), "{moved:?}");
+    }
+
+    /// The same rule on the door the mark's own geometry comes through.
+    ///
+    /// `displace` refuses a non-finite *offset* and `channel` clamps a colour;
+    /// the coordinates of the mark itself were taken as sent, which is the
+    /// number that reaches `/Rect`, `/QuadPoints` and `/InkList`. The model
+    /// does not catch it: `Quad::covers_area` is `right > left && bottom > top`,
+    /// and an infinity satisfies both, so `[0, 0, 1e40, 1e40]` was a mark that
+    /// covered area as far as every layer below here was concerned.
+    ///
+    /// Both shapes are checked because they arrive by different fields --- a
+    /// highlight's rectangle and an ink stroke's points --- and a guard written
+    /// for one is not a guard on the other. The control is what stops a method
+    /// that refuses every mark from passing.
+    #[test]
+    fn a_mark_whose_geometry_is_not_finite_is_refused_rather_than_written() {
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+
+        for bad in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let mut want = a_mark(page);
+            // The corner `covers_area` reads, so this is the value that would
+            // have passed the model's own check.
+            want.quads = vec![0.0, 0.0, bad, bad];
+            let refused = edits.annotate(7, want, stamped());
+            assert!(
+                refused.is_err(),
+                "a rectangle cornered at {bad} was taken: {refused:?}"
+            );
+
+            let mut want = of_kind(MarkKind::Ink, page);
+            want.quads = Vec::new();
+            want.strokes = vec![vec![10.0, 10.0, bad, 20.0]];
+            let refused = edits.annotate(7, want, stamped());
+            assert!(
+                refused.is_err(),
+                "a stroke through {bad} was taken: {refused:?}"
+            );
+        }
+        assert!(
+            edits.state(7).expect("state").marks.is_empty(),
+            "and none of them reached the model"
+        );
+
+        // The control. Without it every assertion above is satisfied by an
+        // `annotate` that refuses everything it is handed.
+        edits
+            .annotate(7, a_mark(page), stamped())
+            .expect("an ordinary rectangle");
+        let mut ink = of_kind(MarkKind::Ink, page);
+        ink.quads = Vec::new();
+        ink.strokes = vec![vec![10.0, 10.0, 40.0, 20.0]];
+        edits
+            .annotate(7, ink, stamped())
+            .expect("an ordinary stroke");
+        let marks = edits.state(7).expect("state").marks;
+        assert_eq!(marks.len(), 2, "both ordinary marks were taken");
+        assert!(
+            marks.iter().all(|m| m.quads.iter().all(|v| v.is_finite())),
+            "and what the model holds is finite: {marks:?}"
+        );
+    }
+
+    /// A note past the bound is refused at both doors it can arrive through.
+    ///
+    /// `annotate` and `renote` are separate entry points and a guard on one is
+    /// not a guard on the other --- which is why the check is one function
+    /// called twice rather than two copies, and why this drives both.
+    ///
+    /// What it bounds is work: `wrap` runs for every text box in every state
+    /// the model produces, so an unbounded note makes every later edit re-walk
+    /// it under the lock. The control is a note comfortably longer than
+    /// anything a person types and comfortably inside the bound, so a check
+    /// that refused every note would fail here.
+    #[test]
+    fn a_note_past_the_bound_is_refused_at_both_doors() {
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+        let bound = crate::textbox::MAX_NOTE_CHARS;
+
+        let mut want = a_mark(page);
+        want.note = "a".repeat(bound + 1);
+        let refused = edits.annotate(7, want, stamped());
+        assert!(refused.is_err(), "annotate took it: {refused:?}");
+        assert!(
+            edits.state(7).expect("state").marks.is_empty(),
+            "and no mark reached the model"
+        );
+
+        // The control for that half, and the mark the second half needs.
+        let mut want = a_mark(page);
+        want.note = "a".repeat(bound);
+        edits
+            .annotate(7, want, stamped())
+            .expect("a note exactly at the bound is a note");
+        let mark = edits.state(7).expect("state").marks[0].id;
+
+        let refused = edits.renote(7, mark, "b".repeat(bound + 1));
+        assert!(refused.is_err(), "renote took it: {refused:?}");
+        assert_eq!(
+            edits.state(7).expect("state").marks[0].note.chars().count(),
+            bound,
+            "and the note the reader had is untouched"
+        );
+
+        // The control for the second half.
+        edits
+            .renote(7, mark, "b".repeat(16))
+            .expect("an ordinary note");
+        assert_eq!(edits.state(7).expect("state").marks[0].note, "b".repeat(16));
     }
 
     #[test]

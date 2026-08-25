@@ -144,7 +144,7 @@ pub enum Request {
     /// bytes are attacker-controlled. Doing it here puts it behind the same
     /// sandbox, deadline and restart as every other parse, in the process that
     /// has already parsed this document with `lopdf` for its comments, links and
-    /// properties. `docs/THREAT-MODEL.md` residual risk 17 is what this narrows.
+    /// properties. `docs/THREAT-MODEL.md` residual risk 18 is what this narrows.
     ///
     /// It still names nothing the worker could act on, which is [`Request`]'s
     /// standing property: a `Plan` is page positions, marks and geometry, and

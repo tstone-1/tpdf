@@ -120,6 +120,21 @@ pub fn advance(text: &str, size: f64) -> f64 {
         .sum()
 }
 
+/// Most characters a note may carry.
+///
+/// A bound on work rather than on expression, and generous enough that no reader
+/// typing prose meets it --- sixty-four thousand characters is a long chapter.
+/// What it stops is a *paste*: [`wrap`] runs for every text box in every edit
+/// state the model produces, so one enormous string in one box makes every later
+/// rotate, mark or undo re-wrap it, under the lock that serialises edits. The
+/// wrap is linear in the note's length now, which turns that from unusable into
+/// merely wasteful; this is what keeps it from being unbounded.
+///
+/// Applied to every kind's note rather than to a text box's, because the cost is
+/// in holding and shipping the string, not in drawing it: `EditState` carries
+/// every mark's note to the frontend on every edit.
+pub const MAX_NOTE_CHARS: usize = 64 * 1024;
+
 /// Whether every character can be written in `/WinAnsiEncoding`.
 ///
 /// **The refusal this makes possible is the point.** Without it a reader pastes
@@ -176,17 +191,32 @@ pub fn wrap(text: &str, size: f64, width: f64) -> Vec<String> {
             }
             let mut rest = word;
             while advance(rest, size) > width {
+                // One pass over the head, accumulating. This used to re-measure
+                // every prefix and re-count `rest` on each step --- both O(n)
+                // inside a loop that runs n times, so breaking one long word
+                // cost O(n^2), and a note has no length bound above this. The
+                // result is unchanged because `advance` is a sum over
+                // characters, so the running total after `k` of them *is*
+                // `advance` of that prefix; the arithmetic is identical, in the
+                // same order, on the same values.
+                //
                 // At least one character, always: `take` of zero would push an
                 // empty line and leave `rest` unchanged, which is the loop that
                 // does not end.
-                let mut take = 1;
-                while take < rest.chars().count()
-                    && advance(&rest.chars().take(take + 1).collect::<String>(), size) <= width
-                {
-                    take += 1;
+                let mut used = 0.0;
+                let mut cut = 0;
+                for ch in rest.chars() {
+                    let next = used + f64::from(advance_of(ch)) * size / 1000.0;
+                    // `cut > 0` is "at least one character has been taken",
+                    // which is the guard this loop needs and the only thing a
+                    // separate counter was carrying.
+                    if cut > 0 && next > width {
+                        break;
+                    }
+                    used = next;
+                    cut += ch.len_utf8();
                 }
-                let head: String = rest.chars().take(take).collect();
-                let cut = head.len();
+                let head: String = rest[..cut].to_string();
                 lines.push(head);
                 rest = &rest[cut..];
             }
@@ -288,6 +318,38 @@ mod tests {
             assert!(advance(line, SIZE_PT) <= 40.0, "{line:?} overflows");
         }
         assert_eq!(lines.concat(), long, "breaking it lost or added letters");
+    }
+
+    /// Breaking a long word cuts on character boundaries, not byte ones.
+    ///
+    /// The single-pass break added for the quadratic wrap advances a byte
+    /// cursor by `ch.len_utf8()` where the version before it collected chars
+    /// and took `head.len()`. Both are right; they are right for different
+    /// reasons, and the new one is wrong the moment that arithmetic slips ---
+    /// on a multi-byte character it would slice mid-code-point, which is a
+    /// panic rather than a wrong answer. Every existing word-breaking test is
+    /// pure ASCII, where `len_utf8()` is 1 and any off-by-one in the units
+    /// cannot show.
+    #[test]
+    fn a_long_word_of_multibyte_characters_is_broken_on_character_boundaries() {
+        // Two bytes per character in UTF-8, and each is in the accented range
+        // `advance_of` maps onto a base letter, so it has a real width.
+        let long = "ä".repeat(60);
+        let lines = wrap(&long, SIZE_PT, 40.0);
+        assert!(lines.len() > 1, "a long word was not broken: {lines:?}");
+        for line in &lines {
+            assert!(advance(line, SIZE_PT) <= 40.0, "{line:?} overflows");
+        }
+        assert_eq!(
+            lines.concat(),
+            long,
+            "breaking it lost, added or split a character"
+        );
+        assert_eq!(
+            lines.iter().map(|l| l.chars().count()).sum::<usize>(),
+            60,
+            "and every character came back exactly once"
+        );
     }
 
     #[test]

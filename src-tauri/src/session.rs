@@ -228,25 +228,19 @@ mod tests {
     use super::{Fit, Place, Session, CAPACITY};
     use std::path::PathBuf;
 
-    /// A directory that removes itself, so a failing test cannot leave litter.
-    struct TempDir(PathBuf);
+    use crate::testutil::TempDir;
 
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("tpdf-session-{name}"));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("temp dir");
-            Self(dir)
-        }
-
-        fn file(&self) -> PathBuf {
-            self.0.join("session.json")
-        }
+    /// The session file inside a scratch directory.
+    ///
+    /// An extension rather than a method on [`TempDir`], for `diag.rs`'s
+    /// reason: `session.json` is this module's name for it.
+    trait SessionFile {
+        fn file(&self) -> PathBuf;
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+    impl SessionFile for TempDir {
+        fn file(&self) -> PathBuf {
+            self.join("session.json")
         }
     }
 
@@ -493,11 +487,7 @@ mod tests {
         session.remember(place("/tmp/a.pdf"));
         session.save(&dir.file()).expect("save");
 
-        let left: Vec<String> = std::fs::read_dir(&dir.0)
-            .expect("read dir")
-            .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
-            .collect();
-        assert_eq!(left, vec!["session.json".to_string()]);
+        assert_eq!(dir.names(), vec!["session.json".to_string()]);
     }
 
     #[test]

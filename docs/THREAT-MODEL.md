@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- four of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- five of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -81,11 +81,20 @@ Four principals, each trusting only what is below it in the table.
 since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
 `core:default`, `dialog:allow-open`, `dialog:allow-save` and `updater:default`, and the two
 dialog permissions open panels and write nothing. But it can issue `save_copy`,
-`save_document`, `extract_pages` and `print_document`, and all four write a file at the
-process's authority with a path the caller chose. So the accurate statement is that the
-webview cannot touch the filesystem *itself* and can ask for four specific writes; the flat version reads as the stronger claim, and a reader
-who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why
-neither path checks its argument against the document actually open.
+`save_document`, `extract_pages`, `merge_documents` and `print_document`, and all five write
+a file at the process's authority with a path the caller chose. So the accurate statement is
+that the webview cannot touch the filesystem *itself* and can ask for five specific writes;
+the flat version reads as the stronger claim, and a reader who stops at this table gets the
+wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
+against the document actually open.
+
+**It said "four" until 2026-08-24, and `merge_documents` had been the fifth since 2026-08-24.**
+That is the same drift this paragraph was written to record, one writer later: the count is a
+number in prose and the list of commands is the thing that changes, so the count is wrong from
+the moment a command is added until somebody reads this sentence again. The list is now the
+claim and the number follows it --- and the standing rule that a count in prose has nothing
+checking it applies here as much as it does to the trap index. A new file-writing command
+belongs in this list, in §T6.1, and in the coordinator-parsing entry at residual risk 18.
 
 **"No network" was wrong in the same way and for longer.** `updater:default` is granted to
 this window, and it is the *frontend* that spends it: `App.svelte` imports
@@ -180,6 +189,9 @@ too, through `lopdf`, and each is one menu item away.
   over the open file.
 - `save_copy` → `save::write_copy`, on every Save a copy.
 - `extract_pages` → `save::write_copy` again, on every extraction.
+- `merge_documents` → `save::write_merged`, on every merge --- and this one parses **more**
+  than the open document: every file going in is loaded with `lopdf` here, so a merge of four
+  documents is four parses of bytes nothing has rendered. Residual risk 18 carries that.
 
 **The first of those moved the same day.** A save that only *adds* marks --- the ordinary
 "keep my highlights" --- is prepared by `save::append_update`, which is a pure function of the
@@ -250,7 +262,7 @@ What is **not** bounded is time or memory. There is no deadline on these parses 
 resource limit, because both need a process to enforce them against — which is exactly what
 `docs/PLAN.md` §3's surgery worker is for and it is not built. A document crafted to make
 `lopdf` spin presents as an application that has stopped responding, not as a contained
-worker failure. See residual risk 17.
+worker failure. See residual risk 18.
 
 What is bounded rather than moved: both graph walks the rewrite performs — `sweep::references`
 and `print::forget_in_object` — are recursive and now refuse past `sweep::MAX_NESTING` (256)
@@ -711,7 +723,7 @@ correctness property rather than a saving: a rebuild reparents every page of eve
 and doing that to one nobody rearranged is a rewrite with no request behind it. The
 abandoned tree nodes stay in the file as unreachable objects, exactly as a deleted page's
 content does, and for the same stated reason --- a saved copy is a serialisation, not a
-sanitation (§T6.1, residual risk 15).
+sanitation (§T6.1, residual risk 16).
 
 **Dragging a thumbnail adds nothing here**, checked rather than assumed when it landed on
 2026-08-17. It registers no command, takes no capability and reaches no new sink: the gesture
@@ -829,10 +841,30 @@ attacker-controlled, and three things bound it rather than one.
   rather than passed off as a document with no certificate. The bound has a test that can fail,
   which took two attempts --- see the trap; the first version could not distinguish refusing a
   blob from parsing one and failing.
+
+  **This sentence was true of two parsers out of three until 2026-08-24.** `ber.rs` walks the
+  same attacker-chosen bytes as `cms` and `der` and ran *before* the bound, so a 200 MB
+  `/Contents` was measured, re-measured once per constructed level and copied into an
+  allocation its own size, and only the result was compared against `MAX_SIG_BLOB`. It is a
+  parser like the other two and is now bounded like them, on its **input**, at twice the
+  bound --- the factor is what makes the check refuse nothing the output check would have
+  accepted, since definite-length rewriting can shrink a value by at most half. The guard has
+  no outcome a test can see, for exactly that reason; what its test pins is the factor.
 - **Both crates are `no_std`-shaped pure-Rust decoders returning `Result`.** No `unsafe`, no
   allocation driven by a declared length the input chose, and every failure path here maps to
   `None` plus a counted limit. Nine packages, all `Apache-2.0 OR MIT` bar `flagset` which is
   `Apache-2.0`, swept over the whole tree rather than read off a README.
+
+**Reaching a signature is bounded too, and it was not until 2026-08-24.**
+`docinfo::read_signatures` walks the form's field tree, and it bounded the *depth* of that
+walk and the number of signatures it would report --- neither of which stops **fan-out**. A
+group node carries no `/FT`, so it emits no signature and `MAX_SIGNATURES` never fires; a node
+whose `/Kids` names itself sixty-four times therefore costs 64^8 pops inside a depth bound of
+eight, on a file of a few kilobytes. `MAX_FIELD_NODES` (4,096) bounds the pops themselves,
+which is the shape `links.rs`'s `MAX_TREE_NODES` had already taken for its own tree walk.
+Hitting it is reported through `Limits::signatures_dropped` --- the same counter the signature
+bound reports through, because to a reader they are one event: this scan stopped looking, and
+what it says about signatures is incomplete.
 
 **And the honest limit, which is the part a reader would get wrong.** Parsing a certificate is
 not verifying one. tpdf builds no chain, holds no trust store, consults no revocation list, and
@@ -1767,7 +1799,7 @@ which is what makes it evidence rather than a milestone.
     left an empty log, byte-identical to a session with nothing wrong. What is unchanged is
     the general case above --- a worker that *crashes*, or dies after the document is open,
     still says nothing a reader can send back.
-13. **`save_copy` writes a PDF anywhere the reader can write** (§T6.1), added 2026-08-16 ---
+14. **`save_copy` writes a PDF anywhere the reader can write** (§T6.1), added 2026-08-16 ---
     the first command on this surface that creates a file, and its authority is the app
     process's rather than a panel's. The path comes from the frontend, so a native save panel
     is the *interface* and not the bound. What bounds it is residual risk 7: the CSP admits
@@ -1775,11 +1807,11 @@ which is what makes it evidence rather than a milestone.
     this can already reach `open_document` and the print path --- and it is listed because a
     write is a different verb from the ones this surface had, not because the CSP is believed
     to be weaker than it was yesterday.
-14. **A saved copy is a serialisation and not a sanitation** (§T6.1). Nothing on that path
+15. **A saved copy is a serialisation and not a sanitation** (§T6.1). Nothing on that path
     collects an unreachable object or drops a prior incremental revision, so whatever the
     source carried, the copy carries. That is right for "save a copy" and wrong for a
     redaction, and the redaction path must not be built on it by assuming otherwise.
-15. **A copy that lost a page keeps the deleted page's content in every place that is not
+16. **A copy that lost a page keeps the deleted page's content in every place that is not
     the page tree** (§T6.2), added 2026-08-17. `pagetree::drop_pages` removes the page
     object and every reference to it, and the mark-and-sweep that would collect what those
     references *held* --- the content stream, the fonts, an embedded image --- runs on the
@@ -1789,7 +1821,7 @@ which is what makes it evidence rather than a milestone.
     reader could plausibly believe otherwise: `docs/PLAN.md` §6 is where "removed" comes to
     mean removed, and it is not built.
 
-16. **A cropped page hides content and does not remove it** (§T6.6), added 2026-08-18.
+17. **A cropped page hides content and does not remove it** (§T6.6), added 2026-08-18.
     Everything outside the crop box is still in the saved file, still extractable, and still
     found by tpdf's own search --- a crop moves character boxes, not character indices. That
     is what `/CropBox` means, and it is the right behaviour for a crop. It is listed
@@ -1798,7 +1830,7 @@ which is what makes it evidence rather than a milestone.
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
 
-17. **A rewriting save, Save a copy, Extract and Merge parse documents inside the coordinator**
+18. **A rewriting save, Save a copy, Extract and Merge parse documents inside the coordinator**
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
     day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).

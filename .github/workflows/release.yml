@@ -259,7 +259,9 @@ jobs:
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag
-          a thumbnail in the page strip, or use the command palette. Text you
+          a thumbnail in the page strip, or use the command palette. Any number
+          of other PDFs can be merged onto the end of the open one, into a new
+          file. Text you
           drag across can be highlighted, underlined, struck out or
           squiggled; you can leave a comment anywhere on a page, draw a
           box, an ellipse or freehand ink on one, add a text box, stamp it
@@ -303,7 +305,10 @@ jobs:
           roadmap in `docs/PLAN.md`.
 
           (Stamps were listed here until `26.8.8`, one release after they
-          shipped. Nothing can go red for a stale sentence in this block --
+          shipped, and *Merge documents* was missing from the paragraph above
+          until `26.8.10`, the release that added it -- the same drift in the
+          other direction, caught by the same step. Nothing can go red for a
+          stale sentence in this block --
           it is a literal in the workflow, deliberately, so that no tag can
           pick up a CHANGELOG heading of the wrong shape. The cost is that it
           is only ever as current as the last person who read it, which is why

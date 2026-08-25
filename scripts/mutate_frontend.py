@@ -484,6 +484,18 @@ MUTATIONS = [
         "normalises the corners whichever way the drag went",
     ),
     Mutation(
+        # Classify a comment as a plain fill. The overlay then draws a filled
+        # rectangle where the bubble goes --- which is what the painter's old
+        # bare `else` did for *any* kind it had no branch for, and the reason
+        # this classifier is exhaustive: a wrong picture rather than a missing
+        # one, on every page, with the saved file still correct.
+        "markband: draw a comment as a plain fill rather than as its own style",
+        "src/lib/markband.ts",
+        '    case "note":\n      return "icon";',
+        '    case "note":\n      return "fill";',
+        "agrees with save.rs arm for arm, which is where the pair can drift",
+    ),
+    Mutation(
         # Drop the clamp that keeps a drawn box on the page, exactly as the
         # comment's was dropped above. A drag off the edge writes a /Rect past
         # the page box, which `save.rs` maps without complaint.

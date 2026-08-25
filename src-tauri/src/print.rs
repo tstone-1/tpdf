@@ -42,11 +42,7 @@ use crate::edits::Plan;
 use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages, reorder_pages};
 use crate::sweep;
 
-/// Cap on a single decompressed stream, matching the sanitizing rewrite.
-///
-/// A print job parses attacker-controlled input like everything else here, and
-/// spike 0.4 measured a 2,879-byte input inflating to 1 GiB.
-pub(crate) const MAX_DECODE: usize = 64 * 1024 * 1024;
+use crate::encoding::MAX_DECODE;
 
 /// One page of a print job.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -851,28 +847,7 @@ mod tests {
     /// because a vanished check and a passing one look identical in a summary.
     const OS_PARSER_HAS_TEXT: bool = cfg!(target_os = "macos");
 
-    /// A scratch directory that removes itself.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> Self {
-            let mut path = std::env::temp_dir();
-            path.push(format!("tpdf-print-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).expect("scratch");
-            Self(path)
-        }
-
-        fn file(&self, name: &str) -> PathBuf {
-            self.0.join(name)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::testutil::TempDir;
 
     /// A document whose pages inherit `/Resources` and `/Rotate` from the tree.
     ///
@@ -1029,7 +1004,7 @@ mod tests {
         // risk --- lopdf drops encryption silently, and a rewrite reflows
         // structure --- and the printer was going to get these bytes anyway.
         let dir = TempDir::new("passthrough");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 3, 0);
         let original = std::fs::read(&path).expect("read");
 
@@ -1047,7 +1022,7 @@ mod tests {
     #[test]
     fn a_turn_of_four_quarters_is_still_the_file_itself() {
         let dir = TempDir::new("fullturn");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 2, 0);
         let original = std::fs::read(&path).expect("read");
         let out = build(
@@ -1064,7 +1039,7 @@ mod tests {
     #[test]
     fn a_page_range_keeps_exactly_the_pages_asked_for() {
         let dir = TempDir::new("range");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 5, 0);
 
         let out = build(
@@ -1090,7 +1065,7 @@ mod tests {
         // still opens, still counts, and prints blank --- so the assertion has
         // to reach the font through the page, which is what a renderer does.
         let dir = TempDir::new("inherit");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 4, 0);
 
         let out = build(
@@ -1158,7 +1133,7 @@ mod tests {
         // another quarter. Composing against the literal `/Rotate` --- absent on
         // every page here --- would print 90 instead of 180.
         let dir = TempDir::new("compose");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 2, 90);
 
         let out = build(
@@ -1237,7 +1212,7 @@ mod tests {
     #[test]
     fn the_shared_fixture_really_does_present_one_object_under_two_numbers() {
         let dir = TempDir::new("shared-pre");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         let _ = shared_fixture(&path);
 
         let doc = Document::load(&path).expect("load");
@@ -1258,7 +1233,7 @@ mod tests {
     #[test]
     fn a_page_named_twice_is_turned_once() {
         let dir = TempDir::new("shared-turn");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         let _ = shared_fixture(&path);
 
         let out = build(
@@ -1294,7 +1269,7 @@ mod tests {
     #[test]
     fn each_page_takes_its_own_edit_and_the_view_rotation_on_top() {
         let dir = TempDir::new("per-page");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 3, 90);
 
         let out = build(
@@ -1343,7 +1318,7 @@ mod tests {
     #[test]
     fn a_page_the_reader_turned_prints_turned_with_no_view_rotation_at_all() {
         let dir = TempDir::new("per-page-only");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 3, 90);
 
         let out = build(
@@ -1382,7 +1357,7 @@ mod tests {
     #[test]
     fn a_page_a_kept_number_also_names_is_not_dropped() {
         let dir = TempDir::new("shared-drop");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         let _ = shared_fixture(&path);
 
         // Print page 1 only. Page 2 is the same object, so building `doomed` from
@@ -1419,7 +1394,7 @@ mod tests {
     #[test]
     fn a_shared_page_costs_the_tree_one_count_per_number_it_answered_to() {
         let dir = TempDir::new("shared-count");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         let pages_id = shared_fixture(&path);
 
         let before = reload(&std::fs::read(&path).expect("read"));
@@ -1455,7 +1430,7 @@ mod tests {
     #[test]
     fn a_rotation_wraps_rather_than_growing() {
         let dir = TempDir::new("wrap");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 1, 270);
 
         let out = build(
@@ -1474,7 +1449,7 @@ mod tests {
     #[test]
     fn a_page_the_document_does_not_have_is_refused() {
         let dir = TempDir::new("range-error");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 3, 0);
         let error = build(
             &path,
@@ -1491,7 +1466,7 @@ mod tests {
     fn an_empty_selection_is_refused() {
         // Printing nothing is a bug in whatever built the job, not a job.
         let dir = TempDir::new("empty");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 2, 0);
         assert!(build(
             &path,
@@ -1511,7 +1486,7 @@ mod tests {
         // assertion. What only the sweep can remove is the *content stream* a
         // deleted page pointed at, so that is what is named and looked for.
         let dir = TempDir::new("collect");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 8, 0);
 
         let source = Document::load(&path).expect("load");
@@ -1548,7 +1523,7 @@ mod tests {
     #[test]
     fn an_outline_naming_pages_that_are_gone_is_dropped() {
         let dir = TempDir::new("outline");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 4, 0);
 
         // Give it an outline pointing at a page the subset will not keep.
@@ -1606,7 +1581,7 @@ mod tests {
     #[test]
     fn a_third_parser_reads_back_exactly_the_pages_that_were_kept() {
         let dir = TempDir::new("pdfkit-range");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 5, 0);
 
         let out = build(
@@ -1662,7 +1637,7 @@ mod tests {
         // second case can tell --- the first is 90 either way.
         for (inherited, expected) in [(0, 90), (90, 180)] {
             let dir = TempDir::new(&format!("pdfkit-turn-{inherited}"));
-            let path = dir.file("in.pdf");
+            let path = dir.join("in.pdf");
             fixture(&path, 2, inherited);
 
             let out = build(
@@ -1691,7 +1666,7 @@ mod tests {
         // readers tolerate the tail --- asserted here rather than assumed, by a
         // reader that is not the one which wrote it.
         let dir = TempDir::new("pdfkit-tail");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 3, 0);
 
         let out = build(
@@ -1919,7 +1894,7 @@ mod tests {
         // the same *document* here --- the same pages in the same order --- and
         // what tells them apart is the shape of the tree underneath.
         let dir = TempDir::new("nested-order");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         nested_fixture(&path, 3, 2);
 
         let kind = |bytes: &[u8]| {
@@ -1989,7 +1964,7 @@ mod tests {
         // parent, and one that decrements the root once per *group* rather than
         // once per page, are both wrong here and in different directions.
         let dir = TempDir::new("nested");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         let (root, middles) = nested_fixture(&path, 3, 2);
 
         let mut doc = Document::load(&path).expect("load");
@@ -2039,7 +2014,7 @@ mod tests {
         };
 
         let dir = TempDir::new("control");
-        let synthetic = dir.file("in.pdf");
+        let synthetic = dir.join("in.pdf");
         fixture(&synthetic, 6, 90);
 
         let mut cases: Vec<(String, PathBuf)> = vec![("synthetic-6p".into(), synthetic)];
@@ -2137,7 +2112,7 @@ mod tests {
         // `effective_rotation` runs on input we did not write. A `/Parent` loop
         // is exactly the shape the outline walk already has to defend against.
         let dir = TempDir::new("cycle");
-        let path = dir.file("in.pdf");
+        let path = dir.join("in.pdf");
         fixture(&path, 1, 0);
         let mut doc = Document::load(&path).expect("load");
         let page = *doc.get_pages().values().next().expect("one page");

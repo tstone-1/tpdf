@@ -745,3 +745,71 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       return quad;
   }
 }
+
+/**
+ * How the overlay draws a kind, as one value rather than seven questions.
+ *
+ * The names are `save.rs`'s `Paint` variants, deliberately: the overlay and the
+ * writer draw every mark, and a reader comparing the two should not have to
+ * translate between two vocabularies for one decision. `docs/TRAPS.md` records
+ * a differential between them finding a defect neither side's own tests could.
+ *
+ * **`Fill` has no `Paint` counterpart** and is not an omission. A wash is drawn
+ * multiplied here and written as a `/Highlight` with a blend mode there, so the
+ * file's version of it is a property of the annotation rather than of the shape;
+ * what the overlay does is fill the quad. The blend is still {@link isWash}'s to
+ * decide, because it is set per mark on the context rather than per shape.
+ */
+export type Paint =
+  | "fill"
+  | "line"
+  | "wave"
+  | "outline"
+  | "ellipse"
+  | "text"
+  | "path"
+  | "icon"
+  | "stamp";
+
+/**
+ * Which of those a kind is drawn as.
+ *
+ * **Exhaustive, for {@link isMovable}'s reason and one more.** The overlay used
+ * to ask the `isX` predicates in an if-chain ending in a bare `else` that filled
+ * the quad, so a kind nobody added a branch for was drawn as a filled rectangle
+ * --- a wrong picture rather than a missing one, on every page, with nothing
+ * going red. `paintMarks`' own comments record a kind that shipped unpainted for
+ * exactly that reason.
+ *
+ * Answering it once, here, is what turns that into a compile error: a tenth kind
+ * has no arm, and `MarkKind` is a union rather than an enum so TypeScript refuses
+ * the switch rather than falling through it. The individual predicates stay ---
+ * they answer questions the painter is not asking, `isWash` for the blend mode
+ * and `isMovable` for the drag --- and this is the only one the painter needs.
+ *
+ * The mapping is `paint()` in `save.rs` arm for arm, except that a highlight is
+ * `fill` here where it is `Wash` there. See {@link Paint}.
+ */
+export function paintOf(kind: MarkKind): Paint {
+  switch (kind) {
+    case "highlight":
+      return "fill";
+    case "underline":
+    case "strikeout":
+      return "line";
+    case "squiggly":
+      return "wave";
+    case "square":
+      return "outline";
+    case "ellipse":
+      return "ellipse";
+    case "textbox":
+      return "text";
+    case "ink":
+      return "path";
+    case "note":
+      return "icon";
+    case "stamp":
+      return "stamp";
+  }
+}

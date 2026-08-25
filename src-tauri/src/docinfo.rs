@@ -66,14 +66,24 @@ use crate::annots::decode_text_string;
 use crate::ber;
 use crate::encoding::resolve;
 
-/// Ceiling on decompressed stream size, as everywhere else that parses.
-const MAX_DECODE: usize = 64 * 1024 * 1024;
+use crate::encoding::MAX_DECODE;
 
 /// Most `/Info` entries reported. A document may carry arbitrary custom keys.
 const MAX_FIELDS: usize = 64;
 
 /// Most signature fields walked.
 const MAX_SIGNATURES: usize = 32;
+
+/// Most `/Fields` entries popped walking the form's field tree.
+///
+/// A bound on the work, not on the tree, and it is the one [`MAX_SIGNATURES`]
+/// and the depth bound together do not give. Depth stops a chain; neither stops
+/// *fan-out*, and a node whose `/Kids` names itself sixty-four times costs
+/// 64^8 pops inside a bound of eight --- while `MAX_SIGNATURES` never fires,
+/// because a group node carries no `/FT` and so emits no signature to count.
+/// `links.rs`'s `MAX_TREE_NODES` bounds its own tree walk for exactly this
+/// reason and in exactly this shape.
+const MAX_FIELD_NODES: usize = 4_096;
 
 /// Longest reported value, in characters, before it is clipped.
 const MAX_VALUE_CHARS: usize = 512;
@@ -317,7 +327,12 @@ pub struct Limits {
     /// a token dropped in silence reads as a signature nobody timestamped,
     /// which is the ordinary case and therefore the reassuring one.
     pub timestamps_unread: usize,
-    /// Signature fields not walked, at [`MAX_SIGNATURES`].
+    /// Signature fields not walked, at [`MAX_SIGNATURES`] or [`MAX_FIELD_NODES`].
+    ///
+    /// One number for two bounds because they are one event to a reader: this
+    /// scan declined to keep looking, so what it reports about signatures is
+    /// incomplete. Which bound stopped it is a fact about the document's shape,
+    /// not about what the reader can now trust.
     pub signatures_dropped: usize,
     /// `/Fields` entries that resolved to nothing usable.
     pub unreadable: usize,
@@ -712,7 +727,6 @@ fn permissions(revision: i64, p: i64) -> Vec<Permission> {
         .collect()
 }
 
-/// Reads the `/Info` dictionary, standard keys first.
 /// The catalog's XMP packet, decoded.
 ///
 /// A `/Metadata` stream is *usually* stored uncompressed --- the specification
@@ -740,6 +754,7 @@ fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp
     Some(crate::xmp::scan(&packet))
 }
 
+/// Reads the `/Info` dictionary, standard keys first.
 fn read_fields(document: &Document, limits: &mut Limits) -> Vec<Field> {
     let Some(dict) = document
         .trailer
@@ -909,10 +924,13 @@ fn count_attachments(document: &Document) -> usize {
 
 /// Reads every signature field the form declares.
 ///
-/// The walk is bounded in both directions a form can grow --- `/Fields` is a
-/// tree, so it is hostile input of the same shape [`crate::outline`] bounds its
-/// depth against, and a document can declare more fields than anybody would
-/// read. Both bounds report through [`Limits`].
+/// The walk is bounded in all three directions a form can grow --- `/Fields` is
+/// a tree, so it is hostile input of the same shape [`crate::outline`] bounds
+/// its depth against; a document can declare more fields than anybody would
+/// read; and it can make one node the parent of many, which neither of the
+/// other two bounds touches. Depth is bounded at eight, emitted signatures at
+/// [`MAX_SIGNATURES`], and popped entries at [`MAX_FIELD_NODES`]. All three
+/// report through [`Limits`].
 fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<Signature> {
     let Some(form) = document
         .catalog()
@@ -937,7 +955,19 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
     // sees the fields in every other application.
     queue.reverse();
 
+    let mut budget = MAX_FIELD_NODES;
     while let Some((entry, depth, prefix)) = queue.pop() {
+        // Charged before anything is read, so the refusal costs one pop rather
+        // than one parse. What is left in the queue is what will now not be
+        // walked, and it is reported as such: stopping in silence here would
+        // read as a form with no more signature fields in it, which is the
+        // ordinary case and therefore the reassuring one.
+        let Some(left) = budget.checked_sub(1) else {
+            limits.signatures_dropped += queue.len() + 1;
+            break;
+        };
+        budget = left;
+
         if out.len() >= MAX_SIGNATURES {
             limits.signatures_dropped += 1;
             continue;
@@ -1139,6 +1169,11 @@ fn read_certificate_bounded(
 /// lost its end-of-contents markers. It also rewrites indefinite lengths, so a
 /// signature no parser here could read now reaches one. See the traps of those
 /// names.
+///
+/// **`bound` is applied twice, and the first one is the load-bearing half.**
+/// The walk is itself a parser on attacker-chosen bytes, so bounding only its
+/// *output* lets a document choose how much work the walk does. The input check
+/// is deliberately looser than the output one --- see the comment on it.
 fn signature_contents(
     document: &Document,
     sig: &Dictionary,
@@ -1152,6 +1187,47 @@ fn signature_contents(
     if raw.iter().all(|byte| *byte == 0) {
         return None;
     }
+
+    // Bounded **before** the BER walk, not only after it. `ber` is a parser on
+    // the same attacker-chosen bytes as `cms` and `der`, and the bound below
+    // was the only one --- so a 200 MB `/Contents` was measured, walked once
+    // per constructed level, and copied into an allocation its own size before
+    // being declared too large. `docs/THREAT-MODEL.md` §T6.8 claims the blob is
+    // capped before the parser sees it; this is the line that makes that true
+    // of every parser rather than of two out of three.
+    //
+    // Twice the bound rather than the bound itself, and the factor is the whole
+    // of the reasoning. `bound` measures the walk's *output*, and rewriting can
+    // make a value shorter: an indefinite level costs four bytes (`30 80` and
+    // the `00 00` that closes it) where a definite one costs two. So the most a
+    // blob can shrink is half, and it cannot reach half --- with `L` levels
+    // around content of `c` bytes the input is `4L + c` and the output `2L + c`,
+    // whose ratio is under 2 for every `L` and every `c`, approaching it only as
+    // the content vanishes and the nesting grows without bound.
+    //
+    // So on the *rewriting* term this refuses nothing the check below would
+    // have accepted, at any bound. A tighter factor would not: at 1x, a
+    // legitimately nested signature is refused unparsed. The test pins the
+    // constant by building the shape that comes closest to the limit.
+    //
+    // **Rewriting is not the only term, and the first version of this comment
+    // claimed "at *any* bound" on the strength of it alone.** `raw` is the
+    // whole reserved span and the walk drops the writer's zero padding with
+    // everything else past the value's end, so the input can also exceed the
+    // output by however much was reserved --- a term with no bound in the
+    // format at all. Where a writer reserves more than double what it fills,
+    // this refuses a blob the check below would have taken. Measured on
+    // `incr-signed.pdf`: 2,202 raw against 1,468 walked, a ratio of 1.50, so
+    // the fixtures here are nowhere near it, and at [`MAX_SIG_BLOB`] reaching
+    // it means a `/Contents` reservation over 2 MiB holding under 1 MiB of
+    // signature, which no signer writes. It is a real edge rather than a
+    // reachable one, and it is stated because the sentence above it was a
+    // stronger claim than the argument supported.
+    if raw.len() > bound.saturating_mul(2) {
+        *unread += 1;
+        return None;
+    }
+
     let Some(blob) = ber::to_definite_length(raw) else {
         *unread += 1;
         return None;
@@ -2758,6 +2834,80 @@ mod tests {
         assert!(!limits.any(), "nothing is wrong with it");
     }
 
+    /// The blob is bounded before the BER walk reads it, not only after.
+    ///
+    /// The walk is a parser on attacker-chosen bytes like `cms` and `der`, and
+    /// until this guard it was the one with no bound in front of it: a 200 MB
+    /// `/Contents` was measured, re-measured once per constructed level, and
+    /// copied into an allocation its own size, and only then compared against
+    /// [`MAX_SIG_BLOB`]. `docs/THREAT-MODEL.md` §T6.8 said the blob was capped
+    /// before the parser saw it, which was true of two parsers out of three.
+    ///
+    /// **What this pins is the slack, because the guard itself has no outcome.**
+    /// The input check can only refuse blobs the output check would refuse too
+    /// --- that is the point of the factor of two --- so no input makes the two
+    /// versions of this function return different answers, and an outcome test
+    /// of the guard would pass with it deleted. Its real effect is work not
+    /// done, which no assertion here can observe; `docs/TRAPS.md` has that shape
+    /// under a length bound not being testable by the verdict it produces.
+    ///
+    /// The constant *is* testable, and it is where a mistake would land. The
+    /// fixture is the shape that shrinks the most under rewriting --- maximal
+    /// nesting around nothing, the case whose input-to-output ratio comes
+    /// closest to two from below --- and asserts it still gets through. At a
+    /// factor of one it does not, so a signature legitimately nested that deep
+    /// would be refused unparsed.
+    #[test]
+    fn the_pre_walk_bound_refuses_nothing_the_walk_would_have_accepted() {
+        // Nested indefinite-length values: `30 80` per level, `00 00` to close,
+        // an empty value at the centre. Four bytes a level in, two out.
+        let levels = ber::MAX_DEPTH;
+        let mut blob = Vec::new();
+        for _ in 0..levels {
+            blob.extend_from_slice(&[0x30, 0x80]);
+        }
+        blob.extend_from_slice(&[0x05, 0x00]);
+        for _ in 0..levels {
+            blob.extend_from_slice(&[0x00, 0x00]);
+        }
+
+        let rewritten = ber::to_definite_length(&blob).expect("a walkable value");
+        assert!(
+            rewritten.len() < blob.len(),
+            "the fixture is only interesting if rewriting shrinks it: {} -> {}",
+            blob.len(),
+            rewritten.len()
+        );
+
+        // The tightest bound that still admits the rewritten value. The input
+        // is nearly twice this and must pass anyway.
+        let bound = rewritten.len();
+        assert!(
+            blob.len() > bound,
+            "and only if the input is larger than the bound at all: {} vs {}",
+            blob.len(),
+            bound
+        );
+
+        let document = Document::with_version("1.7");
+        let sig = dictionary! {
+            "Type" => "Sig",
+            "Contents" => Object::String(blob.clone(), lopdf::StringFormat::Hexadecimal),
+        };
+
+        let mut unread = 0;
+        let got = signature_contents(&document, &sig, bound, &mut unread);
+        assert_eq!(
+            got.as_deref(),
+            Some(rewritten.as_slice()),
+            "the deepest legitimate nesting survives the input check, at {} \
+             bytes in against a bound of {}",
+            blob.len(),
+            bound
+        );
+        assert_eq!(unread, 0, "and nothing is reported as unread");
+    }
+
     /// A bound a *valid* blob exceeds refuses it rather than parsing it.
     ///
     /// The pair is the test. An oversized piece of garbage cannot check this ---
@@ -2767,15 +2917,32 @@ mod tests {
     /// guard survived it. The same real blob is offered twice instead, once
     /// under a bound it clears and once under one it does not; only the guard
     /// can make those two differ.
+    ///
+    /// **And the second version survived that mutation too, for a different
+    /// reason.** `bound` is applied twice now --- once to the raw span before
+    /// the BER walk and once to the walked blob --- and the two are
+    /// indistinguishable in their observable: both return `None` and both
+    /// increment the same counter. At a bound of 100 the *input* check refuses
+    /// a 2,202-byte span long before the output check is reached, so deleting
+    /// the output check changed nothing this test could see. It was covered
+    /// until an unrelated change that only made things stricter took the cover
+    /// away, which is the trap of that name, arriving in the same increment
+    /// that added the front guard.
+    ///
+    /// So the refusal is asked for twice, at a bound chosen for each guard.
+    /// `raw.len().div_ceil(2)` is the tightest bound the input check still
+    /// admits --- `raw.len() > bound * 2` is false by construction there --- so
+    /// a refusal at that bound can only be the output check's, and deleting it
+    /// makes the call return `Some`.
     #[test]
     fn a_bound_a_valid_blob_exceeds_refuses_it_rather_than_parsing_it() {
-        let Some(blob) = signature_blob("incr-signed.pdf") else {
+        let Some(raw) = signature_blob("incr-signed.pdf") else {
             println!("[SKIP] incr-signed.pdf: not generated");
             return;
         };
         let document = Document::with_version("1.7");
         let sig = dictionary! {
-            "Contents" => Object::String(blob, lopdf::StringFormat::Hexadecimal),
+            "Contents" => Object::String(raw.clone(), lopdf::StringFormat::Hexadecimal),
         };
 
         // The control: under the real bound the very same blob parses.
@@ -2786,12 +2953,38 @@ mod tests {
         );
         assert_eq!(generous.certificates_unread, 0);
 
+        // Far under both bounds: the input check is what refuses this one.
         let mut tight = Limits::default();
         assert!(
             read_certificate_bounded(&document, &sig, &mut tight, 100).is_none(),
             "and must be refused when it is over the bound"
         );
         assert_eq!(tight.certificates_unread, 1, "and say so");
+
+        // The fixture has to be able to tell the two guards apart, and that is
+        // a property of how much padding its writer reserved rather than of
+        // anything here: the walked blob must still exceed half the raw span.
+        // Measured on `incr-signed.pdf`, 1,468 walked against 2,202 raw. A
+        // fixture padded past half would make the two bounds agree on every
+        // input, and this assertion is what says so instead of the test
+        // quietly ceasing to discriminate.
+        let walked = ber::to_definite_length(&raw).expect("a real signature walks");
+        let edge = raw.len().div_ceil(2);
+        assert!(
+            walked.len() > edge,
+            "the fixture cannot separate the two bounds: {} walked, {} raw, so no bound \
+             both the input check admits and the output check refuses",
+            walked.len(),
+            raw.len()
+        );
+
+        // Admitted by the input check by construction, and over the output one.
+        let mut edged = Limits::default();
+        assert!(
+            read_certificate_bounded(&document, &sig, &mut edged, edge).is_none(),
+            "a blob the walk admits must still be refused when the walked value is over the bound"
+        );
+        assert_eq!(edged.certificates_unread, 1, "and say so");
     }
 
     /// The `/Contents` blob of a signed fixture, padding and all.
@@ -3285,6 +3478,121 @@ mod tests {
              shown a document that looks unsigned"
         );
         assert!(deep.limits.any(), "which puts the notice on the dialog");
+    }
+
+    /// A node that names itself in `/Kids` is walked in bounded steps.
+    ///
+    /// The depth bound above cannot do this, and the test above cannot see it:
+    /// its fixture is a *chain*, one kid per node, where eight levels are eight
+    /// pops. Give one node sixty-four kids and eight levels are 64^8 pops, and
+    /// `MAX_SIGNATURES` never fires because a group node carries no `/FT` and
+    /// so emits nothing to count. The whole cost of the trap is in the fan-out,
+    /// which is the dimension neither existing bound touches.
+    ///
+    /// The two halves are what make this a bound rather than a refusal: a form
+    /// wide enough to be real is read in full, and the self-referencing one
+    /// returns *and says it gave up*. Without the first half a scan that
+    /// refused every form would pass.
+    ///
+    /// **The looping half carries no signature field at all**, and that is the
+    /// load-bearing choice rather than a simplification. `signatures_dropped`
+    /// is incremented by [`MAX_SIGNATURES`] as well as by the node budget, so a
+    /// fixture whose leaves are signatures satisfies the assertion by the wrong
+    /// bound --- measured: with signature leaves, mutating the budget's own
+    /// count to `+= 0` left this test green. With no `/FT` anywhere, nothing is
+    /// ever emitted, `MAX_SIGNATURES` cannot fire, and the only mechanism that
+    /// can produce a non-zero count is the one under test.
+    ///
+    /// **Deleting the budget makes this hang rather than fail**, because the
+    /// walk it removes is 65^8 pops. That is the shape `docs/TRAPS.md` records
+    /// as a check whose failure mode is a wait, and it is why the assertion is
+    /// on the *count* --- which fails in milliseconds --- rather than on the
+    /// walk having terminated, which is what a timeout would have to report.
+    #[test]
+    fn a_field_tree_that_fans_out_onto_itself_is_walked_in_bounded_steps() {
+        // `kids` names per node. `looping` makes every one of them the node
+        // itself, which both removes the signature fields --- so nothing is
+        // emitted and `MAX_SIGNATURES` cannot fire --- and makes the walk
+        // exponential, which is the thing under test.
+        let scan_wide = |kids: usize, looping: bool| -> Properties {
+            let mut document = Document::with_version("1.7");
+            let sig = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Sig",
+                "Filter" => "Adobe.PPKLite",
+                "SubFilter" => "adbe.pkcs7.detached",
+            }));
+            // Reserved first, so the node can name itself. `lopdf` hands out
+            // ids in order, so the group is the object after the signature.
+            let group = (sig.0 + 1, 0);
+            let leaf = |n: usize| {
+                Object::Dictionary(dictionary! {
+                    "FT" => "Sig",
+                    "T" => Object::string_literal(format!("Signature{n}")),
+                    "V" => Object::Reference(sig),
+                })
+            };
+            // **Every** kid is the node itself, not one of them. One
+            // self-reference beside `kids` ordinary leaves grows *linearly* ---
+            // each level has exactly one node that fans out, so eight levels
+            // cost 8 x kids pops and never reach the bound. Measured: that
+            // fixture made this test fail on a correct implementation. What
+            // makes the cost exponential is every entry fanning out, so level
+            // `k` holds `kids^k` nodes.
+            let names: Vec<Object> = if looping {
+                (0..kids).map(|_| Object::Reference(group)).collect()
+            } else {
+                (0..kids).map(leaf).collect()
+            };
+            let made = document.add_object(Object::Dictionary(dictionary! {
+                "Kids" => Object::Array(names),
+            }));
+            assert_eq!(made, group, "the reserved id must be the one handed out");
+            let form = document.add_object(Object::Dictionary(dictionary! {
+                "Fields" => vec![Object::Reference(group)],
+            }));
+            let pages = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![]),
+                "Count" => 0,
+            }));
+            let catalog = document.add_object(Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => Object::Reference(pages),
+                "AcroForm" => Object::Reference(form),
+            }));
+            document.trailer.set("Root", Object::Reference(catalog));
+            let mut out = Vec::new();
+            document.save_to(&mut out).expect("a writable document");
+            scan(&out, 0, None).expect("the document must parse")
+        };
+
+        // A form with sixteen signature fields under one group is ordinary, and
+        // is read in full: 1 group + 16 leaves is 17 pops, far inside the bound.
+        let wide = scan_wide(16, false);
+        assert_eq!(
+            wide.signatures.len(),
+            16,
+            "a wide form that terminates is read in full"
+        );
+        assert_eq!(
+            wide.limits.signatures_dropped, 0,
+            "and nothing is reported as dropped"
+        );
+
+        // The same shape with one self-reference and no signature field in it.
+        // Without a node budget this does not return in any time worth waiting
+        // for; with one, it returns having counted what it did not walk.
+        let looping = scan_wide(64, true);
+        assert!(
+            looping.signatures.is_empty(),
+            "nothing in this fixture is a signature field, which is what makes \
+             the count below attributable to the node budget alone"
+        );
+        assert!(
+            looping.limits.signatures_dropped > 0,
+            "the walk gave up, and said so"
+        );
+        assert!(looping.limits.any(), "which puts the notice on the dialog");
     }
 
     /// The honesty rule, held by the type rather than by review.
