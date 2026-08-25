@@ -11,7 +11,7 @@ use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::ocr::{adjudicate, Control, Legibility, Options, Pixels, Recogniser};
 use tpdf_lib::ocr_vision::Vision;
-use tpdf_lib::progressive::{self, CancelToken, RawDocument, RawPage, TileSpec};
+use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::text;
 
 /// Verdicts, with every label padded to seven at column 1 so the rows that pass line up with

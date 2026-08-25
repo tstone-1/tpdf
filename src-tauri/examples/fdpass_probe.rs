@@ -59,7 +59,8 @@ mod imp {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
 
-    use tpdf_lib::progressive::{self, RawDocument};
+    use tpdf_lib::document::OpenDocument;
+    use tpdf_lib::progressive::{self};
     use tpdf_lib::worker::Shm;
     use tpdf_lib::worker_child::{apply_sandbox, bind};
 
