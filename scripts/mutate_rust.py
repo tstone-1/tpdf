@@ -3334,6 +3334,38 @@ MUTATIONS += [
         "a_response_carries_its_reply_through_the_framing",
     ),
     Mutation(
+        # Read the appendix without requiring the signed prefix to parse. With
+        # no prefix to compare against, every object in the document reads as
+        # ADDED -- so an ordinary validation-data append is reported as the
+        # document having been rewritten from nothing, which is the alarming
+        # direction to be wrong in. The guard is "both parses or neither".
+        "docinfo: describe an appendix whose signed prefix would not parse",
+        "src/docinfo.rs",
+        "    let (Ok(whole), Ok(signed)) = (load(bytes), load(&bytes[..end])) else {",
+        "    let signed = load(&bytes[..end]).unwrap_or_default();\n    let Ok(whole) = load(bytes) else {",
+        "an_appendix_whose_signed_prefix_is_unparseable_is_reported_as_unread",
+    ),
+    Mutation(
+        # Count a page like any other object. `pages_touched` is the one number
+        # separating an append that rewrote something a reader sees from one that
+        # did not, and without it the two rows read identically.
+        "docinfo: stop counting the pages an appendix rewrote",
+        "src/docinfo.rs",
+        '        if kind == "Page" {',
+        '        if kind == "Pages" {',
+        "a_second_signature_is_reported_as_a_signature_rather_than_as_a_size",
+    ),
+    Mutation(
+        # Slice past the end of the file. A `/ByteRange` written for bytes a
+        # truncation removed gives an `end` beyond the buffer, and this bound is
+        # what stands between that and a panic inside the worker.
+        "docinfo: slice an appendix on an end past the file",
+        "src/docinfo.rs",
+        "    if end == 0 || end >= bytes.len() {",
+        "    if end == 0 {",
+        "an_appendix_outside_the_file_is_refused_rather_than_sliced",
+    ),
+    Mutation(
         "docinfo: report every uncovered byte as an append",
         "src/docinfo.rs",
         "        out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));",

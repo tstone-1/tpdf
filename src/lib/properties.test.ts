@@ -4,6 +4,7 @@ import {
   certificateRows,
   certificationOf,
   conformanceRows,
+  appendixRow,
   coverageOf,
   formatBytes,
   limitRows,
@@ -11,6 +12,7 @@ import {
   sections,
   signatureRows,
   VERDICT_WORDS,
+  type Appendix,
   type Certificate,
   type Properties,
   type Signature,
@@ -56,6 +58,7 @@ function signed(): Signature {
     covers_whole_file: true,
     covered_bytes: 1024,
     appended_bytes: 0,
+    appendix: null,
     certification: 0,
     certificate: null,
     timestamp: null,
@@ -183,6 +186,149 @@ describe("coverageOf", () => {
       value: "no byte range stated, so nothing could be checked",
       warn: true,
     });
+  });
+});
+
+describe("appendixRow", () => {
+  /** An LTV append, with the shape measured on a real DocuSign contract. */
+  function validationData(): Appendix {
+    return {
+      added: 15,
+      replaced: 1,
+      kinds: ["Catalog", "DSS", "VRI", "stream", "untyped", "value"],
+      catalog_gained: ["DSS"],
+      pages_touched: 0,
+      unread: false,
+    };
+  }
+
+  /** A second signature, with the shape measured on `incr-two-signers.pdf`. */
+  function secondSignature(): Appendix {
+    return {
+      added: 5,
+      replaced: 3,
+      kinds: ["Annot/Widget", "FontDescriptor", "Page", "Sig", "stream", "untyped"],
+      catalog_gained: [],
+      pages_touched: 1,
+      unread: false,
+    };
+  }
+
+  it("says nothing at all when nothing was appended", () => {
+    // `null`, not an empty row. A signature nobody has appended to should not
+    // grow a row saying so -- the Covers row above it already reads "the whole
+    // file, except the signature container", and a second line adding "and
+    // nothing after it" is the same fact twice.
+    expect(appendixRow(signed())).toBeNull();
+  });
+
+  it("names validation data as what it is, and says no page moved", () => {
+    // The row the whole feature exists for. 9 KB of LTV data and 9 KB of new
+    // page content are the same size, and the size is all a reader had.
+    const signature = { ...signed(), appendix: validationData() };
+    expect(appendixRow(signature)).toEqual({
+      name: "Appended",
+      value:
+        "the certificates and revocation records a signature needs to be checked later, " +
+        "and no page was rewritten",
+      warn: true,
+    });
+  });
+
+  it("distinguishes a second signature from validation data", () => {
+    // The discrimination, on two inputs that a byte count cannot tell apart.
+    // Both appended about nine kilobytes; only one of them touched a page.
+    const signature = { ...signed(), appendix: secondSignature() };
+    expect(appendixRow(signature)).toEqual({
+      name: "Appended",
+      value: "another signature, and 1 page was rewritten",
+      warn: true,
+    });
+  });
+
+  it("reads DSS from the catalog rather than from the object list", () => {
+    // The two are not the same test, and the catalog is the one that means
+    // something: a `/DSS` object among fifteen could be anything the file
+    // happens to hold, while the catalog gaining the key is what an LTV append
+    // *is*. Here the object is present and the catalog is not -- and the row
+    // must fall through rather than claim validation data.
+    const ambiguous = { ...validationData(), catalog_gained: [] };
+    const value = appendixRow({ ...signed(), appendix: ambiguous })?.value ?? "";
+    // Against the phrase the DSS branch actually produces. It said "validation
+    // data" until the wording moved off that word to keep clear of
+    // `VERDICT_WORDS`, and an assertion naming a string nothing can produce is
+    // one that cannot fail.
+    expect(value).not.toContain("revocation records");
+    expect(value).toContain("16 objects");
+  });
+
+  it("falls through to the file's own names when it has no better word", () => {
+    const other: Appendix = {
+      added: 2,
+      replaced: 0,
+      kinds: ["Metadata", "StructTreeRoot"],
+      catalog_gained: ["StructTreeRoot"],
+      pages_touched: 0,
+      unread: false,
+    };
+    expect(appendixRow({ ...signed(), appendix: other })?.value).toBe(
+      "2 objects: Metadata, StructTreeRoot, and no page was rewritten",
+    );
+  });
+
+  it("reports an appendix it could not read as unread, never as empty", () => {
+    // The reassuring failure this exists to prevent: an appendix that could not
+    // be decomposed has no objects in it, and "no objects" renders as an append
+    // that changed nothing.
+    const unread: Appendix = {
+      added: 0,
+      replaced: 0,
+      kinds: [],
+      catalog_gained: [],
+      pages_touched: 0,
+      unread: true,
+    };
+    expect(appendixRow({ ...signed(), appendix: unread })).toEqual({
+      name: "Appended",
+      value: "something, but its contents could not be read",
+      warn: true,
+    });
+  });
+
+  it("counts pages in the plural where there are several", () => {
+    const many = { ...secondSignature(), pages_touched: 4 };
+    expect(appendixRow({ ...signed(), appendix: many })?.value).toContain(
+      "4 pages were rewritten",
+    );
+  });
+
+  it("sits directly under the Covers row it completes", () => {
+    // Position is the point: Covers says how much, this says what, and a reader
+    // takes them as one statement. Anywhere else and the two numbers are a
+    // puzzle to assemble.
+    const signature = {
+      ...signed(),
+      covers_whole_file: false,
+      covered_bytes: 51_996,
+      appended_bytes: 9_101,
+      appendix: validationData(),
+    };
+    const names = signatureRows(signature, 126_633).map((row) => row.name);
+    const covers = names.indexOf("Covers");
+    expect(covers).toBeGreaterThanOrEqual(0);
+    expect(names[covers + 1]).toBe("Appended");
+  });
+
+  it("carries no verdict word, as nothing in this panel may", () => {
+    // The standing rule, applied to the one row that describes a change rather
+    // than reporting a field. `VERDICT_WORDS` is the same list the rest of the
+    // panel is held to.
+    for (const appendix of [validationData(), secondSignature()]) {
+      const value = appendixRow({ ...signed(), appendix })?.value.toLowerCase() ?? "";
+      for (const word of VERDICT_WORDS) {
+        expect(value, `"${word}" is a verdict`).not.toContain(word);
+      }
+    }
   });
 });
 

@@ -54,6 +54,23 @@ export interface Encryption {
   permissions: Permission[];
 }
 
+/**
+ * What an appended revision changed. Mirrors `docinfo::Appendix`.
+ *
+ * Nothing here is a verdict, and the rendering below has to keep it that way:
+ * naming `/DSS` as validation data is translation, in the same voice
+ * {@link certificationOf} turns a DocMDP level into words. Calling an append
+ * harmless would not be.
+ */
+export interface Appendix {
+  added: number;
+  replaced: number;
+  kinds: string[];
+  catalog_gained: string[];
+  pages_touched: number;
+  unread: boolean;
+}
+
 /** One signature field, as `docinfo.rs` reports it. */
 export interface Signature {
   field: string;
@@ -67,6 +84,7 @@ export interface Signature {
   covers_whole_file: boolean;
   covered_bytes: number;
   appended_bytes: number;
+  appendix: Appendix | null;
   certification: number;
   certificate: Certificate | null;
   timestamp: Timestamp | null;
@@ -464,6 +482,92 @@ export function certificateRows(signature: Signature): Row[] {
   return rows;
 }
 
+/**
+ * What was appended after a signature, in words rather than in bytes.
+ *
+ * ## Why this row exists
+ *
+ * {@link coverageOf} says *when* --- so many bytes were written after this
+ * signature --- and stops there, deliberately, because until 2026-08-25 nothing
+ * could say more. The gap is not small. Two documents measured, both appending
+ * about nine kilobytes:
+ *
+ * - a DocuSign contract: `/DSS`, a `/VRI` and seven streams, and the catalog
+ *   gained `/DSS`. That is **validation data** --- the certificates and
+ *   revocation responses a signature needs to still verify in ten years' time.
+ *   Adobe does not treat it as a modification.
+ * - `incr-two-signers.pdf`: a `/Sig`, an `/Annot/Widget` and a rewritten
+ *   `/Page`. That is **a second person signing**.
+ *
+ * Same size, and a reader shown only the size would read the first as the
+ * second. That is exactly what happened: the row was quoted in a letter as
+ * evidence of unsigned content when what it described was the signature's own
+ * container plus routine LTV data.
+ *
+ * ## Where the line is drawn
+ *
+ * Translating `/DSS` into "signature validation data" is the same act as
+ * {@link certificationOf} turning a DocMDP level into a sentence: the file's own
+ * vocabulary, in words a reader has. What this must not do is conclude. It never
+ * says an append was harmless, permitted, or a modification --- those are
+ * verdicts, and `docinfo::Appendix`'s own note is that nothing in it makes one.
+ *
+ * The page count is the one thing separated out, because it is the difference a
+ * reader can act on. It is still stated as what it is: a page object was written
+ * again. A page can be rewritten for reasons that change nothing on screen, and
+ * the wording does not claim otherwise.
+ */
+export function appendixRow(signature: Signature): Row | null {
+  const appendix = signature.appendix;
+  if (!appendix) return null;
+  if (appendix.unread) {
+    // A fact about tpdf, in the voice `NOT_CHECKED` uses for the rest of this
+    // panel: what could not be read is never reported as what is not there.
+    return {
+      name: "Appended",
+      value: "something, but its contents could not be read",
+      warn: true,
+    };
+  }
+
+  const what = describeAppendix(appendix);
+  const pages =
+    appendix.pages_touched === 0
+      ? "no page was rewritten"
+      : appendix.pages_touched === 1
+        ? "1 page was rewritten"
+        : `${appendix.pages_touched} pages were rewritten`;
+  return { name: "Appended", value: `${what}, and ${pages}`, warn: true };
+}
+
+/**
+ * The appendix in a phrase, most specific reading first.
+ *
+ * Ordered rather than combined, because the readings are not equally
+ * informative and a reader takes the first clause. `/DSS` arriving in the
+ * catalog is the one unambiguous signal here --- it is what an LTV append *is*,
+ * one key rather than a guess over fifteen objects --- so it leads. A `/Sig`
+ * among the objects is next, and everything else falls through to the file's
+ * own names, which is honest about having no better word for it.
+ */
+function describeAppendix(appendix: Appendix): string {
+  if (appendix.catalog_gained.includes("DSS")) {
+    return "the certificates and revocation records a signature needs to be checked later";
+  }
+  if (appendix.kinds.includes("Sig")) {
+    return "another signature";
+  }
+  const objects =
+    appendix.added + appendix.replaced === 1
+      ? "1 object"
+      : `${appendix.added + appendix.replaced} objects`;
+  if (appendix.kinds.length === 0) return objects;
+  // The file's own vocabulary, unglossed. A reader who does not know what a
+  // `/StructTreeRoot` is learns nothing from this, and a reader who does learns
+  // everything -- which beats inventing a phrase for a shape nobody measured.
+  return `${objects}: ${appendix.kinds.join(", ")}`;
+}
+
 /** Every line of one signature. */
 export function signatureRows(signature: Signature, bytes: number): Row[] {
   if (!signature.signed) {
@@ -502,6 +606,10 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
     });
   }
   rows.push(coverageOf(signature, bytes));
+  // Directly under Covers, which is the row it completes: that one says how much
+  // was appended and this one says what it was.
+  const appended = appendixRow(signature);
+  if (appended) rows.push(appended);
 
   const level = certificationOf(signature.certification);
   if (level) rows.push({ name: "Certification", value: level });
