@@ -2868,12 +2868,24 @@ fn appearance_stream(
         g = mark.color[1],
         b = mark.color[2],
     );
-    // **The loop is inside each arm rather than around the `match`**, because
-    // four of the five styles are one per quad and the fifth is one per stroke.
-    // Written out three times rather than hoisted, so that there is no arm which
-    // is reached with the wrong collection and silently draws nothing --- and so
-    // that a sixth style is a compile error here, which is the whole reason this
-    // is a `match` on an enum and not a pair of booleans.
+    // **The loop is inside each arm rather than around the `match`**, so that no
+    // arm can be reached with the wrong collection and silently draw nothing ---
+    // and so that a new style is a compile error here, which is the whole reason
+    // this is a `match` on an enum and not a pair of booleans.
+    //
+    // Measured rather than stated, because this comment carried three counts and
+    // every one of them had gone stale: it said *five* styles, the loop *written
+    // out three times*, and a *sixth* style being the compile error. Today there
+    // are **nine arms, seven per-quad loops and one per-stroke**, and the tenth
+    // style is what the compiler would refuse. The argument was right the whole
+    // time and the arithmetic in it was wrong for six of them --- which is this
+    // repository's own lesson about a number in prose, arriving inside the
+    // comment that defends a design.
+    //
+    // Repeating the loop is what that argument buys, and it is not free to read:
+    // `docs/TRAPS.md` records the measurement of these nine arms --- 6 to 47 lines
+    // each, with genuinely different inputs --- and the shape a per-arm extraction
+    // would take. It keeps this property; it does not trade it away.
     match style {
         // The whole quad, filled.
         Paint::Wash => {

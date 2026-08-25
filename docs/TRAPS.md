@@ -15116,3 +15116,57 @@ nothing), 73 (writes, cannot refuse for a reason the caller could have known) an
 8 that compose them. The 177 is still long and is long-and-linear --- a list of
 independent refusals --- which is the shape the review explicitly did not object
 to.
+
+### A comment defending a design, with every number in it stale
+
+`appearance_stream`'s `match` carried this:
+
+> **The loop is inside each arm rather than around the `match`**, because four of
+> the five styles are one per quad and the fifth is one per stroke. Written out
+> three times rather than hoisted, so that there is no arm which is reached with
+> the wrong collection and silently draws nothing --- and so that a sixth style is
+> a compile error here.
+
+**The argument is right and all three counts are wrong.** Measured against the
+code it sits on: nine arms, seven per-quad loops, one per-stroke. Not five, not
+three, and the compile error would be a *tenth* style rather than a sixth.
+
+This repository already records that a number in prose is what nobody updates ---
+`PDFIUM_SUBDIR` says so, and the fix there was to replace the count with a rule.
+What is new is the shape: the numbers are inside **the comment that defends a
+design decision**, so a reader weighing whether the repetition is still worth it
+is handed a cost that is 3 when it is 8, in a paragraph that is otherwise
+correct. The reasoning survives being wrong about its own scale; the reader's
+ability to judge it does not.
+
+An outside review read exactly that paragraph and scored the function as *"355
+lines with nine `Paint` arms; `appearance_stream`'s comment defends 'written out
+three times rather than hoisted' --- it is nine now."* Which is the right thing to
+notice, and the conclusion it invites --- that the repetition should go --- is not
+what the argument says. The repetition buys the property that no arm can be
+reached with the wrong collection, and nine arms is a better reason for that
+property than five was.
+
+**The measurement, so the extraction is a prepared piece rather than a fresh
+investigation.** The nine arms and what each actually reads:
+
+    Wash        7 lines   quads
+    Line       13         quads, mark, rect, turns
+    Outline     6         quads
+    Text       27         quads, mark, turns
+    Stamp      38         quads, mark, turns
+    Wave       43         quads, mark, turns
+    Ellipse    47         quads
+    Path       12         strokes
+    None        1         nothing
+
+268 lines between `match style {` and its close. A per-arm `fn` keeps the loop in
+each arm and keeps the `match` exhaustive, so it trades none of the property
+away; what it costs is a context type, because the inputs genuinely differ.
+
+**And the control to do it behind, which is the part worth keeping.** A throwaway
+`#[test]` that saves one mark of every `MarkKind` and dumps each `/Subtype /Form`
+stream, decompressed, into one file: 125 lines covering all ten kinds. Run it
+before, refactor, run it again, diff. String-generating code is exactly where a
+"looks equivalent" reading is worth nothing --- the operators are the output, and
+`72 674 228 18 re f` is either identical or it is a different drawing.
