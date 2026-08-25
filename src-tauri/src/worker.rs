@@ -96,7 +96,7 @@ pub use crate::worker_argv::{doc_len_arg, library_dir_arg};
 pub use crate::worker_handover::recv_document;
 #[cfg(windows)]
 pub use crate::worker_proto::Handover;
-pub use crate::worker_proto::{Request, Response, MAX_REPLY_BYTES};
+pub use crate::worker_proto::{Reply, Request, Response, MAX_REPLY_BYTES};
 pub use crate::worker_shm::Shm;
 
 /// The argv marker that turns this executable into a worker.
@@ -449,16 +449,17 @@ impl PreWorker {
                 ready.error
             ));
         }
-        let warm = ready
-            .json
-            .as_ref()
-            .and_then(|j| j.get("prespawn"))
-            .and_then(serde_json::Value::as_str);
         // Asserted positively. "Not an error" would be satisfied by any reply at
         // all, including a real one if the ordering here ever changed.
-        if warm != Some("warm") {
+        //
+        // Until 2026-08-25 this read `.get("prespawn")` off a `serde_json::Value`
+        // and compared it against the literal `"warm"` -- two magic strings, one
+        // written in this process and one in the child, held together by nothing.
+        // A variant is the same assertion with the compiler behind both ends.
+        if !matches!(ready.reply, Some(Reply::Warm)) {
             return Err(format!(
-                "a pre-spawned worker sent {warm:?} where its readiness was expected"
+                "a pre-spawned worker sent {:?} where its readiness was expected",
+                ready.reply
             ));
         }
         Ok(WarmWorker { pre: self })

@@ -42,13 +42,13 @@ use crate::outline::Outline;
 use crate::progressive::{CancelToken, Refusal};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{
-    dispatch, not_open, open_slot_mut, DocumentInfo, Engine, Job, PageSize, Tile, TileFormat,
-    TileOutcome, TileRequest,
+    dispatch, not_open, open_slot_mut, DocumentInfo, Engine, Job, Tile, TileFormat, TileOutcome,
+    TileRequest,
 };
 use crate::search::PageMatches;
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::PageText;
-use crate::worker::{Request, Response, Shm, WarmWorker, Worker, WorkerSender};
+use crate::worker::{Reply, Request, Response, Shm, WarmWorker, Worker, WorkerSender};
 
 /// How many workers one document may have, unless `TPDF_POOL` says otherwise.
 ///
@@ -1123,19 +1123,21 @@ impl Workers {
         second
     }
 
-    /// Sends a request that answers with JSON, and reads the answer back.
-    fn ask<T: serde::de::DeserializeOwned>(
-        &self,
-        doc: u32,
-        request: &Request,
-    ) -> Result<T, String> {
+    /// Sends a request that answers with a payload, and reads the answer back.
+    ///
+    /// Returns the [`Reply`] whole. Which variant belongs to which request is
+    /// the caller's to check, and every caller below does it the same way
+    /// through [`mismatched`] --- the type says a reply arrived, not that it
+    /// answers the question asked.
+    fn ask(&self, doc: u32, request: &Request) -> Result<Reply, String> {
         self.with_worker(doc, |worker| {
             let response = worker.call(request)?;
             if !response.ok {
                 return Err(response.error);
             }
-            let json = response.json.ok_or("worker replied without a payload")?;
-            serde_json::from_value(json).map_err(|e| format!("unreadable reply from a worker: {e}"))
+            response
+                .reply
+                .ok_or_else(|| "worker replied without a payload".to_string())
         })
     }
 
@@ -1492,9 +1494,15 @@ impl Engine for Workers {
         if !response.ok {
             return Err(refusal_of(response));
         }
-        let json = response.json.ok_or("worker opened without a payload")?;
-        let opened: OpenReply = serde_json::from_value(json)
-            .map_err(|e| format!("unreadable open reply from a worker: {e}"))?;
+        let payload = response.reply.ok_or("worker opened without a payload")?;
+        let (pages, page_count, lazy_geometry) = match payload {
+            Reply::Open {
+                pages,
+                page_count,
+                lazy_geometry,
+            } => (pages, page_count, lazy_geometry),
+            other => return Err(mismatched("open", &other).into()),
+        };
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
@@ -1516,9 +1524,9 @@ impl Engine for Workers {
 
         Ok(DocumentInfo {
             id,
-            pages: opened.pages,
-            page_count: opened.page_count,
-            lazy_geometry: opened.lazy_geometry,
+            pages,
+            page_count,
+            lazy_geometry,
             open_ms,
             at_ms: since_process_start_ms(),
         })
@@ -1545,7 +1553,10 @@ impl Engine for Workers {
     }
 
     fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String> {
-        self.ask(doc, &Request::Text { page, crop })
+        match self.ask(doc, &Request::Text { page, crop })? {
+            Reply::Text(text) => Ok(text),
+            other => Err(mismatched("text", &other)),
+        }
     }
 
     fn search(
@@ -1556,19 +1567,23 @@ impl Engine for Workers {
         options: crate::search::Options,
         carry: Option<&crate::search::Carry>,
     ) -> Result<PageMatches, String> {
-        self.ask(
-            doc,
-            &Request::Search {
-                page,
-                query: query.to_string(),
-                options,
-                carry: carry.cloned(),
-            },
-        )
+        let request = Request::Search {
+            page,
+            query: query.to_string(),
+            options,
+            carry: carry.cloned(),
+        };
+        match self.ask(doc, &request)? {
+            Reply::Search(matches) => Ok(matches),
+            other => Err(mismatched("search", &other)),
+        }
     }
 
     fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
-        self.ask(doc, &Request::Content { page })
+        match self.ask(doc, &Request::Content { page })? {
+            Reply::Content(found) => Ok(found),
+            other => Err(mismatched("content", &other)),
+        }
     }
 
     fn geometry(
@@ -1577,35 +1592,59 @@ impl Engine for Workers {
         page: u32,
         crop: Option<[f32; 4]>,
     ) -> Result<crate::render::CropGeometry, String> {
-        self.ask(doc, &Request::Geometry { page, crop })
+        match self.ask(doc, &Request::Geometry { page, crop })? {
+            Reply::Geometry(size) => Ok(size),
+            other => Err(mismatched("geometry", &other)),
+        }
     }
 
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
-        self.ask(doc, &Request::CropBox { page, rect })
+        match self.ask(doc, &Request::CropBox { page, rect })? {
+            Reply::CropBox(want) => Ok(want),
+            other => Err(mismatched("crop box", &other)),
+        }
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
-        self.ask(doc, &Request::Outline)
+        match self.ask(doc, &Request::Outline)? {
+            Reply::Outline(outline) => Ok(outline),
+            other => Err(mismatched("outline", &other)),
+        }
     }
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {
-        self.ask(doc, &Request::Comments)
+        match self.ask(doc, &Request::Comments)? {
+            Reply::Comments(comments) => Ok(comments),
+            other => Err(mismatched("comments", &other)),
+        }
     }
 
     fn links(&self, doc: u32) -> Result<Links, String> {
-        self.ask(doc, &Request::Links)
+        match self.ask(doc, &Request::Links)? {
+            Reply::Links(links) => Ok(links),
+            other => Err(mismatched("links", &other)),
+        }
     }
 
     fn mapping(&self, doc: u32) -> Result<Vec<crate::encoding::PageMapping>, String> {
-        self.ask(doc, &Request::Mapping)
+        match self.ask(doc, &Request::Mapping)? {
+            Reply::Mapping(mapping) => Ok(mapping),
+            other => Err(mismatched("mapping", &other)),
+        }
     }
 
     fn properties(&self, doc: u32) -> Result<crate::docinfo::Properties, String> {
-        self.ask(doc, &Request::Properties)
+        match self.ask(doc, &Request::Properties)? {
+            Reply::Properties(properties) => Ok(*properties),
+            other => Err(mismatched("properties", &other)),
+        }
     }
 
     fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
-        self.ask(doc, &Request::Append { plan: plan.clone() })
+        match self.ask(doc, &Request::Append { plan: plan.clone() })? {
+            Reply::Append(update) => Ok(update),
+            other => Err(mismatched("append", &other)),
+        }
     }
 
     /// Answered from this process's own record, without asking a worker.
@@ -1663,16 +1702,20 @@ impl Engine for Workers {
     }
 }
 
-/// What a worker answers [`Request::Open`] with.
+/// A worker answered, with the wrong thing.
 ///
-/// A struct rather than poking at the `serde_json::Value`, so a field the worker
-/// stops sending is a deserialisation error here instead of a zero somewhere
-/// downstream.
-#[derive(serde::Deserialize)]
-struct OpenReply {
-    pages: Vec<PageSize>,
-    page_count: usize,
-    lazy_geometry: bool,
+/// The one failure the [`Reply`] enum does not remove: it makes both ends
+/// agree about a payload's *shape*, and nothing in it pairs a reply with the
+/// request that asked. A worker sending `Reply::Links` to a `Request::Outline`
+/// is a well-formed message and a broken conversation.
+///
+/// It cannot happen while one process writes the dispatch in
+/// `worker_child::answer`, which is a `match` over `Request` -- so this is a
+/// guard against that dispatch being edited wrongly, not against the wire.
+/// Named so the message says which end is confused: the request that was
+/// asked, and the variant that came back.
+fn mismatched(asked: &str, got: &Reply) -> String {
+    format!("a worker answered {got:?} to a request for {asked}")
 }
 
 /// Serves jobs from `threads` threads sharing one receiver.

@@ -46,7 +46,7 @@ use crate::render::{self, PageSize, TileFormat, TileRequest};
 #[cfg(windows)]
 use crate::worker::{doc_handle_arg, tile_handle_arg, Handover};
 use crate::worker::{
-    doc_len_arg, library_dir_arg, Request, Response, Shm, PRESPAWN_ARGV, TILE_CAPACITY,
+    doc_len_arg, library_dir_arg, Reply, Request, Response, Shm, PRESPAWN_ARGV, TILE_CAPACITY,
 };
 #[cfg(target_os = "macos")]
 use crate::worker::{recv_document, SANDBOX_PROFILE, SOCK_FD};
@@ -161,10 +161,7 @@ fn serve(args: &[String]) -> Result<(), String> {
             // stopped warming would look exactly like one that worked, which is
             // the failure shape this repository keeps meeting. The parent waits
             // for this in `PreWorker::adopt`.
-            reply(
-                &mut std::io::stdout(),
-                &Response::json(&serde_json::json!({ "prespawn": "warm" })),
-            )?;
+            reply(&mut std::io::stdout(), &Response::reply(Reply::Warm))?;
             wait_for_document()?
         }
     };
@@ -355,10 +352,7 @@ fn unlock(
         };
         match RawDocument::open_bytes(bindings, bytes, Some(&password)) {
             Ok(document) => {
-                reply(
-                    &mut out,
-                    &Response::json(&serde_json::json!({"unlocked": true})),
-                )?;
+                reply(&mut out, &Response::reply(Reply::Unlocked))?;
                 return Ok(document);
             }
             Err(refusal) if refusal.locked => {
@@ -462,7 +456,7 @@ fn handle(
         // above changed and this arm was forgotten.
         Request::Withdraw { .. } => Response::err("a withdrawal is not a request to answer"),
         Request::Text { page, crop } => match render::run_text(document, *page, *crop) {
-            Ok(text) => Response::json(&text),
+            Ok(text) => Response::reply(Reply::Text(text)),
             Err(e) => Response::err(e),
         },
         Request::Search {
@@ -471,39 +465,39 @@ fn handle(
             options,
             carry,
         } => match render::run_search(document, *page, query, *options, carry.as_ref()) {
-            Ok(matches) => Response::json(&matches),
+            Ok(matches) => Response::reply(Reply::Search(matches)),
             Err(e) => Response::err(e),
         },
         Request::Content { page } => {
             match render::run_content(bindings, document, *page, &CancelToken::default()) {
-                Ok(found) => Response::json(&found),
+                Ok(found) => Response::reply(Reply::Content(found)),
                 Err(e) => Response::err(e),
             }
         }
         Request::Geometry { page, crop } => match render::geometry_of(document, *page, *crop) {
-            Ok(size) => Response::json(&size),
+            Ok(size) => Response::reply(Reply::Geometry(size)),
             Err(e) => Response::err(e),
         },
         Request::CropBox { page, rect } => match render::crop_box_of(document, *page, *rect) {
-            Ok(want) => Response::json(&want),
+            Ok(want) => Response::reply(Reply::CropBox(want)),
             Err(e) => Response::err(e),
         },
-        Request::Outline => Response::json(&render::run_outline(document)),
+        Request::Outline => Response::reply(Reply::Outline(render::run_outline(document))),
         Request::Comments => match render::run_comments(document) {
-            Ok(comments) => Response::json(&comments),
+            Ok(comments) => Response::reply(Reply::Comments(comments)),
             Err(e) => Response::err(e),
         },
         Request::Links => match render::run_links(document) {
-            Ok(links) => Response::json(&links),
+            Ok(links) => Response::reply(Reply::Links(links)),
             Err(e) => Response::err(e),
         },
-        Request::Mapping => Response::json(&render::run_mapping(document)),
+        Request::Mapping => Response::reply(Reply::Mapping(render::run_mapping(document))),
         Request::Properties => match render::run_properties(document) {
-            Ok(properties) => Response::json(&properties),
+            Ok(properties) => Response::reply(Reply::Properties(Box::new(properties))),
             Err(e) => Response::err(e),
         },
         Request::Append { plan } => match render::run_append(document, plan) {
-            Ok(update) => Response::json(&update),
+            Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
         // Reached when the document opened without one --- a reader who typed a
@@ -512,7 +506,7 @@ fn handle(
         // Accepted rather than refused: the request asks for a document this
         // process can read, and it has one. Refusing would report a failure for
         // a state that is exactly what was wanted.
-        Request::Unlock { .. } => Response::json(&serde_json::json!({"unlocked": true})),
+        Request::Unlock { .. } => Response::reply(Reply::Unlocked),
     }
 }
 
@@ -545,11 +539,11 @@ fn open(document: &RawDocument, lazy_geometry: bool) -> Response {
     };
 
     match pages {
-        Ok(pages) => Response::json(&serde_json::json!({
-            "pages": pages,
-            "page_count": page_count as usize,
-            "lazy_geometry": lazy_geometry,
-        })),
+        Ok(pages) => Response::reply(Reply::Open {
+            pages,
+            page_count: page_count as usize,
+            lazy_geometry,
+        }),
         Err(e) => Response::err(e),
     }
 }

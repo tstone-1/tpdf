@@ -14769,3 +14769,134 @@ sides there, which is also how the other two harnesses got the flag: one
 implementation with three callers, rather than the second copy that would have
 carried the same bug into two more places. Same measurement afterwards: **48 of
 363** Rust, **63 of 432** front-end, **1 of 92** window, on the same commit.
+
+### One untyped reply carrier, and the two ways serde refuses to replace it
+
+An outside review scored `Response.json: Option<serde_json::Value>` as the one
+abstraction in this repository that does not earn its keep. What it was charging
+is specific rather than stylistic: **a payload's shape lived in two processes and
+nothing held the two copies together.**
+
+The clearest instance. The worker built its open reply as
+
+    Response::json(&serde_json::json!({
+        "pages": pages, "page_count": page_count as usize, "lazy_geometry": lazy_geometry,
+    }))
+
+and the parent read it with a **private** struct, in a different module, in a
+different process:
+
+    #[derive(serde::Deserialize)]
+    struct OpenReply { pages: Vec<PageSize>, page_count: usize, lazy_geometry: bool }
+
+Three string keys, hand-matched across a boundary. Renaming one is not a compile
+error; it is *"unreadable open reply from a worker"* on somebody's machine. That
+struct's own doc comment shows the right instinct --- *"a struct rather than
+poking at the `serde_json::Value`, so a field the worker stops sending is a
+deserialisation error here instead of a zero somewhere downstream"* --- applied
+to **one side** of a two-sided problem.
+
+The readiness handshake was worse:
+
+    .and_then(|j| j.get("prespawn")).and_then(Value::as_str) ... if warm != Some("warm")
+
+Two magic strings, one written in each process. Its comment records *"asserted
+positively --- 'not an error' would be satisfied by any reply at all"*, which is
+the kind of thing you have to think about only because the check is a string
+comparison rather than a variant.
+
+**And it had already cost a wrong measurement once.** `latency_bench.rs`'s module
+doc records it: *"the reply is an object and the harness asked it for an array,
+so `as_array()` gave `None`, a defaulted `0` read as 'the document has no
+outline', and the run claimed a tight bound on the one fixture in the corpus that
+exists to have an ordinary outline."*
+
+The fix is a `Reply` enum both processes construct and destructure, so all of
+that is `error[E0308]`. **What it does not fix, stated rather than implied:**
+nothing pairs a reply with the *request* --- a worker answering `Reply::Links` to
+a `Request::Outline` is a well-formed message --- so each caller checks that and
+says which end is confused.
+
+Two things came out of writing it that no amount of reading would have.
+
+**1. Internal tagging cannot carry a payload that is not a map, and it fails at
+runtime.** `#[serde(tag = "reply")]` has to merge the tag into the payload's own
+object, so a newtype variant wrapping anything else is refused when it is
+*serialised*:
+
+    Error("cannot serialize tagged newtype variant Reply::Content containing an optional")
+
+`Content` is the crop tool's ink bounds. A reader would have met this as a worker
+that could not answer, and the compiler is silent about it --- the whole point of
+moving to a type. `#[serde(tag = "reply", content = "value")]` --- adjacent
+tagging --- carries any shape.
+
+**2. Untagged is worse than untyped, quietly.** `Content(Option<[f64; 4]>)` and
+`CropBox([f32; 4])` are the same four numbers on the wire. Without a tag serde
+takes the first variant that fits, so a crop box arrives as ink bounds: the right
+numbers carrying the wrong meaning, which is the `serde_json::Value` failure in
+a costume that type-checks.
+
+**Both were found by the round-trip test, before the code ran once, and only
+because it enumerates.** A sample would have taken `Open` (a struct variant,
+which internal tagging handles) and passed. The test builds **every** variant and
+compares `std::mem::discriminant` --- not the value, because two variants agreeing
+on a payload is exactly the failure being excluded, and an equality assertion on
+the contents passes for a `Content` that arrived as a `CropBox` holding identical
+numbers.
+
+One measured detail worth keeping. `clippy::large_enum_variant` fires here, and
+the fix is one `Box`, not a habit: `Properties` is **304 bytes** where the next
+largest payload is `PageText` at 96, so without the indirection every reply on
+the stack --- a tile's, a withdrawal's --- is sized for the one a reader asks for
+once. Serde writes a `Box<T>` as its `T`, so the wire is unchanged, and the
+round-trip test asserts that rather than assuming it.
+
+### A `tauri dev` watcher recompiles the crate you are gating, and rustc's own OOM reads as a failed test
+
+`npm run tauri dev` prints `Info Watching C:\Users\mail\tpdf\src-tauri for
+changes...` and means it. Leave one running while editing Rust sources --- which
+is exactly what a long refactor is --- and **every save starts a second rustc on
+the same 585-unit crate**, alongside whatever `scripts/gates.py` is doing.
+
+What that looks like is not a build error. It looks like this:
+
+    [FAIL] test  19.9s  -- exit 101; usually means: a test failed, or Cargo.lock is stale
+
+and the transcript's first useful line is
+
+    memory allocation of 1081360 bytes failed
+
+with a backtrace through `rustc_query_impl` and `rustc_middle`. **The compiler
+ran out of memory**, and the gate's own hint --- which is a good hint for the
+usual case --- sends you to look for a failing test that does not exist. The same
+gate had failed once earlier the same day in the same shape; that transcript was
+discarded, so it could not be diagnosed, which is its own entry here.
+
+**A megabyte failing is not what memory pressure looks like, and measuring said
+so.** At the moment of failure the machine had **34.5 GB free of 63 GB** and
+**27 GB of commit headroom** (69,293 MB committed against a 96,798 MB limit). The
+first hypothesis --- that 71 leaked worker processes had exhausted memory --- was
+wrong, and cheap to refute: those workers held **6 MB** of working set between
+them. Two rustc instances on one crate is the explanation that survives, and the
+control is that the identical gate run passes with the watcher idle: **18/18**,
+`test` in 3.7 s where the failing run took 19.9 s.
+
+So: **stop the dev watcher before running gates, or before any measurement at
+all.** This is the same family as the entry about a harness paying for the editor
+watching its files --- a language server held the build lock there --- and the
+lesson generalises past both: anything that rebuilds on change is a second writer
+to your build directory, and it is invisible in every instrument except the
+process table.
+
+**One thing measured here is still unexplained, and is recorded as an
+observation rather than a mechanism.** That same app process had **71 live child
+workers** --- 64 render workers all carrying the identical `--doc-len 126633`, so
+one document, plus 7 pre-spawned --- created in a two-minute window and not
+retired in the 48 minutes since, against a documented pool cap of 6 to 8. All
+parents alive, so not orphans. The strongest available guess is that rebuilding
+`target/release/tpdf.exe` under the running app made its workers fail to start,
+and the pool spawned replacements in a loop --- which would be *"a pool that
+replaces a dead worker with the same bytes faults again, forever"* wearing a
+different trigger. **That is a guess.** What is measured is the count, the single
+`--doc-len`, the two-minute window and the 48 minutes of no retirement.
