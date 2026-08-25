@@ -14558,3 +14558,162 @@ passes it; planting a `0xFF` in the padding makes it fail with *"a non-zero byte
 past the declared end"*. The patch changes no length, so the structure is
 untouched --- which is what makes it a fair reproduction rather than a different
 document.
+
+### A document's spelling of an em dash is not a string's, and the comment above the line legitimises it
+
+Reported from use on 2026-08-25: Document properties printed several literal
+`---`. Every one was a string carrying this repository's **prose** spelling of
+an em dash --- the convention `AGENTS.md`, `BUILD.md`, `docs/TRAPS.md` and every
+doc comment here use, because a Markdown file is read as text and an em dash
+written as a character is one more thing to get wrong in a terminal.
+
+A string literal is not a Markdown file. The three hyphens are drawn as three
+hyphens, in the middle of a sentence a reader is trying to read.
+
+**Eighteen had shipped**, in three modules: the properties readout (13), the
+update notice (4) and the after-merge message (1). `update.ts` is what shows it
+was a slip rather than a decision --- it writes
+
+    return `Downloading update — ${state.percent}%`;      // line 200
+    return `tpdf ${version} --- checking for updates`;    // line 226
+
+**twenty-six lines apart, in one `switch`.** The other spelling was already the
+house style for reader-facing text: `marklist.ts` draws `"—"` for a mark with no
+page, `outline.ts` writes `"opens a web link — not followed"`, `results.ts` and
+`comments.ts` the same. Nobody chose `---`; it arrived by writing prose.
+
+**Why nothing caught it.** The line above a string here is almost always a doc
+comment, and in a doc comment `---` is correct. So the wrong spelling has a
+correct instance two lines away in the same file, in the same idiom, written by
+the same hand in the same minute. There is no disagreement for a reader to stop
+at --- the same shape as *A comment defending a name can become an argument for
+the opposite name*.
+
+**The regex you reach for first is off by a factor of eight, in the reassuring
+direction of finding too much.** The scan written first over these files
+reported **73** hits where there are **9**, because a backtick inside a doc
+comment --- ``` `viewer.ts` ``` is how every module here names its neighbours ---
+opens a template literal that then runs to the next backtick, swallowing the
+prose between them. Fifty of the 73 came from two files. A list that long is
+skimmed, and the four real ones in it are indistinguishable from the noise.
+
+The distinction that matters is *string literal or comment*, and it is not one a
+regex can draw. `typescript` is already a devDependency, so `ts.createSourceFile`
+plus `forEachChild` over `isStringLiteral`, `isNoSubstitutionTemplateLiteral` and
+the three `TemplateHead|Middle|Tail` cases answers exactly, in twenty lines, with
+comments excluded by the parser rather than by a pattern. Same reasoning as
+`readme.test.ts` importing the registry instead of grepping `appcommands.ts`: the
+second parser is the defect, not the thing to improve.
+
+**The check's own exemptions could not fail, and only a synthetic input showed
+it.** `readertext.test.ts` skips two things: the exact value `"---"`, which
+`contextmenu.ts` and `menubar.ts` both export as `SEPARATOR` and the builders
+turn into a real rule, and a table of harness modules whose strings go to a
+terminal transcript. Widening the first from `found.text === SENTINEL` to
+`.includes(SENTINEL)` **survived** --- because with the tree clean, no module
+outside that table holds a string that merely *contains* the sentinel, so the two
+rules agree about every input the repository has. The widened version would have
+exempted `Signature --- Signature1`, one of the eighteen.
+
+The repair is not a cleverer assertion over the tree. It is to lift the
+classification into a function and hand it a two-line module built to
+distinguish the rules:
+
+    const synthetic = {
+      "made-up.ts": 'export const SEPARATOR = "---";\nconst title = "Signature --- x";',
+    };
+    expect(unwanted(synthetic)).toEqual(['made-up.ts:2: "Signature --- x"']);
+
+Both exemptions have one, because the module table has the identical problem: on
+a clean tree a name lookup and a blanket `continue` agree about everything.
+Six controls, all measured: the reported defect goes red, both widened
+exemptions go red, a stale table entry goes red, a glob matching nothing goes
+red, and a `---` planted in a *doc comment* stays green.
+
+**The permanent mutations are aimed at three modules, not one.** Two put the
+dash back where it actually shipped; the third puts it in `outline.ts`, which was
+never broken. That one is what says the check covers the population rather than
+the sample it was written from --- a check written from four known defects will
+happily be green everywhere else and nothing says so.
+
+What it still does not see is named in the test rather than left to be
+discovered: `.svelte` markup, which this parser cannot read, and every other
+spelling of the same mistake --- `--` used as a dash, `...` where the rest of the
+application writes `…`. Those are worth adding the day one of them is reported;
+inventing them now would be a list nobody has measured.
+
+### The uncovered bytes are mostly the signature's own container, and reporting the total reads as an accusation
+
+Document properties showed this for a real DocuSign contract:
+
+    Covers: not the whole file — 73 KB (74,637 bytes) lie outside the signed range
+
+Every digit is right. The conclusion a reader draws from it is wrong, and it was
+wrong for every signed PDF tpdf had ever opened.
+
+**A detached signature cannot cover its own `/Contents`.** The value holds the
+hash of the bytes around it, so it cannot be among them; `/ByteRange` is two
+spans with a hole between them, and the hole is exactly the hex string. It is
+not small --- the placeholder is sized for the largest CMS the signer might
+produce and then padded. Measured on that contract:
+
+    size                126,633
+    covered              51,996
+    not covered          74,637   <- the number on screen
+      /Contents hole     65,536   at 50,392..115,928   starts '<' ends '>'
+      after the end       9,101   at 117,532..126,633
+
+**88% of the alarming number is a structural property of signing.** What was
+actually written after the signature is 9,101 bytes: one incremental update
+whose objects are `1, 23, 56, 64–69` --- a `/DSS` for LTV validation data, the
+**catalog rewritten to point at it**, and a fresh XMP packet. No page content
+and no annotations. So a reader shown *73 KB outside the signed range* is being
+told something that a technical reader will correct and a non-technical one will
+act on, and neither reaction is available from the row.
+
+**The frontend could not have fixed this.** `docinfo.rs` reported
+`covers_whole_file: bool` and `covered_bytes: u64`, so `size - covered_bytes` was
+the only quantity `coverageOf` could compute, and it is the one that conflates
+the two holes. The fix is a field --- `appended_bytes`, the bytes after the last
+byte the range covers --- because the distinction does not exist until the reading
+is taken apart at the point it is read.
+
+**The old good case was false too, and quietly.** `covers_whole_file` printed
+*"the whole file"*, which no signature does: the container is excluded from all
+of them. Saying so once in the good case is what stops the appended case reading
+as though the container were a second, separate problem.
+
+**The check that could not exist while the row was a subtraction.** With one
+number there is nothing to hold fixed --- any test of the appended case also
+moves with the container. With two, the control is one line: grow the file by
+57,344 bytes of container, keep the append, and assert the row does not move.
+A number that changes when the container changes is a number about the wrong
+thing.
+
+**A wrong comment sat where an assertion belonged.** The fixture test that
+appends to a signed document said:
+
+    "22 bytes now lie outside the signed range"
+
+The slice is `b"\n% and one more line\n"`, which is **21** bytes --- and what
+lies outside the range also includes the container, which is tens of kilobytes.
+Two errors in seven words, in a `#[test]`, uncorrected because **there was
+nothing to compare either number against**. It asserts `appended_bytes ==
+extra.len()` now, and separately that the uncovered total is much larger, which
+is the property the whole change is about.
+
+**What the row still does not say, stated rather than left to be found: what was
+appended.** Nine kilobytes of validation data and nine kilobytes of new page
+content produce the identical row, and they are not the same fact. Telling them
+apart means parsing the appended revision and deciding which additions a
+signature tolerates --- which is a *verdict*, and nothing in this panel makes one
+yet. Until then the wording says when, not what.
+
+**And the account that arrived with the report was itself slightly over-stated**,
+which is worth keeping because it is the same failure one level up: it described
+the appendix as *"/DSS and nothing else"*. Object 1 is the catalog and it is
+rewritten, objects 23 and 56 with it, and a whole XMP packet is in there. The
+conclusion --- no page content, standard LTV, not a modification Adobe flags --- is
+right, and "nothing else" is the clause a DocuSign engineer would have picked
+off. Read the bytes before writing the sentence, even when the sentence is
+correcting somebody else's.

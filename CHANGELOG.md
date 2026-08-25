@@ -17,6 +17,53 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.11] - Unreleased
+
+### Fixed: Document properties overstated what a signature leaves uncovered
+
+The Covers row read *not the whole file --- 73 KB (74,637 bytes) lie outside the
+signed range* on an ordinary signed contract. Every digit was right and the row
+was misleading, because **65,536 of those bytes were the signature's own
+container**. A detached signature cannot cover its `/Contents` --- the value
+holds the hash of the bytes around it, so it cannot be among them --- and that
+hole is in every signed PDF ever written.
+
+What had actually been written after the signature was 9,101 bytes. The row now
+says so:
+
+    Covers: everything up to the signature, and 8.9 KB (9,101 bytes) were appended afterwards
+
+The good case changed too. It used to say *the whole file*, which is false of
+every signature for the same reason; it now names the container once, so the
+appended case above does not read as though the container were a second problem.
+
+This needed a new reading rather than new wording: the backend reported only how
+many bytes were covered, so the panel could compute the uncovered total and
+nothing finer. It reports the append separately now.
+
+**What the row still does not tell you is what was appended.** Nine kilobytes of
+signature-validation data and nine kilobytes of new page content produce the same
+row today. Telling them apart means reading the appended revision and judging it,
+and nothing in this panel makes a judgement yet.
+
+### Fixed: three hyphens printed where an em dash belonged
+
+Document properties, the update notice and the after-merge message drew a literal
+`---` in the middle of a sentence --- eighteen strings in all. It is how this
+project's documentation writes an em dash, and it had leaked into text the window
+draws.
+
+A check now reads every frontend module with the TypeScript parser and fails on
+three hyphens inside a string literal, with the two separator constants and the
+console-transcript modules excluded by name.
+
+### Fixed: an empty Results pane put its message in a different place from every other panel
+
+"Type in the find field to search." sat higher than the outline's "This document
+has no outline." and in a lighter grey, because Results wrote its message into the
+notice bar above the list while the other three panels draw a placeholder where
+the rows would be. All four now use the same element and the same style.
+
 ## [26.8.10] - 2026-08-25
 
 ### Fixed: upgrading from 26.8.8 on Windows stopped with an error, or installed a broken app

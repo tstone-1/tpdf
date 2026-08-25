@@ -14,6 +14,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
+import { placeholder } from "./panelrow";
 import { MAX_RESULT_ROWS, Results, statusFor } from "./results";
 import type { Match } from "./search";
 
@@ -199,5 +200,76 @@ describe("Results", () => {
     if (notice) notice.textContent = "clobbered";
     panel.update([match(0, "cat")], -1, "cat", true);
     expect(notice?.textContent).toBe("clobbered");
+  });
+
+  it("draws an empty pane's message where the rows would be, not above them", () => {
+    // Reported by a reader: "Type in the find field to search." sat higher than
+    // the outline's "This document has no outline." and in a different grey.
+    // Both are a side panel with nothing to list, and the other three put that
+    // message in the list as a placeholder. This one put it in the notice --
+    // 0.3rem padding at 0.7 opacity against a placeholder's 0.5rem at 0.55.
+    panel.update([], -1, "", false);
+
+    const list = host.children.find((child) => child.getAttribute("role") === "listbox");
+    const notice = host.children.find((child) => child.getAttribute("role") === "status");
+    expect(list?.children.length).toBe(1);
+    expect(list?.children[0]?.textContent).toBe("Type in the find field to search.");
+    expect(notice?.textContent).toBe("");
+    expect(notice?.style.display).toBe("none");
+    // Still the message, wherever it is drawn: the harness reads this.
+    expect(panel.status).toBe("Type in the find field to search.");
+  });
+
+  it("draws it in the same element, with the same style, as the other panels", () => {
+    // The complaint was position and colour, so the assertion is on the style
+    // rather than on which module produced it: a second copy of those numbers
+    // anywhere would pass a "did you call the helper" check and still look
+    // wrong on screen.
+    panel.update([], -1, "", false);
+    const list = host.children.find((child) => child.getAttribute("role") === "listbox");
+    const drawn = list?.children[0];
+    expect(drawn?.style.cssText).toBe(placeholder("x").style.cssText);
+  });
+
+  it("puts the count above the rows once there are rows to count", () => {
+    panel.update([match(0, "cat"), match(1, "cat")], -1, "cat", false);
+
+    const list = host.children.find((child) => child.getAttribute("role") === "listbox");
+    const notice = host.children.find((child) => child.getAttribute("role") === "status");
+    expect(notice?.textContent).toBe("2 matches");
+    expect(notice?.style.display).toBe("block");
+    // Two rows and no placeholder among them.
+    expect(list?.children.length).toBe(2);
+    for (const child of list?.children ?? []) {
+      expect(child.getAttribute("role")).toBe("option");
+    }
+  });
+
+  it("says so again when one empty result replaces another", () => {
+    // The regression the routing invites, and the reason `said` is forgotten
+    // when the list is cleared: a new query empties the list -- taking the
+    // placeholder with it -- and the message for the new query is the same
+    // string, so a "write only what changed" guard writes nothing. The pane
+    // would then hold no rows and no message at all.
+    panel.update([], -1, "cat", false);
+    const list = host.children.find((child) => child.getAttribute("role") === "listbox");
+    expect(list?.children[0]?.textContent).toBe("No matches.");
+
+    // A different array is what marks a new query, not a different length.
+    panel.update([], -1, "dog", false);
+    expect(list?.children.length).toBe(1);
+    expect(list?.children[0]?.textContent).toBe("No matches.");
+  });
+
+  it("takes the placeholder away when rows arrive", () => {
+    panel.update([], -1, "cat", true);
+    const list = host.children.find((child) => child.getAttribute("role") === "listbox");
+    expect(list?.children[0]?.textContent).toBe("Searching…");
+
+    // The same array, extended: the panel appends rather than rebuilding.
+    const found = [match(0, "cat")];
+    panel.update(found, -1, "cat", true);
+    expect(list?.children.length).toBe(1);
+    expect(list?.children[0]?.getAttribute("role")).toBe("option");
   });
 });

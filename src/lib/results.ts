@@ -34,6 +34,7 @@
  * query changes underneath it.
  */
 
+import { placeholder } from "./panelrow";
 import type { Match } from "./search";
 
 /** Rows drawn at once. Beyond this the panel says how many it is not showing. */
@@ -57,8 +58,17 @@ export class Results {
   /** Index of the highlighted row, or -1. */
   private currentIndex = -1;
   private readonly rows: HTMLElement[] = [];
-  /** What the notice last said, so an unchanged frame writes nothing. */
+  /** What the panel last said, so an unchanged frame writes nothing. */
   private said = "";
+  /**
+   * The placeholder standing in for rows, while there are none.
+   *
+   * Held so it can be taken away again. It is *not* the same thing as
+   * {@link said}, which is the message whichever element carries it --- that
+   * distinction is what lets {@link status} go on answering for the harness
+   * while the message moves between two elements.
+   */
+  private empty: HTMLElement | null = null;
 
   constructor(host: HTMLElement, opts: ResultsOptions) {
     this.opts = opts;
@@ -83,7 +93,14 @@ export class Results {
     return this.built;
   }
 
-  /** What the panel says above the list. For the check harness and the tests. */
+  /**
+   * What the panel says, wherever it is drawn. For the check harness and tests.
+   *
+   * It said "above the list" until the message learned to move: an empty pane
+   * draws it *in* the list, as a placeholder, like every other side panel. The
+   * accessor deliberately did not change with it, so nothing that reads this
+   * has to know which element carries the text.
+   */
   get status(): string {
     return this.said;
   }
@@ -147,6 +164,12 @@ export class Results {
       this.built = 0;
       this.shown = matches;
       this.currentIndex = -1;
+      // `replaceChildren` took the placeholder with the rows. Only the field is
+      // cleared, deliberately: forgetting {@link said} as well would redraw the
+      // notice on every new query whose message happens to be unchanged, and
+      // that is a live region --- `writes the status line only when it changes`
+      // is the test that says so, and it went red for exactly this.
+      this.empty = null;
     }
 
     for (let i = this.built; i < matches.length && i < MAX_RESULT_ROWS; i++) {
@@ -180,7 +203,23 @@ export class Results {
       : "";
   }
 
-  /** Writes the line above the list, if it has changed. */
+  /**
+   * Writes what the panel says, if it has changed.
+   *
+   * **Which element carries it depends on whether there are rows, and that is
+   * the rule the other three side panels already follow.** A placeholder
+   * stands where rows would be; the notice summarises rows that are there.
+   * This panel put both in the notice, so its "Type in the find field to
+   * search." sat `0.4rem` higher than the outline's "This document has no
+   * outline." and a shade darker --- `0.3rem` padding at `0.7` opacity against
+   * a placeholder's `0.5rem` at `0.55`, plus the outline tree's own `0.2rem`.
+   * Reported by a reader. The `panelrow.ts` extraction that made the other
+   * three agree was written for three panels and this is the fourth.
+   *
+   * {@link said} stays the message rather than the notice's text, so
+   * {@link status} answers the same thing it always did wherever the message
+   * is drawn.
+   */
   private say(
     total: number,
     query: string,
@@ -188,10 +227,24 @@ export class Results {
     unsearchablePages: number,
   ): void {
     const text = statusFor(total, query, running, unsearchablePages);
-    if (text === this.said) return;
+    const bare = this.built === 0;
+    const wanted = bare && text !== "";
+    // Two conditions, because the message is no longer the only state: a new
+    // query clears the list and takes the placeholder with it, so the same
+    // message can need redrawing without having changed. Guarding on the text
+    // alone left "No matches." for one query replaced by "No matches." for the
+    // next showing a pane with neither rows nor a message.
+    if (text === this.said && wanted === (this.empty !== null)) return;
     this.said = text;
-    this.notice.textContent = text;
-    this.notice.style.display = text ? "block" : "none";
+
+    this.empty?.remove();
+    this.empty = null;
+    if (bare && text) {
+      this.empty = placeholder(text);
+      this.list.appendChild(this.empty);
+    }
+    this.notice.textContent = bare ? "" : text;
+    this.notice.style.display = !bare && text ? "block" : "none";
   }
 
   /** One row: the page number, then the snippet with the hit emboldened. */

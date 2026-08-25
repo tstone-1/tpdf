@@ -280,7 +280,7 @@ export const NOT_IN_MENU: { prefix: string; reason: string }[] = [
     prefix: "recent.",
     reason:
       "the recent-document list is rebuilt whenever a file is opened, and a " +
-      "menu that follows it needs rebuilding with it --- File > Open Recent is " +
+      "menu that follows it needs rebuilding with it — File > Open Recent is " +
       "worth having and is its own piece of work",
   },
 ];

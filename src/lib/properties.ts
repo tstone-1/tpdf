@@ -66,6 +66,7 @@ export interface Signature {
   when: string;
   covers_whole_file: boolean;
   covered_bytes: number;
+  appended_bytes: number;
   certification: number;
   certificate: Certificate | null;
   timestamp: Timestamp | null;
@@ -237,7 +238,34 @@ export function certificationOf(level: number): string {
   }
 }
 
-/** The one thing about a signature that was checked rather than claimed. */
+/**
+ * The one thing about a signature that was checked rather than claimed.
+ *
+ * ## Why this does not report `bytes - covered_bytes`
+ *
+ * It did until 2026-08-25, and the number was arithmetically right and read as
+ * an accusation. A detached signature cannot cover its own `/Contents` hex
+ * string -- the value would have to contain its own hash -- so **every signed
+ * PDF ever written has that hole**, and it is large: on the DocuSign contract
+ * this was reported from, 65,536 of the 74,637 uncovered bytes were the
+ * container, and the part actually written after signing was 9,101 bytes of
+ * LTV validation data. The row said *73 KB lie outside the signed range*, which
+ * a technical reader corrects and a non-technical one is alarmed by, and
+ * neither reaction is the right one.
+ *
+ * So the headline is {@link Signature.appended_bytes}: what was added **after**
+ * the signature was made. That is the number that distinguishes one document
+ * from another, and the container is named rather than counted.
+ *
+ * ## What it still does not say
+ *
+ * **What was appended.** Nine kilobytes of validation data and nine kilobytes
+ * of new page content are the same row here, and they are not the same fact.
+ * Telling them apart means parsing the appended revision's objects and deciding
+ * which additions a signature tolerates -- a real piece of work, and one that
+ * would be making a *verdict*, which nothing in this panel does yet. Until then
+ * the wording says when, not what, and does not imply the answer.
+ */
 export function coverageOf(signature: Signature, bytes: number): Row {
   if (signature.covered_bytes === 0) {
     return {
@@ -247,12 +275,32 @@ export function coverageOf(signature: Signature, bytes: number): Row {
     };
   }
   if (signature.covers_whole_file) {
-    return { name: "Covers", value: "the whole file" };
+    // Not "the whole file", which was the old wording and is false of every
+    // signature: the container is excluded and always will be. Saying so once,
+    // here, is what stops the appended case below reading as though the
+    // container were the reader's problem too.
+    return {
+      name: "Covers",
+      value: "the whole file, except the signature container it cannot cover",
+    };
   }
+  if (signature.appended_bytes > 0) {
+    return {
+      name: "Covers",
+      value:
+        `everything up to the signature, and ${formatBytes(signature.appended_bytes)} ` +
+        "were appended afterwards",
+      warn: true,
+    };
+  }
+  // The range stops at the last byte and still does not begin at the first, so
+  // the hole is at the front of the file rather than after it. Rare, and worth
+  // its own sentence: an unsigned prologue is not an appendix and the two want
+  // different suspicion.
   const short = Math.max(0, bytes - signature.covered_bytes);
   return {
     name: "Covers",
-    value: `not the whole file --- ${formatBytes(short)} lie outside the signed range`,
+    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,
     warn: true,
   };
 }
@@ -281,7 +329,7 @@ export function conformanceRows(xmp: Xmp | null): Row[] {
   if (xmp.conformance.length > 0) {
     rows.push({
       name: "States conformance",
-      value: `${xmp.conformance.join(", ")} --- the document's own claim, which tpdf does not check`,
+      value: `${xmp.conformance.join(", ")} — the document's own claim, which tpdf does not check`,
     });
   }
   if (xmp.unread) {
@@ -318,7 +366,7 @@ export function certificateRows(signature: Signature): Row[] {
   if (certificate.self_issued) {
     rows.push({
       name: "Issued by",
-      value: "itself --- self-issued, so no other party vouched for this name",
+      value: "itself — self-issued, so no other party vouched for this name",
     });
   } else {
     const by = certificate.issuer_cn || certificate.issuer;
@@ -347,10 +395,10 @@ export function certificateRows(signature: Signature): Row[] {
     name: "Key is for",
     value:
       usage === null
-        ? "not stated --- the certificate places no limit on what the key is used for"
+        ? "not stated — the certificate places no limit on what the key is used for"
         : usage.length > 0
           ? usage.join(", ")
-          : "nothing --- the certificate names no use for its own key",
+          : "nothing — the certificate names no use for its own key",
     warn: usage !== null && usage.length === 0,
   });
 
@@ -361,7 +409,7 @@ export function certificateRows(signature: Signature): Row[] {
       value:
         purposes.length > 0
           ? purposes.join(", ")
-          : "nothing --- the certificate names no purpose",
+          : "nothing — the certificate names no purpose",
       warn: purposes.length === 0,
     });
   }
@@ -394,7 +442,7 @@ export function certificateRows(signature: Signature): Row[] {
     rows.push({
       name: "Certificates present",
       value:
-        "one, and the signature does not point at it --- shown because there " +
+        "one, and the signature does not point at it — shown because there " +
         "is nothing else it could be",
       warn: true,
     });
@@ -450,7 +498,7 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
       stamp.authority?.subject_cn || stamp.authority?.subject || "an unnamed authority";
     rows.push({
       name: "Timestamped",
-      value: `${stamp.when} by ${by} --- a separate party's claim, which tpdf does not check`,
+      value: `${stamp.when} by ${by} — a separate party's claim, which tpdf does not check`,
     });
   }
   rows.push(coverageOf(signature, bytes));
@@ -487,14 +535,14 @@ export function sections(properties: Properties): Section[] {
           note:
             "Everything below comes from the file's structure, which is readable " +
             "without the password. Nothing inside the document could be read at " +
-            "all, so its properties, signatures and structure are not missing --- " +
+            "all, so its properties, signatures and structure are not missing — " +
             "they were never seen.",
         },
       ]
     : [];
 
   const signatures: Section[] = properties.signatures.map((signature) => {
-    const title = signature.field ? `Signature --- ${signature.field}` : "Signature";
+    const title = signature.field ? `Signature — ${signature.field}` : "Signature";
     const rows = signatureRows(signature, properties.bytes);
     // The disclaimer goes on a signature that exists, and not on an empty field
     // waiting for one --- there is nothing there to be wrong about.
@@ -526,7 +574,7 @@ export function sections(properties: Properties): Section[] {
       rows,
       note:
         "These are the document's stated restrictions. Any application may " +
-        "ignore them --- they are a request, not an enforcement.",
+        "ignore them — they are a request, not an enforcement.",
     });
   }
 
@@ -545,8 +593,8 @@ export function sections(properties: Properties): Section[] {
     rows.push({
       name: "Tagged",
       value: properties.tagged
-        ? "yes --- the document states its own reading order"
-        : "no --- reading order is inferred from the layout",
+        ? "yes — the document states its own reading order"
+        : "no — reading order is inferred from the layout",
     });
   }
   if (properties.attachments !== null && properties.attachments > 0) {

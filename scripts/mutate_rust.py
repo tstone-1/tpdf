@@ -3306,9 +3306,33 @@ MUTATIONS += [
         # the half of the check that reading the code calls redundant.
         "docinfo: check only where the signed range ends, not where it starts",
         "src/docinfo.rs",
-        "        }) && numbers.first() == Some(&0);",
-        "        });",
+        "        out.covers_whole_file = end == Some(size) && numbers.first() == Some(&0);",
+        "        out.covers_whole_file = end == Some(size);",
         "a_range_that_skips_the_start_of_the_file_is_not_whole_coverage",
+    ),
+    Mutation(
+        # Count the container as an append. This is the defect the field was
+        # added to fix, wearing the shape it had before: `size -
+        # covered_bytes` is the uncovered total, and on a real DocuSign
+        # contract 65,536 of its 74,637 bytes are the `/Contents` hex string
+        # that no signature can cover. The panel then leads with 73 KB where
+        # the honest number is 9 KB.
+        "docinfo: report every uncovered byte as an append",
+        "src/docinfo.rs",
+        "        out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));",
+        "        out.appended_bytes = size.saturating_sub(out.covered_bytes);",
+        "what_was_appended_after_signing_is_counted_apart_from_the_container",
+    ),
+    Mutation(
+        # Subtract without saturating. A range written for bytes a truncation
+        # removed claims to end past the file, and an unsigned wrap then tells
+        # the reader 18 exabytes were appended -- which is not a smaller error
+        # than the one above, it is a different one.
+        "docinfo: let a range past the end of the file wrap the append count",
+        "src/docinfo.rs",
+        "        out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));",
+        "        out.appended_bytes = end.map_or(0, |end| size.wrapping_sub(end));",
+        "a_range_reaching_past_the_end_of_the_file_reports_no_append",
     ),
     Mutation(
         # Sum every number in `/ByteRange`. Offsets are not lengths, so this

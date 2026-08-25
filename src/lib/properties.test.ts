@@ -55,6 +55,7 @@ function signed(): Signature {
     when: "2026-05-25 08:05:07 UTC",
     covers_whole_file: true,
     covered_bytes: 1024,
+    appended_bytes: 0,
     certification: 0,
     certificate: null,
     timestamp: null,
@@ -102,21 +103,66 @@ describe("formatBytes", () => {
 });
 
 describe("coverageOf", () => {
-  it("says the whole file when the range reaches the last byte", () => {
+  it("names the container it cannot cover, rather than claiming the whole file", () => {
+    // It said "the whole file" until 2026-08-25, which is false of every
+    // signature there is: the `/Contents` hex string holding the hash cannot be
+    // inside what was hashed. Saying it once here is what stops the appended
+    // case below reading as though the container were the reader's problem.
     expect(coverageOf(signed(), 1024)).toEqual({
       name: "Covers",
-      value: "the whole file",
+      value: "the whole file, except the signature container it cannot cover",
     });
   });
 
-  it("names how much lies outside the range, and warns", () => {
-    // The real failure this exists for: a document signed and then appended to.
-    // The number is what makes it actionable --- "not the whole file" alone
-    // does not distinguish a stray newline from a second document bolted on.
-    const short = { ...signed(), covers_whole_file: false, covered_bytes: 700 };
+  it("counts what was appended after signing, not what is uncovered", () => {
+    // The defect a reader reported, with the real numbers from the DocuSign
+    // contract that produced it. 74,637 bytes are uncovered, and the row said
+    // so; 65,536 of them are the container, which every signed PDF has, and the
+    // 9,101 that were appended after signing are the whole of what is worth
+    // reading. A row that leads with 73 KB is corrected by anyone technical and
+    // alarms everyone else.
+    const appended = {
+      ...signed(),
+      covers_whole_file: false,
+      covered_bytes: 51_996,
+      appended_bytes: 9_101,
+    };
+    expect(coverageOf(appended, 126_633)).toEqual({
+      name: "Covers",
+      value:
+        "everything up to the signature, and 8.9 KB (9,101 bytes) were appended afterwards",
+      warn: true,
+    });
+  });
+
+  it("does not let the container reach the number a reader is shown", () => {
+    // The control for the sentence above, and the one that could not exist
+    // while the row was a subtraction: the container grows by 56 KB and the
+    // reading does not move, because it is not a fact about the container.
+    const small = {
+      ...signed(),
+      covers_whole_file: false,
+      covered_bytes: 51_996,
+      appended_bytes: 9_101,
+    };
+    const large = { ...small, covered_bytes: 51_996 };
+    expect(coverageOf(large, 126_633 + 57_344)).toEqual(coverageOf(small, 126_633));
+  });
+
+  it("names how much lies outside a range that leaves the head of the file", () => {
+    // Not an append: the range reaches the last byte and does not start at the
+    // first, so the unsigned bytes are a prologue. Rare, and it wants different
+    // suspicion from an appendix -- content that was there before the signature
+    // and was left out of it.
+    const short = {
+      ...signed(),
+      covers_whole_file: false,
+      covered_bytes: 700,
+      appended_bytes: 0,
+    };
     expect(coverageOf(short, 1024)).toEqual({
       name: "Covers",
-      value: "not the whole file --- 324 bytes lie outside the signed range",
+      value: "not the whole file — 324 bytes lie outside the signed range",
       warn: true,
     });
   });
@@ -124,7 +170,14 @@ describe("coverageOf", () => {
   it("refuses to answer at all when there is no byte range", () => {
     // "Covers nothing" would be a measurement. There was no range to measure,
     // which is a different statement and the only honest one.
-    const none = { ...signed(), covers_whole_file: false, covered_bytes: 0 };
+    // `appended_bytes` is set to something loud on purpose: with no range there
+    // is no end to measure from, so this branch must answer before it is read.
+    const none = {
+      ...signed(),
+      covers_whole_file: false,
+      covered_bytes: 0,
+      appended_bytes: 4_096,
+    };
     expect(coverageOf(none, 1024)).toEqual({
       name: "Covers",
       value: "no byte range stated, so nothing could be checked",
@@ -196,7 +249,7 @@ describe("sections", () => {
     // document opened it about the signature.
     const properties = { ...blank(), signatures: [signed()] };
     const titles = sections(properties).map((section) => section.title);
-    expect(titles.indexOf("Signature --- Signature1")).toBeLessThan(
+    expect(titles.indexOf("Signature — Signature1")).toBeLessThan(
       titles.indexOf("File"),
     );
   });
