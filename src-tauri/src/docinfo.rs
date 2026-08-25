@@ -4505,10 +4505,29 @@ mod tests {
     /// A blob that is already DER must survive the walk untouched, because it
     /// now goes through it on the way to every parser here.
     ///
-    /// The old trailing-zero scan is the oracle, and it is a fair one *for
-    /// these fixtures*: every one ends in a non-zero byte, which is the case
-    /// the scan gets right. It is not a fair one in general, which is why it
-    /// was replaced.
+    /// **The oracle is the blob's own declared length, and it was the old
+    /// trailing-zero scan until 2026-08-25.** That comment argued the scan was
+    /// "a fair oracle *for these fixtures*: every one ends in a non-zero byte,
+    /// which is the case the scan gets right" --- true of the fixtures in front
+    /// of whoever wrote it, and these fixtures are **regenerated with a fresh
+    /// key on every run**, so "these fixtures" is not a fixed set. A signature's
+    /// last byte is effectively random, so about one run in 256 per signature
+    /// produces one ending in `0x00`, the scan trims a byte that belongs to the
+    /// value, and a correct reader fails the assertion.
+    ///
+    /// It cost a release: it passed the rehearsal tag and failed the real one
+    /// forty minutes later on the same commit, on `incr-two-signers.pdf` ---
+    /// 2,145 bytes returned against 2,144 expected. The trap *"A signature blob
+    /// is trimmed by trailing zero, and BER ends in zeros"* names this exact
+    /// arithmetic, and the scan it describes was removed from the code and left
+    /// standing in the test that checks it.
+    ///
+    /// So the expectation now comes from the outer TLV header: tag, length, and
+    /// where that says the value stops. That is an independent computation and
+    /// not a second copy of [`ber::to_definite_length`], which walks the whole
+    /// structure recursively --- reading one header is five lines and shares no
+    /// mechanism with it. Padding cannot reach it and neither can the value's
+    /// last byte.
     #[test]
     fn a_der_signature_blob_is_returned_byte_for_byte() {
         let names = [
@@ -4535,15 +4554,45 @@ mod tests {
                     .ok()
                     .and_then(|object| resolve(&document, object).as_str().ok())
                     .expect("a signed field carries its blob");
-                let last = raw
-                    .iter()
-                    .rposition(|byte| *byte != 0)
-                    .expect("not a placeholder");
+                // Where the outer value says it stops: tag byte, then either a
+                // short length or `0x80 | n` followed by n big-endian bytes.
+                let short = raw[1];
+                assert_ne!(
+                    short, 0x80,
+                    "{name}: an indefinite-length blob is BER, so the walk is \
+                     entitled to rewrite it and this test does not apply --- \
+                     give it its own case rather than weakening this one"
+                );
+                let (length, header) = if short & 0x80 != 0 {
+                    let count = usize::from(short & 0x7F);
+                    let mut length = 0usize;
+                    for byte in &raw[2..2 + count] {
+                        length = length * 256 + usize::from(*byte);
+                    }
+                    (length, 2 + count)
+                } else {
+                    (usize::from(short), 2)
+                };
+                let declared_end = header + length;
+
                 let mut unread = 0;
                 let read = signature_contents(&document, field, MAX_SIG_BLOB, &mut unread)
                     .expect("a walkable blob");
-                assert_eq!(read, raw[..=last], "{name}: DER must come back unchanged");
+                assert_eq!(
+                    read,
+                    raw[..declared_end],
+                    "{name}: DER must come back unchanged"
+                );
                 assert_eq!(unread, 0);
+                // The padding really is padding: everything past the declared
+                // end is zero. Without this the check above would pass for a
+                // `declared_end` that stopped short of the real value, which is
+                // the failure the trailing-zero oracle used to produce.
+                assert!(
+                    raw[declared_end..].iter().all(|byte| *byte == 0),
+                    "{name}: a non-zero byte past the declared end, so the blob \
+                     does not end where its own header says it does"
+                );
                 examined += 1;
             }
         }

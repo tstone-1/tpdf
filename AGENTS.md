@@ -1661,6 +1661,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A square fixture cannot tell a rotation from an identity
 - A bound in the code hides everything after it in the fixture
 - A test pinned a random value out of a generated fixture, and both places it runs hid that (a serial and a date transcribed from `openssl`; stale bytes locally, a `[SKIP]` on CI, red the first time anyone followed BUILD.md)
+- A test whose oracle is the heuristic the code replaced fails once in 256 runs, on correct code (the rehearsal tag passed and the real tag failed on the SAME commit; a per-run regenerated fixture makes two runs independent draws rather than a repetition, and an oracle written from the fixtures you can see is a claim about a sample)
 - A `-manifest.json` sidecar enrols a fixture in a check it never claimed
 - A `/Text` annotation's rectangle is advisory, and PDFKit replaces it (a 24x24 icon on your top-left corner reads as a 229 pt error, and it hangs below your rectangle's bottom edge)
 - A rotated page makes a document mixed-size, and two checks assume it is not
