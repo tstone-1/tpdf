@@ -60,6 +60,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
+import mutation_since  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "src-tauri"
@@ -2728,27 +2729,6 @@ SUMMARY = re.compile(r"^test result: \w+\. \d+ passed; (\d+) failed", re.M)
 LISTED_TEST = re.compile(r"^(\S+): test$", re.M)
 
 
-def changed_files(ref: str) -> set[str] | None:
-    """Repo-relative paths differing from `ref`, working tree included.
-
-    Two questions, because they have different answers and both matter: what
-    the commits since `ref` touched, and what is edited right now and not
-    committed. A run that read only the first would skip exactly the mutation
-    aimed at the code being written.
-    """
-    out: set[str] = set()
-    for cmd in (
-        ["git", "diff", "--name-only", f"{ref}...HEAD"],
-        ["git", "diff", "--name-only", "HEAD"],
-        ["git", "ls-files", "--others", "--exclude-standard"],
-    ):
-        done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-        if done.returncode != 0:
-            return None
-        out |= {line.strip() for line in done.stdout.splitlines() if line.strip()}
-    return out
-
-
 def run_tests(only: str | None = None) -> tuple[set[str], int | None, str]:
     """Runs the suite, returning failed names, the summary count and the log.
 
@@ -4326,18 +4306,18 @@ def main() -> int:
     args = parser.parse_args()
     chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
     if args.since:
-        touched = changed_files(args.since)
-        if touched is None:
-            print(f"[FAIL] git could not diff against {args.since!r}")
-            return 1
-        scoped = [m for m in chosen if str(Path("src-tauri") / m.path) in touched]
-        left = len(chosen) - len(scoped)
-        rust = sorted(f for f in touched if f.endswith(".rs"))
-        print(f"--- --since {args.since}: {len(rust)} Rust file(s) changed, "
-              f"{len(scoped)} mutation(s) aimed at them, {left} NOT run")
-        print("    a change elsewhere can still break a mutation in a file this "
-              "missed --- run the whole table before pushing")
-        chosen = scoped
+        # The prefix is a string, not `Path("src-tauri") / m.path`, and that is
+        # the whole of what was wrong with this for as long as it existed: git
+        # reports forward slashes on every platform, `str(WindowsPath(...))`
+        # produces backslashes, and the set membership test therefore matched
+        # nothing on Windows. Measured 2026-08-25 -- `--since HEAD~1` over a
+        # commit that changed `docinfo.rs`, which 48 mutations aim at, selected
+        # **0**. It refused rather than passing, because the guard below treats
+        # an empty selection as "proved nothing"; so the flag was useless here
+        # rather than misleading, which is the difference that guard makes.
+        chosen, code = mutation_since.apply(chosen, args.since, "src-tauri/")
+        if code:
+            return code
     # Mutations for another platform. `--list` still shows them, marked: the
     # table is the same everywhere and what differs is which rows this machine
     # can execute, so a listing that silently dropped them would make two

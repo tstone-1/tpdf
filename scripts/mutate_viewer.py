@@ -57,6 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
+import mutation_since  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 WINDOWS = sys.platform == "win32"
@@ -1714,6 +1715,16 @@ def main() -> int:
             "whether it is needed here."
         ),
     )
+    # The same flag the other two harnesses take, and it buys most here: every
+    # mutation in this table rebuilds the application and drives a real window,
+    # so the table is measured in hours rather than minutes. See
+    # `mutation_since.py` for what it does not reach.
+    parser.add_argument(
+        "--since",
+        default="",
+        metavar="REF",
+        help="only mutations in files changed since REF (plus the working tree)",
+    )
     args = parser.parse_args()
     global RAISE_WINDOW
     RAISE_WINDOW = args.raise_window
@@ -1723,6 +1734,11 @@ def main() -> int:
         for m in MUTATIONS
         if args.only.lower() in m.name.lower() and (not args.runner or m.runner == args.runner)
     ]
+    if args.since:
+        # No prefix: this table names paths from the repository root.
+        chosen, code = mutation_since.apply(chosen, args.since)
+        if code:
+            return code
     if args.list:
         for m in chosen:
             print(f"{m.name}\n    {m.path} [{m.runner}]\n    expects: {m.expect}")
