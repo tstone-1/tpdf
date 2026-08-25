@@ -15223,3 +15223,57 @@ The related hazard, avoided deliberately: `release_all` reads the open ids under
 the lock and closes them *outside* it, because `close` takes the same lock and
 then waits. Holding it across the calls deadlocks on the first document with a
 worker out --- on a path that runs while a reader is waiting for their first page.
+
+### An unused-import warning on one platform is not an unused import
+
+A cross-module rename left a pile of `warning: unused import` diagnostics, so a
+pass collected them from `cargo check --all-targets` and deleted every one. It
+was scripted off the warning list, which is the tempting way to do it and is
+wrong for one reason: **the warning list is a fact about the platform that
+produced it.**
+
+`fdpass_probe`'s body is POSIX-only. On Windows it is compiled out, so its import
+of the document type genuinely is unused --- rustc says so, correctly --- and the
+pass removed it. On macOS the body compiles and the type is gone:
+
+    Gates (windows-2025): success
+    Gates (macos-latest): failure    clippy, test and bins all red
+
+    error[E0433]: cannot find type `OpenDocument`
+       --> examples/fdpass_probe.rs:210:19
+
+Three compile gates red on one platform and green on the other is the signature
+of this, and it is worth recognising on sight: nothing about the *code* is
+platform-specific here, only the compiler's view of which lines exist.
+
+The same pass left `ocr_probe.rs` importing a name that is unused **on macOS**,
+which under `-D warnings` is an error there and invisible on Windows. Both
+directions, from one pass.
+
+`fdpass_probe` compounded it by keeping its imports **inside** the cfg'd module
+rather than at file scope, which is why the earlier rename sweep reported "no use
+block" for that file and skipped it entirely. A file whose imports are not where
+imports usually are is a file every `^use ` regex will miss.
+
+**The check that would have caught it does not exist on this machine, and both
+alternatives were measured rather than assumed.** `scripts/check_windows.py`
+works because a Mac can cross-check Windows code: the target's std comes from
+rustup and `cargo check` needs no linker. The mirror does not:
+
+- an Apple target needs the macOS SDK, which is not obtainable on Windows;
+- a Linux target would at least satisfy `#[cfg(unix)]` and catch exactly this
+  error. Installed and tried: it dies in **`ring`'s build script** for want of a
+  Linux C toolchain, `ring` being in the tree through the updater's TLS stack.
+
+So macOS-gated code on this box is checked by CI and by nothing else. That is not
+a gap to close, it is the reason to push and *watch* rather than to read a local
+`18/18` as the answer --- which is what turned a four-minute red run into a
+four-minute fix.
+
+**And the general shape, which is now three for three in one day.** A mechanical
+pass keyed on something that means two different things: a field name that
+occurs in six unrelated places, a type name that collides with `lopdf::Document`,
+and a warning list that is one platform's opinion. Each looked like a rename and
+each needed undoing. The tell in every case is the same --- **the error count did
+not fall** --- and the cheapest defence is to key the pass on something that
+cannot mean two things, or to let the compiler enumerate the sites instead.
