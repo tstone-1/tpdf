@@ -186,7 +186,10 @@ def build_xrefstream(outdir: str) -> "str | None":
     """
     source = os.path.join(outdir, "text-heavy.pdf")
     if not os.path.exists(source):
-        print(f"[SKIP] incr-xrefstream.pdf: {source} missing (run make_text_pdf.py)")
+        print(
+            f"[SKIP] incr-xrefstream.pdf: {source} missing -- no script writes"
+            " it, it is a real document supplied by hand (BUILD.md)"
+        )
         return None
     target = os.path.join(outdir, "incr-xrefstream.pdf")
     subprocess.run(

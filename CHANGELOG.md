@@ -138,6 +138,16 @@ the engine before the page is drawn, so the page, the text you can select, and
 anything you mark on it all line up again. On a document that states its own
 sizes --- which is most of them --- nothing changes and nothing extra is read.
 
+### Fixed: a skip message pointed at a script that cannot produce the fixture
+
+`make_incremental_pdf.py` derives `incr-xrefstream.pdf` from `text-heavy.pdf`, and
+when that file is absent it told the reader to `run make_text_pdf.py`. That script
+writes `text-base14`, `text-truetype`, `text-cid` and `text-marked`, and none of
+them is `text-heavy.pdf` --- which no script writes at all. It is the reading
+`ci_fixtures.py` corrected in its own list on 2026-08-19, surviving in one more
+place, and it sends whoever hits the skip to run something that cannot help. The
+message now says the fixture is a real document supplied by hand.
+
 ### Fixed: an extract from a file that changed said nothing
 
 `Save a copy` tells you when the file underneath moved while you had it open, so
