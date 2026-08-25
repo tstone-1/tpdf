@@ -3341,6 +3341,26 @@ MUTATIONS += [
         # been rediscovered three times and named the grep that checks it; on
         # 2026-08-25 four probes had drifted back, which is what a rule with
         # nothing enforcing it does.
+        # Count every id swept rather than every document actually released.
+        # `close` leaves holes rather than removing entries, so a table of holes
+        # is the ordinary shape here -- and this makes a fresh start claim it
+        # released documents belonging to a webview that never existed. The one
+        # line this count produces means "a page reloaded", which is exactly what
+        # the miscount turns into a lie.
+        #
+        # A sibling mutation belongs here and is deliberately absent: dropping the
+        # `slot.is_some()` filter that builds the id list. Running it showed it
+        # SURVIVES, and correctly -- the filter keeps `close` from being asked
+        # about holes, and `close` refuses a hole anyway, so the count is held
+        # here rather than there. A variant, not a gap; recorded so the next
+        # person to notice finds out it was measured.
+        "workers: sweep the documents without closing any of them",
+        "src/workers.rs",
+        "            if self.close(doc).is_ok() {",
+        "            if false {",
+        "releasing_everything_empties_every_slot_and_reports_how_many",
+    ),
+    Mutation(
         "lib: hardcode the macOS library directory in a portable spike",
         "examples/crop_probe.rs",
         'PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR)',

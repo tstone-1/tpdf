@@ -1263,6 +1263,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Where the parse runs is not observable from a unit test (the same bytes from the same input, every test green before and after; the probe's first run failed on a `/CropBox`-shaped quad in a display-space type)
 - A Rust process absorbs the first SIGSEGV you send it
 - A released id must leave a hole, because removing it renumbers the rest
+- A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets (one correct caller of `close_document` and no other owner, so a webview reload strands every document with its pool; the fix's argument depends on there being one window, two mutations survive by guarding each other, and the test that HUNG is the evidence the sweep reuses the drain)
 - Two copies of a distinction drift, and a mutation of one survives
 - Dropping the owner does not close a pipe something else has cloned
 - A descriptor without `FD_CLOEXEC` leaks into every later child, and keeps it alive

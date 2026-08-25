@@ -1700,6 +1700,36 @@ impl Engine for Workers {
         drop(held);
         Ok(())
     }
+
+    fn release_all(&self) -> Result<usize, String> {
+        // The ids first, under the lock; the closes afterwards, outside it.
+        // **Not a style choice**: `close` takes this same lock and then waits on
+        // `returned` for the pool to come home, so holding it across the calls
+        // would deadlock on the first document with a worker still out --- and
+        // deadlock is the one failure mode a *cleanup* path must not have, since
+        // it runs while a reader is waiting for their first page.
+        let open: Vec<u32> = {
+            let docs = self.lock();
+            docs.iter()
+                .enumerate()
+                .filter(|(_, slot)| slot.is_some())
+                .map(|(id, _)| id as u32)
+                .collect()
+        };
+
+        let mut released = 0;
+        for doc in open {
+            // A slot that went between the read and the close is not an error
+            // here, where a caller closing one id twice is. The difference is who
+            // is asking: `close` answers a caller that says it has this document,
+            // and being wrong about that is worth saying. This is a sweep, and
+            // nothing named the ids.
+            if self.close(doc).is_ok() {
+                released += 1;
+            }
+        }
+        Ok(released)
+    }
 }
 
 /// A worker answered, with the wrong thing.
@@ -2015,6 +2045,66 @@ mod tests {
         assert_eq!(workers.close(0), Ok(()));
         assert!(workers.lock()[0].is_none(), "the slot was not emptied");
         assert!(workers.close(0).is_err(), "a hole cannot be closed again");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Everything held goes, and the count says how much there was.
+    ///
+    /// **The leak this exists for, demonstrated rather than argued.** Two
+    /// documents are open and nothing has closed either --- which is the state a
+    /// webview reload leaves behind, because `close_document`'s only caller in
+    /// the application is a *successful subsequent open* and a reloaded page has
+    /// no id to pass it. Nothing else reclaims them: no timer, no reference
+    /// count, no backend-side owner.
+    ///
+    /// The count is asserted as well as the emptiness, because a caller cannot
+    /// see this table. Without it, *nothing was open* and *everything was
+    /// released* come back as the same answer, and only one of them means a
+    /// webview reloaded.
+    #[test]
+    fn releasing_everything_empties_every_slot_and_reports_how_many() {
+        let workers = supervisor(Duration::from_secs(30));
+        let (first, one) = held("release-all-1", 0);
+        // Both with a drained pool. `held`'s second argument is `spawned`, not
+        // the document id, and a document with a worker still out makes `close`
+        // wait for it --- correct behaviour, and it hung the first version of
+        // this test, which is the clearest evidence available that `release_all`
+        // reuses the drain rather than working around it.
+        let (second, two) = held("release-all-2", 0);
+        workers.lock().push(Some(one));
+        workers.lock().push(Some(two));
+
+        assert_eq!(workers.release_all(), Ok(2), "both were held");
+        assert!(
+            workers.lock().iter().all(Option::is_none),
+            "a slot survived"
+        );
+
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(&second);
+    }
+
+    /// A hole does not count, and neither does an empty table.
+    ///
+    /// The control on the count, and it is the direction that matters: a sweep
+    /// that reported the table's *length* rather than what was in it would say a
+    /// fresh start had released something, and the one line this logs exists
+    /// precisely to mean "a webview reloaded". `close` leaves holes rather than
+    /// removing entries, so a table of holes is the ordinary shape here.
+    #[test]
+    fn releasing_nothing_reports_nothing_even_with_holes_in_the_table() {
+        let workers = supervisor(Duration::from_secs(30));
+        assert_eq!(workers.release_all(), Ok(0), "an empty table held nothing");
+
+        let (dir, one) = held("release-all-hole", 0);
+        workers.lock().push(Some(one));
+        assert_eq!(workers.close(0), Ok(()));
+        assert_eq!(
+            workers.release_all(),
+            Ok(0),
+            "a hole is not a document, and the table still has an entry for it"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

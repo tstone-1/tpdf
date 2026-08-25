@@ -387,6 +387,18 @@ impl Edits {
         self.docs.lock().expect("edits lock").remove(&doc);
     }
 
+    /// Drops every document's model, returning how many there were.
+    ///
+    /// For a webview that has just started and therefore holds no document id.
+    /// See `lib.rs`'s `release_documents`, which is the only caller and which
+    /// carries the argument for why that is sound.
+    pub fn release_all(&self) -> usize {
+        let mut docs = self.docs.lock().expect("edits lock");
+        let held = docs.len();
+        docs.clear();
+        held
+    }
+
     /// How many documents have a model, for tests and diagnostics.
     pub fn len(&self) -> usize {
         self.docs.lock().expect("edits lock").len()
