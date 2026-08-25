@@ -12,6 +12,7 @@ pub mod annots;
 pub mod ber;
 pub mod content;
 pub mod diag;
+pub mod docgraph;
 pub mod docinfo;
 pub mod docmodel;
 pub mod edits;
@@ -255,10 +256,20 @@ fn log_file(app: &tauri::AppHandle) -> PathBuf {
 /// count --- "four spike binaries still hardcode `lib`" --- which was nine by the
 /// time anyone checked, and which is why this was rediscovered a *third* time, by
 /// `text-probe` failing to bind on 2026-08-02. A number in prose is exactly what
-/// nobody updates; the authority is
-/// `grep -rn 'vendor/pdfium/lib' src-tauri/examples`, and what it should return
-/// is the two macOS-only binaries, `fdpass-probe` and `ocr-probe`, where `lib` is
-/// simply correct.
+/// nobody updates.
+///
+/// **And a rule in prose is not much better, which is what the fourth time
+/// showed.** This paragraph used to end by naming the authority as
+/// `grep -rn 'vendor/pdfium/lib' src-tauri/examples` and stating what it should
+/// return: the two macOS-only binaries, `fdpass-probe` and `ocr-probe`, where
+/// `lib` is simply correct. Nobody ran it. On 2026-08-25 it returned four more
+/// --- `crop-probe`, `geometry-probe`, `merge-probe`, `turned-probe` --- every one
+/// of them unable to bind on Windows, and `geometry-probe` was found that way:
+/// it panicked with `LoadLibraryError` on a path that exists.
+///
+/// The authority is now `only_the_macos_spikes_hardcode_the_library_directory`,
+/// which runs that comparison as a **set** on every `cargo test`. Same rule, with
+/// something behind it.
 pub const PDFIUM_SUBDIR: &str = if cfg!(windows) { "bin" } else { "lib" };
 
 /// The file whose presence proves [`PDFIUM_SUBDIR`] is the right directory.
@@ -2492,6 +2503,68 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+
+    /// Only the two macOS-only spikes may hardcode `vendor/pdfium/lib`.
+    ///
+    /// [`PDFIUM_SUBDIR`]'s own note states this invariant and names the command
+    /// that checks it --- `grep -rn 'vendor/pdfium/lib' src-tauri/examples` ---
+    /// and says what it should return. Nothing ran that command. The constant
+    /// exists because the fact had been rediscovered three times, by
+    /// `worker-probe`, then `backend-probe`, then `text-probe`; on 2026-08-25 it
+    /// was a fourth, with `crop-probe`, `geometry-probe`, `merge-probe` and
+    /// `turned-probe` all unable to bind on Windows because `lib/` holds the
+    /// *import* library there, so the directory exists and the load fails much
+    /// later pointing at a path that is right there.
+    ///
+    /// So this is the same rule with a test behind it, which is the difference
+    /// between a rule and a comment. It is deliberately a **set** comparison and
+    /// not a count: `PDFIUM_SUBDIR`'s note records that the count in its own
+    /// prose said four when the real number was nine, which is why that sentence
+    /// was replaced by a rule in the first place.
+    ///
+    /// A binary that genuinely is macOS-only belongs in [`MAC_ONLY`] with the
+    /// reason; anything else must ask the constant.
+    #[test]
+    fn only_the_macos_spikes_hardcode_the_library_directory() {
+        /// The two where `lib` is simply correct, because they do not build
+        /// anywhere else: `fdpass-probe` carries a POSIX `SCM_RIGHTS` handover
+        /// and `ocr-probe` drives macOS Vision.
+        const MAC_ONLY: [&str; 2] = ["fdpass_probe.rs", "ocr_probe.rs"];
+
+        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let mut found: Vec<String> = Vec::new();
+        let mut scanned = 0usize;
+        let entries = std::fs::read_dir(&examples).expect("the examples directory must be there");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "rs") {
+                continue;
+            }
+            scanned += 1;
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if source.contains("vendor/pdfium/lib") {
+                found.push(path.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+
+        // The refusal that makes the rest mean anything: a scan that read no
+        // files finds no offenders, and passes exactly like a clean tree.
+        assert!(
+            scanned > 20,
+            "only {scanned} example sources were scanned; the directory walk is wrong"
+        );
+
+        found.sort();
+        let mut allowed: Vec<String> = MAC_ONLY.iter().map(|s| (*s).to_string()).collect();
+        allowed.sort();
+        assert_eq!(
+            found, allowed,
+            "every portable spike must join PDFIUM_SUBDIR rather than `lib`, which is the \
+             import library on Windows and binds to nothing"
+        );
+    }
     use super::{
         app_version, await_reply, env_list, env_or, parse_setting, reply_channel, spike_env,
         with_close_note, with_session, SaveFailure, WEBVIEW_ALIVE,

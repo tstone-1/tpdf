@@ -101,7 +101,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // the page count comes from, which is what bounds the scan.
     let bindings = bind(&args.library)?;
     let document = RawDocument::open(bindings, &args.file, None)?;
-    let comments = document.comments()?;
+    let comments = document.graph().comments(document.page_count() as usize)?;
 
     match args.mode {
         Mode::Read => {

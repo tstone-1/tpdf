@@ -1602,6 +1602,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An uninhabited type carries its impossibility into every caller
 - A `null` that means "inferred" is not a `null` that means "unknown"
 - A directory that exists is not the library you need
+- The comment naming the grep that would have caught it, four times running (the fix for a stale COUNT was a stale RULE, and the doc comment even wrote out the command; four probes could not bind on Windows and it was found by accident -- if a command is short enough for a comment it is short enough for a test)
 - A list of documented blockers can be wrong in the direction that looks thorough
 - A gate list that never links a binary cannot see a link error
 - A pin that nothing verifies is indistinguishable from no pin
@@ -1694,6 +1695,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing (twelve lines arguing against the feature being built, attached to nothing; a scan is two lines of Python and found 26, and it over-reports on purpose --- a section header is the same shape)
 - A comment defending a name can become an argument for the opposite name, with no word of it changing (every clause stayed true and the conclusion inverted; a premise becoming TRUE is the direction that flips it, and there is no disagreement for a reader to stop at)
 - A *Not done* note can describe a route with no reader in it (the parameter's half was true and the reader's half never happened; it held the print subsystem's ranked gap for a week and aimed two sessions at the wrong place --- ask whether a reader can get there, which for a command is one grep over the callers)
+- A module header that says "and nothing more", under a `use` block that says otherwise (the header was true when written and five features each added one field to the type that already had the document; measure the seam on BOTH axes -- 7 fields touched once or twice against 38 signatures in 32 files -- because they disagree about how big the job is, and a door beats forwarding methods)
 - A document's spelling of an em dash is not a string's, and the comment above the line legitimises it (eighteen shipped; the same `switch` wrote both spellings twenty-six lines apart, a regex over the sources reported 73 hits where there are 9, and both of the check's own exemptions held by construction until a synthetic module distinguished them)
 
 ## Repository facts

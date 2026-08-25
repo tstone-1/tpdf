@@ -1086,8 +1086,12 @@ MUTATIONS = [
         # on. The accounting check is the only thing that can fail.
         "geometry: parse the page tree for every document",
         "src-tauri/src/progressive.rs",
-        "        let tree = if media.is_none() {\n            self.sheet(index)\n        } else {\n            None\n        };",
-        "        let tree = self.sheet(index);",
+        "        let tree = if media.is_none() {\n"
+        "            self.graph.sheet(index, self.page_count() as usize)\n"
+        "        } else {\n"
+        "            None\n"
+        "        };",
+        "        let tree = self.graph.sheet(index, self.page_count() as usize);",
         "the page tree was parsed only because a page needed it",
         "geometry-plain",
     ),

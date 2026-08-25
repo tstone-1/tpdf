@@ -68,7 +68,7 @@ const INK_FLOOR: f64 = 0.001;
 
 fn main() {
     let mut file = None;
-    let mut library = PathBuf::from("vendor/pdfium/lib");
+    let mut library = PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -172,7 +172,7 @@ fn main() {
 
     // Every page has been loaded by now, so this is the answer for the whole
     // document rather than for whichever page happened to be last.
-    let parsed_tree = doc.consulted_page_tree();
+    let parsed_tree = doc.graph().consulted_page_tree();
     check(
         "the page tree was parsed only because a page needed it",
         parsed_tree == inherits,

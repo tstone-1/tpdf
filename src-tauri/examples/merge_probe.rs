@@ -52,7 +52,7 @@ use tpdf_lib::text;
 
 fn main() {
     let mut files: Vec<PathBuf> = Vec::new();
-    let mut library = PathBuf::from("vendor/pdfium/lib");
+    let mut library = PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut emit: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {

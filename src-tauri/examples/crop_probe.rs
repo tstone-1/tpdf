@@ -43,7 +43,7 @@ fn main() {
     let mut file = None;
     let mut page = 0u32;
     let mut mode = String::from("follows");
-    let mut library = PathBuf::from("vendor/pdfium/lib");
+    let mut library = PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {

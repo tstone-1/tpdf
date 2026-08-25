@@ -115,7 +115,7 @@ fn run(args: &Args) -> Result<bool, String> {
     // it is what the outline is read through.
     let bindings = bind(&args.library)?;
     let document = RawDocument::open(bindings, &args.file, None)?;
-    let links = document.links()?;
+    let links = document.graph().links(document.page_count() as usize)?;
 
     match args.mode {
         Mode::Read => {

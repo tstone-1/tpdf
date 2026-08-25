@@ -30,10 +30,10 @@
 //! boundary is the [`CancelToken`], which is an `AtomicBool` and touches no
 //! PDFium state.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::os::raw::{c_int, c_void};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -41,11 +41,7 @@ use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
 
-use crate::annots::{self, Comments};
-use crate::docinfo::{self, Properties};
-use crate::encoding::{self, PageMapping};
-use crate::links::{self, Links};
-use crate::pagetree;
+use crate::docgraph::{DocumentGraph, Source};
 
 /// `pdfium-render`'s `bindgen` module is private; only the handle *types* are
 /// `pub use`d out of it, so these values are restated rather than imported.
@@ -145,24 +141,6 @@ const PAGE_CACHE: usize = 4;
 /// thing safe: a `RawPage` borrows the document, so storing one inside the
 /// document would be self-referential. A handle is a plain pointer, copied out
 /// under a short borrow, and the document closes every one it holds on drop.
-/// Where a document's bytes came from, so its object graph can be read as well
-/// as rendered.
-///
-/// PDFium answers questions about *drawing*; some questions are only answerable
-/// from the file's own structure --- whether a font states what its glyphs mean
-/// is the one that forced this (`crate::encoding`). PDFium exposes no API for it,
-/// so the bytes have to be reachable a second time.
-///
-/// Two variants because the two backends genuinely differ: a worker is handed a
-/// mapping and never learns a path, which is the property `docs/THREAT-MODEL.md`
-/// §3 rests on, and the in-process backend has only a path.
-enum Source {
-    /// The mapping the worker was handed. Already in memory; no re-read.
-    Bytes(&'static [u8]),
-    /// A path the in-process backend opened. Read on demand, once.
-    Path(PathBuf),
-}
-
 pub struct RawDocument {
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
@@ -181,74 +159,15 @@ pub struct RawDocument {
     /// handle the next request gets, so a crop set once is in force until
     /// something sets it back.
     original_crops: RefCell<HashMap<u32, [f32; 4]>>,
-    /// Where to find the bytes again, for questions PDFium cannot answer.
-    source: Source,
-    /// The password this document was opened with, if it needed one.
+    /// Everything about this document that is answered by parsing it rather
+    /// than by rendering it.
     ///
-    /// **Held because `lopdf` needs it too, and it is the same key to the same
-    /// bytes.** Every question PDFium cannot answer --- comments, links,
-    /// properties, the character mapping, and the update section a save appends
-    /// --- is a second parse of `source`, and a parse without the password reads
-    /// *no objects at all*: `lopdf` returns a `Document` that loads cleanly and
-    /// reports zero pages. So a locked document would open, render and search
-    /// while its comments, links and properties came back empty, and the save
-    /// path would refuse it.
-    ///
-    /// What this costs is one more copy of the password in a process that
-    /// already has it: `Workers::open` holds it for the document's lifetime so
-    /// that a pool growing under contention can unlock its new workers, which
-    /// `docs/THREAT-MODEL.md` §T6.9 states. This is the worker's own copy, in
-    /// the process that is sandboxed.
-    password: Option<String>,
-    /// Per-page character-mapping verdicts, computed at most once.
-    ///
-    /// Lazy, and **not for the reason first written here**. The original comment
-    /// said this costs a full `lopdf` parse and that on a 337 MB document that is
-    /// the dominant cost of opening one --- a guess, and wrong. Measured in
-    /// release: 0.1 ms small, 5.8 ms on the 775-page document, 11.9 ms on the
-    /// 337 MB scan, because `lopdf` reads the xref and object headers rather than
-    /// every stream and the cost tracks object count, not bytes.
-    ///
-    /// It is still lazy, because warm startup is ~276 ms against a 300 ms target
-    /// (`docs/PLAN.md` §4) and 6--12 ms is a quarter of the whole margin. Off the
-    /// critical path that is free; on it, it is expensive. So it is computed when
-    /// first asked for --- after first paint, by a search that found nothing or by
-    /// the accessibility layer --- and cached for the document's lifetime.
-    mapping: OnceCell<Vec<PageMapping>>,
-    /// Every comment in the document, read at most once.
-    ///
-    /// Lazy for the same reason [`RawDocument::mapping`] is, and cached for the
-    /// same one: it costs a second `lopdf` parse of the whole file, nothing on
-    /// the startup path asks for it, and a reader who opens the comments panel
-    /// twice should pay for it once. The `Result` is cached too --- a document
-    /// that could not be read does not become readable on the second attempt,
-    /// and re-parsing to rediscover that is the same work for the same answer.
-    comments: OnceCell<Result<Comments, String>>,
-    /// Every link in the document, read at most once.
-    ///
-    /// Lazy and cached for the same reasons as [`RawDocument::comments`], with
-    /// one difference in when it is asked for: the viewer wants links as soon as
-    /// a page is on screen rather than when a panel opens, so this is warmed
-    /// just after first paint instead of on demand.
-    links: OnceCell<Result<Links, String>>,
-    /// What the document says about itself, read at most once.
-    ///
-    /// Lazy and cached like [`RawDocument::comments`], and the laziest of the
-    /// three: nothing asks for this until a reader opens the properties dialog,
-    /// which most never will.
-    properties: OnceCell<Result<Properties, String>>,
-    /// The box each page is displayed from, per the page tree, read at most once.
-    ///
-    /// **Only consulted for a page PDFium has no `/MediaBox` for**, which is the
-    /// tell that the page inherits one --- `FPDFPage_GetMediaBox` does not walk
-    /// `/Parent`. So this is another whole-file `lopdf` parse, and on the
-    /// overwhelming majority of documents it never happens at all: a page that
-    /// states its own box never asks.
-    ///
-    /// Lazy and cached like [`RawDocument::comments`], and for one more reason
-    /// than the others: it is read on the path that loads a page, which is a
-    /// path a reader waits on. A document that needs it pays once.
-    sheets: OnceCell<Result<Vec<[f32; 4]>, String>>,
+    /// Held rather than inherited: this type owns the PDFium handle, and the
+    /// graph is a second thing the same document has. Its methods take the
+    /// page count because that is PDFium's to know --- see
+    /// [`crate::docgraph`], which records why these stopped being fields
+    /// here.
+    graph: crate::docgraph::DocumentGraph,
 }
 
 /// Which box to lay a page out from, given both readings of it.
@@ -502,13 +421,10 @@ impl RawDocument {
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             original_crops: RefCell::new(HashMap::new()),
-            source: Source::Path(path.to_path_buf()),
-            password: password.map(str::to_string),
-            mapping: OnceCell::new(),
-            comments: OnceCell::new(),
-            links: OnceCell::new(),
-            properties: OnceCell::new(),
-            sheets: OnceCell::new(),
+            graph: DocumentGraph::new(
+                Source::Path(path.to_path_buf()),
+                password.map(str::to_string),
+            ),
         })
     }
 
@@ -560,14 +476,20 @@ impl RawDocument {
             form,
             pages: RefCell::new((HashMap::new(), VecDeque::new())),
             original_crops: RefCell::new(HashMap::new()),
-            source: Source::Bytes(bytes),
-            password: password.map(str::to_string),
-            mapping: OnceCell::new(),
-            comments: OnceCell::new(),
-            links: OnceCell::new(),
-            properties: OnceCell::new(),
-            sheets: OnceCell::new(),
+            graph: DocumentGraph::new(Source::Bytes(bytes), password.map(str::to_string)),
         })
+    }
+
+    /// Everything about this document that is read rather than rendered.
+    ///
+    /// The door to [`crate::docgraph::DocumentGraph`], and the reason it is a
+    /// door rather than a set of forwarding methods: a forward here would leave
+    /// this type's public surface exactly as wide as it was, which is half of
+    /// what an outside review found wrong with it. A caller that wants the
+    /// object graph now says so.
+    #[must_use]
+    pub fn graph(&self) -> &crate::docgraph::DocumentGraph {
+        &self.graph
     }
 
     /// The bindings this document was opened through.
@@ -592,115 +514,6 @@ impl RawDocument {
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.
         let count = unsafe { self.bindings.FPDF_GetPageCount(self.handle) };
         count.max(0) as u32
-    }
-
-    /// Per-page verdicts on whether the text means anything, computed once.
-    ///
-    /// Always exactly `page_count()` long, so index `n` is page `n`.
-    ///
-    /// **Every failure is "unknown", never "clean".** Bytes that cannot be read,
-    /// a document `lopdf` refuses, a page it cannot account for --- all produce a
-    /// `PageMapping` with `truncated` set and `certain()` false. That is the rule
-    /// `docs/PLAN.md` §6 states for a redaction verification, and it applies here
-    /// for the same reason: this exists so a reader is not told "no matches" on a
-    /// page nobody could search, and a scan that failed silently reporting clean
-    /// would reinstate exactly that.
-    pub fn mapping(&self) -> &[PageMapping] {
-        self.mapping.get_or_init(|| {
-            let count = self.page_count() as usize;
-            let unknown = || {
-                vec![
-                    PageMapping {
-                        truncated: true,
-                        ..PageMapping::default()
-                    };
-                    count
-                ]
-            };
-            let Some(bytes) = self.source_bytes() else {
-                return unknown();
-            };
-            encoding::scan(&bytes, count, self.password()).unwrap_or_else(|_| unknown())
-        })
-    }
-
-    /// Every comment in the document, read at most once.
-    ///
-    /// A failure is kept as a failure rather than answered with an empty list:
-    /// "this document has no comments" and "this document could not be read"
-    /// are different things to tell a reader, and only one of them is
-    /// reassuring. See `crate::annots`.
-    pub fn comments(&self) -> Result<Comments, String> {
-        self.comments
-            .get_or_init(|| {
-                let bytes = self
-                    .source_bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                annots::scan(&bytes, self.page_count() as usize, self.password())
-            })
-            .clone()
-    }
-
-    /// The update section for a save that only adds marks.
-    ///
-    /// Deliberately **not** cached, where the comments, links, mapping and
-    /// properties beside it are. Those four are read-only facts about the
-    /// document: asked for repeatedly, identical every time. This is a function
-    /// of the *plan*, which differs on every save, so a cache keyed on the
-    /// document would answer a second save with the first save's bytes --- and
-    /// silently, because those bytes are a perfectly valid update section for a
-    /// document that no longer matches them.
-    ///
-    /// # Errors
-    ///
-    /// The document's bytes are unreadable, or [`crate::save::append_update`]
-    /// refuses --- see there for the reasons, all of which are about the document
-    /// or the plan rather than about this process.
-    pub fn append(&self, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
-        let bytes = self
-            .source_bytes()
-            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-        // `into_owned` is the one copy this path makes, and it is the same copy
-        // the coordinator used to make with `std::fs::read`. The document
-        // arrives as a read-only mapping and `lopdf` needs an owned buffer, so
-        // the copy is `IncrementalDocument::create_from`'s requirement rather
-        // than a choice made here --- see the note beside it, including what
-        // `worker-probe` measured when this was moved from there to here and
-        // nothing changed.
-        crate::save::append_update(bytes.into_owned(), plan, self.password())
-            .map_err(|why| why.message)
-    }
-
-    /// Every link in the document, read at most once.
-    ///
-    /// A failure is kept as a failure, for the reason above: a document whose
-    /// links could not be read is a document whose cross-references silently do
-    /// nothing, and the reader is better told than left clicking.
-    pub fn links(&self) -> Result<Links, String> {
-        self.links
-            .get_or_init(|| {
-                let bytes = self
-                    .source_bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                links::scan(&bytes, self.page_count() as usize, self.password())
-            })
-            .clone()
-    }
-
-    /// What the document says about itself, read at most once.
-    ///
-    /// # Errors
-    ///
-    /// The bytes not being readable, or `lopdf` refusing to parse them.
-    pub fn properties(&self) -> Result<Properties, String> {
-        self.properties
-            .get_or_init(|| {
-                let bytes = self
-                    .source_bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                docinfo::scan(&bytes, self.page_count(), self.password())
-            })
-            .clone()
     }
 
     /// The box a page is displayed from: PDFium's reading, or the page tree's.
@@ -731,62 +544,11 @@ impl RawDocument {
         // every file opened. `consulted_page_tree` is what makes that
         // observable, and `geometry-probe` reads it in both directions.
         let tree = if media.is_none() {
-            self.sheet(index)
+            self.graph.sheet(index, self.page_count() as usize)
         } else {
             None
         };
         box_to_use(media, page.crop_pt(), tree)
-    }
-
-    /// Whether the page tree has been parsed for this document yet.
-    ///
-    /// **An accounting observable.** [`original_box`](Self::original_box) is
-    /// meant to reach `lopdf` only for a document PDFium cannot give a
-    /// `/MediaBox` for, and "it never happened" is invisible from outside ---
-    /// every number a caller can see is identical either way, because the two
-    /// agree wherever both answer. So the property that would silently be lost
-    /// is the one this exists to let a check assert.
-    pub fn consulted_page_tree(&self) -> bool {
-        self.sheets.get().is_some()
-    }
-
-    /// One page's box out of the page tree, parsing the document at most once.
-    ///
-    /// See [`RawDocument::sheets`] for why this is lazy and why most documents
-    /// never reach it.
-    fn sheet(&self, index: u32) -> Option<[f32; 4]> {
-        self.sheets
-            .get_or_init(|| {
-                let bytes = self
-                    .source_bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                pagetree::displayed_boxes(&bytes, self.page_count() as usize, self.password())
-            })
-            .as_ref()
-            .ok()
-            .and_then(|boxes| boxes.get(index as usize).copied())
-    }
-
-    /// The password this document was opened with, for a parser that needs it.
-    ///
-    /// Every caller is a `lopdf` parse of the same bytes PDFium already holds
-    /// open, in the same process. See the field.
-    pub fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-
-    /// The document's bytes, however it was opened.
-    ///
-    /// A worker holds the mapping and can borrow it; a probe opened a path and
-    /// has to read it back, because PDFium keeps no copy anything here can
-    /// reach. `None` is a file that has gone or become unreadable since it was
-    /// opened --- which is a real state, not a defect: see `docs/PLAN.md` §5 on
-    /// external modification.
-    fn source_bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
-        match &self.source {
-            Source::Bytes(bytes) => Some(std::borrow::Cow::Borrowed(*bytes)),
-            Source::Path(path) => std::fs::read(path).ok().map(std::borrow::Cow::Owned),
-        }
     }
 
     /// Returns one page by zero-based index, loading it if it is not cached.
