@@ -14900,3 +14900,107 @@ and the pool spawned replacements in a loop --- which would be *"a pool that
 replaces a dead worker with the same bytes faults again, forever"* wearing a
 different trigger. **That is a guess.** What is measured is the count, the single
 `--doc-len`, the two-minute window and the 48 minutes of no retirement.
+
+### A module header that says "and nothing more", under a `use` block that says otherwise
+
+`progressive.rs` exists to own `FPDF_DOCUMENT`, `FPDF_PAGE` and `FPDF_BITMAP` so
+that a render can be cancelled, and its header says exactly that: *"The RAII
+types below are that ownership, and nothing more."*
+
+Eleven lines below that sentence:
+
+    use crate::annots::{self, Comments};
+    use crate::docinfo::{self, Properties};
+    use crate::encoding::{self, PageMapping};
+    use crate::links::{self, Links};
+    use crate::pagetree;
+
+`RawDocument` carried five `OnceCell` caches, the document's bytes, its password,
+and called `save::append_update`. An outside review measured its fan-in at 14 ---
+the highest in the crate --- and named the loop it closed: `save -> progressive`,
+so the renderer's handle type depended on the writer.
+
+**The header was not wrong when it was written.** It was true, and then five
+features each added one field to the type that already had the document, because
+that type already had the document. No single one of those was a bad decision.
+
+**Measure the seam before deciding how big the job is, because the two axes
+disagree.** Counted here before anything moved:
+
+    fields belonging to the object graph      7
+    times each is touched                     1 or 2  (password 7, source 2)
+    methods reaching into them                9
+    lines those methods occupy              151
+    ---
+    files mentioning RawDocument             32
+    signatures taking &RawDocument           38  (16 in annot_probe.rs alone)
+
+Thin in data, wide in types. That is what makes this **two** pieces rather than
+one: moving the fields and their methods into a module of their own is 270 lines
+and thirteen call sites, and making a worker-side `Document` own both halves so
+that 38 signatures stop naming the PDFium handle is a separate change across 32
+files. Doing the first and stopping is a complete increment; starting the second
+and stopping is worse than the debt.
+
+**A door, not forwarding methods.** `RawDocument::graph()` returns the new type
+and the nine methods do not stay behind as one-line forwards. A forward would
+have left the public surface exactly as wide as it was, which is half of what the
+review found wrong --- the file would look fixed and the type would be unchanged.
+Thirteen call sites is the price of the difference, and the compiler names every
+one.
+
+**The coupling that survives is now an argument.** Four of the moved methods need
+the page count, and the page count is PDFium's. They take it: `graph.comments(page_count)`.
+A back-reference from the graph to the handle would have hidden it and pointed
+the arrow back the way it came.
+
+**And the compiler found the seam for me.** After the move, `cargo check`
+reported exactly six errors, all in `render.rs`, all in the five `run_*` functions
+plus one password accessor --- which is the seam the measurement predicted. A
+refactor whose error list matches the prediction is one that went where it was
+aimed.
+
+The end-to-end evidence is `geometry-probe`, whose accounting check
+(`consulted_page_tree`) exists precisely because the lazy page-tree parse is
+invisible in every number a caller can see: 10/10 after the move, and
+`worker-probe` 19/19 for the append that moved with it.
+
+### The comment naming the grep that would have caught it, four times running
+
+`PDFIUM_SUBDIR` is `bin` on Windows and `lib` everywhere else, and it exists
+because `vendor/pdfium/lib` **is** a real directory on Windows --- it holds the
+*import* library. So a spike that hardcodes `lib` finds a directory that is
+there, passes any check that the path exists, and fails at
+`Pdfium::bind_to_library` with `LoadLibraryError` pointing at a path you can see
+in Explorer.
+
+Its doc comment records that this had been rediscovered by `worker-probe`, then
+by `backend-probe`, then by `text-probe`. It also records the fix for the *last*
+version of the drift --- a count in prose, "four spike binaries still hardcode
+`lib`", which was nine by the time anyone checked --- and replaces it with a rule:
+
+> the authority is `grep -rn 'vendor/pdfium/lib' src-tauri/examples`, and what it
+> should return is the two macOS-only binaries, `fdpass-probe` and `ocr-probe`.
+
+**Nobody ran it.** On 2026-08-25 that grep returned six: the two it should, plus
+`crop-probe`, `geometry-probe`, `merge-probe` and `turned-probe`, none of which
+could bind on Windows at all. It was found by accident --- `geometry-probe` was
+being run to check an unrelated refactor and panicked before printing anything.
+
+So the entry is not "a number in prose goes stale". That one was already learned,
+and the fix for it was a **rule** in prose, which went stale the same way and for
+the same reason: *both* are things a person has to decide to check. The doc
+comment even names the command, which is the strongest form the prose version can
+take, and it made no difference.
+
+`only_the_macos_spikes_hardcode_the_library_directory` runs that exact grep as a
+`#[test]`, comparing **sets** --- not counts, for the reason the comment already
+gave. Two controls, both measured: a portable spike put back on `lib` goes red
+naming the file, and a directory walk that reads nothing goes red on its own
+guard rather than passing as a clean tree, since a scan of zero files finds zero
+offenders.
+
+The general form, which this repository keeps meeting from new directions: **a
+rule with a named command behind it is still a rule nobody runs.** If the command
+is short enough to write in a comment, it is short enough to be a test, and the
+comment should name the test instead.

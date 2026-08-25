@@ -1278,6 +1278,7 @@ impl Engine for InProcess {
 
     fn password(&self, doc: u32) -> Result<Option<String>, String> {
         Ok(open_slot(&self.docs.borrow(), doc)?
+            .graph()
             .password()
             .map(str::to_string))
     }
@@ -1623,11 +1624,11 @@ pub(crate) fn run_outline(document: &RawDocument) -> Outline {
 
 /// Reads a document's comments on the render thread.
 ///
-/// Cached inside [`RawDocument`], so the `lopdf` parse this costs happens at
+/// Cached inside [`crate::docgraph::DocumentGraph`], so the `lopdf` parse this costs happens at
 /// most once per open document however often the panel is opened --- the same
 /// arrangement `run_mapping` has, and `annots::scan` is what it wraps.
 pub(crate) fn run_comments(document: &RawDocument) -> Result<Comments, String> {
-    document.comments()
+    document.graph().comments(document.page_count() as usize)
 }
 
 /// Builds a save's update section on the render thread.
@@ -1639,33 +1640,36 @@ pub(crate) fn run_append(
     document: &RawDocument,
     plan: &crate::edits::Plan,
 ) -> Result<crate::save::Update, String> {
-    document.append(plan)
+    document.graph().append(plan)
 }
 
 /// Reads a document's links on the render thread.
 ///
-/// Cached inside [`RawDocument`] like the comments are, so the `lopdf` parse
+/// Cached inside [`crate::docgraph::DocumentGraph`] like the comments are, so the `lopdf` parse
 /// happens once per open document however often it is asked for --- which
 /// matters more here, because a re-open after a rotation would otherwise repeat
 /// it on a document that has not changed.
 pub(crate) fn run_links(document: &RawDocument) -> Result<Links, String> {
-    document.links()
+    document.graph().links(document.page_count() as usize)
 }
 
 /// Reads the document's font dictionaries on the render thread.
 ///
-/// Cached inside [`RawDocument`], so the `lopdf` parse this costs happens at most
+/// Cached inside [`crate::docgraph::DocumentGraph`], so the `lopdf` parse this costs happens at most
 /// once per open document however often a reader searches.
 pub(crate) fn run_mapping(document: &RawDocument) -> Vec<PageMapping> {
-    document.mapping().to_vec()
+    document
+        .graph()
+        .mapping(document.page_count() as usize)
+        .to_vec()
 }
 
 /// Reads what a document says about itself, on the render thread.
 ///
-/// Cached inside [`RawDocument`] like the comments and the links are, so a
+/// Cached inside [`crate::docgraph::DocumentGraph`] like the comments and the links are, so a
 /// reader who opens the properties dialog twice pays for the `lopdf` parse once.
 pub(crate) fn run_properties(document: &RawDocument) -> Result<Properties, String> {
-    document.properties()
+    document.graph().properties(document.page_count())
 }
 
 #[cfg(test)]

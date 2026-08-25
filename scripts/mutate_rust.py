@@ -3334,6 +3334,20 @@ MUTATIONS += [
         "a_response_carries_its_reply_through_the_framing",
     ),
     Mutation(
+        # Put a portable spike back on the macOS library directory. `lib/` exists
+        # on Windows and holds the IMPORT library, so the path resolves, the
+        # directory check passes and the bind fails much later pointing at
+        # something that is right there. PDFIUM_SUBDIR's own note says this had
+        # been rediscovered three times and named the grep that checks it; on
+        # 2026-08-25 four probes had drifted back, which is what a rule with
+        # nothing enforcing it does.
+        "lib: hardcode the macOS library directory in a portable spike",
+        "examples/crop_probe.rs",
+        'PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR)',
+        'PathBuf::from("vendor/pdfium/lib")',
+        "only_the_macos_spikes_hardcode_the_library_directory",
+    ),
+    Mutation(
         # Read the appendix without requiring the signed prefix to parse. With
         # no prefix to compare against, every object in the document reads as
         # ADDED -- so an ordinary validation-data append is reported as the

@@ -148,7 +148,7 @@ fn main() {
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
     let document = RawDocument::open(bindings, &args.file, None)?;
-    let ours = document.properties()?;
+    let ours = document.graph().properties(document.page_count())?;
     let theirs = pdfium_signatures(bindings, document.handle());
 
     match args.mode {
