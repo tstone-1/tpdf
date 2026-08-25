@@ -287,6 +287,26 @@ The worker outliving its parent is the other half, and it is a claim in
 `docs/THREAT-MODEL.md` that now has a counterexample rather than a measurement.
 Both are written up.
 
+### Fixed: a test that failed about once in every 256 runs, on correct code
+
+Internal, and it stopped this release once. tpdf reads a digital signature's
+raw block out of a PDF, and one test checks that a block already in the strict
+encoding comes back byte for byte. It built the answer it expected by scanning
+backwards for the last byte that is not zero --- which is the very shortcut the
+code was changed to stop using, because a block whose own final byte is a zero
+gets one byte trimmed off it that way.
+
+The signed test files are generated fresh on every run, so that final byte is
+effectively random. Roughly one run in 256 per signature produces a zero, the
+expected answer is a byte short, and a correct reader fails. That is what
+happened: the same commit passed a rehearsal and failed the real thing forty
+minutes later, on one of the two signatures in one file.
+
+The expectation now comes from the block's own header, which states where it
+ends. Proved both ways: a file patched so both signatures end in zero
+reproduces the failure exactly and now passes, and a byte planted after the
+stated end still makes it fail.
+
 ### Changed: one home for each thing that was written out several times
 
 Internal, with nothing to see from the outside. The bound on decompressing a
