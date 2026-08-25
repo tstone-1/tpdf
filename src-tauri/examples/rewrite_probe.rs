@@ -64,7 +64,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tpdf_lib::worker;
-use tpdf_lib::worker::{Request, Response, Worker};
+use tpdf_lib::worker::{Reply, Request, Response, Worker};
 use tpdf_lib::worker_child;
 
 /// Tiles are compared at this size --- large enough to hold recognisable
@@ -1184,13 +1184,10 @@ fn page_count(fixture: &Path, library_dir: &Path) -> Result<u32, String> {
     if !reply.ok {
         return Err(reply.error);
     }
-    reply
-        .json
-        .as_ref()
-        .and_then(|j| j.get("page_count"))
-        .and_then(serde_json::Value::as_u64)
-        .map(|n| n as u32)
-        .ok_or_else(|| "the open reply carried no page count".to_string())
+    match reply.reply {
+        Some(Reply::Open { page_count, .. }) => Ok(page_count as u32),
+        _ => Err("the open reply carried no page count".to_string()),
+    }
 }
 
 /// Where PDFium lives, matching the app's own resolution in development.

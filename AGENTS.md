@@ -1295,6 +1295,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Moving a mark is a re-inking of it, and reusing the command beat adding one (a second variant would give one accessor three sources to choose between; the delta-not-a-geometry decision, and why the clamp is not in the model)
 - A password that unlocks the first worker unlocks nothing else (the page you are looking at renders and the next one refuses; and a probe for it has to FORCE the pool to grow rather than hope it does)
 - Wrapping stdin in a `BufReader` eats the first request of the session (the rule was already written down beside the other handover, two hundred lines away)
+- One untyped reply carrier, and the two ways serde refuses to replace it (a payload's shape lived in two processes with nothing holding the copies together, and it had already cost one wrong measurement; internal tagging then refuses a bare payload at RUNTIME and untagged silently swaps two four-number variants -- both found because the round-trip test enumerates instead of sampling)
 
 
 ### The document model: saving, structure, signatures
@@ -1586,6 +1587,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A mechanical edit keyed on a field name hits every occurrence of that name (six wrong insertions: a parameter list, a request payload, an assertion, a check table; make the field required and let the type-checker enumerate the real sites)
 - An AppleScript loop over a property list iterates a reference, and every menu reads as empty (an instrument failure wearing the shape of a finding; two causes, one symptom, six lines)
 - A harness that edits source files pays for the editor watching them (4.4 hours to 405 s; the language server held the build lock, and the suite ran 607 tests to check one assertion)
+- A `tauri dev` watcher recompiles the crate you are gating, and rustc's own OOM reads as a failed test (`memory allocation of 1081360 bytes failed` with 34.5 GB free and 27 GB of commit headroom; the leaked-worker hypothesis was wrong and cost nothing to refute, and one unexplained observation is recorded as an observation)
 - A harness written on a locked screen is a harness that has never run (the half needing no screen was proved instead, and the gap went into `BUILD.md` beside the invocation, with the mutation that would prove it can go red)
 - A documented cost measured warm is the wrong number for the run you are about to make (0.47 s, ~8 s, 2 min 58 s and longer are all the same command; the correction written first was wrong in both halves, and its long figure had a second copy of itself contending for the build lock)
 - A mutation block below the `__main__` guard is counted by the gate and run by nothing (251 anchors green, 241 registered, ten new mutations silently absent; the gate imports and a run executes, and undoing the control with `git checkout` discarded them a second time)

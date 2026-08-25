@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use tpdf_lib::progressive::{self, RawDocument};
 use tpdf_lib::worker;
-use tpdf_lib::worker::{Request, Worker};
+use tpdf_lib::worker::{Reply, Request, Worker};
 
 /// Below this much headroom against the commit cap, the run says so.
 ///
@@ -140,12 +140,10 @@ fn main() {
         lazy_geometry: false,
     });
     let page_count = match &opened {
-        Ok(r) if r.ok => r
-            .json
-            .as_ref()
-            .and_then(|j| j.get("page_count"))
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
+        Ok(r) if r.ok => match &r.reply {
+            Some(Reply::Open { page_count, .. }) => *page_count as u64,
+            _ => 0,
+        },
         _ => 0,
     };
     check(
@@ -305,13 +303,13 @@ fn main() {
     });
     check(
         "text extraction crosses the boundary",
-        matches!(&text, Ok(r) if r.ok && r.json.is_some()),
+        matches!(&text, Ok(r) if r.ok && matches!(r.reply, Some(Reply::Text(_)))),
         describe(&text),
     );
     let outline = worker.call(&Request::Outline);
     check(
         "an outline crosses the boundary",
-        matches!(&outline, Ok(r) if r.ok && r.json.is_some()),
+        matches!(&outline, Ok(r) if r.ok && matches!(r.reply, Some(Reply::Outline(_)))),
         describe(&outline),
     );
     let matches = worker.call(&Request::Search {
@@ -322,7 +320,7 @@ fn main() {
     });
     check(
         "a search crosses the boundary",
-        matches!(&matches, Ok(r) if r.ok && r.json.is_some()),
+        matches!(&matches, Ok(r) if r.ok && matches!(r.reply, Some(Reply::Search(_)))),
         describe(&matches),
     );
 
@@ -352,11 +350,14 @@ fn main() {
         plan: highlight_plan(page_count),
     });
     let after_append = memory_reading(&worker);
+    // No `from_value` and no clone: `Reply::Append` carries the real `Update`,
+    // so this is the same type the worker built rather than a re-parse of its
+    // JSON that could disagree with it.
     let built: Option<tpdf_lib::save::Update> = match &update {
-        Ok(reply) if reply.ok => reply
-            .json
-            .as_ref()
-            .and_then(|j| serde_json::from_value(j.clone()).ok()),
+        Ok(reply) if reply.ok => match &reply.reply {
+            Some(Reply::Append(update)) => Some(update.clone()),
+            _ => None,
+        },
         _ => None,
     };
     if let (Some((was, metric)), Some((now, _))) = (before_append, after_append) {
@@ -721,8 +722,15 @@ fn memory_cap() -> Option<u64> {
 fn describe(result: &Result<tpdf_lib::worker::Response, String>) -> String {
     match result {
         Ok(r) if r.ok => {
-            let size = r.json.as_ref().map_or(0, |j| j.to_string().len());
-            format!("{size} bytes of JSON")
+            // Sized by re-serialising rather than by a hand-kept table of
+            // variant names, which would be exactly the second inventory the
+            // typed reply exists to remove.
+            let size = r
+                .reply
+                .as_ref()
+                .and_then(|reply| serde_json::to_string(reply).ok())
+                .map_or(0, |line| line.len());
+            format!("{size} bytes of payload")
         }
         Ok(r) => r.error.clone(),
         Err(e) => e.clone(),

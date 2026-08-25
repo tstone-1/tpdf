@@ -3297,6 +3297,43 @@ MUTATIONS += [
         # contract 65,536 of its 74,637 bytes are the `/Contents` hex string
         # that no signature can cover. The panel then leads with 73 KB where
         # the honest number is 9 KB.
+        # Tag the reply enum internally rather than adjacently. This is not a
+        # style choice being reverted: serde cannot merge a tag into a payload
+        # that is not a map, so `Reply::Content(Option<[f64; 4]>)` fails to
+        # serialise AT RUNTIME with "cannot serialize tagged newtype variant
+        # containing an optional". Content is the crop tool's ink bounds, so a
+        # reader would meet it as a worker that cannot answer. Found this way,
+        # before the code ran once.
+        "proto: tag the reply enum internally, which cannot carry a bare payload",
+        "src/worker_proto.rs",
+        '#[serde(tag = "reply", content = "value", rename_all = "kebab-case")]',
+        '#[serde(tag = "reply", rename_all = "kebab-case")]',
+        "every_reply_variant_survives_the_wire_as_itself",
+    ),
+    Mutation(
+        # Drop the tag entirely. `Content(Option<[f64; 4]>)` and
+        # `CropBox([f32; 4])` are then the same four numbers on the wire, so serde
+        # takes the first that fits and a crop box arrives as ink bounds --- the
+        # right numbers carrying the wrong meaning, which is the failure mode the
+        # untyped `serde_json::Value` had in a different costume.
+        "proto: leave the reply enum untagged, so two payloads of four numbers collide",
+        "src/worker_proto.rs",
+        '#[serde(tag = "reply", content = "value", rename_all = "kebab-case")]',
+        "#[serde(untagged)]",
+        "every_reply_variant_survives_the_wire_as_itself",
+    ),
+    Mutation(
+        # Send a payload on a reply that says it failed. Every caller checks `ok`
+        # before reading the payload, so this is the reply that carries an answer
+        # nobody will look at -- and the parent reports the worker's `error`
+        # string, which is empty.
+        "proto: mark a payload-bearing reply as a failure",
+        "src/worker_proto.rs",
+        "    pub fn reply(reply: Reply) -> Self {\n        Self {\n            ok: true,",
+        "    pub fn reply(reply: Reply) -> Self {\n        Self {\n            ok: false,",
+        "a_response_carries_its_reply_through_the_framing",
+    ),
+    Mutation(
         "docinfo: report every uncovered byte as an append",
         "src/docinfo.rs",
         "        out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));",

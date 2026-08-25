@@ -178,6 +178,103 @@ pub enum Request {
     },
 }
 
+/// What a request answers with, one variant per request that answers anything.
+///
+/// **This replaced `Option<serde_json::Value>`**, which was the universal
+/// carrier for every structured reply and the one abstraction an outside review
+/// found not earning its keep. The cost it was charging is specific rather than
+/// stylistic: a payload's *shape* lived in two processes and nothing held the
+/// two copies together. `Request::Open`'s reply was built in `worker_child.rs`
+/// as
+///
+/// ```text
+/// serde_json::json!({ "pages": .., "page_count": .., "lazy_geometry": .. })
+/// ```
+///
+/// and read in `workers.rs` by a **private** struct of three matching fields.
+/// Three string keys, hand-matched across a process boundary; renaming one is a
+/// runtime *"unreadable open reply from a worker"* on a machine somewhere, not a
+/// compile error. The readiness handshake was worse, comparing
+/// `.get("prespawn")` against the literal `"warm"` --- and its own comment
+/// records that a weaker check would be satisfied by any reply at all, which is
+/// what a magic string across a boundary forces you to think about.
+///
+/// The generic path had a quieter version of the same hole. `Workers::ask::<T>`
+/// picked `T` from the accessor's return type while the worker serialised
+/// whatever `render::run_*` happened to return; the two agree because a person
+/// matched them, and a change to one is caught by neither compiler.
+///
+/// With one enum both processes construct and destructure, all of that is
+/// `error[E0308]`. What is *not* fixed, and is worth saying rather than
+/// implying: nothing here checks that the reply matches the **request** --- a
+/// worker answering `Reply::Links` to a `Request::Outline` is a well-formed
+/// message. The caller checks that, and says so when it fails.
+/// **Adjacently tagged**, not internally tagged, and the difference is not a
+/// preference. `#[serde(tag = "reply")]` alone refuses at *runtime* --- `Error:
+/// cannot serialize tagged newtype variant Reply::Content containing an
+/// optional` --- because internal tagging has to merge the tag into the payload's
+/// own map, and most of the variants below carry something that is not a map:
+/// an `Option`, a fixed array, a `Vec`. `Content` is the crop tool's ink bounds,
+/// so that failure would have reached a reader as a worker that could not answer.
+/// Caught by `every_reply_variant_survives_the_wire_as_itself` before it ran
+/// once, which is the whole reason that test enumerates the variants instead of
+/// sampling them.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "reply", content = "value", rename_all = "kebab-case")]
+pub enum Reply {
+    /// The document parsed, with the geometry [`Request::Open`] asked for.
+    Open {
+        /// One entry per page, or just page 1's under `lazy_geometry`.
+        pages: Vec<crate::render::PageSize>,
+        /// The whole count, which is known either way.
+        page_count: usize,
+        /// Echoed back so the caller knows which of the two it got, rather than
+        /// inferring it from the length of `pages` --- a one-page document makes
+        /// those two indistinguishable.
+        lazy_geometry: bool,
+    },
+    /// A page's text, its characters and their boxes.
+    Text(crate::text::PageText),
+    /// What a query found on one page.
+    Search(crate::search::PageMatches),
+    /// The ink's bounds on a page, or `None` where there is no ink.
+    Content(Option<[f64; 4]>),
+    /// A page's size and origin under the crop the reader has.
+    Geometry(crate::render::CropGeometry),
+    /// The rectangle a proposed crop would actually produce.
+    CropBox([f32; 4]),
+    /// The document's bookmarks.
+    Outline(crate::outline::Outline),
+    /// Every annotation a reader can be shown.
+    Comments(crate::annots::Comments),
+    /// Every link, with the destination each resolves to.
+    Links(crate::links::Links),
+    /// Per page, whether its text decodes to anything meaningful.
+    Mapping(Vec<crate::encoding::PageMapping>),
+    /// What the document says about itself.
+    ///
+    /// **Boxed, alone among these**, and measured rather than guessed:
+    /// `Properties` is **304 bytes** where the next largest payload here is
+    /// `PageText` at 96, so without the indirection every `Reply` on the stack
+    /// -- a tile's, a search's, a withdrawal's -- would be sized for the one a
+    /// reader asks for once, when they open the properties dialog. It costs one
+    /// allocation on a path that has just done a whole `lopdf` parse. The wire
+    /// is unchanged: serde serialises a `Box<T>` as its `T`.
+    Properties(Box<crate::docinfo::Properties>),
+    /// The update section for a save that only adds marks.
+    Append(crate::save::Update),
+    /// The password was accepted, or was not needed.
+    ///
+    /// Carries nothing: [`Request::Unlock`] asks a yes-or-no question, and the
+    /// no is a [`Response::locked`] rather than a variant here.
+    Unlocked,
+    /// A pre-spawned worker has finished warming and has no document yet.
+    ///
+    /// The only reply sent unprompted --- it is the second half of a spawn, not
+    /// the answer to anything on stdin.
+    Warm,
+}
+
 /// A reply, one JSON object per line on the worker's stdout.
 ///
 /// Payloads travel through the shared mapping, never inline: measured at
@@ -210,9 +307,14 @@ pub struct Response {
     /// holding the conversation knows, and words it.
     #[serde(default)]
     pub locked: bool,
-    /// JSON for a structured reply --- geometry, text, matches, an outline.
+    /// The structured reply, for a request that answers with one.
+    ///
+    /// `None` for a tile, whose payload is the shared mapping, and for a
+    /// failure. Named `reply` rather than `json` since 2026-08-25: it stopped
+    /// being JSON-shaped when it became [`Reply`], and the old name is what let
+    /// two processes describe one payload in two places.
     #[serde(default)]
-    pub json: Option<serde_json::Value>,
+    pub reply: Option<Reply>,
     /// Time inside PDFium.
     #[serde(default)]
     pub render_us: u64,
@@ -245,18 +347,18 @@ impl Response {
 
     /// A success carrying a structured payload.
     ///
-    /// # Errors
-    ///
-    /// Serialisation failure, which is a bug rather than a document problem and
-    /// is reported as such rather than being unwrapped.
-    pub fn json<T: Serialize>(value: &T) -> Self {
-        match serde_json::to_value(value) {
-            Ok(json) => Self {
-                ok: true,
-                json: Some(json),
-                ..Default::default()
-            },
-            Err(e) => Self::err(format!("could not serialise a reply: {e}")),
+    /// Infallible where the old `json` constructor returned an error branch for
+    /// a `serde_json::to_value` that had failed. That branch is gone with the
+    /// call: [`Reply`] is serialised once, by the framing, at the moment the
+    /// line is written --- so a payload that will not serialise fails there, in
+    /// the one place that already handles a write that will not complete,
+    /// rather than turning into a *success-shaped* `Response::err` here.
+    #[must_use]
+    pub fn reply(reply: Reply) -> Self {
+        Self {
+            ok: true,
+            reply: Some(reply),
+            ..Default::default()
         }
     }
 }
@@ -394,6 +496,125 @@ mod tests {
                 "round trip changed {line}"
             );
         }
+    }
+
+    /// Every reply variant comes back as the variant it went out as.
+    ///
+    /// The mirror of `a_request_survives_the_wire`, and it guards something that
+    /// request test does not: several variants here carry *nothing but* a
+    /// payload, and three of them are shaped alike enough to be confusable.
+    /// `Content(Option<[f64; 4]>)` and `CropBox([f32; 4])` are both a bare array
+    /// of four numbers, so an **untagged** enum would deserialise a crop box as
+    /// content --- silently, with the right numbers in the wrong meaning.
+    /// `#[serde(tag = "reply")]` is what makes that impossible, and dropping the
+    /// attribute is the mutation that turns this red.
+    ///
+    /// The discriminant is compared rather than the value, because two variants
+    /// agreeing on a payload is exactly the failure being excluded: asserting
+    /// equality on the *contents* would pass for a `Content` that arrived as a
+    /// `CropBox` holding identical numbers.
+    #[test]
+    fn every_reply_variant_survives_the_wire_as_itself() {
+        use super::Reply;
+
+        // Enumerated, not sampled. Every variant, because what fails here is
+        // per-variant: the tagging refuses a payload that is not a map, so the
+        // ones carrying a bare `Option`, array or `Vec` are exactly the ones a
+        // sample would miss --- and the first run of this test caught `Content`
+        // doing it. A variant added below and not added here is the one that
+        // fails on a reader's machine.
+        for reply in [
+            Reply::Open {
+                pages: Vec::new(),
+                page_count: 3,
+                lazy_geometry: true,
+            },
+            Reply::Text(crate::text::PageText::default()),
+            // Constructed rather than defaulted: neither of these derives
+            // `Default`, and adding one to production code to make a test
+            // shorter would be the test steering the type.
+            Reply::Search(crate::search::PageMatches {
+                page: 4,
+                matches: Vec::new(),
+                chars: 120,
+                problem: None,
+                tail: None,
+            }),
+            // The confusable pair, given the *same* four numbers so that only
+            // the tag can tell them apart.
+            Reply::Content(Some([1.0, 2.0, 3.0, 4.0])),
+            Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
+            Reply::Geometry(crate::render::CropGeometry {
+                width_pt: 595.0,
+                height_pt: 842.0,
+                left: 0.0,
+                top: 0.0,
+            }),
+            Reply::Outline(crate::outline::Outline::default()),
+            Reply::Comments(crate::annots::Comments::default()),
+            Reply::Links(crate::links::Links {
+                items: Vec::new(),
+                limits: crate::links::Limits::default(),
+                scan_ms: 1.5,
+            }),
+            Reply::Mapping(Vec::new()),
+            // The boxed one. Serde writes a `Box<T>` as its `T`, so this asserts
+            // that the indirection `large_enum_variant` asked for changed the
+            // wire by nothing.
+            Reply::Properties(Box::default()),
+            Reply::Append(crate::save::Update {
+                update: vec![1, 2, 3],
+                pages: 2,
+                built_against: 888,
+            }),
+            Reply::Unlocked,
+            Reply::Warm,
+        ] {
+            let line = serde_json::to_string(&reply).expect("serialise");
+            let back: Reply = serde_json::from_str(&line).expect("deserialise");
+            assert_eq!(
+                std::mem::discriminant(&reply),
+                std::mem::discriminant(&back),
+                "round trip changed which variant this is: {line}"
+            );
+            assert_eq!(
+                format!("{reply:?}"),
+                format!("{back:?}"),
+                "round trip changed {line}"
+            );
+        }
+    }
+
+    /// A reply carried by [`Response`] survives the framing it travels in.
+    ///
+    /// The variant test above proves the enum round-trips on its own. This is
+    /// the other half: it is carried inside a `Response` whose every other field
+    /// is `#[serde(default)]`, so a `reply` that failed to serialise would come
+    /// back as `None` --- which the parent reads as *"worker replied without a
+    /// payload"*, a message about the worker for a fault in the framing.
+    #[test]
+    fn a_response_carries_its_reply_through_the_framing() {
+        use super::Reply;
+
+        let sent = Response::reply(Reply::Open {
+            pages: Vec::new(),
+            page_count: 7,
+            lazy_geometry: false,
+        });
+        let line = serde_json::to_string(&sent).expect("serialise");
+        let back: Response = serde_json::from_str(&line).expect("deserialise");
+
+        assert!(back.ok, "a payload-bearing reply is a success");
+        let Some(Reply::Open {
+            page_count,
+            lazy_geometry,
+            ..
+        }) = back.reply
+        else {
+            panic!("the reply did not survive the framing: {line}");
+        };
+        assert_eq!(page_count, 7);
+        assert!(!lazy_geometry, "and the flag came back as it was sent");
     }
 
     #[test]

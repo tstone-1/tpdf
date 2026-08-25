@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use tpdf_lib::worker::{self, PreWorker, Request, Shm, WarmWorker, Worker};
+use tpdf_lib::worker::{self, PreWorker, Reply, Request, Shm, WarmWorker, Worker};
 use tpdf_lib::worker_child;
 
 /// Documents chosen to span the parse cost while sharing every fixed cost.
@@ -276,7 +276,10 @@ fn check_opened(response: &tpdf_lib::worker::Response) -> Result<(), String> {
     if !response.ok {
         return Err(format!("the worker refused to open it: {}", response.error));
     }
-    if response.json.is_none() {
+    // The variant, not merely that something arrived. A payload-shaped check
+    // passes for any reply at all, which is the weaker question the untyped
+    // carrier could ask.
+    if !matches!(response.reply, Some(Reply::Open { .. })) {
         return Err("the open reply carried no geometry".into());
     }
     Ok(())
@@ -305,7 +308,10 @@ fn once(path: &Path, library_dir: &Path) -> Result<(f64, f64), String> {
     if !response.ok {
         return Err(format!("the worker refused to open it: {}", response.error));
     }
-    if response.json.is_none() {
+    // The variant, not merely that something arrived. A payload-shaped check
+    // passes for any reply at all, which is the weaker question the untyped
+    // carrier could ask.
+    if !matches!(response.reply, Some(Reply::Open { .. })) {
         return Err("the open reply carried no geometry".into());
     }
     Ok((forked, ready))

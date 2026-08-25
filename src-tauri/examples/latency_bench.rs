@@ -83,7 +83,7 @@ use std::time::Instant;
 
 use tpdf_lib::progressive::{self, RawDocument};
 use tpdf_lib::worker;
-use tpdf_lib::worker::{Request, Worker};
+use tpdf_lib::worker::{Reply, Request, Worker};
 use tpdf_lib::worker_child;
 
 /// Tile side in device pixels.
@@ -281,22 +281,22 @@ fn run(document: &Path, rounds: usize, reps: usize, page: u32, scale: f32) -> Re
     // failed; the run just quietly claimed a tight bound it did not have. See the
     // trap of that name.
     let outline = worker.call(&Request::Outline)?;
-    let outline_total = outline
-        .json
-        .as_ref()
-        .and_then(|j| j.get("total"))
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| {
-            // Refused rather than defaulted. A count this harness cannot read is
-            // not a count of zero, and zero is the answer that suppresses the
-            // warning --- so a defaulted parse fails in the direction that looks
-            // like good news.
-            format!(
-                "could not read `total` from the outline reply; its shape is not what this \
-                 harness parses: {:?}",
-                outline.json
-            )
-        })?;
+    // Refused rather than defaulted. A count this harness cannot read is not a
+    // count of zero, and zero is the answer that suppresses the warning --- so a
+    // defaulted parse fails in the direction that looks like good news.
+    //
+    // It used to read `.get("total")` off a `serde_json::Value`, which is the
+    // same refusal guarding a weaker question: a renamed field arrived here as a
+    // missing key rather than as a compile error. `Reply::Outline` carries the
+    // real `Outline`, so `total` is a field and this can now only fail on a
+    // worker answering the wrong request entirely.
+    let Some(Reply::Outline(read)) = &outline.reply else {
+        return Err(format!(
+            "the outline reply is not an outline: {:?}",
+            outline.reply
+        ));
+    };
+    let outline_total = read.total as u64;
     println!("outline    {outline_total} entries at every depth");
     println!();
 
@@ -335,12 +335,10 @@ fn run(document: &Path, rounds: usize, reps: usize, page: u32, scale: f32) -> Re
                         // that turns the round trip from an upper bound into a
                         // figure, on a fixture with an outline as well as one
                         // without.
-                        let walk_ms = response
-                            .json
-                            .as_ref()
-                            .and_then(|j| j.get("walk_ms"))
-                            .and_then(serde_json::Value::as_f64)
-                            .unwrap_or(0.0);
+                        let walk_ms = match &response.reply {
+                            Some(Reply::Outline(read)) => read.walk_ms,
+                            _ => 0.0,
+                        };
                         render_us += (walk_ms * 1000.0) as u64;
                     }
                     tile => {
