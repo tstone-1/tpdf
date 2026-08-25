@@ -14717,3 +14717,55 @@ conclusion --- no page content, standard LTV, not a modification Adobe flags ---
 right, and "nothing else" is the clause a DocuSign engineer would have picked
 off. Read the bytes before writing the sentence, even when the sentence is
 correcting somebody else's.
+
+### `git` reports forward slashes on every platform, so a path key built with `Path` matches nothing on Windows
+
+`mutate_rust.py` grew a `--since <ref>` in August: run only the mutations whose
+file the diff touched. It selected them like this:
+
+    scoped = [m for m in chosen if str(Path("src-tauri") / m.path) in touched]
+
+`touched` comes from `git diff --name-only`, which emits `src-tauri/src/docinfo.rs`
+on **every** platform --- git's plumbing does not use the host separator.
+`str(WindowsPath("src-tauri") / "src/docinfo.rs")` is `src-tauri\src\docinfo.rs`.
+So on Windows the set membership test was comparing two spellings of the same
+path and matching neither, for every mutation in the table, for as long as the
+flag existed.
+
+Measured 2026-08-25, against the commit that had just changed `docinfo.rs` --- a
+file **48** mutations aim at:
+
+    --- --since HEAD~1: 1 Rust file(s) changed, 0 mutation(s) aimed at them, 363 NOT run
+
+One Rust file changed, correctly identified, and zero mutations selected from it.
+The line is plausible enough to read past: *0 aimed at them* is a sentence the
+flag would legitimately print for a change to a file nothing mutates.
+
+**What made this cost nothing is the guard the author put beside it**, and it is
+worth naming because it is the whole difference between a dead flag and a
+dangerous one:
+
+    if not chosen:
+        # Not exit 0. "Nothing to run" and "everything passed" are different
+        # facts, and a caller reading only the status must not be told the
+        # second when this is the first.
+
+So a Windows `--since` **refused** every time, with *"this run proved nothing,
+which is not the same as a green table"* and exit 1. The flag was unusable here
+rather than quietly certifying an empty run. An empty-selection guard is cheap
+and it is the reason a two-month-old cross-platform defect produced no wrong
+result --- which is the argument for writing one before you need it, since
+nothing about this code knew it was broken.
+
+**The tell was available and nobody was looking at it.** `--since` is a
+developer flag rather than a gate, so it runs on the machine of whoever reaches
+for it and never in CI; a flag that refuses is a flag you stop using, and not
+using it looks exactly like not needing it. Anything keyed on a path from an
+external tool deserves one normalisation at the boundary --- `.replace("\\",
+"/")` --- and one measurement on the platform that spells paths differently.
+
+The fix moved the selection into `scripts/mutation_since.py` and normalises both
+sides there, which is also how the other two harnesses got the flag: one
+implementation with three callers, rather than the second copy that would have
+carried the same bug into two more places. Same measurement afterwards: **48 of
+363** Rust, **63 of 432** front-end, **1 of 92** window, on the same commit.

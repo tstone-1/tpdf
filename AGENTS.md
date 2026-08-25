@@ -1649,6 +1649,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong (the second was wrong too; `gh release view <tag>` cannot tell them apart, and `gh api .../releases` answers 200 with `[]`)
 - `$?` read in the same word as a command substitution is the substitution's status (all three controls agreed, which is the tell)
 - A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work (five probe runners dead on Windows since the day they were written; the wrapper's own `echo` supplied the exit 0 that hid it)
+- `git` reports forward slashes on every platform, so a path key built with `Path` matches nothing on Windows (a two-month-old `--since` selected 0 of the 48 mutations aimed at the file that had just changed; the empty-selection guard beside it is what made a dead flag rather than a dangerous one, and a flag that refuses is a flag you stop using)
 - A guard that answers by refusing the whole run turns two blocked mutations into 178 (the diagnosis was exactly right and the outcome exactly wrong; a dated measurement in `BUILD.md` had quietly expired)
 - An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
 - A `[SKIP]` whose stated reason is true can be the check you most need (the reason was true, the conclusion inverted, and the skip is what made it findable)

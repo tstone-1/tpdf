@@ -3621,20 +3621,34 @@ starts at 0 and increments within the month.
 
    ```
    scripts/mutate_rust.py --since <last tag>        # only the mutations whose FILE moved
+   scripts/mutate_frontend.py --since <last tag>    # same flag, same meaning
+   scripts/mutate_viewer.py --since <last tag>      # and here, where it saves most
    scripts/mutate_viewer.py --runner structure      # the three that need no window,
    scripts/mutate_viewer.py --runner search         # about 24 s a mutation
    scripts/mutate_viewer.py --runner encodings
    ```
 
-   ⚠ **The narrow pass is genuinely partial, in two named ways, and neither is a detail.**
-   `--since` exists on `mutate_rust.py` **only** --- `mutate_frontend.py` and
-   `mutate_viewer.py` have `--only` and `--runner`, which need you to know the names --- so the
-   front-end table is all-or-nothing at about 30 minutes and the 67 window mutations are
-   all-or-nothing at about 50. Giving those two a `--since` is the obvious next piece of work
-   and would make this split real rather than lopsided. And `--since`'s reach is shorter than
-   its scope even where it exists: a change in one module can stop a mutation in another from
-   being caught, which is why the full table is still the thing before a release that qualifies
-   above.
+   **All three take `--since` as of 2026-08-25**, from one implementation in
+   `scripts/mutation_since.py`. This paragraph used to say the flag existed on `mutate_rust.py`
+   only and called giving it to the other two *the obvious next piece of work*; that is done.
+   Measured against `HEAD~1` of the commit that closed it: **48 of 363** Rust mutations,
+   **63 of 432** front-end, **1 of 92** window.
+
+   ⚠ **It had never once worked on Windows, and the reason is one character.** The Rust
+   harness built its key with `str(Path("src-tauri") / m.path)`, which is `src-tauri\src\...`
+   there, while `git diff --name-only` reports forward slashes on every platform --- so the set
+   membership test matched nothing and `--since HEAD~1` over a commit that changed
+   `docinfo.rs`, which **48** mutations aim at, selected **0**. What made that cost nothing is
+   the guard beside it: an empty selection is refused with *"this run proved nothing, which is
+   not the same as a green table"* and exit 1, so the flag was unusable here rather than
+   quietly certifying an empty run.
+
+   ⚠ **The narrow pass is still genuinely partial, and `--since`'s reach is shorter than its
+   scope.** A mutation is selected by the file it edits; a change in one module can stop a
+   mutation in another from being caught without that other file appearing in any diff. Each
+   run prints what it left out --- the count against the table's total, and the changed files
+   no mutation aims at --- and ends by saying it is not the full table. That is still the thing
+   to run before a release that qualifies above.
 
    ⚠ **A `--runner` run validates only that runner's mutations.** So the narrow pass cannot
    report a mutation registered against the wrong runner --- which is exactly what `26.8.7`
@@ -3693,13 +3707,16 @@ starts at 0 and increments within the month.
    # exists because re-proving a hundred mutations that could not have moved is
    # somebody waiting, not because a subset is ever the gate.
 
-   # mutate_rust.py also takes `--since <ref>`, which needs no knowledge of the
+   # All three also take `--since <ref>`, which needs no knowledge of the
    # mutation names: it runs the ones whose FILE the diff touched, working tree
-   # included, prints how many it left out, and exits 1 rather than looking
-   # green when it selected nothing. Its reach is shorter than its scope --- a
-   # change in docmodel.rs can stop a mutation in save.rs from being caught --
-   # so it is the loop, and the whole table is still the thing before a push.
+   # included, prints how many it left out and which changed files no mutation
+   # aims at, and exits 1 rather than looking green when it selected nothing.
+   # Its reach is shorter than its scope --- a change in docmodel.rs can stop a
+   # mutation in save.rs from being caught --- so it is the loop, and the whole
+   # table is still the thing before a push.
    scripts/mutate_rust.py --since HEAD~3
+   scripts/mutate_frontend.py --since HEAD~3
+   scripts/mutate_viewer.py --since HEAD~3
 
    # Or one runner at a time. The three probe runners need no webview, no bundle
    # and no unlocked screen; the three viewer ones need all three.

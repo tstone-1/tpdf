@@ -36,6 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
+import mutation_since  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -4756,8 +4757,20 @@ def main() -> int:
     parser.add_argument(
         "--only", default="", help="run mutations whose name contains this"
     )
+    # `--only` matches a mutation's name, so a change across four modules is
+    # four runs and four control passes. This selects by the file a mutation
+    # edits, which is what an edit actually moves. See `mutation_since.py` for
+    # why it is loud and why nothing selected is a refusal.
+    parser.add_argument(
+        "--since", default="", help="run only mutations whose file changed since this ref"
+    )
     args = parser.parse_args()
     chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
+    if args.since:
+        # No prefix: this table names paths from the repository root already.
+        chosen, code = mutation_since.apply(chosen, args.since)
+        if code:
+            return code
 
     if args.list:
         for mutation in chosen:
