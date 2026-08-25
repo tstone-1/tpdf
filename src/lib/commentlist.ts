@@ -33,6 +33,7 @@
  * first.
  */
 
+import { placeholder } from "./panelrow";
 import {
   bylineOf,
   needsWords,
@@ -457,9 +458,3 @@ function idOf(target: EventTarget | null): number | null {
   return Number.isFinite(id) ? id : null;
 }
 
-function placeholder(text: string): HTMLElement {
-  const element = document.createElement("div");
-  element.style.cssText = "padding:0.5rem 0.7rem;opacity:0.55;";
-  element.textContent = text;
-  return element;
-}

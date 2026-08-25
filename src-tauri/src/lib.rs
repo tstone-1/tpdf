@@ -52,6 +52,10 @@ pub mod startup;
 pub mod structure;
 pub mod sweep;
 pub mod text;
+
+/// Helpers shared by this crate's own tests. Not compiled into any binary.
+#[cfg(test)]
+mod testutil;
 pub mod textbox;
 pub mod worker;
 pub mod xmp;
@@ -1210,7 +1214,7 @@ async fn extract_pages(
 ///
 /// `others` are paths the reader chose in a file dialog. They are opened here,
 /// in the coordinator, which is where every other `lopdf` parse on a save path
-/// runs --- see `docs/THREAT-MODEL.md` residual risk 17, which this widens by
+/// runs --- see `docs/THREAT-MODEL.md` residual risk 18, which this widens by
 /// one file per merge rather than by a new kind of access.
 ///
 /// On the blocking pool for [`save_copy`]'s reason, and rather more so: this one
@@ -2810,7 +2814,7 @@ mod tests {
     /// A parser panic inside a save must reach the reader as a refusal, not as a
     /// closed window.
     ///
-    /// **`docs/THREAT-MODEL.md` §3 and residual risk 17 rest on this**, and it
+    /// **`docs/THREAT-MODEL.md` §3 and residual risk 18 rest on this**, and it
     /// is a property of the build rather than of any code written here: `save`,
     /// `save_copy` and `extract_pages` all parse attacker-controlled bytes with
     /// `lopdf` inside the coordinator, under `spawn_blocking`. That containment
@@ -2861,7 +2865,7 @@ mod tests {
         assert!(
             !manifest.contains("panic"),
             "no profile may set a panic strategy: unwinding is what makes a parser panic on \
-             the save path a refusal instead of a closed window (THREAT-MODEL residual risk 17)"
+             the save path a refusal instead of a closed window (THREAT-MODEL residual risk 18)"
         );
     }
 

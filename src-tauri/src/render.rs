@@ -201,12 +201,21 @@ pub struct DocumentInfo {
     pub at_ms: f64,
 }
 
-/// Startup mark recorded when the platform default is the uncontained backend.
+/// Startup mark recorded when this process parses documents uncontained.
 ///
 /// Named as a constant so a check can look for the same string the code writes.
 /// `AGENTS.md` records two copies of a distinction drifting until a mutation of
 /// one survived; a mark asserted by its spelling in two places is that shape.
-pub const UNSANDBOXED_MARK: &str = "unsandboxed: no worker on this platform";
+///
+/// **Recorded for either route to the uncontained backend**, and it did not
+/// used to be: the announcement lived inside [`Backend::default_here`], so
+/// `TPDF_BACKEND=in-process` on a platform that *has* a boundary switched it off
+/// leaving no mark and no log line. That is the one route where the outcome ---
+/// hostile input parsed in the app process --- is invisible from inside, which
+/// is exactly where a record is worth having. The wording no longer says "no
+/// worker on this platform", because that is now true of only one of the two
+/// ways to get here.
+pub const UNSANDBOXED_MARK: &str = "unsandboxed: documents parsed in this process";
 
 /// Where documents are parsed and rendered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,7 +237,11 @@ impl Backend {
     /// implementations ran, and a typo that silently selects the *other* one
     /// makes a comparison between them report whatever it likes.
     pub fn from_env() -> Result<Self, String> {
-        Self::parse(std::env::var("TPDF_BACKEND").ok().as_deref())
+        let chosen = Self::parse(std::env::var("TPDF_BACKEND").ok().as_deref())?;
+        if chosen == Self::InProcess {
+            announce_uncontained();
+        }
+        Ok(chosen)
     }
 
     /// Reads a backend name, or the platform default when there is none.
@@ -274,20 +287,38 @@ impl Backend {
         if cfg!(any(target_os = "macos", windows)) {
             Self::Worker
         } else {
-            // Once per process: this is called per service, and a benchmark
-            // holding several would otherwise print the same warning per
-            // construction and bury it in its own repetition.
-            static SAID: std::sync::Once = std::sync::Once::new();
-            SAID.call_once(|| {
-                mark(UNSANDBOXED_MARK);
-                crate::diag::note(
-                    "[WARN] no sandbox on this platform: documents are parsed in the app \
-                     process, uncontained. See BUILD.md.",
-                );
-            });
             Self::InProcess
         }
     }
+}
+
+/// Records that this process parses documents uncontained.
+///
+/// Called from [`Backend::from_env`] rather than from
+/// [`Backend::default_here`], so it covers **both** ways of arriving at the
+/// uncontained backend --- the platform having no boundary, and an operator
+/// asking for it by name. It used to sit in the second of those, which left the
+/// asked-for route silent.
+///
+/// Deliberately not called from `parse`, which is the unit the tests drive:
+/// marks and the log sink are process-global, so announcing there would make
+/// `each_backend_can_be_asked_for_by_name` --- which asks for `in-process` ---
+/// leave a mark that the test asserting the default's mark then reads, and the
+/// pair would pass or fail on the order the harness happened to run them in.
+/// The seam is the same one `diag::note_to` exists for, and the same reason.
+///
+/// Once per process: `from_env` is called per service, and a benchmark holding
+/// several would otherwise print the same warning per construction and bury it
+/// in its own repetition.
+fn announce_uncontained() {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| {
+        mark(UNSANDBOXED_MARK);
+        crate::diag::note(
+            "[WARN] documents are parsed in the app process, uncontained --- either \
+             this platform has no sandbox or TPDF_BACKEND asked for it. See BUILD.md.",
+        );
+    });
 }
 
 /// What a job is answered through, for any failure type.
@@ -735,13 +766,6 @@ impl RenderService {
         }
     }
 
-    /// Reads a document's outline, invoking `reply` on a service thread.
-    ///
-    /// One job for the whole tree rather than one per level, which is the
-    /// opposite of the choice `search` makes and for the opposite reason: the
-    /// walk is bounded at 10,000 entries and touches no page content, so it
-    /// finishes in single-digit milliseconds, and a per-level protocol would
-    /// hand the caller a cycle to terminate rather than a tree.
     /// Measures a page's content box, invoking `reply` on a service thread.
     ///
     /// One job per page, and it costs a render --- the reader asked for this
@@ -795,6 +819,13 @@ impl RenderService {
         }
     }
 
+    /// Reads a document's outline, invoking `reply` on a service thread.
+    ///
+    /// One job for the whole tree rather than one per level, which is the
+    /// opposite of the choice `search` makes and for the opposite reason: the
+    /// walk is bounded at 10,000 entries and touches no page content, so it
+    /// finishes in single-digit milliseconds, and a per-level protocol would
+    /// hand the caller a cycle to terminate rather than a tree.
     pub fn outline(&self, doc: u32, reply: Reply<Outline>) {
         if self.tx.send(Job::Outline { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with.
@@ -855,7 +886,7 @@ impl RenderService {
     /// document, under the same sandbox, deadline and restart as every render.
     /// What comes back is bytes and two numbers; every decision about the file
     /// on disk stays with the caller. See `save::append_update` and
-    /// `docs/THREAT-MODEL.md` residual risk 17.
+    /// `docs/THREAT-MODEL.md` residual risk 18.
     ///
     /// Asked for **before** the document is closed, which is not a preference:
     /// the worker builds this from the document it has mapped, so there is no
@@ -1762,17 +1793,61 @@ mod tests {
     /// check has not weakened; its precondition has stopped occurring, which is a
     /// different thing and the reason it is written down rather than left to be
     /// rediscovered on the platform where the branch comes back.
+    ///
+    /// **The announcement moved out of `default_here` and into `from_env`**, so
+    /// this drives `from_env` --- the entry point the application uses and the
+    /// only one that announces. Reading the timeline after calling `parse`
+    /// would now assert nothing at all, which is the quiet way this test could
+    /// have stopped meaning anything.
+    ///
+    /// **The asked-for route is asserted here rather than in a test of its
+    /// own**, and that is not tidiness. The mark is process-global and `cargo
+    /// test` runs this binary's tests on several threads, so a second test that
+    /// announced would race this one: whichever ran first would decide what the
+    /// other read, and the pair would pass or fail on the harness's scheduling.
+    /// One test, in a defined order --- observe the default, then announce ---
+    /// is the only version of this that means the same thing every run.
     #[test]
-    fn the_uncontained_default_says_so_and_the_contained_one_does_not() {
-        assert_eq!(Backend::parse(None), Ok(Backend::default_here()));
-        let marked = crate::startup::timeline()
-            .iter()
-            .any(|(name, _)| name == super::UNSANDBOXED_MARK);
+    fn the_uncontained_backend_says_so_by_either_route_and_the_contained_one_does_not() {
+        // No `TPDF_BACKEND` in the test environment, so this is the default
+        // path. Asserted rather than assumed: a variable set by the harness
+        // would make the comparison below one between two other things.
+        assert!(
+            std::env::var("TPDF_BACKEND").is_err(),
+            "this test is about the default, so nothing may have asked"
+        );
+        let uncontained = |marks: &[(String, f64)]| {
+            marks
+                .iter()
+                .filter(|(name, _)| name == super::UNSANDBOXED_MARK)
+                .count()
+        };
+
+        assert_eq!(Backend::from_env(), Ok(Backend::default_here()));
         assert_eq!(
-            marked,
+            uncontained(&crate::startup::timeline()) > 0,
             Backend::default_here() == Backend::InProcess,
             "the uncontained mark and the uncontained default must agree"
         );
+
+        // The route that used to be silent: on a platform that *has* a
+        // boundary, asking for the uncontained backend by name turns it off,
+        // and nothing inside the process said so. Every claim of the form "the
+        // app process never maps the parser" is checked from outside by
+        // `scripts/win_modules.py`; this left the inside with no record at all.
+        super::announce_uncontained();
+        assert_eq!(
+            uncontained(&crate::startup::timeline()),
+            1,
+            "asking for it by name records the mark --- once, however many \
+             services ask, so a benchmark holding several does not bury the \
+             warning in copies of itself"
+        );
+
+        // What this cannot reach is the wiring in `from_env`, which is one
+        // line, because driving it needs `TPDF_BACKEND` set and the variable is
+        // read once per process. `mutate_rust.py` carries the mutation that
+        // deletes that line, and it is what covers the join.
     }
 
     #[test]

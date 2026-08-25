@@ -593,26 +593,8 @@ impl Drop for Shm {
 mod tests {
     use super::Shm;
 
-    /// A directory that removes itself, so a failing test cannot leave litter.
     #[cfg(unix)]
-    struct TempDir(std::path::PathBuf);
-
-    #[cfg(unix)]
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("tpdf-shm-{name}"));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("temp dir");
-            Self(dir)
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::testutil::TempDir;
 
     /// Truncation is visible through the mapping's own descriptor.
     ///
@@ -625,7 +607,7 @@ mod tests {
     #[test]
     fn a_mapping_reports_its_file_shrinking_and_not_a_file_that_did_not() {
         let dir = TempDir::new("shrink");
-        let path = dir.0.join("doc.bin");
+        let path = dir.join("doc.bin");
         std::fs::write(&path, vec![7u8; 4096]).expect("write");
 
         let shm = Shm::map_file(&path).expect("map");
@@ -677,12 +659,12 @@ mod tests {
     #[test]
     fn a_file_renamed_over_the_path_does_not_look_like_a_truncation() {
         let dir = TempDir::new("rename");
-        let path = dir.0.join("doc.bin");
+        let path = dir.join("doc.bin");
         std::fs::write(&path, vec![7u8; 4096]).expect("write");
 
         let shm = Shm::map_file(&path).expect("map");
 
-        let staged = dir.0.join("doc.new");
+        let staged = dir.join("doc.new");
         std::fs::write(&staged, vec![9u8; 64]).expect("write");
         std::fs::rename(&staged, &path).expect("rename");
 

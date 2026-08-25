@@ -289,7 +289,7 @@ MUTATIONS = [
         # the second of those is the reading that replaced `edges === 0`.
         "viewer: draw a text box as a filled rectangle",
         "src/lib/viewer.ts",
-        "        if (isText(mark.kind)) {",
+        '        if (style === "text") {',
         "        if (false) {",
         "a text box draws its words and not its rectangle",
         "viewer",
@@ -353,10 +353,10 @@ MUTATIONS = [
         # own line width; the stamp's is followed by the word it draws.
         "          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;\n"
         "          ctx.strokeRect(left, top, width, height);\n"
-        "        } else if (isEllipse(mark.kind)) {",
+        '        } else if (style === "ellipse") {',
         "          ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;\n"
         "          ctx.fillRect(left, top, width, height);\n"
-        "        } else if (isEllipse(mark.kind)) {",
+        '        } else if (style === "ellipse") {',
         "a box is a frame with its middle clear",
         runner="viewer",
     ),
@@ -379,8 +379,8 @@ MUTATIONS = [
         # shows a red block where a bubble belongs.
         "viewer: draw a comment as a plain rectangle rather than a bubble",
         "src/lib/viewer.ts",
-        "} else if (isIcon(mark.kind)) drawBubble(ctx, left, top, width, height);",
-        "} else if (isIcon(mark.kind)) ctx.fillRect(left, top, width, height);",
+        '} else if (style === "icon") drawBubble(ctx, left, top, width, height);',
+        '} else if (style === "icon") ctx.fillRect(left, top, width, height);',
         "a comment draws inside its own icon box",
         runner="viewer",
     ),

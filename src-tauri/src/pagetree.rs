@@ -214,12 +214,7 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
     }
 }
 
-/// A cap on one decompressed stream while reading the page tree.
-///
-/// The same 64 MB every other `lopdf` scan here uses. The page tree itself is
-/// tiny, but the objects reached on the way to it are the document's, so this
-/// parse is as much attacker-facing as any other.
-const MAX_DECODE: usize = 64 * 1024 * 1024;
+use crate::encoding::MAX_DECODE;
 
 /// The box every page is displayed from, in page order.
 ///

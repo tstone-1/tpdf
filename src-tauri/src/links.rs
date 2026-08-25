@@ -59,8 +59,7 @@ use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 use crate::encoding::resolve;
 use crate::outline::Target;
 
-/// Largest decompressed stream the scan will accept, matching [`crate::annots`].
-const MAX_DECODE: usize = 64 * 1024 * 1024;
+use crate::encoding::MAX_DECODE;
 
 /// Most links the scan will report for one page.
 ///

@@ -14198,7 +14198,7 @@ existing one, look at what is directly above the insertion point.** If it is a
 
 ### A mitigation that moved half a path reads exactly like one that moved the path
 
-`docs/THREAT-MODEL.md`'s residual risk 17 said the coordinator parses attacker
+`docs/THREAT-MODEL.md`'s residual risk 18 said the coordinator parses attacker
 bytes on three writers, then recorded a narrowing: *"a save that only adds marks
 is prepared in the worker now (`Request::Append`), so what is left is the
 rewriting save and the two copy paths"*. True, precise, dated, and it left the

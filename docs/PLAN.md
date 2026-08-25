@@ -270,7 +270,7 @@ is guarded on `phys_footprint` and cannot print off macOS.
 What is bounded today on the paths that remain: decompression (`MAX_DECODE`), graph recursion
 (`sweep::MAX_NESTING`) and panics (unwinding, pinned by a test so a profile change cannot
 quietly remove it). What is not bounded is **time and memory**, because bounding either needs a
-process to enforce it against. `docs/THREAT-MODEL.md` §3 and residual risk 17 carry the
+process to enforce it against. `docs/THREAT-MODEL.md` §3 and residual risk 18 carry the
 disclosure.
 
 ### Worker processes — measured 2026-07-26
@@ -5455,7 +5455,7 @@ through.
 object. `save.rs` deliberately does not run the mark-and-sweep the print path does, because
 "a saved copy is a serialisation, not a sanitation" is the position `docs/THREAT-MODEL.md`
 §T6.1 takes and this increment does not change it. Deleting is the first operation where a
-reader could plausibly believe otherwise, so it is residual risk 15 there rather than a
+reader could plausibly believe otherwise, so it is residual risk 16 there rather than a
 footnote here, and §6 is where "removed" comes to mean removed.
 
 ##### What the checks are built around, and what none of them covers
@@ -9375,7 +9375,7 @@ together.
 #### Ranked: the append's read-back parses in the coordinator, on the async runtime
 
 Found by step 6 of the release checklist while cutting `26.8.8`, by reading
-`docs/THREAT-MODEL.md`'s residual risk 17 against the code it describes.
+`docs/THREAT-MODEL.md`'s residual risk 18 against the code it describes.
 
 The append's **preparation** moved into the worker on 2026-08-22, which is what
 that entry records. Its **verification** did not: `save::append_in_place`

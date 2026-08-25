@@ -107,7 +107,7 @@ pub use crate::worker_shm::Shm;
 /// of defect `AGENTS.md` already records for the PDFium library directory.
 pub const WORKER_ARGV: &str = "--render-worker";
 
-/// Why every worker entry point refuses off macOS.
+/// Why every worker entry point refuses on a platform with no sandbox.
 ///
 /// One constant rather than the same sentence written at each refusal, because
 /// the refusals are the containment argument and four copies of it are four
@@ -583,8 +583,8 @@ impl Worker {
     ///
     /// # Errors
     ///
-    /// Mapping the document, creating the tile buffer, or spawning; and on any
-    /// platform but macOS, always --- see the module note.
+    /// Mapping the document, creating the tile buffer, or spawning; and on a
+    /// platform with no sandbox, always --- see the module note.
     pub fn spawn(document: &Path, library_dir: &Path) -> Result<Self, String> {
         Self::spawn_shared(Arc::new(Shm::map_file(document)?), library_dir)
     }
@@ -722,8 +722,8 @@ impl Worker {
     ///
     /// # Errors
     ///
-    /// Creating the tile buffer or spawning; and on any platform but macOS,
-    /// always --- see the module note.
+    /// Creating the tile buffer or spawning; and on a platform with no
+    /// sandbox, always --- see the module note.
     pub fn spawn_shared(doc: Arc<Shm>, library_dir: &Path) -> Result<Self, String> {
         let tile = Shm::create(TILE_CAPACITY)?;
         Self::spawn_mapped(doc, tile, library_dir)

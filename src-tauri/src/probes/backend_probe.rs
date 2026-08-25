@@ -1720,30 +1720,6 @@ fn kill_a_worker(pid: Option<u32>) -> Result<(), String> {
     }
 }
 
-/// Kills a worker and waits for it to actually be gone.
-///
-/// **SIGKILL rather than SIGSEGV, and that is not a stylistic choice.** A Rust
-/// process absorbs the first SIGSEGV *sent* to it: std installs a handler so a
-/// stack overflow can be reported, and on a fault address outside the guard page
-/// that handler restores the default disposition and returns --- which for a
-/// signal that arrived by `kill(2)` simply resumes the process. Measured while
-/// writing this: the worker survived SIGSEGV and `/bin/sleep` did not, and the
-/// checks below then passed against a worker that had never died. A genuine
-/// Pdfium fault still terminates, because the faulting instruction re-executes
-/// against the restored default; only a sent one is swallowed.
-///
-/// The wait is not a sleep, and is not optional either: a signal is delivered
-/// asynchronously, so asking the replacement question too early is answered by
-/// the worker that is still alive.
-/// Off unix there is no worker to kill, because none can be spawned.
-///
-/// Refuses rather than terminating by some other route: this check exists to
-/// prove a worker is *replaced* after dying, and there is nothing to replace on
-/// a platform where the pool never starts one.
-///
-/// # Errors
-///
-/// Always.
 /// Kills a worker and waits for the kernel to agree it is gone.
 ///
 /// `TerminateProcess` rather than a signal, because Windows has none --- the
@@ -1794,11 +1770,35 @@ fn kill_and_wait(pid: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Off unix there is no worker to kill, because none can be spawned.
+///
+/// Refuses rather than terminating by some other route: this check exists to
+/// prove a worker is *replaced* after dying, and there is nothing to replace on
+/// a platform where the pool never starts one.
+///
+/// # Errors
+///
+/// Always.
 #[cfg(not(any(unix, windows)))]
 fn kill_and_wait(_pid: u32) -> Result<(), String> {
     Err(worker::NO_WORKERS.into())
 }
 
+/// Kills a worker and waits for it to actually be gone.
+///
+/// **SIGKILL rather than SIGSEGV, and that is not a stylistic choice.** A Rust
+/// process absorbs the first SIGSEGV *sent* to it: std installs a handler so a
+/// stack overflow can be reported, and on a fault address outside the guard page
+/// that handler restores the default disposition and returns --- which for a
+/// signal that arrived by `kill(2)` simply resumes the process. Measured while
+/// writing this: the worker survived SIGSEGV and `/bin/sleep` did not, and the
+/// checks below then passed against a worker that had never died. A genuine
+/// Pdfium fault still terminates, because the faulting instruction re-executes
+/// against the restored default; only a sent one is swallowed.
+///
+/// The wait is not a sleep, and is not optional either: a signal is delivered
+/// asynchronously, so asking the replacement question too early is answered by
+/// the worker that is still alive.
 #[cfg(unix)]
 fn kill_and_wait(pid: u32) -> Result<(), String> {
     // SAFETY: `kill` takes two integers and touches nothing this process owns.

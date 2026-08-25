@@ -73,11 +73,12 @@
 use std::path::{Path, PathBuf};
 
 use tpdf_lib::annots::{self, Kind};
+use tpdf_lib::docmodel::INK_WIDTH;
 use tpdf_lib::docmodel::{MarkKind, Quad, StampName};
 use tpdf_lib::edits::{Edits, NewMark};
 use tpdf_lib::progressive::{self, Placement, RawBitmap, RawDocument};
 use tpdf_lib::save;
-use tpdf_lib::save::{INK_WIDTH, OUTLINE_WIDTH};
+use tpdf_lib::save::OUTLINE_WIDTH;
 use tpdf_lib::text;
 
 /// The document handle every mode opens under. One document, so any number does.

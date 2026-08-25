@@ -87,8 +87,20 @@ use std::collections::HashSet;
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
-/// Largest decompressed stream the scan will accept, matching `print.rs`.
-const MAX_DECODE: usize = 64 * 1024 * 1024;
+/// Largest decompressed stream any scan here will accept.
+///
+/// **The one copy.** `AGENTS.md` states "all `lopdf` stream decoding is
+/// bounded" as a single hard constraint, and it was six private constants in
+/// six modules, each documented as matching a *different* one of the other
+/// five --- so the constraint held by six values agreeing rather than by there
+/// being one value. `save.rs` reached into `print.rs` for it, which put the
+/// writer downstream of the printer for a security bound.
+///
+/// It lives here because decoding is this module's subject: `resolve` is what
+/// every one of those scans reaches a stream through. 64 MB is far past any
+/// real content stream and far under what a decompression bomb wants --- spike
+/// 0.4 measured a 2,879-byte input inflating to 1 GiB.
+pub(crate) const MAX_DECODE: usize = 64 * 1024 * 1024;
 
 /// Deepest the `/Resources` inheritance walk will follow `/Parent`.
 ///

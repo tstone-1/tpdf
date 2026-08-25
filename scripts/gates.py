@@ -52,7 +52,7 @@ dead code the linker drops. `backend_probe.rs` referenced two dyld symbols that
 exist on no other platform, and both gates were blind to it for exactly that
 reason. A gate list that never links what it ships cannot see a link error.
 
-`--examples` is not decoration on that flag, it is where the sixteen spike
+`--examples` is not decoration on that flag, it is where the spike
 harnesses went on 2026-07-31 when they stopped being `[[bin]]` so the installer
 would stop shipping them. `backend_probe.rs` --- the file that motivated this gate
 in the first place --- is one of them, so dropping `--examples` would silently
@@ -74,7 +74,7 @@ gate above it to have run. It is two checks in one command -- that
 `THIRD-PARTY-NOTICES.md` still matches what the dependency tree would generate,
 which is the binary-distribution obligation, and that no GPL, LGPL or AGPL
 licence has appeared anywhere. The second half covers a population `cargo
-metadata` structurally cannot see: the fourteen C++ libraries compiled into
+metadata` structurally cannot see: the C++ libraries compiled into
 libpdfium, enumerated from `vendor/pdfium/licenses/`. All three of its failure
 modes were proved by mutation before it was trusted.
 

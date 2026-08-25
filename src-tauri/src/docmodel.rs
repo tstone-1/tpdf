@@ -226,6 +226,29 @@ pub struct Point {
     pub y: f32,
 }
 
+/// How thick a freehand line is, in points.
+///
+/// **Heavier than [`crate::save::OUTLINE_WIDTH`], and the reason is what each
+/// mark is for.** A box is a frame round something a reader wants to point at,
+/// and a frame that competes with its contents is a worse frame. A drawn line
+/// *is* the content: it is a reader's handwriting, a circle round a figure, an
+/// arrow. At 1.5 pt freehand ink reads as tentative --- and unlike a box, which
+/// is four straight edges, a hand-drawn line at hairline weight breaks up
+/// visually wherever the pointer moved fast.
+///
+/// **It lives here, beside [`Stroke`], because it is part of the geometry**
+/// rather than only of the drawing: an ink mark has no quads of its own, so its
+/// rectangle is derived from its points padded by half this width, and that
+/// derivation is what [`Stroke::bounds`] does. It sat in `save.rs` and was
+/// reached for from here and from `edits.rs`, which put the pure model
+/// downstream of the writer for a number the model cannot do without.
+///
+/// Public for [`crate::save::OUTLINE_WIDTH`]'s reason: `annot-probe` measures
+/// the stroke it draws, and a second copy of the number in the probe would
+/// agree with a wrong value here as readily as with a right one. `markband.ts`
+/// holds the same number for the overlay.
+pub const INK_WIDTH: f64 = 2.5;
+
 /// One continuous line a reader drew without lifting the pointer.
 ///
 /// `/InkList` is an array of these, which is why a mark holds a `Vec<Stroke>`
@@ -1029,6 +1052,27 @@ impl Working {
             .collect()
     }
 
+    /// Tombstones a mark and drops every table keyed by its id.
+    ///
+    /// One implementation for the two arms that end a mark --- deleting the
+    /// page it is on, and removing the mark itself --- because they are the
+    /// same cleanup and were not the same code: `Unannotate` dropped the note,
+    /// the ink and the colour, and `Delete` dropped only the note, leaving two
+    /// entries keyed by an id nothing can reach. Nothing read them, so no
+    /// behaviour differed and nothing could go red; what drifts in that state
+    /// is the next table somebody adds, which one arm will clear and the other
+    /// will not.
+    ///
+    /// Safe on either path because undo **replays** rather than inverts: a
+    /// table cleared here is rebuilt by the journal, not recovered from what
+    /// was left behind.
+    fn forget_mark(&mut self, mark: MarkId) {
+        self.mark_graves.insert(mark);
+        self.notes.remove(&mark);
+        self.inks.remove(&mark);
+        self.colors.remove(&mark);
+    }
+
     /// Refuses unless the id names a mark on a page, naming which of the two it
     /// is, and answers with the page it found.
     ///
@@ -1107,12 +1151,7 @@ impl Working {
                 // page and marks back together, because it replays rather than
                 // inverts.
                 for mark in self.marks.remove(&page).unwrap_or_default() {
-                    self.mark_graves.insert(mark);
-                    // The note goes too, and it is the *only* piece of a mark
-                    // this has to clear: the body stays in `Doc`'s table, where
-                    // a redo finds it. Left here, a note would be reachable
-                    // through a mark this document no longer has.
-                    self.notes.remove(&mark);
+                    self.forget_mark(mark);
                 }
             }
             Command::Move { page, after } => {
@@ -1160,10 +1199,7 @@ impl Working {
                 if list.is_empty() {
                     self.marks.remove(&page);
                 }
-                self.mark_graves.insert(mark);
-                self.notes.remove(&mark);
-                self.inks.remove(&mark);
-                self.colors.remove(&mark);
+                self.forget_mark(mark);
             }
             Command::Renote { mark, note } => {
                 self.live_mark(mark)?;
@@ -1452,7 +1488,7 @@ impl Doc {
         if !strokes.iter().any(Stroke::is_drawable) {
             return Err(Refusal::EmptyMark);
         }
-        let quads = Stroke::bounds(&strokes, crate::save::INK_WIDTH as f32 / 2.0)
+        let quads = Stroke::bounds(&strokes, INK_WIDTH as f32 / 2.0)
             .into_iter()
             .collect();
         let ink = self.issue_ink(Ink { strokes, quads });

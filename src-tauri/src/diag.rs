@@ -305,34 +305,19 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    /// A directory that removes itself, so a failing test cannot leave litter.
-    struct TempDir(PathBuf);
+    use crate::testutil::TempDir;
 
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("tpdf-diag-{name}"));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("temp dir");
-            Self(dir)
-        }
-
-        fn file(&self) -> PathBuf {
-            self.0.join("tpdf.log")
-        }
-
-        fn names(&self) -> Vec<String> {
-            let mut names: Vec<String> = std::fs::read_dir(&self.0)
-                .expect("read dir")
-                .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
-                .collect();
-            names.sort();
-            names
-        }
+    /// The log file inside a scratch directory.
+    ///
+    /// An extension rather than a method on [`TempDir`]: the name `tpdf.log`
+    /// belongs to this module, not to a general-purpose temp directory.
+    trait LogFile {
+        fn file(&self) -> PathBuf;
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+    impl LogFile for TempDir {
+        fn file(&self) -> PathBuf {
+            self.join("tpdf.log")
         }
     }
 

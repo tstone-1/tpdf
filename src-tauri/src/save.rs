@@ -67,12 +67,12 @@ use lopdf::{dictionary, Dictionary, Object, ObjectId};
 
 use crate::docmodel::MarkKind;
 use crate::edits::{Plan, PlannedMark};
+use crate::encoding::MAX_DECODE;
 use crate::fingerprint::{FileId, Fingerprint};
 use crate::pagetree::{
     agreed_turns, apply_crops, apply_turns, displayed_page, drop_outline, drop_pages,
     ordered_pages, reorder_pages, DisplayedPage,
 };
-use crate::print::MAX_DECODE;
 use crate::textbox;
 
 /// The middle of the name of the file bytes are written to before the rename.
@@ -524,19 +524,6 @@ pub enum Mode {
     Rewrite,
 }
 
-/// Which writer a plan needs.
-///
-/// The append is not merely a faster rewrite and the difference is not
-/// performance: an update section leaves the previous revision **byte for byte
-/// intact** inside the new file, so what was signed stays exactly where it was
-/// and a validator can still show it. A rewrite renumbers every object in the
-/// document.
-///
-/// The narrowness is deliberate and is bounded by evidence rather than by
-/// caution: spike 0.6 put an appended annotation to PDFium, QPDF, poppler and
-/// CoreGraphics across twelve fixtures. It never put an appended page deletion,
-/// reorder, rotation or crop to any of them. Those take the rewrite until
-/// somebody measures them.
 /// The largest document whose save may be prepared inside a worker.
 ///
 /// **A bound on the input, because the parse is what costs.** [`append_update`]
@@ -572,6 +559,20 @@ pub const APPEND_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// here. Raising `APPEND_MAX_BYTES` past a measured ceiling stops the build.
 const _: () = assert!(APPEND_MAX_BYTES < 345_040_737);
 
+/// Which writer a plan needs.
+///
+/// The append is not merely a faster rewrite and the difference is not
+/// performance: an update section leaves the previous revision **byte for byte
+/// intact** inside the new file, so what was signed stays exactly where it was
+/// and a validator can still show it. A rewrite renumbers every object in the
+/// document.
+///
+/// The narrowness is deliberate and is bounded by evidence rather than by
+/// caution: spike 0.6 put an appended annotation to PDFium, QPDF, poppler and
+/// CoreGraphics across twelve fixtures. It never put an appended page deletion,
+/// reorder, rotation or crop to any of them. Those take the rewrite until
+/// somebody measures them.
+///
 /// **Size is the second condition, and it costs something real.** Above
 /// [`APPEND_MAX_BYTES`] a marks-only save is reserialised, which means the
 /// previous revision does *not* survive byte for byte --- so a signed revision
@@ -696,7 +697,7 @@ pub fn append_bytes(
 /// here is a question about a *path* --- has this file changed, how long is it ---
 /// and answering it needs filesystem authority and no parser. Everything in
 /// [`append_update`] is a parse of attacker-controlled bytes and needs no
-/// filesystem at all. `docs/THREAT-MODEL.md` §T6 and residual risk 17.
+/// filesystem at all. `docs/THREAT-MODEL.md` §T6 and residual risk 18.
 #[derive(Debug)]
 pub struct Ready {
     was: u64,
@@ -818,7 +819,7 @@ pub struct Update {
 /// worker that already holds the document --- which parses it with `lopdf`
 /// already, for comments, links and properties --- instead of in the process
 /// holding the window and the reader's filesystem authority.
-/// `docs/THREAT-MODEL.md` §T6 and residual risk 17 carry what that changes.
+/// `docs/THREAT-MODEL.md` §T6 and residual risk 18 carry what that changes.
 ///
 /// **`password` is the reader's, when the document needed one.** It is a key to
 /// bytes this process already holds rather than a new authority --- the same
@@ -1610,29 +1611,6 @@ pub fn pdf_date(at: std::time::SystemTime) -> String {
 /// legible in a reader that ignores the blend and paints the fill flat.
 const WASH_ALPHA: f32 = 0.4;
 
-/// Writes the reader's marks into the document as real annotations.
-///
-/// **One object per mark, appended to its page's `/Annots`.** That array may be
-/// absent, written inline, or an indirect reference to an array; `AGENTS.md`
-/// records that the distinction decides how large an annotation edit is, and
-/// [`attach`] handles all three.
-///
-/// **The coordinates are the whole of the difficulty.** A mark is held in
-/// display space --- what the reader dragged across, y downwards from the
-/// displayed page's top-left corner --- and `/QuadPoints` is the page's own
-/// space, y upwards, before `/Rotate` and measured from the media box. The
-/// mapping is [`crate::text::from_device`] followed by the crop box's origin,
-/// which is exactly the two steps `annots.rs` performs in reverse when it reads
-/// one back. Those are separate implementations, which is what makes
-/// `annot-probe`'s round trip a differential rather than a tautology.
-///
-/// `kept` is the one-based page numbers being written, used only for the
-/// shared-object refusal.
-///
-/// # Errors
-///
-/// A mark naming a page the file does not have; a mark on a page object that
-/// more than one kept page number names; or a mark whose quads map to nothing.
 /// Where one annotation goes, read out of the document it is measured against.
 ///
 /// **Everything a mark needs from the *reader*, gathered before anything is
@@ -1683,6 +1661,29 @@ enum AnnotsSite {
 ///
 /// A mark naming a page the file does not have; a mark on a page object that
 /// more than one kept page number names.
+/// Writes the reader's marks into the document as real annotations.
+///
+/// **One object per mark, appended to its page's `/Annots`.** That array may be
+/// absent, written inline, or an indirect reference to an array; `AGENTS.md`
+/// records that the distinction decides how large an annotation edit is, and
+/// [`attach`] handles all three.
+///
+/// **The coordinates are the whole of the difficulty.** A mark is held in
+/// display space --- what the reader dragged across, y downwards from the
+/// displayed page's top-left corner --- and `/QuadPoints` is the page's own
+/// space, y upwards, before `/Rotate` and measured from the media box. The
+/// mapping is [`crate::text::from_device`] followed by the crop box's origin,
+/// which is exactly the two steps `annots.rs` performs in reverse when it reads
+/// one back. Those are separate implementations, which is what makes
+/// `annot-probe`'s round trip a differential rather than a tautology.
+///
+/// `kept` is the one-based page numbers being written, used only for the
+/// shared-object refusal.
+///
+/// # Errors
+///
+/// A mark naming a page the file does not have; a mark on a page object that
+/// more than one kept page number names; or a mark whose quads map to nothing.
 fn mark_sites(
     read: &Document,
     pages: &[ObjectId],
@@ -2395,22 +2396,6 @@ pub const OUTLINE_WIDTH: f64 = 1.5;
 /// point: the neighbouring constant's rule is not this one's.)
 const KAPPA: f64 = 0.5522847498307936;
 
-/// How thick a freehand line is, in points.
-///
-/// **Heavier than [`OUTLINE_WIDTH`], and the reason is what each mark is for.**
-/// A box is a frame round something a reader wants to point at, and a frame that
-/// competes with its contents is a worse frame. A drawn line *is* the content:
-/// it is a reader's handwriting, a circle round a figure, an arrow. At 1.5 pt
-/// freehand ink reads as tentative --- and unlike a box, which is four straight
-/// edges, a hand-drawn line at hairline weight breaks up visually wherever the
-/// pointer moved fast.
-///
-/// Public for [`OUTLINE_WIDTH`]'s reason: `annot-probe` measures the stroke it
-/// draws and a second copy of the number in the probe would agree with a wrong
-/// value here as readily as with a right one. `markband.ts` holds the same
-/// number for the overlay.
-pub const INK_WIDTH: f64 = 2.5;
-
 /// How far a stamp's word sits inside its border, in points.
 ///
 /// Larger than [`textbox::INSET`] and deliberately: a text box's inset stops
@@ -2718,7 +2703,7 @@ fn appearance_stream(
     // rather than as a style. `1 J 1 j` is round caps and round joins, and it
     // also gives a stroke its ends, without which a line stops square.
     let (width, joins) = match style {
-        Paint::Path => (INK_WIDTH, "1 J 1 j "),
+        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),
         _ => (OUTLINE_WIDTH, ""),
     };
     let mut content = format!(
@@ -3107,7 +3092,6 @@ fn unshared(pages: &[lopdf::ObjectId], kept: &[u32], dropped: &[u32]) -> Result<
     Ok(())
 }
 
-/// Writes `bytes` to `out` via a sibling temporary file and a rename.
 /// The crop each kept source page is to get, refusing two that disagree.
 ///
 /// One entry per **source** page rather than per plan position, because a page
@@ -3145,6 +3129,7 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
     Ok(order.into_iter().map(|s| (s, chosen[&s].0)).collect())
 }
 
+/// Writes `bytes` to `out` via a sibling temporary file and a rename.
 fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
     let staged = stage(out, bytes)?;
     commit(&staged, out)
@@ -5517,12 +5502,11 @@ mod tests {
     // Saving by appending an update section
     // -----------------------------------------------------------------
 
-    /// A copy of a fixture in scratch, with a plan fingerprinted against it.
+    /// A copy of a fixture in scratch, with a marks-only plan against it.
     ///
     /// A copy rather than the fixture itself, and it is not tidiness: an append
     /// writes to the file it is given, so a test that pointed at `testdata/`
     /// would edit the corpus every other test reads.
-    /// A copy of a fixture in scratch, with a marks-only plan against it.
     ///
     /// **Callers pass `comments.pdf` rather than `text-heavy.pdf`, and that is a
     /// coverage fix rather than a preference.** `text-heavy.pdf` is a real
@@ -6401,47 +6385,6 @@ mod tests {
         assert!(examined > 0, "no fixture was examined");
     }
 
-    /// What an append costs against a rewrite, and where a save's time goes.
-    ///
-    /// `#[ignore]`, so it runs only when asked --- it copies a 337 MB fixture
-    /// three times. Kept beside the code rather than as an example because the
-    /// numbers it produces are what decided the mode's design, and a measurement
-    /// nobody can re-run is a claim.
-    ///
-    /// ```text
-    /// cargo test --release --lib save::tests::bench_append -- --ignored --nocapture
-    /// ```
-    ///
-    /// **Measured 2026-08-22, release, M5 MacBook Pro, warm page cache.** The
-    /// A/B is interleaved per round rather than run as two blocks, which is this
-    /// repository's standing rule, and the best of three is reported because
-    /// what is being compared is the work rather than the scheduling noise.
-    ///
-    /// | fixture | size | append | bytes | rewrite | bytes | ratio |
-    /// |---|---|---|---|---|---|---|
-    /// | text-heavy   | 1.4 MB | 13.4 ms | 867 | 5.8 ms  | 1,345,132 | 0.4x |
-    /// | scan, 5 pages  | 42 MB  | 89.8 ms | 824 | 84.4 ms | 42,078,652 | 0.9x |
-    /// | scan, 20 pages | 168 MB | 336.9 ms | 830 | 344.9 ms | 168,312,340 | 1.0x |
-    /// | scan, 40 pages | 337 MB | 667.2 ms | 839 | 739.2 ms | 336,624,052 | 1.1x |
-    ///
-    /// **The wall-clock claim in `docs/PLAN.md` §5 does not survive this, and
-    /// the bytes-written claim survives it completely.** §5 records 8.2x at
-    /// 337 MB. What it measured is the *writer* in isolation; what a reader
-    /// waits for is a save, and a save is dominated by something neither mode
-    /// chooses: the open-time fingerprint's streamed SHA-256 of the whole file,
-    /// which this run times separately at **603 ms of the append's 667**. Both
-    /// modes pay it, so the mode moves about 64 ms of a 670 ms save.
-    ///
-    /// The rest of the append's own cost is 21 ms reading the file, 6 ms parsing
-    /// it and 43 ms parsing it again to verify the result --- a check the rewrite
-    /// does not perform at all, since it verifies the *source* before a rename
-    /// rather than the file it produced.
-    ///
-    /// So the reason to append is what it writes: **839 bytes rather than 337
-    /// megabytes**, which matters for a document in a synced folder, for the
-    /// life of the disk, and because the previous revision survives byte for
-    /// byte inside the new file. It is not the speed, and this file should not
-    /// be read as claiming it is.
     /// What a rewrite costs in memory, which is what decides where it can run.
     ///
     /// **Measured because a design rested on it.** Moving the rewrite into the
@@ -6529,6 +6472,47 @@ mod tests {
         );
     }
 
+    /// What an append costs against a rewrite, and where a save's time goes.
+    ///
+    /// `#[ignore]`, so it runs only when asked --- it copies a 337 MB fixture
+    /// three times. Kept beside the code rather than as an example because the
+    /// numbers it produces are what decided the mode's design, and a measurement
+    /// nobody can re-run is a claim.
+    ///
+    /// ```text
+    /// cargo test --release --lib save::tests::bench_append -- --ignored --nocapture
+    /// ```
+    ///
+    /// **Measured 2026-08-22, release, M5 MacBook Pro, warm page cache.** The
+    /// A/B is interleaved per round rather than run as two blocks, which is this
+    /// repository's standing rule, and the best of three is reported because
+    /// what is being compared is the work rather than the scheduling noise.
+    ///
+    /// | fixture | size | append | bytes | rewrite | bytes | ratio |
+    /// |---|---|---|---|---|---|---|
+    /// | text-heavy   | 1.4 MB | 13.4 ms | 867 | 5.8 ms  | 1,345,132 | 0.4x |
+    /// | scan, 5 pages  | 42 MB  | 89.8 ms | 824 | 84.4 ms | 42,078,652 | 0.9x |
+    /// | scan, 20 pages | 168 MB | 336.9 ms | 830 | 344.9 ms | 168,312,340 | 1.0x |
+    /// | scan, 40 pages | 337 MB | 667.2 ms | 839 | 739.2 ms | 336,624,052 | 1.1x |
+    ///
+    /// **The wall-clock claim in `docs/PLAN.md` §5 does not survive this, and
+    /// the bytes-written claim survives it completely.** §5 records 8.2x at
+    /// 337 MB. What it measured is the *writer* in isolation; what a reader
+    /// waits for is a save, and a save is dominated by something neither mode
+    /// chooses: the open-time fingerprint's streamed SHA-256 of the whole file,
+    /// which this run times separately at **603 ms of the append's 667**. Both
+    /// modes pay it, so the mode moves about 64 ms of a 670 ms save.
+    ///
+    /// The rest of the append's own cost is 21 ms reading the file, 6 ms parsing
+    /// it and 43 ms parsing it again to verify the result --- a check the rewrite
+    /// does not perform at all, since it verifies the *source* before a rename
+    /// rather than the file it produced.
+    ///
+    /// So the reason to append is what it writes: **839 bytes rather than 337
+    /// megabytes**, which matters for a document in a synced folder, for the
+    /// life of the disk, and because the previous revision survives byte for
+    /// byte inside the new file. It is not the speed, and this file should not
+    /// be read as claiming it is.
     #[test]
     #[ignore]
     fn bench_append_against_rewrite() {
@@ -7039,7 +7023,7 @@ mod tests {
         ];
         let mut plan = plan_of_kind(
             MarkKind::Ink,
-            crate::docmodel::Stroke::bounds(&strokes, (INK_WIDTH / 2.0) as f32)
+            crate::docmodel::Stroke::bounds(&strokes, (crate::docmodel::INK_WIDTH / 2.0) as f32)
                 .into_iter()
                 .collect(),
         );

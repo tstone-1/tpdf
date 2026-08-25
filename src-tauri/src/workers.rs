@@ -1810,12 +1810,6 @@ mod tests {
         )
     }
 
-    /// A document over a real mapping, believing in `spawned` workers.
-    ///
-    /// The mapping has to exist because [`Held`] owns one; nothing here reads a
-    /// byte of it. The workers are believed in rather than spawned, which is the
-    /// only way to reach the close drain from a unit test --- a real one needs
-    /// PDFium, a document and a sandboxed child.
     /// A worker's refusal keeps its answerability on the way to the engine.
     ///
     /// Two representations of one distinction meet in `refusal_of`, and that is
@@ -1837,6 +1831,12 @@ mod tests {
         assert_eq!(broken.reason, "This file is not a PDF.");
     }
 
+    /// A document over a real mapping, believing in `spawned` workers.
+    ///
+    /// The mapping has to exist because [`Held`] owns one; nothing here reads a
+    /// byte of it. The workers are believed in rather than spawned, which is the
+    /// only way to reach the close drain from a unit test --- a real one needs
+    /// PDFium, a document and a sandboxed child.
     fn held(name: &str, spawned: usize) -> (std::path::PathBuf, Held) {
         let dir = std::env::temp_dir().join(format!("tpdf-workers-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
