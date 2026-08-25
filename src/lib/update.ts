@@ -223,18 +223,18 @@ export function updateNotice(state: UpdateState, version: string): string {
   switch (state.kind) {
     case "idle":
     case "checking":
-      return `tpdf ${version} --- checking for updates`;
+      return `tpdf ${version} — checking for updates`;
     case "current":
       return `tpdf ${version} is the latest version`;
     case "available":
-      return `tpdf ${version} --- version ${state.version} is available`;
+      return `tpdf ${version} — version ${state.version} is available`;
     case "downloading":
       return `Downloading version ${state.version}`;
     case "ready":
-      return `Version ${state.version} is ready --- restart to finish`;
+      return `Version ${state.version} is ready — restart to finish`;
     case "failed":
       // The version still leads, because the reader asked two questions with one
       // press and only one of them failed.
-      return `tpdf ${version} --- could not check for updates: ${state.message}`;
+      return `tpdf ${version} — could not check for updates: ${state.message}`;
   }
 }

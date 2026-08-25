@@ -1323,6 +1323,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A field with no reachable `true`, guarded by a comment about the wrong call (the ordering it protected was correct and had stopped mattering; nothing renders the field, so the wrong value had no screen to be wrong on)
 - The same silent decryption, on the path whose output a reader keeps (`print::build` had no guard at all, and `is_passthrough`'s comment is why it looked covered; found by grepping for the predicate the first fix had just taught, which is the cheapest moment to look)
 - A mark's rectangle survives a quarter turn and everything drawn inside it does not (four kinds of the seven wrong on a scanner's `/Rotate 90`, and the two that survived are the two whose shape is symmetric under one; every instrument aimed at them was blind to rotation or excused from it, and the one red check was diagnosed from its fixture's most conspicuous property, which was not the cause)
+- The uncovered bytes are mostly the signature's own container, and reporting the total reads as an accusation (88% of an alarming 74,637 was the `/Contents` hole every signed PDF has; the frontend could not have fixed it, a control needs two numbers to hold one fixed, and a wrong count sat in a test message where nothing could check it)
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1690,6 +1691,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing (twelve lines arguing against the feature being built, attached to nothing; a scan is two lines of Python and found 26, and it over-reports on purpose --- a section header is the same shape)
 - A comment defending a name can become an argument for the opposite name, with no word of it changing (every clause stayed true and the conclusion inverted; a premise becoming TRUE is the direction that flips it, and there is no disagreement for a reader to stop at)
 - A *Not done* note can describe a route with no reader in it (the parameter's half was true and the reader's half never happened; it held the print subsystem's ranked gap for a week and aimed two sessions at the wrong place --- ask whether a reader can get there, which for a command is one grep over the callers)
+- A document's spelling of an em dash is not a string's, and the comment above the line legitimises it (eighteen shipped; the same `switch` wrote both spellings twenty-six lines apart, a regex over the sources reported 73 hits where there are 9, and both of the check's own exemptions held by construction until a synthetic module distinguished them)
 
 ## Repository facts
 

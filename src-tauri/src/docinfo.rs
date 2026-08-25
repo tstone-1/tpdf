@@ -189,6 +189,20 @@ pub struct Signature {
     pub covers_whole_file: bool,
     /// How many bytes the signature covers, and how many there are.
     pub covered_bytes: u64,
+    /// How many bytes sit **after** the last byte `/ByteRange` covers.
+    ///
+    /// This is the number a reader wants and `covered_bytes` cannot give them.
+    /// `size - covered_bytes` is *not* the unprotected part: a detached
+    /// signature leaves a hole for its own `/Contents` hex string, because a
+    /// value cannot cover itself, and that hole is in every signed PDF ever
+    /// written. On one real DocuSign contract it is **65,536 of the 74,637
+    /// uncovered bytes**, so the total reads as an alarm about 73 KB of
+    /// unprotected content when the part that was actually appended after
+    /// signing is 9,101 bytes of validation data.
+    ///
+    /// Zero when the range ends at the last byte, which is the ordinary case
+    /// for a document nobody has touched since it was signed.
+    pub appended_bytes: u64,
     /// A DocMDP certification level, 1 to 3, when the signature carries one.
     ///
     /// 1 forbids every change, 2 permits filling in forms, 3 also permits
@@ -1072,10 +1086,18 @@ fn read_signature(
             .chunks_exact(2)
             .map(|pair| u64::try_from(pair[1]).unwrap_or_default())
             .sum();
-        out.covers_whole_file = numbers.chunks_exact(2).last().is_some_and(|last| {
-            let end = last[0].saturating_add(last[1]);
-            u64::try_from(end).is_ok_and(|end| end == size)
-        }) && numbers.first() == Some(&0);
+        // Where the covered bytes stop. Everything past it was written after
+        // this signature was made, which is the one part of `size -
+        // covered_bytes` that is evidence of anything: the rest is the hole the
+        // signature leaves for its own `/Contents`, and every detached
+        // signature has one.
+        let end = numbers
+            .chunks_exact(2)
+            .last()
+            .map(|last| last[0].saturating_add(last[1]))
+            .and_then(|end| u64::try_from(end).ok());
+        out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));
+        out.covers_whole_file = end == Some(size) && numbers.first() == Some(&0);
     }
 
     out.certification = certification_of(document, sig);
@@ -2031,17 +2053,38 @@ mod tests {
         // The control first: untouched, it covers the file.
         let before = scan(&bytes, 1, None).expect("must parse");
         assert!(before.signatures[0].covers_whole_file);
+        assert_eq!(
+            before.signatures[0].appended_bytes, 0,
+            "nothing has been written after this signature"
+        );
 
+        let extra = b"\n% and one more line\n";
         let mut tampered = bytes.clone();
-        tampered.extend_from_slice(b"\n% and one more line\n");
+        tampered.extend_from_slice(extra);
         let after = scan(&tampered, 1, None).expect("must still parse");
         assert!(
             !after.signatures[0].covers_whole_file,
-            "22 bytes now lie outside the signed range"
+            "the range no longer reaches the last byte"
         );
         assert_eq!(
             after.signatures[0].covered_bytes, before.signatures[0].covered_bytes,
             "what the signature covers has not changed --- the file has"
+        );
+        // The message above used to read "22 bytes now lie outside the signed
+        // range", and it was wrong twice over: the slice is 21 bytes, and what
+        // lies outside the range also includes the container, which is tens of
+        // kilobytes. Neither number could be checked, because until
+        // `appended_bytes` existed there was nothing to compare an append
+        // against. Now the append is exactly the bytes appended, whatever the
+        // container's size.
+        assert_eq!(
+            after.signatures[0].appended_bytes,
+            extra.len() as u64,
+            "the append is what was appended, and nothing else"
+        );
+        assert!(
+            tampered.len() as u64 - after.signatures[0].covered_bytes > extra.len() as u64,
+            "and it is much smaller than the uncovered total, which is the whole point"
         );
     }
 
@@ -2333,6 +2376,76 @@ mod tests {
         );
     }
 
+    /// What was appended after signing, which is not what is uncovered.
+    ///
+    /// The distinction the panel got wrong for a month, and the two numbers are
+    /// far apart in exactly the ordinary case. Here the range ends at 340 over
+    /// a 900-byte file: **760 bytes are uncovered and 560 were appended**, the
+    /// other 200 being the gap from 100 to 300 that the signature leaves for
+    /// its own `/Contents`. A detached signature cannot cover the value that
+    /// holds its own hash, so that gap is in every signed PDF there is ---
+    /// counting it as unprotected content is true of the bytes and false of the
+    /// document.
+    ///
+    /// The whole-file case pins the other direction: nothing after the range
+    /// means nothing appended, and the gap is still there.
+    #[test]
+    fn what_was_appended_after_signing_is_counted_apart_from_the_container() {
+        let bytes = document_signed(dictionary! {
+            "Type" => "Sig",
+            "ByteRange" => vec![0.into(), 100.into(), 300.into(), 40.into()],
+            "Contents" => Object::string_literal("junk"),
+        });
+
+        let appended = read_signatures(&parse(&bytes), 900, &mut Limits::default());
+        assert_eq!(appended[0].appended_bytes, 560, "900 - (300 + 40)");
+        assert_eq!(
+            900 - appended[0].covered_bytes - appended[0].appended_bytes,
+            200,
+            "the rest is the container gap, 100 to 300"
+        );
+
+        let whole = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        assert_eq!(
+            whole[0].appended_bytes, 0,
+            "the range ends at the last byte, so nothing followed it"
+        );
+        assert_eq!(
+            340 - whole[0].covered_bytes,
+            200,
+            "and the container gap is unchanged, which is why it must not be reported as an append"
+        );
+    }
+
+    /// A range claiming to reach past the end of the file appends nothing.
+    ///
+    /// Malformed rather than hypothetical: a truncated file leaves a range
+    /// written for the bytes that are gone. The subtraction would go negative,
+    /// and an unsigned negative is the largest number there is --- a reader
+    /// would be told that 18 exabytes were appended.
+    #[test]
+    fn a_range_reaching_past_the_end_of_the_file_reports_no_append() {
+        let bytes = document_signed(dictionary! {
+            "Type" => "Sig",
+            "ByteRange" => vec![0.into(), 100.into(), 300.into(), 40.into()],
+        });
+        let read = read_signatures(&parse(&bytes), 200, &mut Limits::default());
+        assert_eq!(read[0].appended_bytes, 0);
+        assert!(!read[0].covers_whole_file);
+    }
+
+    /// No byte range states no end, so nothing can be said about an append.
+    ///
+    /// Zero here means *not measured*, which is the same thing
+    /// [`Signature::covered_bytes`] means at zero and is why the panel refuses
+    /// on that field before it reads this one.
+    #[test]
+    fn a_signature_with_no_byte_range_reports_no_append() {
+        let bytes = document_signed(dictionary! { "Type" => "Sig" });
+        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        assert_eq!(read[0].appended_bytes, 0);
+    }
+
     /// A range that does not start at zero leaves the file's head unsigned.
     ///
     /// Reaching the last byte is not sufficient on its own, and a check written
@@ -2538,6 +2651,10 @@ mod tests {
             when: _,
             covers_whole_file: _,
             covered_bytes: _,
+            // A count of bytes, not a judgement about them. What was appended
+            // decides whether an append matters, and reading that is not done
+            // here --- see `coverageOf`, which says when and not what.
+            appended_bytes: _,
             certification: _,
             // A struct of its own, with a guard of its own ---
             // `no_certificate_field_may_carry_a_verdict`.

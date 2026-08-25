@@ -150,7 +150,7 @@ export function afterMerge(merged: {
   const others =
     merged.files === 1 ? "1 other document" : `${merged.files} other documents`;
   const pages = merged.pages === 1 ? "1 page" : `${merged.pages} pages`;
-  const said = `Merged this document with ${others} --- ${pages} in all.`;
+  const said = `Merged this document with ${others} — ${pages} in all.`;
   if (!merged.changed) return said;
   return (
     `${said} The original changed on disk while you had it open, ` +

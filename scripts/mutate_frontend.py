@@ -82,7 +82,7 @@ MUTATIONS = [
         # reader cannot check by looking at what they asked for.
         "recovery: report a merge without saying what it merged",
         "src/lib/recovery.ts",
-        "  const said = `Merged this document with ${others} --- ${pages} in all.`;",
+        "  const said = `Merged this document with ${others} — ${pages} in all.`;",
         '  const said = "The merge was written.";',
         "says how many documents went in and how many pages came out",
     ),
@@ -1702,6 +1702,37 @@ MUTATIONS = [
         "appends only what has arrived since the last paint",
     ),
     Mutation(
+        # Put an empty pane's message back above the list, where it sat 0.4rem
+        # higher and a shade darker than the other three panels' -- which is
+        # what a reader reported after 26.8.10.
+        "results: say it above the list even when there is nothing in the list",
+        "src/lib/results.ts",
+        "    this.notice.textContent = bare ? \"\" : text;",
+        "    this.notice.textContent = text;",
+        "draws an empty pane's message where the rows would be, not above them",
+    ),
+    Mutation(
+        # Draw the placeholder here rather than taking it from `panelrow`. The
+        # text lands in the same element and looks different, which is the whole
+        # of the reader's complaint and is invisible to any check that only asks
+        # where the message is.
+        "results: give an empty pane's message a style of its own",
+        "src/lib/results.ts",
+        "      this.empty = placeholder(text);",
+        "      this.empty = document.createElement(\"div\");\n      this.empty.textContent = text;",
+        "draws it in the same element, with the same style, as the other panels",
+    ),
+    Mutation(
+        # Guard on the message alone, as it was before the message could move.
+        # A new query clears the list and takes the placeholder with it, so an
+        # unchanged message then leaves a pane with no rows and nothing said.
+        "results: decide what to redraw from the message alone",
+        "src/lib/results.ts",
+        "    if (text === this.said && wanted === (this.empty !== null)) return;",
+        "    if (text === this.said) return;",
+        "says so again when one empty result replaces another",
+    ),
+    Mutation(
         "results: append to the old rows when the query changes",
         "src/lib/results.ts",
         "    if (matches !== this.shown) {",
@@ -1730,9 +1761,14 @@ MUTATIONS = [
         "numbers pages as a reader does, from one",
     ),
     Mutation(
+        # Re-aimed when the guard grew its second condition: the line it named
+        # became `if (text === this.said && wanted === ...) return;` and the
+        # anchor matched nothing. Deleting the whole guard is still the mutation
+        # -- writing on every reply is 775 live-region announcements -- and the
+        # sibling above it covers dropping only the new half.
         "results: write the status line on every reply",
         "src/lib/results.ts",
-        "    if (text === this.said) return;",
+        "    if (text === this.said && wanted === (this.empty !== null)) return;",
         "",
         "writes the status line only when it changes",
     ),
@@ -3727,6 +3763,38 @@ MUTATIONS += [
         "  <!-- built: file.open view.zoomIn",
         "does not both claim and exclude a command",
     ),
+    # The three below reintroduce the defect a reader reported on 2026-08-25:
+    # this repository's *prose* spelling of an em dash, `---`, inside a string
+    # the window draws. Eighteen had shipped, in three modules, and the reason
+    # nothing caught them is that a doc comment two lines above says `---` and
+    # means it. `src/lib/readertext.test.ts` is what reads these.
+    #
+    # Three modules rather than one on purpose. The eighteen were confined to
+    # properties, update and recovery, so a mutation in any of those tests the
+    # check where it was already looking; `outline.ts` is the one aimed at a
+    # module that was never broken, which is what says the check covers the
+    # population rather than the sample it was written from.
+    Mutation(
+        "properties: spell a signature's title with the prose dash",
+        "src/lib/properties.ts",
+        'const title = signature.field ? `Signature — ${signature.field}` : "Signature";',
+        'const title = signature.field ? `Signature --- ${signature.field}` : "Signature";',
+        "holds no prose dash outside the separator sentinel",
+    ),
+    Mutation(
+        "update: spell the ready-to-restart notice with the prose dash",
+        "src/lib/update.ts",
+        "return `Version ${state.version} is ready — restart to finish`;",
+        "return `Version ${state.version} is ready --- restart to finish`;",
+        "holds no prose dash outside the separator sentinel",
+    ),
+    Mutation(
+        "outline: spell a refused action with the prose dash",
+        "src/lib/outline.ts",
+        'return "opens a web link — not followed";',
+        'return "opens a web link --- not followed";',
+        "holds no prose dash outside the separator sentinel",
+    ),
 ]
 
 TEST_FILES = [
@@ -3862,6 +3930,9 @@ TEST_FILES = [
     # rather than after them --- which is the thirteenth time this list has been
     # the thing that was forgotten, and the first time it was not.
     "src/lib/readme.test.ts",
+    # Added 2026-08-25 with the three prose-dash mutations above, in the same
+    # edit for the same reason as the entry above it.
+    "src/lib/readertext.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
@@ -4033,9 +4104,44 @@ MUTATIONS += [
         # only thing that makes it visible in a list of twenty rows.
         "properties: state partial coverage without marking it",
         "src/lib/properties.ts",
-        "    value: `not the whole file --- ${formatBytes(short)} lie outside the signed range`,\n    warn: true,",
-        "    value: `not the whole file --- ${formatBytes(short)} lie outside the signed range`,\n    warn: false,",
-        "names how much lies outside the range, and warns",
+        "    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,\n    warn: true,",
+        "    value: `not the whole file — ${formatBytes(short)} lie outside the signed range`,\n    warn: false,",
+        "names how much lies outside a range that leaves the head of the file",
+    ),
+    Mutation(
+        # The reported defect, restored: lead with everything the signature does
+        # not cover instead of what was appended after it. Those differ by the
+        # `/Contents` container, which is in every signed PDF there is and was
+        # 65,536 of 74,637 bytes on the contract this came from. The row is then
+        # arithmetically right and reads as an accusation about 73 KB of
+        # unprotected content where 9 KB of validation data was added.
+        "properties: lead with everything outside the range rather than the append",
+        "src/lib/properties.ts",
+        "        `everything up to the signature, and ${formatBytes(signature.appended_bytes)} ` +",
+        "        `everything up to the signature, and ${formatBytes(bytes - signature.covered_bytes)} ` +",
+        "does not let the container reach the number a reader is shown",
+    ),
+    Mutation(
+        # Go back to claiming the whole file. Every signature excludes its own
+        # container, so this is false of all of them -- and it is what made the
+        # appended row above read as though the container were a second problem
+        # rather than the same one, named once.
+        "properties: claim a signature covers the whole file",
+        "src/lib/properties.ts",
+        '      value: "the whole file, except the signature container it cannot cover",',
+        '      value: "the whole file",',
+        "names the container it cannot cover, rather than claiming the whole file",
+    ),
+    Mutation(
+        # Read the append before deciding whether anything was measured. With no
+        # `/ByteRange` there is no end to subtract from, so `appended_bytes` is
+        # zero for *not measured* exactly as `covered_bytes` is -- and reordering
+        # makes the refusal unreachable for any signature that has one.
+        "properties: report an append before checking a range was stated",
+        "src/lib/properties.ts",
+        "  if (signature.covered_bytes === 0) {",
+        "  if (signature.covered_bytes === 0 && signature.appended_bytes === 0) {",
+        "refuses to answer at all when there is no byte range",
     ),
     Mutation(
         # Put the disclaimer on every signature section including the unsigned
@@ -4135,7 +4241,7 @@ MUTATIONS += [
         # tell those apart from one an authority issued.
         "certificate: stop saying when a certificate vouches for itself",
         "src/lib/properties.ts",
-        """      value: "itself --- self-issued, so no other party vouched for this name",""",
+        """      value: "itself — self-issued, so no other party vouched for this name",""",
         """      value: certificate.issuer_cn || certificate.issuer,""",
         "says a self-issued certificate was vouched for by nobody",
     ),
@@ -4146,10 +4252,10 @@ MUTATIONS += [
         "certificate: treat self-issued as something to warn about",
         "src/lib/properties.ts",
         """      name: "Issued by",
-      value: "itself --- self-issued, so no other party vouched for this name",
+      value: "itself — self-issued, so no other party vouched for this name",
     });""",
         """      name: "Issued by",
-      value: "itself --- self-issued, so no other party vouched for this name",
+      value: "itself — self-issued, so no other party vouched for this name",
       warn: true,
     });""",
         "says a self-issued certificate was vouched for by nobody",
@@ -4214,10 +4320,10 @@ MUTATIONS += [
         "certificate: collapse an unstated key usage onto an empty one",
         "src/lib/properties.ts",
         """      usage === null
-        ? "not stated --- the certificate places no limit on what the key is used for"
+        ? "not stated — the certificate places no limit on what the key is used for"
         : usage.length > 0
           ? usage.join(", ")
-          : "nothing --- the certificate names no use for its own key",""",
+          : "nothing — the certificate names no use for its own key",""",
         """      usage === null || usage.length === 0
         ? "nothing --- the certificate names no use for its own key"
         : usage.join(", "),""",
@@ -4258,7 +4364,7 @@ MUTATIONS += [
         # cannot.
         "conformance: state a claim without saying it is unchecked",
         "src/lib/properties.ts",
-        '      value: `${xmp.conformance.join(", ")} --- the document\'s own claim, which tpdf does not check`,',
+        '      value: `${xmp.conformance.join(", ")} — the document\'s own claim, which tpdf does not check`,',
         '      value: xmp.conformance.join(", "),',
         "shows a claim as a claim",
     ),
@@ -4302,7 +4408,7 @@ MUTATIONS += [
         # then reads as tpdf vouching for the moment.
         "timestamp: state an attested time as a bare fact",
         "src/lib/properties.ts",
-        '      value: `${stamp.when} by ${by} --- a separate party\'s claim, which tpdf does not check`,',
+        '      value: `${stamp.when} by ${by} — a separate party\'s claim, which tpdf does not check`,',
         "      value: stamp.when,",
         "names the authority beside the time, and says it is unchecked",
     ),
