@@ -142,6 +142,19 @@ export interface AppActions {
    */
   cropPage(to: "content" | "reset" | "drag"): void;
   /**
+   * Arm the redaction tool: the next drag marks a region for removal.
+   *
+   * **Its own action rather than a fourth argument to `cropPage`**, which is
+   * the shape it most resembles and the one thing it must not share. The two
+   * gestures are the same drag with opposite outcomes, and a single entry point
+   * choosing between them on a string is one typo away from cropping a page a
+   * reader asked to redact.
+   *
+   * Marking removes nothing. `docs/PLAN.md` §6 keeps applying behind a command
+   * of its own so that a reader reviews the list first.
+   */
+  redactRegion(): void;
+  /**
    * Move the page the reader is on `delta` slots along, in the document.
    *
    * A signed step rather than a pair of commands, so that the two palette
@@ -774,6 +787,26 @@ export function registerAppCommands(
       title: "Remove mark",
       enabled: () => withDocument() && actions.hasOpenMark(),
       run: () => actions.removeMark(),
+    },
+    {
+      // **Mark a region for removal.** The first half of `docs/PLAN.md` §6:
+      // nothing is destroyed, the region joins a list, and undo takes it back
+      // off.
+      //
+      // **No keyboard binding**, for the reason "Delete page" has none: this is
+      // the entry to the one workflow in the application that destroys content
+      // a reader can see, and a mis-pressed chord that arms it silently is a
+      // worse first experience than one extra keystroke. Two keystrokes in the
+      // palette is what `docs/PLAN.md` asks of every command.
+      //
+      // The title leads with the verb a reader is looking for and says what the
+      // gesture is, exactly as "Crop page by dragging" does --- and they sit
+      // near each other in the palette on purpose, because a reader who has
+      // confused the two should meet both.
+      id: "edit.redactRegion",
+      title: "Redact region by dragging",
+      enabled: withDocument,
+      run: () => actions.redactRegion(),
     },
     {
       // **Crop by dragging.** The one page operation only the reader can decide:

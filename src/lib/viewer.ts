@@ -60,6 +60,7 @@ import {
   markBand,
   OUTLINE_WIDTH,
   quadSwept,
+  scrimBands,
   strokeSwept,
 } from "./markband";
 import { PointerDrag, type DragPoint } from "./drag";
@@ -115,6 +116,7 @@ import {
   type StampName,
   type PageId,
   type PageView,
+  type RedactionView,
 } from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import {
@@ -309,8 +311,14 @@ export interface ViewerStatus {
    * second boolean keeps that one line of chrome one line --- two elements coming
    * and going beside each other is the toolbar-rearrangement trap, and only one
    * of the two can ever be set.
+   *
+   * **`"redact"` joins it on the same argument**, and it is the member whose
+   * absence would cost most: a reader who armed the redaction tool and looked
+   * away sees the identical crosshair a crop gives, and the two gestures are the
+   * same drag with opposite meanings. The line of chrome is where they are told
+   * which one their next press is.
    */
-  armed: MarkKind | "crop" | null;
+  armed: MarkKind | "crop" | "redact" | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -506,6 +514,22 @@ export interface ViewerOptions {
    * and reads the preview without a model behind it.
    */
   onCropped?: (page: PageId, rect: [number, number, number, number]) => void;
+  /**
+   * The reader dragged out a region to be removed from a page.
+   *
+   * `rect` is `left, top, right, bottom` in the page's **display** space ---
+   * the same rectangle {@link onCropped} is handed, from the same drag and the
+   * same clamp. Unlike a crop it needs no further turn: the model holds a
+   * pending redaction in display space, so this is the number that is stored.
+   *
+   * **Marking is not removing.** This puts a row in the review list and an
+   * outline on the page; `docs/PLAN.md` §6 keeps the destructive step behind a
+   * separate command on purpose.
+   *
+   * Optional for {@link onDrawn}'s reason: the window harness drives the drag
+   * and reads the preview without a model behind it.
+   */
+  onRedacted?: (page: PageId, rect: [number, number, number, number]) => void;
 }
 
 /**
@@ -742,6 +766,23 @@ const GHOST_FILL = "rgba(80, 140, 255, 0.2)";
  * in.
  */
 const CROP_SCRIM = "rgba(0, 0, 0, 0.33)";
+/**
+ * What a pending redaction is drawn in, before it is applied.
+ *
+ * **Not black**, which is the one colour it must not be. A black rectangle over
+ * words is what a redaction that does not work looks like --- the failure this
+ * whole subsystem exists to refuse --- so a *pending* one has to read as an
+ * instruction rather than as a result. Red at a third says "this is going" while
+ * leaving the words underneath readable, which is what step 2 is for: a reader
+ * checking a region cannot check one they cannot see through.
+ *
+ * The applied result is not drawn by this file at all. It is whatever the page
+ * becomes once the content is gone, rendered by PDFium like any other page.
+ */
+const REDACT_FILL = "rgba(190, 30, 45, 0.30)";
+/** The edge of a pending redaction. The same red, opaque, so the region has a
+ * definite boundary a reader can judge an over-selection against. */
+const REDACT_EDGE = "rgba(190, 30, 45, 0.95)";
 /**
  * The outline a committed comment's bubble is drawn with.
  *
@@ -1021,6 +1062,24 @@ export class Viewer {
    * most one of the three is live and no gesture has to ask which meant it.
    */
   private cropping = false;
+
+  /**
+   * Whether the redaction tool is armed: the next drag marks a region for
+   * removal.
+   *
+   * **Beside {@link cropping} rather than sharing it**, even though the two
+   * gestures are the same drag over the same clamp. What a drag *commits* is
+   * the whole difference between them --- a crop hides part of a page and a
+   * redaction is a step towards destroying it --- so a single flag with a
+   * destination read from somewhere else is one bug away from cropping when the
+   * reader asked to redact. Both are cleared by every arming method, so at most
+   * one is ever live.
+   *
+   * The drag itself is shared, which is the other half of the same reasoning:
+   * `armDraw`'s note says a second method would be a second copy of the whole
+   * gesture, and that argument does not stop at the third tool.
+   */
+  private redacting = false;
 
   /**
    * The rectangle being dragged for a crop, in the slot's laid-out space.
@@ -1330,7 +1389,7 @@ export class Viewer {
     // no equivalent of ink's several strokes.
     this.cropDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
-        if (!this.cropping) return false;
+        if (!this.cropping && !this.redacting) return false;
         const { page, x, y } = this.pageAndPoint(at);
         this.cropDrawing = { slot: page, from: { x, y }, to: { x, y } };
         this.wake();
@@ -1356,6 +1415,7 @@ export class Viewer {
           // `cancelDraw` has already cleared it --- this is the browser's own
           // `pointercancel` arriving by the same door.
           this.cropping = false;
+          this.redacting = false;
           this.showCursor();
           return;
         }
@@ -1376,11 +1436,20 @@ export class Viewer {
           // the reader the command with nothing on screen to say so.
           return;
         }
-        // Spent, and cleared *before* the callback for `onDrawn`'s reason: a
-        // caller that arms something again must not be undone by this line.
+        // Which of the two was armed, read before either is cleared. Both are
+        // spent here and cleared *before* the callback for `onDrawn`'s reason:
+        // a caller that arms something again must not be undone by these lines.
+        const marking = this.redacting;
         this.cropping = false;
+        this.redacting = false;
         this.showCursor();
-        this.opts.onCropped?.(id, this.fileRectOn(live.slot, quad));
+        // The same display rectangle either way, and the callbacks part company
+        // there: `onCropped`'s caller turns it into a crop box, which needs the
+        // page's own `/Rotate` and a further turn; `onRedacted`'s does not,
+        // because the model holds a redaction in exactly this space.
+        const rect = this.fileRectOn(live.slot, quad);
+        if (marking) this.opts.onRedacted?.(id, rect);
+        else this.opts.onCropped?.(id, rect);
       },
     });
 
@@ -1847,10 +1916,16 @@ export class Viewer {
       // Never while `drawing` is reporting. `drawnStrokes` answers `0` for an
       // armed pen as well as for one mid-drawing, so the two would otherwise
       // both name ink and the window would say it twice.
-      // The crop first, because the two cannot both be set --- `armCrop` and
-      // `armDraw` each clear the other --- so the order is a statement about
-      // which is checked, not about which wins.
-      armed: this.cropping ? "crop" : this.drawnStrokes === null ? this.drawKind : null,
+      // The crop and the redaction first, because none of the three can be set
+      // together --- every arming method clears the other two --- so the order
+      // is a statement about which is checked, not about which wins.
+      armed: this.redacting
+        ? "redact"
+        : this.cropping
+          ? "crop"
+          : this.drawnStrokes === null
+            ? this.drawKind
+            : null,
       search: this.searchStatus(),
     };
     const summary = [
@@ -2639,6 +2714,7 @@ export class Viewer {
         this.erasing ||
         this.doomed ||
         this.cropping ||
+        this.redacting ||
         this.cropDrawing
       ) {
         this.cancelDraw();
@@ -3638,6 +3714,7 @@ export class Viewer {
     // no two of the three can be set and no gesture has to ask which meant it.
     this.erasing = false;
     this.cropping = false;
+    this.redacting = false;
     this.drawKind = kind;
     // Held beside the kind rather than in the caller, so that what a drag
     // commits comes from one place. A second copy in `App.svelte` would be a
@@ -3670,7 +3747,42 @@ export class Viewer {
     this.drawStamp = null;
     this.inking = null;
     this.erasing = false;
+    this.redacting = false;
     this.cropping = true;
+    this.showCursor();
+    this.wake();
+  }
+
+  /**
+   * Arms the redaction tool: the next drag marks a region for removal.
+   *
+   * **The same gesture as {@link armCrop} and the opposite meaning, which is
+   * why it is a tool of its own rather than a mode of that one.** A crop hides
+   * everything outside the rectangle and can be reset; a redaction is a step
+   * towards destroying everything inside it and cannot. Two commands that share
+   * a drag but not an outcome must not share a name, an entry in the palette or
+   * a preview --- see `paintCropPreview`, where the scrim is inverted so that
+   * what is about to go is what is shaded.
+   *
+   * **One-shot, like the crop and unlike the eraser.** A reader marking several
+   * regions arms it again for each, which is deliberate: every region is a
+   * separate row in the review list and a separate undo, and a tool that stayed
+   * armed would let a slipped drag add one nobody meant to make.
+   *
+   * Marking destroys nothing. `docs/PLAN.md` §6 splits marking from applying
+   * precisely so that a reader looks at the list before anything is removed.
+   *
+   * Arming closes an open note, for {@link armDraw}'s reason.
+   */
+  armRedact(): void {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.drawKind = null;
+    this.drawStamp = null;
+    this.inking = null;
+    this.erasing = false;
+    this.cropping = false;
+    this.redacting = true;
     this.showCursor();
     this.wake();
   }
@@ -3719,6 +3831,7 @@ export class Viewer {
     this.drawKind = null;
     this.inking = null;
     this.cropping = false;
+    this.redacting = false;
     this.erasing = true;
     this.showCursor();
     this.wake();
@@ -3815,6 +3928,7 @@ export class Viewer {
     // named method would only leave Escape asking which of three was live.
     this.cropDrag.cancel();
     this.cropping = false;
+    this.redacting = false;
     this.cropDrawing = null;
     this.drawKind = null;
     this.drawing = null;
@@ -3939,6 +4053,18 @@ export class Viewer {
   }
 
   /**
+   * Whether the redaction tool is armed. For the status line and the harness.
+   *
+   * Separate from {@link cropArmed} for {@link cropPreview}'s reason: an
+   * accessor answering from whichever of the two is set would be a check unable
+   * to tell a crop from a redaction, and those are the two this application can
+   * most plausibly confuse.
+   */
+  get redactArmed(): boolean {
+    return this.redacting;
+  }
+
+  /**
    * The crop being dragged, in the page's laid-out space. For the harness.
    *
    * Separate from {@link drawPreview} because the two states are separate, and
@@ -3979,7 +4105,7 @@ export class Viewer {
     // this branch runs on.
     if (this.drawKind === null) this.armedAt = null;
     this.surfaceHost.style.cursor =
-      this.drawKind || this.cropping
+      this.drawKind || this.cropping || this.redacting
         ? "crosshair"
         : this.overLink
           ? "pointer"
@@ -4606,6 +4732,15 @@ export class Viewer {
   private marks: readonly MarkView[] = [];
 
   /**
+   * Every region marked for removal, as the model reports them.
+   *
+   * Its own list beside {@link marks} rather than entries in it. See
+   * {@link setRedactions}, and `docmodel.rs` for the property that arrangement
+   * carries.
+   */
+  private redactions: readonly RedactionView[] = [];
+
+  /**
    * Each cropped page's geometry, by page **id**.
    *
    * By id and not by slot, because a page moves and its crop moves with it ---
@@ -4680,6 +4815,20 @@ export class Viewer {
     // `wake` rather than a repaint: the overlay is drawn from the frame loop,
     // which may be idle when a mark is made from the menu bar with nothing
     // scrolling. Painting here as well would draw the same rectangles twice.
+    this.wake();
+  }
+
+  /**
+   * The pending redactions, as the model reports them.
+   *
+   * {@link setMarks}' twin, and a separate call for the reason the two lists are
+   * separate everywhere else: a mark is written into the saved file and a
+   * redaction is never. One setter taking both would be the first place the
+   * distinction could be lost.
+   */
+  setRedactions(regions: readonly RedactionView[]): void {
+    this.redactions = regions;
+    // `wake` rather than a repaint, for {@link setMarks}' reason.
     this.wake();
   }
 
@@ -4790,9 +4939,56 @@ export class Viewer {
     this.paintMarks(ctx, dpr);
     this.paintMatches(ctx, dpr);
     this.paintSelection(ctx, dpr);
+    // Over the marks, the hits and the selection, and under the live gesture.
+    // A pending redaction is the most consequential thing on the page --- it
+    // names content that is about to stop existing --- so nothing the reader is
+    // merely looking through may sit on top of it. The hand still wins, because
+    // what the hand is doing is the only thing more current.
+    this.paintRedactions(ctx, dpr);
     // Last, and over everything: it is the thing the reader's hand is on.
     this.paintDrawing(ctx, dpr);
     ctx.globalCompositeOperation = "source-over";
+  }
+
+  /**
+   * Draws every pending redaction on a visible page.
+   *
+   * Placed through {@link viewRectOn}, which is the same primitive
+   * {@link viewQuadsOf} uses for a mark and `comments.ts` and `links.ts` use for
+   * theirs: the crop and the two turns are one rule, and a second copy written
+   * for regions is a second thing to get wrong at every `/Rotate`. The mark
+   * subsystem drifted from the other two once already by holding its own copy.
+   *
+   * Drawn `source-over` rather than `multiply`, unlike a wash. A redaction is
+   * not a highlight over words --- it is a statement that the words are going,
+   * and it has to keep a definite edge over paper as well as over text so an
+   * over-selection is visible against the margin.
+   */
+  private paintRedactions(ctx: CanvasRenderingContext2D, dpr: number): void {
+    if (this.redactions.length === 0) return;
+
+    const visible = new Set(this.scroller.visiblePages());
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = REDACT_FILL;
+    ctx.strokeStyle = REDACT_EDGE;
+    ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
+    for (const region of this.redactions) {
+      const slot = this.pages.slotOfId(region.page);
+      if (slot === undefined || !visible.has(slot)) continue;
+      const quad = this.viewRectOn(slot, region.area);
+      const origin = this.scroller.pageOrigin(slot);
+      const x = (origin.left + quad.left * this.zoom) * dpr;
+      const y = (origin.top + quad.top * this.zoom - this.scrollTop) * dpr;
+      const w = (quad.right - quad.left) * this.zoom * dpr;
+      const h = (quad.bottom - quad.top) * this.zoom * dpr;
+      ctx.fillRect(x, y, w, h);
+      // Solid, where the drag's preview is dashed. That is the one difference
+      // between the two states and it carries the whole distinction: dashed is
+      // a rectangle still being decided, solid is one that is in the list.
+      ctx.strokeRect(x, y, w, h);
+    }
+    ctx.restore();
   }
 
   /**
@@ -5080,6 +5276,13 @@ export class Viewer {
   private paintCropPreview(ctx: CanvasRenderingContext2D, dpr: number): void {
     const live = this.cropDrawing;
     if (!live) return;
+    // **The redaction's preview is this one inverted, and the inversion is the
+    // point.** Both gestures are the same drag; a crop keeps the inside and a
+    // redaction destroys it, so shading the same band for both would leave the
+    // reader with no way to tell from the screen which tool is armed. The scrim
+    // marks what goes: outside the rectangle for a crop, inside it for a
+    // redaction.
+    const marking = this.redacting;
     const origin = this.scroller.pageOrigin(live.slot);
     const size = this.laidSize(live.slot);
     // The page's own rectangle on screen, which the scrim is bounded by.
@@ -5100,20 +5303,24 @@ export class Viewer {
 
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = CROP_SCRIM;
-    // Above and below the full width, then the two sides between them, so no
-    // band overlaps another: the scrim is translucent and a doubled band would
-    // draw a darker cross the reader would read as part of the gesture.
-    ctx.fillRect(px0, py0, px1 - px0, ky0 - py0);
-    ctx.fillRect(px0, ky1, px1 - px0, py1 - ky1);
-    ctx.fillRect(px0, ky0, kx0 - px0, ky1 - ky0);
-    ctx.fillRect(kx1, ky0, px1 - kx1, ky1 - ky0);
+    ctx.fillStyle = marking ? REDACT_FILL : CROP_SCRIM;
+    // Which bands those are is `scrimBands`, not this loop: the inversion is
+    // the whole distinction between the two tools and a branch written inside
+    // this call sequence would be reachable by no test --- the fake DOM's
+    // `getContext` answers `null`, so nothing here runs under vitest at all.
+    for (const [x, y, w, h] of scrimBands(
+      marking,
+      { x0: px0, y0: py0, x1: px1, y1: py1 },
+      { x0: kx0, y0: ky0, x1: kx1, y1: ky1 },
+    )) {
+      ctx.fillRect(x, y, w, h);
+    }
 
-    // The outline as well, in the same dashed blue every gesture in progress
-    // uses. It is what says the rectangle is still being dragged rather than
-    // already applied --- the scrim alone would look like a crop that had
-    // happened and left the rest of the paper showing.
-    ctx.strokeStyle = PREVIEW_STROKE;
+    // The outline as well, dashed, which is what says the rectangle is still
+    // being dragged rather than already applied --- the scrim alone would look
+    // like a crop that had happened and left the rest of the paper showing.
+    // Blue for a crop and red for a redaction, matching the fill each one drew.
+    ctx.strokeStyle = marking ? REDACT_EDGE : PREVIEW_STROKE;
     ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
     ctx.setLineDash([6 * dpr, 4 * dpr]);
     ctx.strokeRect(kx0, ky0, kx1 - kx0, ky1 - ky0);

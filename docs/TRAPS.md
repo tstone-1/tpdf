@@ -16277,3 +16277,51 @@ it there rather than reproducing it. The redaction arm now points at the annotat
 instead of restating the claim.
 
 Paid for on 2026-08-26.
+
+### 486 lines of the viewer never run under vitest, and the fix is a seam rather than a harness
+
+The redaction tool and the crop tool are one drag with opposite meanings: a crop keeps the
+rectangle, a redaction destroys what is inside it. The preview has to say which, and the
+first version said it where you would expect --- inside the painter:
+
+```ts
+if (marking) {
+  ctx.fillRect(kx0, ky0, kx1 - kx0, ky1 - ky0);
+} else {
+  ctx.fillRect(px0, py0, px1 - px0, ky0 - py0);
+  // ... three more bands
+}
+```
+
+**No test in this project can reach that branch.** `testdom.ts`'s `getContext` returns
+`null` --- deliberately, and its own header says so --- and every painter in `viewer.ts`
+begins by returning when the context is absent. Measured on 2026-08-26: **486 of
+`viewer.ts`'s 5,838 lines are inside `paint*` methods**, ten of them, and not one line
+executes under vitest. What covers pixels is `viewer_check.py` against a real webview,
+which needs an unlocked, unoccluded screen and is a manual step in `BUILD.md`.
+
+So a decision written inside a painter is covered by a harness that cannot run in CI, cannot
+run on a locked machine, and is not run on every commit. The reflex --- "the window check
+covers it" --- is true and is not the same as covered.
+
+**The fix is to move the decision out, not to build a cleverer harness.** `scrimBands` in
+`markband.ts` takes the page rectangle, the dragged rectangle and which tool is armed, and
+answers with the list of bands to fill; the painter fills whatever it is handed. It is a
+pure function over numbers, so its tests sample a unit grid and assert that a redaction's
+bands lie entirely inside the rectangle, a crop's entirely outside, and that between them
+they cover the page exactly once --- which is also what proves the crop's four bands do not
+overlap, since an overlap counts a cell twice. Two mutations die there.
+
+This is the same move the trap about a guard written inline with an FFI call records, in a
+different medium: **the untestable thing is not the decision, it is the call sequence around
+it.** Ask, of anything written inside a painter, an FFI call or a platform API call, whether
+a test could reach it as written --- and if not, whether what is actually being decided is a
+value that could be computed one function earlier.
+
+What this does **not** claim: the extraction does not test that the painter *uses* the
+answer. `viewer_check.py` is still the only thing that says a scrim reaches the screen, and
+the two window-harness mutations aimed at this preview are still window-harness mutations
+--- one of them now edits `markband.ts` rather than `viewer.ts`, because that is where the
+geometry went.
+
+Paid for on 2026-08-26.

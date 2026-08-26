@@ -1635,8 +1635,8 @@ confident lie. The audit was hardest on this section and largely right.
 
 1. **Mark.** Drag regions, select text, or pattern-search (emails, order numbers, a word
    list) and mark all hits. Marks are journal commands rendered as an overlay; nothing is
-   destroyed and everything is undoable. *The model is built; see below. Dragging a region
-   is the only shape it can express so far, and no gesture reaches it.*
+   destroyed and everything is undoable. *Built for a dragged region: the model, the
+   gesture, the overlay and the undo. Marking by selection or by pattern is not.*
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
    to catch an over- or under-selection. *The data is built --- page and region, in page
    order. The text, the thumbnail and the panel are not.*
@@ -1865,10 +1865,22 @@ them, so naming one afterwards says *removed* rather than claiming it never exis
 same wrong-diagnosis rule marks already follow, and sharper here, because a redaction left
 behind would be an instruction about a page nobody can see.
 
-**What is not built**: no gesture reaches `redact_mark`, and no panel lists what it
-produces. The commands, the model, the undo and the review data exist and are exercised
-only by tests. The apply path below is likewise reachable from nothing. The two halves meet
-when the gesture lands.
+**The gesture is the crop's, deliberately.** `armRedact` sets a flag beside `cropping` and
+the two share one `PointerDrag`, because `armDraw`'s own note --- a second method would be a
+second copy of the whole gesture --- does not stop at the third tool. What is *not* shared is
+anything a reader sees or anything that commits: separate palette entry, separate menu group,
+separate status line, separate callback, and an inverted preview. A crop shades the four
+bands outside the rectangle; a redaction shades the rectangle. `scrimBands` in `markband.ts`
+is the one line that decides which, and it is a function rather than a branch inside the
+painter because **no test in this project can reach a branch inside a painter** --- see the
+trap of that name.
+
+Neither has a keyboard binding, for the reason `edit.deletePage` has none.
+
+**What is not built**: no panel lists the regions, so the review of §6 step 2 is a list the
+model holds and nothing displays. Nothing applies them --- `redact.rs` below is still
+reachable from no command. A region is a rectangle a reader dragged; marking by selection or
+by pattern is step 1's other two shapes and is not here.
 
 Twelve mutations stand behind it, nine in Rust and three in the frontend, and the one worth
 naming is *snapshot a document without its pending redactions*: `SNAPSHOT_EVERY` is 32, so a

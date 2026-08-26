@@ -211,6 +211,14 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.cropToDrag",
       "edit.cropToContent",
       "edit.resetCrop",
+      SEPARATOR,
+      // Its own group, between the crops and the deletion rather than beside
+      // either. Above the crops it would read as a fourth crop, which is the
+      // one confusion this command must not invite --- the two are the same
+      // drag with opposite outcomes. It belongs near the deletion instead: both
+      // are about content ceasing to exist, and both are palette-and-menu only,
+      // with no accelerator, for the reason `edit.deletePage` states.
+      "edit.redactRegion",
       "edit.deletePage",
     ],
   },

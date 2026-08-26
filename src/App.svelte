@@ -163,8 +163,15 @@
    * that counts strokes --- and it is left out of the table rather than given an
    * unreachable entry, so the fallback is the honest one if that ever changes.
    */
-  function armedLabel(kind: MarkKind | "crop"): string {
+  function armedLabel(kind: MarkKind | "crop" | "redact"): string {
     if (kind === "crop") return "Crop — drag out what to keep";
+    // **Says what goes, where the crop's says what stays**, because the two are
+    // the same drag and this is the only place the reader is told which one
+    // they armed. "Nothing is removed yet" is the other half: marking is
+    // reversible and applying is not, and a reader who thinks the first line
+    // has already destroyed something will not review the list.
+    if (kind === "redact")
+      return "Redact — drag out what to remove; nothing is removed yet";
     return kind === "note"
       ? `${nameOf(kind)} — click to place`
       : `${nameOf(kind)} — click and drag`;
@@ -335,6 +342,7 @@
     rotatePage: (delta) => void rotatePage(delta),
     deletePage: () => void deletePage(),
     cropPage: (to) => void cropPage(to),
+    redactRegion: () => viewer?.armRedact(),
     movePage: (delta) => void movePage(delta),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
@@ -699,6 +707,11 @@
         sidebar?.thumbnails?.setPages(after.pages.length);
       }
       viewer?.setMarks(after.marks);
+      // The pending redactions arrive on the same reply and are pushed the same
+      // way. Not through `setMarks`: they are a separate list for the reason
+      // `docmodel.rs` states, and one setter taking both would be the first
+      // place that distinction could be lost.
+      viewer?.setRedactions(after.redactions);
       // Beside the viewer's own copy rather than in `applyPageOrder`: the marks
       // arrive with this answer, where the links, comments and outline are
       // answers about the *file* that this reconciles against a new page order.
@@ -2190,6 +2203,11 @@
         // model holds is one turn further in --- so unlike the three callbacks
         // around it this one cannot go straight to an edit. See `cropTo`.
         onCropped: (page, rect) => void cropTo(page, rect),
+        // Straight through, where a crop goes via `cropTo` and an IPC round
+        // trip: a crop box is in the page's own unrotated space and the
+        // rectangle a drag produces is not, so that one has to be converted.
+        // A pending redaction is held in exactly the space handed here.
+        onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
         onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
         // The same sweep's other half: a mark with no parts to lose goes whole.

@@ -2773,6 +2773,83 @@ MUTATIONS = [
         "does not send a redaction for a page the model has never mentioned",
     ),
     Mutation(
+        # Leave the redaction tool armed after a region. The crop's twin, and it
+        # needs its own: the two flags are cleared on adjacent lines, so a
+        # mutation of one says nothing about the other. A reader who marked one
+        # region and then dragged to scroll would mark a second.
+        "viewer: leave the redaction tool armed after a region",
+        "src/lib/viewer.ts",
+        "        const marking = this.redacting;\n"
+        "        this.cropping = false;\n"
+        "        this.redacting = false;",
+        "        const marking = this.redacting;\n"
+        "        this.cropping = false;",
+        "is spent by one region, like the crop and unlike the eraser",
+    ),
+    Mutation(
+        # Send a dragged region to the crop instead. The two tools share one
+        # drag and this branch is the only thing separating them, so getting it
+        # backwards crops the page a reader asked to redact -- with an undo they
+        # have to know to reach for and nothing on screen saying what happened.
+        "viewer: commit a redaction drag as a crop",
+        "src/lib/viewer.ts",
+        "        if (marking) this.opts.onRedacted?.(id, rect);\n"
+        "        else this.opts.onCropped?.(id, rect);",
+        "        this.opts.onCropped?.(id, rect);",
+        "sends a dragged region to the redaction callback and not the crop's",
+    ),
+    Mutation(
+        # Arm the crop without putting the redaction tool away. Both flags are
+        # then set, the shared drag reads `redacting` first, and a reader who
+        # armed a redaction and changed their mind to a crop redacts instead.
+        "viewer: let the crop tool leave the redaction tool armed",
+        "src/lib/viewer.ts",
+        "    this.erasing = false;\n"
+        "    this.redacting = false;\n"
+        "    this.cropping = true;",
+        "    this.erasing = false;\n"
+        "    this.cropping = true;",
+        "and the crop tool each put the other away",
+    ),
+    Mutation(
+        # The same for a drawing tool, which is the pair that is easy to forget:
+        # `armDraw` was written when there were two region tools to clear and
+        # now there are three.
+        "viewer: let a drawing tool leave the redaction tool armed",
+        "src/lib/viewer.ts",
+        "    this.cropping = false;\n"
+        "    this.redacting = false;\n"
+        "    this.drawKind = kind;",
+        "    this.cropping = false;\n"
+        "    this.drawKind = kind;",
+        "and the crop tool each put the other away",
+    ),
+    Mutation(
+        # Shade the same area for both tools. The gesture still works and the
+        # right thing still happens -- what goes is the only feedback telling a
+        # reader which of the two they armed, on a pair of commands that differ
+        # by whether the words survive.
+        "markband: shade a redaction the way a crop is shaded",
+        "src/lib/markband.ts",
+        "  if (marking) return [[kept.x0, kept.y0, kept.x1 - kept.x0, kept.y1 - kept.y0]];",
+        "  if (false) return [[kept.x0, kept.y0, kept.x1 - kept.x0, kept.y1 - kept.y0]];",
+        "shades the rectangle for a redaction and everything but it for a crop",
+    ),
+    Mutation(
+        # Cut the crop's side bands the full height of the page rather than
+        # between the top and bottom ones. Every pixel outside the rectangle is
+        # still shaded, so the preview looks almost right -- the two corners
+        # where bands overlap draw twice, and a translucent scrim there reads as
+        # a darker cross the reader takes for part of the gesture.
+        "markband: overlap the crop's side bands with its top and bottom",
+        "src/lib/markband.ts",
+        "    [page.x0, kept.y0, kept.x0 - page.x0, kept.y1 - kept.y0],\n"
+        "    [kept.x1, kept.y0, page.x1 - kept.x1, kept.y1 - kept.y0],",
+        "    [page.x0, page.y0, kept.x0 - page.x0, page.y1 - page.y0],\n"
+        "    [kept.x1, page.y0, page.x1 - kept.x1, page.y1 - page.y0],",
+        "cuts the crop's bands so none of them overlaps another",
+    ),
+    Mutation(
         # Send the redaction's position in the list rather than its identity.
         # Correct for every reader who has removed nothing, and off by one for
         # every reader who has -- which is precisely the case a review list is
@@ -3360,7 +3437,8 @@ MUTATIONS += [
         "viewer: arm the eraser without putting the pen away",
         "src/lib/viewer.ts",
         "    this.drawKind = null;\n    this.inking = null;\n"
-        "    this.cropping = false;\n    this.erasing = true;",
+        "    this.cropping = false;\n    this.redacting = false;\n"
+        "    this.erasing = true;",
         "    this.erasing = true;",
         "puts the pen away, and the pen puts it away",
     ),
@@ -4772,8 +4850,19 @@ MUTATIONS += [
         # Re-aimed 2026-08-23 when the crop joined this expression. It stays a
         # mutation about ink -- the crop's ternary is kept so that the only thing
         # removed is `drawnStrokes`, which is what decides ink's own line.
-        '      armed: this.cropping ? "crop" : this.drawnStrokes === null ? this.drawKind : null,',
-        '      armed: this.cropping ? "crop" : this.drawKind,',
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
+        '      armed: this.redacting\n'
+        '        ? "redact"\n'
+        '        : this.cropping\n'
+        '          ? "crop"\n'
+        '          : this.drawnStrokes === null\n'
+        '            ? this.drawKind\n'
+        '            : null,',
+        '      armed: this.redacting\n'
+        '        ? "redact"\n'
+        '        : this.cropping\n'
+        '          ? "crop"\n'
+        '          : this.drawKind,',
         "names a drawing in one field, not two",
     ),
     Mutation(
@@ -4878,7 +4967,8 @@ MUTATIONS += [
         # has, because a crop removes something the reader can see.
         "crop: start the crop drag whether or not the tool is armed",
         "src/lib/viewer.ts",
-        "        if (!this.cropping) return false;",
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
+        "        if (!this.cropping && !this.redacting) return false;",
         "        if (false) return false;",
         "reports nothing until the tool is armed",
     ),
@@ -4889,8 +4979,11 @@ MUTATIONS += [
         # translation that never happened.
         "crop: report the rectangle in the page's laid-out space",
         "src/lib/viewer.ts",
-        "        this.opts.onCropped?.(id, this.fileRectOn(live.slot, quad));",
-        "        this.opts.onCropped?.(id, [quad.left, quad.top, quad.right, quad.bottom]);",
+        # Re-aimed 2026-08-26: the two region tools now share this line, so the
+        # translation is done once into `rect` rather than inside the call.
+        "        const rect = this.fileRectOn(live.slot, quad);",
+        "        const rect = [quad.left, quad.top, quad.right, quad.bottom] as\n"
+        "          [number, number, number, number];",
         "reports the rectangle in the file's space and not the page's",
     ),
     Mutation(
@@ -4899,8 +4992,12 @@ MUTATIONS += [
         # who did not notice it was still armed loses the crop they just made.
         "crop: leave the crop tool armed after a rectangle",
         "src/lib/viewer.ts",
-        "        this.cropping = false;\n        this.showCursor();\n        this.opts.onCropped?.(",
-        "        this.showCursor();\n        this.opts.onCropped?.(",
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
+        "        const marking = this.redacting;\n"
+        "        this.cropping = false;\n"
+        "        this.redacting = false;",
+        "        const marking = this.redacting;\n"
+        "        this.redacting = false;",
         "is spent by one rectangle",
     ),
     Mutation(
@@ -4909,7 +5006,9 @@ MUTATIONS += [
         # watches the rectangle stay and then commits it by letting go.
         "crop: leave the crop out of what Escape can reach",
         "src/lib/viewer.ts",
-        "        this.doomed ||\n        this.cropping ||\n        this.cropDrawing",
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
+        "        this.doomed ||\n        this.cropping ||\n"
+        "        this.redacting ||\n        this.cropDrawing",
         "        this.doomed",
         "is dropped by Escape mid-drag, without cropping",
     ),
@@ -4954,8 +5053,11 @@ MUTATIONS += [
         # tool crops the page instead.
         "crop: let armDraw leave the crop tool armed",
         "src/lib/viewer.ts",
-        "    this.erasing = false;\n    this.cropping = false;\n    this.drawKind = kind;",
-        "    this.erasing = false;\n    this.drawKind = kind;",
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
+        "    this.erasing = false;\n    this.cropping = false;\n"
+        "    this.redacting = false;\n    this.drawKind = kind;",
+        "    this.erasing = false;\n"
+        "    this.redacting = false;\n    this.drawKind = kind;",
         "puts the drawing tool away, and the drawing tool puts it away",
     ),
     Mutation(
@@ -4967,8 +5069,19 @@ MUTATIONS += [
         # status can see it.
         "crop: leave the armed crop out of the status the window reads",
         "src/lib/viewer.ts",
-        '      armed: this.cropping ? "crop" : this.drawnStrokes === null ? this.drawKind : null,',
-        "      armed: this.drawnStrokes === null ? this.drawKind : null,",
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
+        '      armed: this.redacting\n'
+        '        ? "redact"\n'
+        '        : this.cropping\n'
+        '          ? "crop"\n'
+        '          : this.drawnStrokes === null\n'
+        '            ? this.drawKind\n'
+        '            : null,',
+        '      armed: this.redacting\n'
+        '        ? "redact"\n'
+        '        : this.drawnStrokes === null\n'
+        '          ? this.drawKind\n'
+        '          : null,',
         "names the armed crop, which is not a mark kind",
     ),
     Mutation(
@@ -4977,9 +5090,11 @@ MUTATIONS += [
         # unreachable until the reader presses Escape."""
         "crop: let armCrop leave the drawing tool armed",
         "src/lib/viewer.ts",
+        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
         "    this.drawKind = null;\n    this.drawStamp = null;\n    this.inking = null;\n"
-        "    this.erasing = false;\n    this.cropping = true;",
-        "    this.inking = null;\n    this.erasing = false;\n    this.cropping = true;",
+        "    this.erasing = false;\n    this.redacting = false;\n    this.cropping = true;",
+        "    this.inking = null;\n    this.erasing = false;\n"
+        "    this.redacting = false;\n    this.cropping = true;",
         "puts the drawing tool away, and the drawing tool puts it away",
     ),
 ]

@@ -54,6 +54,7 @@ let dom: FakeDom;
 beforeEach(() => {
   dom = installFakeDom();
   cropped = [];
+  redacted = [];
   core.invoke.mockImplementation((command: string) =>
     command === "page_geometry"
       ? Promise.resolve(GEOMETRY)
@@ -75,11 +76,21 @@ function build(): Viewer {
     pageCount: 2,
     pages: [PAGE],
     onCropped: (page, rect) => cropped.push({ page, rect }),
+    onRedacted: (page, rect) => redacted.push({ page, rect }),
   });
 }
 
 /** Every crop the reader dragged out, in order. */
 let cropped: { page: number; rect: [number, number, number, number] }[] = [];
+
+/**
+ * Every region the reader dragged out to redact, in order.
+ *
+ * Beside `cropped` rather than one list with a label, because what these tests
+ * are for is that a drag reaches exactly one of the two: a single list would
+ * record the same entry whichever callback fired.
+ */
+let redacted: { page: number; rect: [number, number, number, number] }[] = [];
 
 /** Presses, drags and releases, in the root's client coordinates. */
 function drag(
@@ -439,6 +450,115 @@ describe("cropping by dragging", () => {
 
     viewer.armDraw("square");
     expect(viewer.cropArmed).toBe(false);
+    expect(viewer.drawArmed).toBe("square");
+    viewer.destroy();
+  });
+});
+
+describe("the redaction tool shares the crop's drag and nothing else", () => {
+  it("sends a dragged region to the redaction callback and not the crop's", async () => {
+    // **The test the shared drag exists to pass.** One `PointerDrag` serves both
+    // tools, so the only thing separating a crop from a redaction is which flag
+    // was set when the pointer went down -- and getting that branch backwards
+    // crops a page the reader asked to redact, with an undo they have to know
+    // to reach for. Both lists are asserted, because either alone passes with
+    // the branch inverted and the other callback missing.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    viewer.armRedact();
+    expect(viewer.redactArmed).toBe(true);
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+
+    expect(cropped).toEqual([]);
+    expect(redacted).toHaveLength(1);
+    expect(redacted[0]?.page).toBe(1);
+    viewer.destroy();
+  });
+
+  it("reports the region in the same space a crop is reported in", async () => {
+    // Both gestures hand back the file's display rectangle, from the same clamp
+    // -- so the two are compared against each other rather than against a
+    // transcribed number. A redaction that came back in the laid-out page's
+    // space would be inset by the crop on every cropped page, which is the
+    // defect `reports the rectangle in the file's space` pins for the crop.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+
+    viewer.armCrop();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+
+    expect(cropped).toHaveLength(1);
+    expect(redacted).toHaveLength(1);
+    expect(redacted[0]?.rect).toEqual(cropped[0]?.rect);
+    // And the control: the number is not the laid-out one. Two callbacks
+    // agreeing about an untranslated rectangle agree by construction.
+    expect(redacted[0]?.rect[0]).toBeGreaterThan(0);
+    viewer.destroy();
+  });
+
+  it("is spent by one region, like the crop and unlike the eraser", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    expect(viewer.redactArmed).toBe(false);
+
+    drag({ x: 130, y: 150 }, { x: 330, y: 350 });
+    expect(redacted).toHaveLength(1);
+    viewer.destroy();
+  });
+
+  it("is dropped by Escape mid-drag, marking nothing", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 }, false);
+    expect(viewer.cropPreview).not.toBe(null);
+
+    escape();
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 320, clientY: 340 });
+
+    expect(redacted).toEqual([]);
+    expect(viewer.redactArmed).toBe(false);
+    viewer.destroy();
+  });
+
+  it("and the crop tool each put the other away", async () => {
+    // Both directions, for the reason the drawing tool's own test gives: either
+    // alone passes with the code half right, and a viewer with both armed has a
+    // press that has to ask which was meant -- which for these two is the press
+    // that either crops or destroys.
+    const viewer = build();
+    await settle();
+
+    viewer.armCrop();
+    viewer.armRedact();
+    expect(viewer.cropArmed).toBe(false);
+    expect(viewer.redactArmed).toBe(true);
+
+    viewer.armCrop();
+    expect(viewer.redactArmed).toBe(false);
+    expect(viewer.cropArmed).toBe(true);
+
+    // And the drawing tool clears it too, which is the third pair: `armDraw`
+    // has to put away both of the region tools, not whichever one it was
+    // written beside.
+    viewer.armRedact();
+    viewer.armDraw("square");
+    expect(viewer.redactArmed).toBe(false);
     expect(viewer.drawArmed).toBe("square");
     viewer.destroy();
   });

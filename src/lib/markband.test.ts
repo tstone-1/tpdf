@@ -18,6 +18,7 @@ import {
   markBand,
   paintOf,
   quadSwept,
+  scrimBands,
   strokeSwept,
   strokeTouches,
   sweepLabel,
@@ -603,5 +604,70 @@ describe("how the overlay decides to draw a kind", () => {
     // whose wrong answer would have looked most like a real mark.
     expect(paintOf("stamp")).not.toBe("fill");
     expect(paintOf("note")).not.toBe("fill");
+  });
+});
+
+describe("what a region gesture shades", () => {
+  /** A page 100 wide and 80 tall, with a rectangle out of the middle. */
+  const PAGE = { x0: 0, y0: 0, x1: 100, y1: 80 };
+  const KEPT = { x0: 20, y0: 30, x1: 60, y1: 50 };
+
+  /** How much of a band lies inside the rectangle, and how much outside. */
+  function split(bands: readonly (readonly [number, number, number, number])[]) {
+    let inside = 0;
+    let outside = 0;
+    for (const [x, y, w, h] of bands) {
+      // Sampled on a unit grid rather than computed by intersection, because an
+      // intersection here would be the same arithmetic the function under test
+      // does -- a check that derives its inputs from the thing it is testing.
+      for (let px = x; px < x + w; px++) {
+        for (let py = y; py < y + h; py++) {
+          const within =
+            px >= KEPT.x0 && px < KEPT.x1 && py >= KEPT.y0 && py < KEPT.y1;
+          if (within) inside++;
+          else outside++;
+        }
+      }
+    }
+    return { inside, outside };
+  }
+
+  it("shades the rectangle for a redaction and everything but it for a crop", () => {
+    // **The two must be complements**, which is the whole distinction between
+    // the tools: a crop keeps what a redaction destroys. Asserted as a pair
+    // rather than one at a time, because a function that shaded the rectangle
+    // for both would pass either assertion alone.
+    const marking = split(scrimBands(true, PAGE, KEPT));
+    const cropping = split(scrimBands(false, PAGE, KEPT));
+
+    expect(marking.outside).toBe(0);
+    expect(cropping.inside).toBe(0);
+    // And between them they cover the page exactly once -- which is what says
+    // the crop's four bands are the rectangle's complement rather than merely
+    // avoiding it.
+    const area = (PAGE.x1 - PAGE.x0) * (PAGE.y1 - PAGE.y0);
+    expect(marking.inside + cropping.outside).toBe(area);
+  });
+
+  it("cuts the crop's bands so none of them overlaps another", () => {
+    // The scrim is translucent, so a doubled band draws a darker cross a reader
+    // would read as part of the gesture. Counted rather than compared pairwise:
+    // the sampled total has to equal the area exactly, and any overlap counts a
+    // cell twice.
+    const bands = scrimBands(false, PAGE, KEPT);
+    expect(bands).toHaveLength(4);
+    const covered = split(bands);
+    const outside =
+      (PAGE.x1 - PAGE.x0) * (PAGE.y1 - PAGE.y0) -
+      (KEPT.x1 - KEPT.x0) * (KEPT.y1 - KEPT.y0);
+    expect(covered.outside).toBe(outside);
+  });
+
+  it("gives a redaction one band and a crop four", () => {
+    // The count is the cheap tell that the branch ran at all, and it is here
+    // rather than instead of the areas above: a version that returned four
+    // bands all equal to the rectangle would satisfy the first test.
+    expect(scrimBands(true, PAGE, KEPT)).toHaveLength(1);
+    expect(scrimBands(false, PAGE, KEPT)).toHaveLength(4);
   });
 });
