@@ -20,16 +20,16 @@
 //! Usage:
 //!     sanitize-rewrite [--manifest PATH] [--outdir DIR] [--only NAME] [--bench PATH]
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
-use lopdf::{Document, LoadOptions, Object as LoObject};
+use lopdf::{Document, LoadOptions};
 use pdfium_render::prelude::*;
 use serde::Deserialize;
 use tpdf_lib::sweep;
+use tpdf_lib::verify::Report;
 
 /// Ceiling on any single decoded stream. A carrier that will not fit is a blind
 /// spot, never a pass -- which is exactly what the `bomb` fixture provokes.
@@ -72,6 +72,24 @@ impl Carrier {
     /// and where the only correct outcome is therefore *not verified*.
     fn unreadable(&self) -> bool {
         self.expect == "unverifiable"
+    }
+
+    /// Whether the carrier is a picture, which a *different* instrument reads.
+    ///
+    /// Distinct from [`Carrier::unreadable`] because the remedies differ, which
+    /// is the whole reason `verify::Report` carries two lists. Both withhold
+    /// certification; only this one has a next step.
+    fn needs_ocr(&self) -> bool {
+        self.expect == "needs-ocr"
+    }
+
+    /// Whether no byte scan can be expected to find this needle in the input.
+    ///
+    /// The precondition check below requires every *other* needle to be found in
+    /// the fixture before the routes run --- a scanner that cannot see a needle
+    /// going in proves nothing by not seeing it coming out.
+    fn unscannable(&self) -> bool {
+        self.unreadable() || self.needs_ocr()
     }
 }
 
@@ -255,7 +273,7 @@ fn fixture_report(
     let unfound: Vec<&str> = fixture
         .carriers
         .iter()
-        .filter(|c| !c.unreadable() && !before.found.contains(&c.needle))
+        .filter(|c| !c.unscannable() && !before.found.contains(&c.needle))
         .map(|c| c.location.as_str())
         .collect();
     if !unfound.is_empty() {
@@ -325,7 +343,7 @@ fn fixture_report(
             (None, _) => "-".to_string(),
         };
 
-        let verdict = if !after.blind.is_empty() {
+        let verdict = if !after.blind.is_empty() || !after.deferred.is_empty() {
             "NOT VERIFIED"
         } else if !leaks.is_empty() {
             "LEAKS"
@@ -351,11 +369,47 @@ fn fixture_report(
         // instead announces a verdict on it, the verifier is the thing that is
         // broken -- which is how spike 0.3's leak scanner passed a document that
         // was still leaking.
-        if after.blind.is_empty() && fixture.carriers.iter().any(Carrier::unreadable) {
+        //
+        // **Asserted per list rather than per verdict**, which is sharper than
+        // the single check this replaced and not looser. A carrier nothing can
+        // read has to appear in `blind`; a picture has to appear in `deferred`.
+        // Accepting either list for either kind would let the classification
+        // invert -- calling a JPEG undecodable, or an undecodable stream a
+        // picture -- with nothing going red, and the second of those is how a
+        // scanned document would come to certify.
+        //
+        // **Existence, not a count, and the difference was measured rather than
+        // chosen.** Counting looked sharper --- require as many blind spots as
+        // the fixture has unreadable carriers --- and it is wrong, because the
+        // count is a property of the INPUT and this is a report on the OUTPUT.
+        // `qpdf` re-encodes `/ASCIIHexDecode` into Flate, so its rewrite of
+        // `hostile-filters.pdf` genuinely has one undecodable carrier where the
+        // input had two: the carrier became readable, which is an improvement
+        // and not a missing blind spot. The counted version was red on a clean
+        // tree for exactly that, on two routes.
+        //
+        // What existence therefore cannot do is discriminate *within* a fixture
+        // that has more than one carrier of a kind: reclassifying one of the two
+        // in `hostile-filters.pdf` leaves the other in `blind` and this stays
+        // quiet. That gap is real and is why `hostile-scan.pdf` carries exactly
+        // ONE carrier --- on a single-carrier fixture existence and count are the
+        // same test, so the picture check below is fully discriminating and the
+        // mutation that inverts it goes red.
+        let unreadable = fixture.carriers.iter().any(Carrier::unreadable);
+        let pictures = fixture.carriers.iter().any(Carrier::needs_ocr);
+        if after.blind.is_empty() && unreadable {
             println!("               [FAIL] a verdict was reached on a carrier nothing can read");
+        }
+        if after.deferred.is_empty() && pictures {
+            println!(
+                "               [FAIL] a picture was not deferred to the instrument that reads one"
+            );
         }
         for spot in &after.blind {
             println!("               not verified: {spot}");
+        }
+        for spot in &after.deferred {
+            println!("               needs another instrument: {spot}");
         }
         for leak in &leaks {
             println!("               leak: {leak}");
@@ -498,152 +552,18 @@ fn qpdf_check(path: &Path) -> String {
     }
 }
 
-/// What one scan of a written file established, and what it could not look at.
-struct Report {
-    found: BTreeSet<String>,
-    blind: Vec<String>,
-    objects: usize,
-    /// `%%EOF` markers, so more than one revision is visible.
-    eofs: usize,
-    /// Non-whitespace bytes after the last `%%EOF`.
-    trailing: usize,
-    bytes: u64,
-}
-
-/// Scans a file for every needle, at the byte level and through the object graph.
+/// Scans a file for every needle, through `verify::scan`.
 ///
-/// Both are needed and neither is sufficient. The byte scan is the only thing
-/// that can see content outside the object graph -- trailing bytes past `%%EOF`
-/// belong to no object at all -- and the graph walk is the only thing that can
-/// see inside a compressed stream.
+/// **The module is the definition of clean now**, and this is the thin part that
+/// remains: reading the file. The scan itself --- the byte pass, the graph walk,
+/// the `%%EOF` rule and the carrier classification --- moved into
+/// `src/verify.rs` on 2026-08-26 so that the shipped verification and this
+/// spike's are the same code. Two implementations of what counts as clean is the
+/// drift this repository keeps finding in other forms, and it would be at its
+/// worst here: the spike is what says the subsystem works.
 fn verify(path: &Path, needles: &[String]) -> Result<Report, String> {
     let raw = fs::read(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
-    let mut report = Report {
-        found: BTreeSet::new(),
-        blind: Vec::new(),
-        objects: 0,
-        eofs: count(&raw, b"%%EOF"),
-        trailing: 0,
-        bytes: raw.len() as u64,
-    };
-
-    for needle in needles {
-        if find_bytes(&raw, needle.as_bytes()) {
-            report.found.insert(needle.clone());
-        }
-    }
-
-    // More than one revision is a blind spot, not a detail. A parser resolves
-    // every object through the newest cross-reference table, so an object the
-    // update overwrote is never handed to the graph walk at all -- its bytes are
-    // still in the file, at their old offset, addressable by nothing. If they
-    // are also compressed, no check in this harness can see them.
-    if report.eofs > 1 {
-        report.blind.push(format!(
-            "the file has {} %%EOF markers, so earlier revisions exist that no \
-             parser will resolve and no scan can decode",
-            report.eofs
-        ));
-    }
-
-    if let Some(last) = rfind_bytes(&raw, b"%%EOF") {
-        report.trailing = raw[last + 5..]
-            .iter()
-            .filter(|byte| !byte.is_ascii_whitespace())
-            .count();
-    } else {
-        report
-            .blind
-            .push("the file has no %%EOF marker".to_string());
-    }
-
-    match load(path) {
-        Err(message) => report.blind.push(message),
-        Ok(doc) => {
-            report.objects = doc.objects.len();
-            for (id, object) in &doc.objects {
-                let strings = flatten_strings(object);
-                for needle in needles {
-                    if find_bytes(&strings, needle.as_bytes()) {
-                        report.found.insert(needle.clone());
-                    }
-                }
-                let LoObject::Stream(stream) = object else {
-                    continue;
-                };
-                match stream.decompressed_content_with_limit(MAX_DECODE) {
-                    Ok(decoded) => {
-                        for needle in needles {
-                            if find_bytes(&decoded, needle.as_bytes()) {
-                                report.found.insert(needle.clone());
-                            }
-                        }
-                    }
-                    Err(error) => report.blind.push(format!(
-                        "object {} could not be decoded, so its contents are unknown: {error}",
-                        id.0
-                    )),
-                }
-            }
-        }
-    }
-
-    report.blind.sort();
-    report.blind.dedup();
-    Ok(report)
-}
-
-fn count(haystack: &[u8], needle: &[u8]) -> usize {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return 0;
-    }
-    haystack
-        .windows(needle.len())
-        .filter(|window| *window == needle)
-        .count()
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty()
-        && haystack.len() >= needle.len()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
-}
-
-fn rfind_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .rposition(|window| window == needle)
-}
-
-/// Concatenates every string buried anywhere in an object, however nested.
-fn flatten_strings(object: &LoObject) -> Vec<u8> {
-    let mut out = Vec::new();
-    collect_strings(object, &mut out);
-    out
-}
-
-fn collect_strings(object: &LoObject, out: &mut Vec<u8>) {
-    match object {
-        LoObject::String(bytes, _) => {
-            out.extend_from_slice(bytes);
-            // A separator, so two adjacent strings cannot spell out a needle
-            // that neither of them contains.
-            out.push(0);
-        }
-        LoObject::Array(items) => items.iter().for_each(|i| collect_strings(i, out)),
-        LoObject::Dictionary(dictionary) => {
-            dictionary.iter().for_each(|(_, v)| collect_strings(v, out))
-        }
-        LoObject::Stream(stream) => {
-            collect_strings(&LoObject::Dictionary(stream.dict.clone()), out)
-        }
-        _ => {}
-    }
+    Ok(tpdf_lib::verify::scan(&raw, needles, None))
 }
 
 struct Render {

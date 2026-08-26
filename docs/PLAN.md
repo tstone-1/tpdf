@@ -1824,10 +1824,28 @@ the result is "not verified" and tpdf says so. Given the PDFium `GenerateContent
 `AGENTS.md` — where a removed object silently survives into the file while the in-memory
 API reports it gone — this pass is not belt-and-braces, it is load-bearing.
 
+**Step 3 and step 6 are built, 2026-08-26: `src/verify.rs`.** The carrier classification,
+the byte scan, the graph walk and the revision rule are there, and
+`examples/sanitize_rewrite.rs` calls them rather than carrying its own copy — two
+definitions of clean is the drift this repository keeps finding in other forms, and it would
+be at its worst in the one harness that says the subsystem works.
+
+The distinction step 3 asks for is a `Report` with two lists, `blind` and `deferred`, and
+the thing to hold on to is that **both withhold certification**. The split is by remedy, not
+by verdict: `blind` means no instrument would change the answer, `deferred` means step 4 is
+the instrument. Reading it as "images are fine" is the one way to turn this into the
+confident lie the section opens by forbidding, so `an_image_carrier_does_not_certify` pins
+it and a mutation that lets it through goes red.
+
+Steps 1, 2, 4 and 5 are not built. Step 5's independent parser is the one worth naming
+separately: `qpdf --check` runs in the spike today and nothing in the shipped path re-parses
+with anything but `lopdf`.
+
 ### Sanitized full rewrite — measured 2026-07-26
 
 Spike 0.4. Harness `src-tauri/examples/sanitize_rewrite.rs`, corpus
-`testdata/make_hostile_pdf.py`: eleven fixtures, each hiding a distinct needle in a
+`testdata/make_hostile_pdf.py`: eleven fixtures at the time and twelve since 2026-08-26,
+each hiding a distinct needle in a
 different carrier, with `hostile-manifest.json` recording for each one whether a
 reachability sweep is *expected* to clear it. Six routes, from a byte copy (the control)
 through `lopdf` with and without collection to QPDF.
@@ -9866,8 +9884,30 @@ that it presented several genuinely unresolved questions as settled architecture
    document unverifiable, and `/DCTDecode`, `/CCITTFaxDecode`, `/JBIG2Decode` and
    `/JPXDecode` all qualify. The refusal rate on scanned documents would be close to total,
    so the rule has to distinguish a carrier we cannot decode from a carrier that is an image
-   and belongs to a different check. What remains open is where that line sits on a real
-   corpus, and it needs one — the fixtures only prove the failure mode exists.
+   and belongs to a different check.
+
+   **The line is drawn, 2026-08-26: `src/verify.rs`.** It splits by **remedy and
+   deliberately not by verdict**, which is the half that keeps the constraint. A `Report`
+   carries `blind` — nothing here can account for these bytes, and no instrument would
+   change that — and `deferred` — a raster image, whose *encoded bytes* were scanned like
+   every other byte in the file but whose **picture** nobody read. **Both withhold
+   certification.** Calling an image carrier fine would let a scanned document certify with
+   nothing having read the only thing in it, and `an_image_carrier_does_not_certify` is the
+   test that pins it. What the split buys is that the reason names the next instrument
+   instead of ending the conversation.
+
+   Classification is by the **last** filter, because `/Filter` is applied in decoding order
+   and the last entry produces the content: `[/ASCII85Decode /DCTDecode]` is an
+   ASCII-armoured JPEG. The three decodable filters were read out of `lopdf`'s own dispatch
+   — `FlateDecode`, `LZWDecode`, `ASCII85Decode` — rather than remembered, and a chain that
+   classifies as scannable and then fails to decode lands in `blind`, never in a false pass.
+
+   **What is still open is the corpus, and less of it than before.** `hostile-scan.pdf` was
+   added the same day, because the corpus contained no raster filter at all — its `filters`
+   fixture uses `/ASCIIHexDecode` and `/RunLengthDecode`, which are correctly `blind`, so
+   nothing exercised the case the split exists for. That fixture and the new `needs-ocr`
+   expectation close it for `/DCTDecode`. The other three raster filters, and where the line
+   sits on real scanned documents rather than a built one, remain unmeasured.
 10. ~~**Which phase actually defines the OCR interfaces?**~~ **Answered 2026-07-31 by defining
    them.** §9's cross-cutting note was right and §8's enumeration was incomplete: a Phase 1
    item had gone unlisted. `src-tauri/src/ocr.rs` is that item --- the interfaces, with no

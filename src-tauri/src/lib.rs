@@ -54,6 +54,7 @@ pub mod startup;
 pub mod structure;
 pub mod sweep;
 pub mod text;
+pub mod verify;
 
 /// Helpers shared by this crate's own tests. Not compiled into any binary.
 #[cfg(test)]
