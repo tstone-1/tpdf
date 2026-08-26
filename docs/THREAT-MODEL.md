@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- five of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- six of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -1267,6 +1267,38 @@ typed password in a local for the duration of the retry loop and drops it, and n
 served from Rust. The webview is the least trusted place in the application (residual risk
 7), so a password parked in component state for a document's lifetime would be the one hop
 worth avoiding, and it is avoided.
+
+#### T6.11 — Redacting, added 2026-08-26
+
+**No new capability, and one genuinely new kind of claim.** `redact_copy` is §T6.1's verb:
+the same `dialog:allow-save` panel, the same `save::write_copy`, the same caller-supplied
+source and destination, unchecked against the document the render service actually opened.
+Everything that section says about the authority of a write applies here unchanged and is not
+repeated. What is new is that this command **destroys content**, and that its reply asserts a
+security property about the file it wrote.
+
+**`Request::RedactPlans` is the parse, and it is on the right side.** Deciding what a removal
+takes means reading the page's object list, which is a reading of attacker-chosen bytes, so it
+is a worker request rather than coordinator work --- the same argument `Request::Append`
+records. It names nothing the worker could act on: rectangles in, a count and some sentences
+out, and nothing is removed by answering it. The removal itself happens in the coordinator,
+inside the rewrite that already parses that file with `lopdf`, which is residual risk 18 and
+is not widened by this.
+
+**The claim is the exposure, and it is bounded by the type rather than by care.**
+`redact::Applied` cannot carry `verified` without an empty `why`, and every object the removal
+could not take becomes a reason. So the failure mode this section would otherwise have --- a
+reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
+omission at a call site.
+
+**Residual, and it is large enough to state plainly.** This removes **page text and nothing
+else**. Every carrier in `docs/PLAN.md` §6's table survives: annotations, form values, XMP and
+DocInfo metadata, the outline, page labels, embedded files, and any prior incremental
+revision, since a copy is a serialisation rather than a sanitation (§T6.1). An image or a
+vector drawing inside the region is reported and left. A CID-encoded document cannot be
+scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
+a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is
+what the reader is told.
 
 #### T6.10 — Moving a mark, added 2026-08-23
 

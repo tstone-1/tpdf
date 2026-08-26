@@ -1989,6 +1989,15 @@ every real document has, so refusing means tpdf can never redact anything and te
 reader the same thing with nothing to show for it. One rule, *never claim clean*, beats two.
 The panel warns before the reader commits, which is what the second line of a row is for.
 
+**How often the correspondence guard refuses is now a number rather than a worry.**
+`remove_shows` removes by position and refuses when `lopdf`'s show operators disagree with
+PDFium's text objects; spike 0.3 measured 4:4 on four fixtures and said a `TJ` split across
+objects would break it, without saying how often that happens. `--survey` walks every page of
+every fixture: **1720 pages across 48 files, 0 disagreements.** Read with its limit ---
+`testdata/` is mostly fixtures this project generates, so it is not a sample of the wild, and
+what the number supports is *the guard did not fire once across everything here* rather than
+*it never fires*.
+
 **`examples/redact_apply_probe.rs` is the evidence**, and it runs the whole path on
 `text-base14.pdf`: a rectangle built from the character boxes becomes a plan, becomes
 ordinals, becomes a written file. The needle is gone and a word on another line survives,
