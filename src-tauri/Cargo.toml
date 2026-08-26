@@ -377,3 +377,7 @@ path = "examples/rewrite_probe.rs"
 [[example]]
 name = "password-probe"
 path = "examples/password_probe.rs"
+
+[[example]]
+name = "qpdf-probe"
+path = "examples/qpdf_probe.rs"

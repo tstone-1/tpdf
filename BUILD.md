@@ -186,6 +186,51 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 #                             still AES-256, 2 pages
 cargo run --release --manifest-path src-tauri/Cargo.toml --example password-probe
 
+# Structural soundness: does an independent VALIDATOR accept what tpdf writes?
+# PLAN.md section 6 step 5 asks for a parser that did not write a rewrite to
+# re-check it, and measuring that on 2026-08-26 gave an uncomfortable answer.
+# Given a rewrite whose /Size claims more objects than the file holds --
+# spike 0.4's defect -- lopdf's loader says "OK, 8 pages", PDFKit says "OK, 8
+# pages", and only `qpdf --check` objects:
+#
+#   reported number of objects (142) is not one plus the highest object number (101)
+#
+# So the shipped check (verify::structure) is deliberately narrow -- a header,
+# one %%EOF, no trailing data, a startxref inside the file -- and this is where
+# the missing half is exercised. qpdf is not a dependency and is not on a hosted
+# runner; it is on a development machine, so run this by hand before a release
+# and after anything that touches how a document is serialised.
+#
+# Every fixture goes through the REAL writer, save::write_copy -- the same call
+# Save a copy, Extract pages and Split reach -- with two plans each: keep every
+# page, and drop one, which is the plan that makes rewrite() run the sweep.
+#
+# BOTH DIRECTIONS ARE FAILURES, and the second is the one to expect:
+#   * qpdf refuses what we passed  -> the rewrite shipped a broken file.
+#   * we refuse what qpdf passed   -> over-refusal, which is worse than no
+#     check: it would refuse to save a document a reader had just edited. The
+#     first draft of a /Size rule did exactly that.
+#
+# TWO CONTROLS, and the probe is worthless without them, because a sweep that
+# reports "nothing found" looks identical whether the oracle ran or never did:
+#   * a planted stale /Size must be REFUSED BY QPDF. It also re-measures the
+#     gap: verify::structure is expected to pass that file, and a run where it
+#     suddenly catches it contradicts its own doc comment -- read that first.
+#   * planted trailing bytes must be REFUSED BY US, so a run where
+#     verify::structure was never called is distinguishable from a clean one.
+#
+# A finding is compared against the SOURCE's own verdict. A rewrite faithfully
+# carries a defect the input already had, and the first run of this reported
+# outline-hostile.pdf for a loop in its /Outlines tree -- which is what that
+# fixture is for.
+#
+# WITHOUT QPDF it prints one [SKIP] and exits 2 rather than 0: the caller wanted
+# a verdict and there is none. `brew install qpdf`.
+#
+#   macOS arm64, 2026-08-26   66 rewrites checked, 3 plans refused by the
+#                             writer, 0 findings, both controls fired
+cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
+
 # Signatures: does PDFium agree with us about the same signatures?
 # `docinfo.rs` walks /AcroForm /Fields with lopdf; PDFium implements that walk
 # in C++ and exports the result. Neither knows about the other, which is what
