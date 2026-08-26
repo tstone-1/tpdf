@@ -699,6 +699,33 @@ MUTATIONS = [
         only_on="macos",
     ),
     Mutation(
+        # Let an infinite corner through. `Quad::covers_area` excludes NaN and
+        # not infinities, so the model accepts one -- and a region with an
+        # infinite corner overlaps every object on the page, which is one drag
+        # silently covering the document. Written as "reject only NaN", which is
+        # the guard somebody would write believing serde had done the rest.
+        "edits: accept a redaction with an infinite corner",
+        "src/edits.rs",
+        "        if let Some(bad) = area.iter().find(|v| !v.is_finite()) {",
+        "        if let Some(bad) = area.iter().find(|v| v.is_nan()) {",
+        "a_region_whose_geometry_is_not_finite_is_refused_rather_than_marked",
+    ),
+    Mutation(
+        # Report a redaction's rectangle with two corners swapped. The row still
+        # appears in the review list, on the right page, and the overlay draws a
+        # rectangle -- somewhere else. Only an assertion on the numbers can see
+        # it, which is why the reply test asserts the area rather than the count.
+        "edits: transpose a redaction's corners on the way to the frontend",
+        "src/edits.rs",
+        "                area: [\n"
+        "                    redaction.area.left,\n"
+        "                    redaction.area.top,",
+        "                area: [\n"
+        "                    redaction.area.top,\n"
+        "                    redaction.area.left,",
+        "a_pending_redaction_reaches_the_reply_and_no_plan",
+    ),
+    Mutation(
         # Report the selection's length as the file's. `write_copy` compares the
         # baseline against the source's real page count to catch a file that
         # changed under the open one, so this turns every extract of a subset
@@ -1775,6 +1802,92 @@ MUTATIONS = [
         "                self.graves.insert(page);",
         "                let _ = &mut self.graves;",
         "a_command_naming_a_deleted_page_is_refused_as_deleted",
+    ),
+    Mutation(
+        # Take a snapshot that has forgotten the pending redactions. Every short
+        # journal is unaffected -- SNAPSHOT_EVERY is 32, so most documents never
+        # take one -- and a rebuild through such a snapshot silently drops every
+        # region marked before it. A redaction missing from the review list is
+        # the one failure this subsystem must never have, and it would arrive
+        # with the document looking entirely normal.
+        "docmodel: snapshot a document without its pending redactions",
+        "src/docmodel.rs",
+        "            self.snapshots.insert(self.cursor, self.now.clone());",
+        "            let mut snap = self.now.clone();\n"
+        "            snap.redactions.clear();\n"
+        "            self.snapshots.insert(self.cursor, snap);",
+        "a_pending_redaction_survives_a_rebuild_across_a_snapshot_boundary",
+    ),
+    Mutation(
+        # Accept a region that covers nothing. It reaches the review list, the
+        # overlay draws a line, and applying it removes nothing -- so a reader
+        # is shown a row that certifies the removal of nothing at all.
+        "docmodel: accept a redaction covering no area",
+        "src/docmodel.rs",
+        "        if !redaction.area.covers_area() {",
+        "        if false {",
+        "a_region_covering_nothing_is_refused_rather_than_listed",
+    ),
+    Mutation(
+        # Mark a region without checking the page is live. The redaction lands
+        # in the table under a page nobody can see, and every refusal the
+        # frontend depends on for a stale panel row stops happening.
+        "docmodel: mark a region without checking the page exists",
+        "src/docmodel.rs",
+        "        self.now.live(redaction.page)?;",
+        "        let _ = self.now.live(redaction.page);",
+        "a_region_on_a_page_that_is_gone_says_which_of_the_two_it_is",
+    ),
+    Mutation(
+        # Collapse the two redaction refusals, exactly as the page pair above is
+        # collapsed. The model still refuses; what is lost is the distinction
+        # between a row a reader has already removed and an id nobody issued,
+        # which is what a stale review panel needs told apart.
+        "docmodel: report a removed redaction as one that never existed",
+        "src/docmodel.rs",
+        "                Refusal::RedactionRemoved(redaction)",
+        "                Refusal::NoSuchRedaction(redaction)",
+        "removing_a_pending_redaction_twice_is_told_which_answer_it_is_getting",
+    ),
+    Mutation(
+        # Delete a page and leave its pending redactions behind. The document is
+        # identical -- the page is gone from the order either way -- and the
+        # instruction survives, pointing at a page nobody can see. Only a
+        # command naming it afterwards can tell.
+        "docmodel: delete a page without tombstoning its redactions",
+        "src/docmodel.rs",
+        "                for redaction in self.redactions.remove(&page).unwrap_or_default() {\n"
+        "                    self.redaction_graves.insert(redaction);\n"
+        "                }",
+        "                let _ = self.redactions.remove(&page);",
+        "deleting_a_page_takes_its_pending_redactions_with_it",
+    ),
+    Mutation(
+        # Keep the body of a redaction whose command was discarded. Nothing
+        # about the working document differs -- the redaction is gone from the
+        # page either way -- so only the accounting observable can see it.
+        "docmodel: keep redaction bodies a discarded redo tail named",
+        "src/docmodel.rs",
+        "                Command::Redact { redaction, .. } => {\n"
+        "                    self.redactions.remove(&redaction);\n"
+        "                }",
+        "                Command::Redact { .. } => {}",
+        "a_discarded_redo_tail_drops_the_redaction_bodies_it_named",
+    ),
+    Mutation(
+        # Answer with every page's redactions rather than the named page's. A
+        # single-page document cannot tell, and neither can a review list read
+        # whole -- only an assertion about which page a region is on.
+        "docmodel: list every page's redactions for whichever page is asked",
+        "src/docmodel.rs",
+        "    pub fn redactions_on(&self, page: PageId) -> &[RedactionId] {\n"
+        "        self.redactions\n"
+        "            .get(&page)",
+        "    pub fn redactions_on(&self, page: PageId) -> &[RedactionId] {\n"
+        "        self.redactions\n"
+        "            .values()\n"
+        "            .next()",
+        "a_region_marked_for_removal_lands_on_the_page_it_names",
     ),
     Mutation(
         # A document with no pages is not a document.

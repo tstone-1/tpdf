@@ -1635,9 +1635,11 @@ confident lie. The audit was hardest on this section and largely right.
 
 1. **Mark.** Drag regions, select text, or pattern-search (emails, order numbers, a word
    list) and mark all hits. Marks are journal commands rendered as an overlay; nothing is
-   destroyed and everything is undoable.
+   destroyed and everything is undoable. *The model is built; see below. Dragging a region
+   is the only shape it can express so far, and no gesture reaches it.*
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
-   to catch an over- or under-selection.
+   to catch an over- or under-selection. *The data is built --- page and region, in page
+   order. The text, the thumbnail and the panel are not.*
 3. **Apply.** Destructive, full-rewrite, journal truncated at that point.
 4. **Verify.** Mandatory. Reports *verified*, or *not verified* with specifics — never a
    bare success.
@@ -1839,6 +1841,40 @@ it and a mutation that lets it through goes red.
 
 Steps 1 and 2 are not built. **Step 3's text primitive is built and headless** as of
 2026-08-26, and **step 5 is partly built with its ceiling measured** --- both below.
+
+#### Steps 1 and 2: the marking model --- built 2026-08-26
+
+`docmodel.rs` holds pending redactions beside marks, and `edits.rs` reports them beside
+marks, and **that "beside" is the whole design**. A mark is written into the saved file as
+an annotation; a redaction must never be. The two are separate types with separate id
+spaces, separate tables and separate lists in the state reply, so the writer's input ---
+`Plan::marks`, built from `EditState::marks` --- cannot carry a redaction at all. The
+alternative was a `MarkKind::Redaction` and an exclusion in `save.rs`, which is a rule
+somebody has to remember on the day the next kind is added.
+
+`Redaction` is deliberately smaller than `Mark`, and every absent field is absent for a
+reason. No kind, because it has one. No colour, because what a *pending* redaction is drawn
+in is the overlay's decision and nothing about it survives the apply. No note and no author,
+because nothing here is written into a file for anyone to read. `/OverlayText` --- the word
+a reader can leave in the hole --- would be a field and a command of its own.
+
+It is a journal command, so undo takes one back off and redo puts the same one back, with
+its id rather than a fresh one wearing its number. That is what makes step 2 a review
+rather than a formality. A deleted page takes its pending redactions with it and tombstones
+them, so naming one afterwards says *removed* rather than claiming it never existed --- the
+same wrong-diagnosis rule marks already follow, and sharper here, because a redaction left
+behind would be an instruction about a page nobody can see.
+
+**What is not built**: no gesture reaches `redact_mark`, and no panel lists what it
+produces. The commands, the model, the undo and the review data exist and are exercised
+only by tests. The apply path below is likewise reachable from nothing. The two halves meet
+when the gesture lands.
+
+Twelve mutations stand behind it, nine in Rust and three in the frontend, and the one worth
+naming is *snapshot a document without its pending redactions*: `SNAPSHOT_EVERY` is 32, so a
+rebuild that dropped them would be correct on every short journal and would silently empty
+the review list on a long one. That is the failure this subsystem must never have, and it
+would arrive with the document looking entirely normal.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 

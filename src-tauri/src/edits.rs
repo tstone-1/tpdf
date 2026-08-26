@@ -48,7 +48,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
-    Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Refusal, StampName, Stroke,
+    Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Redaction, RedactionId,
+    Refusal, StampName, Stroke,
 };
 use crate::fingerprint::Fingerprint;
 
@@ -182,6 +183,32 @@ pub struct MarkView {
     pub lines: Vec<String>,
 }
 
+/// One region a reader has marked for removal, as the backend reports it.
+///
+/// **Deliberately not a [`MarkView`] with another kind**, and the reason is the
+/// one [`crate::docmodel::RedactionId`] states: a mark is written into the saved
+/// file and a redaction must never be. Keeping them in two lists means the
+/// writer's input --- [`Plan::marks`], built from [`EditState::marks`] --- cannot
+/// carry one by accident, rather than not carrying one because somebody
+/// remembered to filter.
+///
+/// It has no colour, no note and no author for [`crate::docmodel::Redaction`]'s
+/// reason: nothing here is drawn into a file for anyone to read.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct RedactionView {
+    /// The model's identity for this redaction, sent back verbatim to remove it.
+    pub id: u64,
+    /// The page it is on, by [`PageView::id`] --- never a position.
+    pub page: u64,
+    /// Four numbers --- left, top, right, bottom --- in display-space points
+    /// from the page's top-left corner.
+    ///
+    /// One rectangle rather than a list, which is where this parts company with
+    /// [`MarkView::quads`]. A redaction is a region a reader dragged out; see
+    /// [`crate::docmodel::Redaction::area`].
+    pub area: [f32; 4],
+}
+
 /// What the frontend asks for when a reader makes a mark.
 ///
 /// A struct rather than a parameter list, and not only because clippy counts to
@@ -277,6 +304,14 @@ pub struct EditState {
     /// gives: the frontend holds a cache of one answer, and a per-page reply
     /// would have it stitching several together with rules of its own.
     pub marks: Vec<MarkView>,
+    /// Every region the reader has marked for removal, in page order.
+    ///
+    /// **A second list rather than more entries in `marks`**, and the whole of
+    /// the reason is where each one goes: `marks` is what a save writes and this
+    /// is what an apply destroys. See [`RedactionView`].
+    ///
+    /// Whole rather than per page, for `marks`' reason.
+    pub redactions: Vec<RedactionView>,
     /// Whether anything differs from the file on disk.
     ///
     /// Read from the journal cursor rather than by comparing the working
@@ -640,6 +675,64 @@ impl Edits {
             doc,
             Command::Unannotate {
                 mark: MarkId::from_raw(mark),
+            },
+        )
+    }
+
+    /// Marks a region of a page for removal.
+    ///
+    /// **Nothing is destroyed here.** This is `docs/PLAN.md` §6 step 1: the
+    /// region joins the review list and the overlay draws it, and the document
+    /// is untouched until step 3 applies it. Undo takes it back off, which is
+    /// what makes step 2 a review rather than a formality.
+    ///
+    /// Not routed through [`command`](Edits::command) --- like
+    /// [`annotate`](Edits::annotate), it allocates an id, and an id a caller
+    /// chose is an id two redactions can share.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the rectangle holds a corner that is
+    /// not finite; or the model refuses --- the page not existing, having been
+    /// deleted, or the region covering no area.
+    pub fn redact(&self, doc: u32, page: u64, area: [f32; 4]) -> Result<EditState, String> {
+        // [`annotate`](Edits::annotate)'s third door, and the same reasoning
+        // applies with one difference in where it bites: a mark's infinite
+        // corner is written into a content stream as `inf`, and a redaction's
+        // would be compared against every object on the page, where it makes
+        // one region cover the document. Refused rather than clamped, so a
+        // reader is never told a redaction covers what they did not drag.
+        if let Some(bad) = area.iter().find(|v| !v.is_finite()) {
+            return Err(format!("a redaction cannot have a corner at {bad}"));
+        }
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .redact(Redaction {
+                page: PageId::from_raw(page),
+                area: Quad {
+                    left: area[0],
+                    top: area[1],
+                    right: area[2],
+                    bottom: area[3],
+                },
+            })
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
+    /// Takes a pending redaction back off its page, addressed by identity.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document, or the model refuses --- an id that
+    /// never existed and one already removed are different diagnoses and are
+    /// reported as such.
+    pub fn unredact(&self, doc: u32, redaction: u64) -> Result<EditState, String> {
+        self.command(
+            doc,
+            Command::Unredact {
+                redaction: RedactionId::from_raw(redaction),
             },
         )
     }
@@ -1164,6 +1257,12 @@ fn describe(why: Refusal) -> String {
         Refusal::StampMismatch(kind) => {
             format!("a {kind:?} mark cannot carry the stamp name it was sent with")
         }
+        // The three redaction refusals, worded for a reader rather than for a
+        // sender: unlike the two above, every one of them is reachable from a
+        // panel row that has gone stale under a reader's own undo.
+        Refusal::NoSuchRedaction(_) => "no such redaction".into(),
+        Refusal::RedactionRemoved(_) => "that redaction has already been removed".into(),
+        Refusal::EmptyRedaction => "that region covers nothing".into(),
     }
 }
 
@@ -1263,10 +1362,34 @@ fn snapshot(model: &Doc) -> EditState {
         })
         .collect();
 
+    let redactions = working
+        .all_redactions()
+        .into_iter()
+        .map(|(page, id)| {
+            let redaction = model.redaction(id).expect("a live redaction has a body");
+            RedactionView {
+                id: id.get(),
+                page: page.get(),
+                // Off the body, unlike a mark's geometry, and the difference is
+                // real rather than an inconsistency: a mark's quads are read
+                // through an accessor because an eraser can move them, and
+                // nothing moves a redaction. The day one does, this becomes an
+                // accessor and the comment on `MarkView::quads` explains why.
+                area: [
+                    redaction.area.left,
+                    redaction.area.top,
+                    redaction.area.right,
+                    redaction.area.bottom,
+                ],
+            }
+        })
+        .collect();
+
     let (applied, _) = model.depth();
     EditState {
         pages,
         marks,
+        redactions,
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,
@@ -2200,6 +2323,114 @@ mod tests {
         );
         // The strokes reach the reply as well, or the overlay cannot draw them.
         assert_eq!(mark.strokes, vec![vec![50.0, 50.0, 50.0, 300.0]]);
+    }
+
+    /// A region to mark for removal, in the shape the wire sends.
+    const REGION: [f32; 4] = [72.0, 100.0, 300.0, 118.0];
+
+    #[test]
+    fn a_pending_redaction_reaches_the_reply_and_no_plan() {
+        // **The load-bearing test of the whole two-list arrangement.** A
+        // redaction is an instruction to destroy content; a plan is what a save
+        // writes into a file. If one could reach the other, tpdf would write a
+        // reader's pending redactions into a document as annotations --- an
+        // outline over words that are still there, in a file that has been
+        // handed on. Both directions in one test, because a reply that carried
+        // it and a plan that also did would satisfy either half alone.
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+        edits
+            .annotate(7, a_mark(page), stamped())
+            .expect("the model takes the mark");
+        let state = edits.redact(7, page, REGION).expect("the model takes it");
+
+        assert_eq!(state.redactions.len(), 1);
+        assert_eq!(state.redactions[0].page, page);
+        assert_eq!(state.redactions[0].area, REGION);
+        // The mark is still there and is still the only thing a writer sees.
+        assert_eq!(state.marks.len(), 1);
+        assert_eq!(edits.plan(7).expect("plan").marks.len(), 1);
+
+        // And the control: the plan of a document with a redaction is the plan
+        // of the same document without one. Asserting `marks.len() == 1` alone
+        // would pass for a plan that had grown a second field carrying it.
+        let clean = Edits::default();
+        clean.open(8, 3, None);
+        let same = clean.state(8).expect("state").pages[1].id;
+        clean
+            .annotate(8, a_mark(same), stamped())
+            .expect("the model takes the mark");
+        assert_eq!(
+            edits.plan(7).expect("plan").marks,
+            clean.plan(8).expect("plan").marks
+        );
+    }
+
+    #[test]
+    fn a_pending_redaction_makes_the_document_dirty_and_is_undoable() {
+        // Dirty because it is an unsaved change to what the reader is looking
+        // at --- the overlay draws it --- even though no byte of the document
+        // has moved. Undoable because step 2 is a review, and a review a reader
+        // cannot act on is a formality.
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+        assert!(!edits.state(7).expect("state").dirty);
+
+        let state = edits.redact(7, page, REGION).expect("the model takes it");
+        assert!(state.dirty);
+        assert!(state.can_undo);
+
+        let back = edits.undo(7).expect("undo");
+        assert!(back.redactions.is_empty());
+        assert!(!back.dirty);
+    }
+
+    #[test]
+    fn a_redaction_can_be_taken_back_off_by_the_identity_the_reply_gave_it() {
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+        let id = edits.redact(7, page, REGION).expect("redact").redactions[0].id;
+
+        assert!(edits
+            .unredact(7, id)
+            .expect("unredact")
+            .redactions
+            .is_empty());
+        // A stale panel row asking twice is told which answer it is getting,
+        // and an id nobody issued is the other one.
+        assert_eq!(
+            edits.unredact(7, id),
+            Err("that redaction has already been removed".to_string())
+        );
+        assert_eq!(edits.unredact(7, 999), Err("no such redaction".to_string()));
+    }
+
+    #[test]
+    fn a_region_whose_geometry_is_not_finite_is_refused_rather_than_marked() {
+        // `a_mark_whose_geometry_is_not_finite_is_refused_rather_than_written`
+        // for the redaction door. The damage differs: an infinite corner on a
+        // mark writes `inf` into a content stream, and on a region it compares
+        // true against every object on the page --- one drag that silently
+        // covers the document.
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[1].id;
+
+        for bad in [f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(edits
+                .redact(7, page, [72.0, 100.0, bad, 118.0])
+                .expect_err("refused")
+                .starts_with("a redaction cannot have a corner at"));
+        }
+        // NaN is caught here rather than by the model's own emptiness check,
+        // because `is_finite` is false for it and this guard is the outer one.
+        // That is the trap about a caller that validates first: the model's
+        // `EmptyRedaction` for a NaN corner is unreachable through this door,
+        // and it is covered by the test that calls `Doc::redact` directly.
+        assert_eq!(
+            edits.redact(7, page, [72.0, 100.0, f32::NAN, 118.0]),
+            Err("a redaction cannot have a corner at NaN".to_string())
+        );
+        assert!(edits.state(7).expect("state").redactions.is_empty());
     }
 
     #[test]

@@ -16236,3 +16236,44 @@ Ship the invariant, keep the narrow check for what only the bytes can show, and 
 rest with the real validator before a release (`examples/qpdf_probe.rs`).
 
 Paid for on 2026-08-26.
+
+### A comment's stated reason was checkable and false, and the next feature copied it
+
+`Working::apply`'s `Unannotate` arm removes a page's entry from the `marks` map once the last
+mark on it is gone, under this reason:
+
+> An empty entry is removed rather than left, so that a document annotated and un-annotated
+> compares equal to one that never was --- which is what a snapshot comparison rests on.
+
+Both halves are wrong, and one command settles it:
+
+```
+left:  Working { ..., marks: {}, mark_graves: {MarkId(1)}, ... }
+right: Working { ..., marks: {}, mark_graves: {},          ... }
+```
+
+The tombstone stays --- it has to, or removing a mark twice could not be told apart from
+removing one that never existed --- so the two documents **never** compare equal, whatever this
+line does. And nothing rests on it: a snapshot is cloned from the live `Working` and replayed
+forward through the same `apply`, so no code path compares two differently-built documents at
+all. `Working`'s `PartialEq` exists for tests.
+
+The rule itself is worth keeping. The map should hold exactly the pages that have marks,
+because `page_of` walks it and anything else that iterates it reads the same shape. That is a
+smaller reason than the one written down, and it is true.
+
+**What makes this worth an entry is how it was found: by copying it.** Writing the same
+emptiness rule for pending redactions, the obvious test to write beside it was the one the
+comment describes --- redact, unredact, compare against a fresh document --- and it failed, on
+correct code, for a reason the comment had already ruled out. A stated reason is a claim, and
+this one had sat unexercised because **no test asserted it**: every mark test asks about marks,
+and the equality was mentioned only in prose.
+
+Two things follow. **A comment that gives a checkable reason should have the check**, or should
+give a reason that needs none --- the version now in the file is of the second kind. And **when
+a new feature copies an existing rule, the copy is the moment its justification gets read
+carefully for the first time in months**; if the reason does not survive that reading, correct
+it there rather than reproducing it. The redaction arm now points at the annotation arm's note
+instead of restating the claim.
+
+Paid for on 2026-08-26.

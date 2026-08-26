@@ -775,6 +775,41 @@ async fn annot_remove(
     edits.unannotate(doc, mark)
 }
 
+/// Marks a region of one page for removal.
+///
+/// **Nothing is destroyed by this command.** It is `docs/PLAN.md` §6 step 1:
+/// the region joins the review list and the overlay outlines it. Applying is a
+/// separate command, and the whole point of the split is that a reader looks at
+/// the list first.
+///
+/// Named `redact_mark` beside [`annot_mark`], and the pairing is deliberate ---
+/// they are the same gesture producing two different things, and the names
+/// should make the difference legible in a stack trace as well as in a menu.
+///
+/// The page is named by identity for [`annot_mark`]'s sharper reason: a region
+/// is placed by coordinates, so a stale position would mark a different page at
+/// the spot the words used to be --- and here that would be a reader certifying
+/// the removal of something they never looked at.
+#[tauri::command]
+async fn redact_mark(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    page: u64,
+    area: [f32; 4],
+) -> Result<edits::EditState, String> {
+    edits.redact(doc, page, area)
+}
+
+/// Takes one pending redaction back off its page.
+#[tauri::command]
+async fn redact_remove(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    redaction: u64,
+) -> Result<edits::EditState, String> {
+    edits.unredact(doc, redaction)
+}
+
 /// Rubs strokes out of one drawing.
 ///
 /// `remove` is positions into the drawing's current stroke list, not points ---
@@ -2552,6 +2587,8 @@ pub fn run() {
             page_move,
             annot_mark,
             annot_remove,
+            redact_mark,
+            redact_remove,
             annot_erase,
             annot_note,
             annot_recolor,

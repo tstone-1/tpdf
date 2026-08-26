@@ -23,6 +23,7 @@ import {
   type MarkView,
   type PageId,
   type PageView,
+  type RedactionView,
   type StampName,
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
@@ -31,7 +32,7 @@ import { colorFor, type MarkColor } from "./markcolors";
 // first, and the declaration lives in `pages.ts` so that the modules which only
 // need the shape --- the scroller, the thumbnails --- do not have to import this
 // one, which cannot be loaded outside a webview.
-export type { MarkView, PageView };
+export type { MarkView, PageView, RedactionView };
 
 /**
  * What `save_copy` and `extract_pages` report about the file they wrote.
@@ -85,6 +86,15 @@ export interface Split {
 export interface EditState {
   pages: PageView[];
   marks: MarkView[];
+  /**
+   * Every region marked for removal, in page order --- the review list of
+   * `docs/PLAN.md` §6 step 2.
+   *
+   * A second list rather than more entries in `marks`, because the two go
+   * opposite ways: `marks` is what a save writes into the file, and this is what
+   * an apply destroys. See {@link RedactionView}.
+   */
+  redactions: RedactionView[];
   can_undo: boolean;
   can_redo: boolean;
   /** Whether anything differs from the file on disk. */
@@ -95,6 +105,7 @@ export interface EditState {
 export const NOTHING_OPEN: EditState = {
   pages: [],
   marks: [],
+  redactions: [],
   can_undo: false,
   can_redo: false,
   dirty: false,
@@ -421,6 +432,42 @@ export class Edits {
   async unmark(mark: number): Promise<EditState> {
     return this.adopt(
       await invoke<EditState>("annot_remove", { doc: this.doc, mark }),
+    );
+  }
+
+  /**
+   * Marks a region of a page for removal.
+   *
+   * **This destroys nothing.** It is step 1 of `docs/PLAN.md` §6: the region
+   * joins {@link EditState.redactions}, the overlay outlines it, and the
+   * document is untouched until a reader applies it. Undo takes it back off.
+   *
+   * `area` is `left, top, right, bottom` in the same display space
+   * {@link Edits.mark} takes its quads in.
+   *
+   * The stale-page guard is {@link Edits.mark}'s and is here for a sharper
+   * reason: a region is placed by coordinates, so sending one for a page the
+   * model no longer has would mark a different page at the spot the words used
+   * to be --- and a reader reviewing that list would certify a removal they
+   * never looked at.
+   */
+  async redact(
+    page: PageId,
+    area: [number, number, number, number],
+  ): Promise<EditState> {
+    if (!this.current.pages.some((view) => view.id === page)) return this.current;
+    return this.adopt(
+      await invoke<EditState>("redact_mark", { doc: this.doc, page, area }),
+    );
+  }
+
+  /**
+   * Takes one pending redaction back off its page, by the id a state reply gave
+   * it.
+   */
+  async unredact(redaction: number): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("redact_remove", { doc: this.doc, redaction }),
     );
   }
 

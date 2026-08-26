@@ -747,6 +747,18 @@ abandoned tree nodes stay in the file as unreachable objects, exactly as a delet
 content does, and for the same stated reason --- a saved copy is a serialisation, not a
 sanitation (§T6.1, residual risk 16).
 
+**A pending redaction reaches no writer, and that is carried by the type rather than by a
+filter** (2026-08-26). Marking a region puts a `Redaction` in a table of its own with an id
+space of its own, and `Plan::marks` is built from `EditState::marks` --- a list a redaction
+cannot be in. So the failure this arrangement exists to prevent, tpdf writing a reader's
+*pending* redactions into a saved file as annotations, is unexpressible rather than guarded
+against: an outline drawn over words that are still there, in a document that has been handed
+on, is a confident lie of exactly the kind §6 of `docs/PLAN.md` opens by refusing. The
+alternative design --- one mark kind with an exclusion in `save.rs` --- would have been a rule
+to remember on the day the next kind is added. Two tests pin it: the plan of a document with a
+redaction equals the plan of the same document without one, and the reply carries it while the
+plan does not.
+
 **Dragging a thumbnail adds nothing here**, checked rather than assumed when it landed on
 2026-08-17. It registers no command, takes no capability and reaches no new sink: the gesture
 ends in `page_move`, which is the command above. What it does add to the webview is pointer

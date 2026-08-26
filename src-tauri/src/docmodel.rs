@@ -177,6 +177,34 @@ impl MarkId {
     }
 }
 
+/// A redaction's identity, stable for the life of the working document.
+///
+/// Opaque and issued rather than derived, as [`MarkId`] is. **A separate type
+/// rather than a second use of that one**, and the reason is the whole design of
+/// this feature: a mark is written into the saved file as an annotation, and a
+/// redaction must never be. Keeping the two identities apart is what makes
+/// "write a redaction as an annotation" unexpressible instead of a per-kind
+/// exclusion in `save.rs` that a later kind could be added without.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct RedactionId(u64);
+
+impl RedactionId {
+    /// The raw value, for logging and for keying a map across the IPC boundary.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    /// Rebuilds an id from a value [`get`](Self::get) produced.
+    ///
+    /// Safe for [`MarkId::from_raw`]'s reason: every command checks the id
+    /// against the live redactions and the graves before it mutates anything, so
+    /// a number nobody issued is [`Refusal::NoSuchRedaction`] rather than a
+    /// redaction.
+    pub fn from_raw(value: u64) -> RedactionId {
+        RedactionId(value)
+    }
+}
+
 /// A rectangle in **display** space: points from the displayed page's top-left
 /// corner, y increasing downwards, after the page's `/Rotate` and relative to
 /// its crop box.
@@ -729,6 +757,39 @@ pub struct Mark {
     pub made: String,
 }
 
+/// A region a reader has marked for removal.
+///
+/// **Not a [`Mark`], and the difference is a lifecycle rather than a shape.** A
+/// mark is a thing the reader adds to the document: it is drawn, it is saved as
+/// an annotation, and it is still there when the file is reopened. A redaction
+/// is an *instruction* about the document: it is drawn only while it is pending,
+/// it is never written to a file, and applying it destroys content and consumes
+/// the instruction. Two lifecycles is two types --- see [`RedactionId`] for the
+/// property that buys.
+///
+/// It is deliberately smaller than a mark, and every absent field is absent for
+/// a reason rather than for now. There is no kind, because a redaction has one.
+/// There is no colour, because what a pending redaction is drawn in is the
+/// overlay's decision and nothing about it survives the apply. There is no note
+/// and no author, because nothing here is written into a file for anyone to
+/// read. If overlay text (`/OverlayText`, the word a reader can leave in the
+/// hole) is ever built, it is a field then and a command of its own.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Redaction {
+    /// The page the region is on. Held here as well as in [`Working`] for
+    /// [`Mark::page`]'s reason: a reader of the table alone knows where it goes.
+    pub page: PageId,
+    /// The region, in display space.
+    ///
+    /// **One rectangle rather than a list**, which is the other place this
+    /// parts company with a mark. A text-markup mark takes its shape from a
+    /// selection and needs a quad per line; a redaction is a region a reader
+    /// dragged out, and covering three lines with one rectangle is what they
+    /// asked for. A selection that should redact several lines is several
+    /// redactions, which is also what the review list has to show them.
+    pub area: Quad,
+}
+
 /// One page of the working document.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Page {
@@ -817,6 +878,27 @@ pub enum Command {
     /// each of them --- so this is the only member of the family whose subject
     /// is not narrowed by a kind check.
     Recolor { mark: MarkId, color: ColorId },
+    /// Mark a region of a page for removal.
+    ///
+    /// [`Command::Annotate`]'s counterpart, and journalled the same way: the
+    /// body is in [`Doc`]'s table under `redaction` and only the identity is
+    /// here, which is what keeps this enum `Copy`.
+    ///
+    /// **It carries no note and no colour**, which is where the resemblance
+    /// stops. Those two are what a mark says and what it is drawn in, and a
+    /// redaction is neither drawn into the file nor read by anyone --- see
+    /// [`Redaction`].
+    Redact {
+        redaction: RedactionId,
+        page: PageId,
+    },
+    /// Take a pending redaction back off the page.
+    ///
+    /// **The reader's only way out**, and the reason marking is a journal
+    /// command rather than a list somebody edits: a redaction that could not be
+    /// undone would make the review step (`docs/PLAN.md` §6) a formality. Apply
+    /// is the destructive step; this is not it.
+    Unredact { redaction: RedactionId },
 }
 
 impl Command {
@@ -832,11 +914,13 @@ impl Command {
             | Command::Crop { page, .. }
             | Command::Delete { page }
             | Command::Move { page, .. }
-            | Command::Annotate { page, .. } => Some(page),
+            | Command::Annotate { page, .. }
+            | Command::Redact { page, .. } => Some(page),
             Command::Unannotate { .. }
             | Command::Renote { .. }
             | Command::Reink { .. }
-            | Command::Recolor { .. } => None,
+            | Command::Recolor { .. }
+            | Command::Unredact { .. } => None,
         }
     }
 }
@@ -901,6 +985,21 @@ pub enum Refusal {
     /// guess which. That is the trap about one predicate answering two
     /// questions, refused here before it could be made.
     StampMismatch(MarkKind),
+    /// No redaction has ever had this id.
+    NoSuchRedaction(RedactionId),
+    /// The id names a redaction that was taken back off the page --- including
+    /// one that went with a deleted page. Distinct from
+    /// [`NoSuchRedaction`](Refusal::NoSuchRedaction) for the reason
+    /// [`MarkRemoved`](Refusal::MarkRemoved) is distinct from
+    /// [`NoSuchMark`](Refusal::NoSuchMark).
+    RedactionRemoved(RedactionId),
+    /// A redaction covering nothing: a degenerate rectangle, `NaN` included.
+    ///
+    /// Refused here rather than at the apply path, for [`EmptyMark`](Refusal::EmptyMark)'s
+    /// reason and one that is sharper: a region covering no area removes no
+    /// content, so accepting one puts a row in the review list that certifies
+    /// the removal of nothing.
+    EmptyRedaction,
 }
 
 /// Baseline plus the commands applied so far, materialized.
@@ -957,6 +1056,19 @@ pub struct Working {
     /// common case and means the colour the mark was made with, still in the
     /// body table. Only a mark somebody has recoloured has an entry here.
     colors: HashMap<MarkId, ColorId>,
+    /// The pending redactions on each page, in the order they were made.
+    ///
+    /// `marks` above in every structural respect --- absent rather than empty,
+    /// for the reason stated there --- and deliberately a second map rather than
+    /// a second kind in the first one. What separates them is not how they are
+    /// stored but where they go: `marks` is what `save.rs` writes, and nothing
+    /// in this map can reach it.
+    redactions: HashMap<PageId, Vec<RedactionId>>,
+    /// Redactions that were on a page and are not, for `mark_graves`' reason and
+    /// with its subtlety: one that went with a deleted page is in here too, so
+    /// naming it answers [`Refusal::RedactionRemoved`] rather than claiming it
+    /// never existed.
+    redaction_graves: HashSet<RedactionId>,
 }
 
 impl Working {
@@ -986,6 +1098,8 @@ impl Working {
             notes: HashMap::new(),
             inks: HashMap::new(),
             colors: HashMap::new(),
+            redactions: HashMap::new(),
+            redaction_graves: HashSet::new(),
         }
     }
 
@@ -1050,6 +1164,48 @@ impl Working {
             .iter()
             .flat_map(|page| self.marks_on(*page).iter().map(|mark| (*page, *mark)))
             .collect()
+    }
+
+    /// The pending redactions on one page, in the order they were made.
+    pub fn redactions_on(&self, page: PageId) -> &[RedactionId] {
+        self.redactions
+            .get(&page)
+            .map_or(&[], |list| list.as_slice())
+    }
+
+    /// Which page a pending redaction is on, if any.
+    ///
+    /// [`page_of`](Self::page_of)'s twin, and a linear walk for its reason.
+    pub fn page_of_redaction(&self, redaction: RedactionId) -> Option<PageId> {
+        self.redactions
+            .iter()
+            .find(|(_, list)| list.contains(&redaction))
+            .map(|(page, _)| *page)
+    }
+
+    /// Every pending redaction, with the page it sits on, in page order.
+    ///
+    /// Page order for [`all_marks`](Self::all_marks)'s reason, and here it is
+    /// also the order the review list reads in --- which is the order a reader
+    /// checks the document in, rather than the order they happened to drag.
+    pub fn all_redactions(&self) -> Vec<(PageId, RedactionId)> {
+        self.order
+            .iter()
+            .flat_map(|page| self.redactions_on(*page).iter().map(|r| (*page, *r)))
+            .collect()
+    }
+
+    /// Refuses unless the id names a redaction on a page, naming which of the
+    /// two it is, and answers with the page it found.
+    ///
+    /// [`live_mark`](Self::live_mark)'s twin, one implementation for its reason.
+    fn live_redaction(&self, redaction: RedactionId) -> Result<PageId, Refusal> {
+        self.page_of_redaction(redaction)
+            .ok_or(if self.redaction_graves.contains(&redaction) {
+                Refusal::RedactionRemoved(redaction)
+            } else {
+                Refusal::NoSuchRedaction(redaction)
+            })
     }
 
     /// Tombstones a mark and drops every table keyed by its id.
@@ -1153,6 +1309,15 @@ impl Working {
                 for mark in self.marks.remove(&page).unwrap_or_default() {
                     self.forget_mark(mark);
                 }
+                // The pending redactions go with it for the same reason and
+                // with the same consequence: naming one afterwards answers
+                // `RedactionRemoved` rather than claiming it never existed.
+                // Leaving them behind would be worse here than for a mark ---
+                // an apply would carry an instruction about a page nobody can
+                // see, and the review list would show a row with no page.
+                for redaction in self.redactions.remove(&page).unwrap_or_default() {
+                    self.redaction_graves.insert(redaction);
+                }
             }
             Command::Move { page, after } => {
                 self.live(page)?;
@@ -1193,9 +1358,20 @@ impl Working {
                 let page = self.live_mark(mark)?;
                 let list = self.marks.get_mut(&page).expect("page_of found it here");
                 list.retain(|&held| held != mark);
-                // An empty entry is removed rather than left, so that a document
-                // annotated and un-annotated compares equal to one that never
-                // was --- which is what a snapshot comparison rests on.
+                // An empty entry is removed rather than left, so the map holds
+                // exactly the pages that have marks --- which is what
+                // `page_of`'s walk and anything else iterating it reads.
+                //
+                // **This used to claim the document then compares equal to one
+                // that was never annotated, and that is false**, measured
+                // 2026-08-26 while writing the same rule for redactions: the
+                // tombstone in `mark_graves` stays, so the two `Working`s
+                // differ whatever this line does. The sentence went on to say a
+                // snapshot comparison rests on it, and nothing does --- a
+                // snapshot is cloned and replayed through this same `apply`,
+                // never compared against a differently-built document. The rule
+                // is worth keeping and the reason given for it was checkable
+                // and wrong.
                 if list.is_empty() {
                     self.marks.remove(&page);
                 }
@@ -1212,6 +1388,35 @@ impl Working {
             Command::Recolor { mark, color } => {
                 self.live_mark(mark)?;
                 self.colors.insert(mark, color);
+            }
+            Command::Redact { redaction, page } => {
+                self.live(page)?;
+                // `Command::Annotate`'s assertion, for its reason: an id is
+                // issued once and a journalled `Redact` is replayed exactly
+                // where it was accepted, so an id arriving here twice is a
+                // broken model rather than something a reader did.
+                debug_assert!(
+                    self.page_of_redaction(redaction).is_none(),
+                    "a redaction was put on two pages: {redaction:?}"
+                );
+                self.redactions.entry(page).or_default().push(redaction);
+                self.redaction_graves.remove(&redaction);
+            }
+            Command::Unredact { redaction } => {
+                let page = self.live_redaction(redaction)?;
+                let list = self
+                    .redactions
+                    .get_mut(&page)
+                    .expect("page_of_redaction found it here");
+                list.retain(|&held| held != redaction);
+                // Emptied rather than left empty, for `Unannotate`'s reason:
+                // the map holds exactly the pages that have pending redactions.
+                // Read that arm's note before writing a test that asserts more
+                // than that --- the equality it used to claim is false.
+                if list.is_empty() {
+                    self.redactions.remove(&page);
+                }
+                self.redaction_graves.insert(redaction);
             }
         }
         Ok(())
@@ -1276,6 +1481,15 @@ pub struct Doc {
     colors: HashMap<ColorId, [f32; 3]>,
     /// The next colour id to issue. Only ever counts up.
     next_color: u32,
+    /// What each pending redaction is, keyed by the id its command carries.
+    ///
+    /// `marks`' twin and outside [`Working`] for its reason: a redaction's body
+    /// never changes --- moving or resizing one would be a command of its own,
+    /// and there is not one yet --- so a snapshot has no reason to clone it.
+    redactions: HashMap<RedactionId, Redaction>,
+    /// The next redaction id to issue. Only ever counts up, as
+    /// [`next_mark`](Doc::next_mark) does and for its reason.
+    next_redaction: u64,
 }
 
 impl Doc {
@@ -1295,6 +1509,8 @@ impl Doc {
             next_ink: 1,
             colors: HashMap::new(),
             next_color: 1,
+            redactions: HashMap::new(),
+            next_redaction: 1,
         }
     }
 
@@ -1368,6 +1584,77 @@ impl Doc {
     /// [`working`](Doc::working) would notice.
     pub fn mark_bodies(&self) -> usize {
         self.marks.len()
+    }
+
+    /// What a pending redaction is, for one this document has issued.
+    ///
+    /// Answers for an undone id as well as a live one, for [`mark`](Doc::mark)'s
+    /// reason: the body outlives the command, which is what lets redo restore it.
+    pub fn redaction(&self, id: RedactionId) -> Option<&Redaction> {
+        self.redactions.get(&id)
+    }
+
+    /// How many redaction bodies are held.
+    ///
+    /// [`mark_bodies`](Doc::mark_bodies)' twin, and an accounting observable for
+    /// its reason: a body kept after its command was discarded produces a
+    /// document identical to one where it was dropped, so nothing about the
+    /// working state can see the leak.
+    pub fn redaction_bodies(&self) -> usize {
+        self.redactions.len()
+    }
+
+    /// Marks a region of a page for removal, issuing its id.
+    ///
+    /// [`annotate`](Doc::annotate)'s counterpart, and the second entry point
+    /// that allocates. A caller cannot build [`Command::Redact`] itself for that
+    /// method's reason: an id a caller chose is an id two redactions can share.
+    ///
+    /// **Marking is not removing.** Nothing here touches a byte of the document
+    /// --- this puts a row in the review list and an outline on the page, and
+    /// `docs/PLAN.md` §6 step 3 is where content is destroyed.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::EmptyRedaction`] when the region covers no area, and whatever
+    /// [`Command::Redact`] refuses --- the page not existing, or having been
+    /// deleted. **The id is issued after those checks**, so a refused redaction
+    /// spends nothing.
+    pub fn redact(&mut self, redaction: Redaction) -> Result<RedactionId, Refusal> {
+        if !redaction.area.covers_area() {
+            return Err(Refusal::EmptyRedaction);
+        }
+        self.now.live(redaction.page)?;
+
+        let id = RedactionId(self.next_redaction);
+        let page = redaction.page;
+        self.redactions.insert(id, redaction);
+        self.next_redaction += 1;
+        // A refusal cannot reach here --- the page was checked live a line ago
+        // against the same working document and the id is fresh --- and it is
+        // routed through `apply` anyway, so that the journal, the cursor, the
+        // snapshot rule and the redo-tail discard are the ones every other
+        // command gets. `Doc::annotate` says the same and for the same reason.
+        self.apply(Command::Redact {
+            redaction: id,
+            page,
+        })?;
+        Ok(id)
+    }
+
+    /// Takes a pending redaction back off its page.
+    ///
+    /// A thin wrapper over [`Command::Unredact`], here so that a caller does not
+    /// have to know that the command is the whole of it. Undoable like anything
+    /// else: this is the reader changing their mind before step 3, not after.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NoSuchRedaction`] for an id nobody issued, and
+    /// [`Refusal::RedactionRemoved`] for one already taken off --- including one
+    /// that went with a deleted page.
+    pub fn unredact(&mut self, redaction: RedactionId) -> Result<(), Refusal> {
+        self.apply(Command::Unredact { redaction })
     }
 
     /// The highest id issued so far.
@@ -1731,7 +2018,22 @@ impl Doc {
                 Command::Recolor { color, .. } => {
                     self.colors.remove(&color);
                 }
-                _ => {}
+                Command::Redact { redaction, .. } => {
+                    self.redactions.remove(&redaction);
+                }
+                // **Listed rather than left to a catch-all**, which is what
+                // this arm used to be. Every command that issues a body needs a
+                // line here, and `_ => {}` is a rule nobody is reminded of ---
+                // the trap index calls a catch-all the thing that makes
+                // forgetting the quiet outcome. These five issue nothing, so
+                // spelling them out costs a line each and makes the next
+                // command that does issue something a compile error.
+                Command::Rotate { .. }
+                | Command::Crop { .. }
+                | Command::Delete { .. }
+                | Command::Move { .. }
+                | Command::Unannotate { .. }
+                | Command::Unredact { .. } => {}
             }
         }
         self.journal.truncate(self.cursor);
@@ -3319,5 +3621,226 @@ mod tests {
             "still here",
             "the page came back without what was written on it"
         );
+    }
+
+    /// A region to mark for removal, on `page`.
+    fn region_on(page: PageId) -> Redaction {
+        Redaction {
+            page,
+            area: Quad {
+                left: 72.0,
+                top: 90.0,
+                right: 300.0,
+                bottom: 108.0,
+            },
+        }
+    }
+
+    #[test]
+    fn a_region_marked_for_removal_lands_on_the_page_it_names() {
+        let mut doc = Doc::open(3);
+        let second = doc.working().order()[1];
+        let id = doc.redact(region_on(second)).expect("redact");
+
+        assert_eq!(doc.working().redactions_on(second), [id]);
+        assert_eq!(doc.working().page_of_redaction(id), Some(second));
+        // The control a `redactions_on` ignoring its argument would fail.
+        assert!(doc
+            .working()
+            .redactions_on(doc.working().order()[0])
+            .is_empty());
+        assert_eq!(doc.redaction(id).expect("body").page, second);
+    }
+
+    #[test]
+    fn a_pending_redaction_is_not_a_mark_and_a_mark_is_not_a_pending_redaction() {
+        // **The property the whole two-type arrangement exists for**, asserted
+        // rather than left to the type system to be trusted about. The two
+        // populations are separate at every accessor, so nothing that walks the
+        // marks --- which is what `save.rs` does --- can reach a redaction.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let mark = doc.annotate(mark_on(page), String::new()).expect("mark");
+        let region = doc.redact(region_on(page)).expect("redact");
+
+        assert_eq!(doc.working().marks_on(page), [mark]);
+        assert_eq!(doc.working().redactions_on(page), [region]);
+        assert_eq!(doc.working().all_marks(), vec![(page, mark)]);
+        assert_eq!(doc.working().all_redactions(), vec![(page, region)]);
+        // The two id spaces count independently, so the raw numbers collide ---
+        // which is exactly why they are different types and why nothing may
+        // look one up in the other table.
+        assert_eq!(mark.get(), region.get());
+    }
+
+    #[test]
+    fn a_region_covering_nothing_is_refused_rather_than_listed() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let mut flat = region_on(page);
+        flat.area.bottom = flat.area.top;
+
+        assert_eq!(doc.redact(flat), Err(Refusal::EmptyRedaction));
+        // Nothing was spent: the id is issued after the check, so the next
+        // acceptable region gets the first number.
+        assert_eq!(doc.redaction_bodies(), 0);
+        assert!(!doc.can_undo());
+        assert_eq!(doc.redact(region_on(page)).expect("redact").get(), 1);
+    }
+
+    #[test]
+    fn a_region_with_a_corner_that_is_not_a_number_covers_nothing() {
+        // `Quad::covers_area` excludes NaN, and this is the redaction path
+        // asserting it rather than inheriting the claim: a region whose corner
+        // is NaN compares false against every object on the page, so accepting
+        // one would put a row in the review list that removes nothing.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let mut bad = region_on(page);
+        bad.area.right = f32::NAN;
+
+        assert_eq!(doc.redact(bad), Err(Refusal::EmptyRedaction));
+    }
+
+    #[test]
+    fn undo_takes_a_pending_redaction_off_and_redo_puts_the_same_one_back() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let id = doc.redact(region_on(page)).expect("redact");
+
+        assert!(doc.undo());
+        assert!(doc.working().redactions_on(page).is_empty());
+        assert!(doc.redo());
+        // The same id, not a fresh one wearing its number --- the property the
+        // allocator carries and the reason a redaction is journalled at all.
+        assert_eq!(doc.working().redactions_on(page), [id]);
+    }
+
+    #[test]
+    fn removing_a_pending_redaction_twice_is_told_which_answer_it_is_getting() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc.redact(region_on(page)).expect("redact");
+
+        assert_eq!(doc.unredact(id), Ok(()));
+        assert!(doc.working().redactions_on(page).is_empty());
+        assert_eq!(doc.unredact(id), Err(Refusal::RedactionRemoved(id)));
+        // And an id nobody issued is the other diagnosis, which is the whole
+        // reason the two variants are separate.
+        assert_eq!(
+            doc.unredact(RedactionId::from_raw(999)),
+            Err(Refusal::NoSuchRedaction(RedactionId::from_raw(999)))
+        );
+    }
+
+    #[test]
+    fn deleting_a_page_takes_its_pending_redactions_with_it() {
+        let mut doc = Doc::open(2);
+        let first = doc.working().order()[0];
+        let id = doc.redact(region_on(first)).expect("redact");
+
+        doc.apply(Command::Delete { page: first }).expect("delete");
+        assert!(doc.working().page_of_redaction(id).is_none());
+        // The diagnosis a reader gets afterwards is "removed", not "never
+        // existed" --- the same wrong-diagnosis trap `mark_graves` records, and
+        // sharper here: a redaction left behind would be an instruction about a
+        // page nobody can see.
+        assert_eq!(doc.unredact(id), Err(Refusal::RedactionRemoved(id)));
+        // And undo brings page and instruction back together, because replay
+        // rebuilds rather than inverts.
+        assert!(doc.undo());
+        assert_eq!(doc.working().redactions_on(first), [id]);
+    }
+
+    #[test]
+    fn a_pending_redaction_survives_a_rebuild_across_a_snapshot_boundary() {
+        // **The test with a failing case for `Redact`'s replay.** Undo rewinds
+        // by rebuilding from the nearest snapshot forward, so a command whose
+        // arm is right in `apply` and absent from replay would be correct on
+        // every short journal and lose the redaction on a long one --- and a
+        // redaction silently missing from the review list is the one thing this
+        // subsystem must never do. SNAPSHOT_EVERY is 32, so the journal has to
+        // be longer than that for a snapshot to exist at all.
+        let mut doc = Doc::open(3);
+        let page = doc.working().order()[0];
+        let id = doc.redact(region_on(page)).expect("redact");
+        for _ in 0..(SNAPSHOT_EVERY * 2 + 5) {
+            doc.apply(Command::Rotate { page, turns: 1 }).expect("turn");
+        }
+        assert!(doc.snapshots() >= 2, "the test needs snapshots to exist");
+
+        // Every step back, including the two that cross a snapshot boundary.
+        while doc.depth().0 > 1 {
+            assert!(doc.undo());
+            assert_eq!(
+                doc.working().redactions_on(page),
+                [id],
+                "the redaction went missing at cursor {}",
+                doc.depth().0
+            );
+        }
+        assert!(doc.undo());
+        assert!(doc.working().redactions_on(page).is_empty());
+    }
+
+    #[test]
+    fn a_discarded_redo_tail_drops_the_redaction_bodies_it_named() {
+        // The accounting observable, and the reason there is one: a body kept
+        // after its command was discarded produces a document identical to one
+        // where it was dropped, so nothing about the working state can see it.
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        doc.redact(region_on(page)).expect("redact");
+        assert_eq!(doc.redaction_bodies(), 1);
+
+        assert!(doc.undo());
+        doc.apply(Command::Rotate { page, turns: 1 }).expect("turn");
+        assert_eq!(doc.redaction_bodies(), 0);
+    }
+
+    #[test]
+    fn pending_redactions_are_listed_in_page_order_rather_than_in_drag_order() {
+        // Page order is what the review list reads in --- a reader checks the
+        // document, not the sequence they happened to drag --- and a move is
+        // what tells the two apart.
+        let mut doc = Doc::open(3);
+        let [first, second, third] = [0, 1, 2].map(|i| doc.working().order()[i]);
+        let on_third = doc.redact(region_on(third)).expect("redact");
+        let on_first = doc.redact(region_on(first)).expect("redact");
+
+        assert_eq!(
+            doc.working().all_redactions(),
+            vec![(first, on_first), (third, on_third)]
+        );
+        doc.apply(Command::Move {
+            page: third,
+            after: None,
+        })
+        .expect("move");
+        assert_eq!(
+            doc.working().all_redactions(),
+            vec![(third, on_third), (first, on_first)]
+        );
+        assert!(doc.working().redactions_on(second).is_empty());
+    }
+
+    #[test]
+    fn a_region_on_a_page_that_is_gone_says_which_of_the_two_it_is() {
+        let mut doc = Doc::open(2);
+        let first = doc.working().order()[0];
+        doc.apply(Command::Delete { page: first }).expect("delete");
+
+        assert_eq!(
+            doc.redact(region_on(first)),
+            Err(Refusal::PageDeleted(first))
+        );
+        let ghost = PageId::from_raw(9_999);
+        assert_eq!(
+            doc.redact(region_on(ghost)),
+            Err(Refusal::NoSuchPage(ghost))
+        );
+        // Neither refusal spent an id, so the next acceptable region is the
+        // first one.
+        assert_eq!(doc.redaction_bodies(), 0);
     }
 }
