@@ -442,12 +442,28 @@ export async function wordsForPage(
   textOf: (page: number) => Promise<PageText | null>,
 ): Promise<Map<number, string>> {
   const out = new Map<number, string>();
-  const wanted = items.filter((comment) => comment.page === page && needsWords(comment));
+  const wanted = wantingWordsOn(items, page);
   if (wanted.length === 0) return out;
   const text = await textOf(page);
   if (!text) return out;
   for (const comment of wanted) out.set(comment.id, coveredText(text, comment.quads));
   return out;
+}
+
+/**
+ * The comments on one page whose covered words are worth asking for.
+ *
+ * Exported because the caller has to record what it asked about, and recording
+ * a *page* is what went wrong: see {@link pagesNeedingWords}. It is the same
+ * selection {@link wordsForPage} makes, shared rather than written twice, so a
+ * walk cannot mark one set of comments answered while the extraction answers
+ * another.
+ */
+export function wantingWordsOn(
+  items: readonly Comment[],
+  page: number,
+): Comment[] {
+  return items.filter((comment) => comment.page === page && needsWords(comment));
 }
 
 /**
@@ -458,11 +474,28 @@ export async function wordsForPage(
  * sees the front of the document fill in first, which is where they are looking
  * --- the alternative is answers arriving in whatever order the annotations were
  * written in the file, which is nobody's order.
+ *
+ * **`answered` is a set of comment ids and must not be a set of pages**, which
+ * is what the caller kept until 2026-08-26 and is a defect rather than a
+ * preference. `comment.page` here is a *slot*, and a deletion renumbers every
+ * slot after it --- so a walk that had answered slot 5 and then lost a page
+ * would refuse to ask for the page that moved into slot 5, and the comments on
+ * it would say *no comment* for the rest of the session. Measured before it was
+ * fixed: two bare highlights, one answered, one page deleted, and the walk
+ * returned nothing with a comment still wanting words. A comment id is what the
+ * annotation itself carries, and it does not move.
+ *
+ * Required rather than defaulted, so the one caller has to say what it is
+ * tracking. A default of the empty set would have kept the old call site
+ * compiling and wrong.
  */
-export function pagesNeedingWords(items: readonly Comment[]): number[] {
+export function pagesNeedingWords(
+  items: readonly Comment[],
+  answered: ReadonlySet<number>,
+): number[] {
   const pages = new Set<number>();
   for (const comment of items) {
-    if (needsWords(comment)) pages.add(comment.page);
+    if (!answered.has(comment.id) && needsWords(comment)) pages.add(comment.page);
   }
   return [...pages].sort((a, b) => a - b);
 }

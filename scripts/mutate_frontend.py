@@ -2559,10 +2559,15 @@ MUTATIONS = [
         # than by the window: `comments.pdf` has exactly one bare mark with
         # rectangles, so on that corpus dropping the page filter changes nothing
         # and the mutation would survive against a check that is working.
+        #
+        # Re-aimed 2026-08-26: the filter moved into `wantingWordsOn`, which the
+        # walk calls too so that the comments it records as answered are the
+        # ones the extraction answers. The page filter is still what this
+        # deletes; it now deletes it for both readers at once.
         "comments: answer every page's comments from one page's text",
         "src/lib/comments.ts",
-        "  const wanted = items.filter((comment) => comment.page === page && needsWords(comment));",
-        "  const wanted = items.filter((comment) => needsWords(comment));",
+        "  return items.filter((comment) => comment.page === page && needsWords(comment));",
+        "  return items.filter((comment) => needsWords(comment));",
         "asks for a page's text once and answers every comment on it",
     ),
     Mutation(
@@ -4281,6 +4286,44 @@ MUTATIONS += [
         "  setRedactionWords(): void {\n    this.pending.setWords();\n  }",
         "  setRedactionWords(): void {}",
         "redraws the regions when words arrive, without being given the list again",
+    ),
+]
+
+#: The comment word walk's key --- a defect found while building the redaction
+#: panel's own walk, and fixed on 2026-08-26. The first of these three
+#: reintroduces exactly what shipped.
+MUTATIONS += [
+    Mutation(
+        # Key the answered set by page rather than by comment. `comment.page` is
+        # a SLOT, so a deletion renumbers it: the walk then refuses the page
+        # that moved into an answered slot and the comments on it read "no
+        # comment" for the rest of the session.
+        "comments: record a page as answered rather than the comments on it",
+        "src/lib/comments.ts",
+        "    if (!answered.has(comment.id) && needsWords(comment)) pages.add(comment.page);",
+        "    if (!answered.has(comment.page) && needsWords(comment)) pages.add(comment.page);",
+        "keeps asking for a comment a deletion moved into an answered slot",
+    ),
+    Mutation(
+        # Ask again for everything, every round. The walk never terminates on a
+        # document with a bare highlight on it, and every edit re-extracts the
+        # page in front of the one the reader is looking at.
+        "comments: ignore what has already been answered",
+        "src/lib/comments.ts",
+        "    if (!answered.has(comment.id) && needsWords(comment)) pages.add(comment.page);",
+        "    if (needsWords(comment)) pages.add(comment.page);",
+        "leaves out a comment already answered, and keeps its page for the others",
+    ),
+    Mutation(
+        # Record every comment on the page as answered, not only the ones an
+        # extraction would answer. A comment that later loses its body would
+        # then never be asked about, because it was marked answered while it
+        # still had one.
+        "comments: name every comment on the page, not the ones wanting words",
+        "src/lib/comments.ts",
+        "  return items.filter((comment) => comment.page === page && needsWords(comment));",
+        "  return items.filter((comment) => comment.page === page);",
+        "names the comments on a page whose words are worth asking for",
     ),
 ]
 

@@ -16391,3 +16391,37 @@ read, with `null` for every region on it --- otherwise the walk asks for it agai
 edit, forever, and the row says *reading* for the rest of the session.
 
 Paid for on 2026-08-26.
+
+### An "already asked" set keyed by a slot is renumbered by the next deletion
+
+The comments panel fills in the words under a bare highlight one page at a time, and keeps a
+set of what it has asked for so no page is extracted twice. The set held **page slots**,
+under a comment that read: *"Pages rather than comments: one extraction answers every comment
+on a page, and a page that came back with nothing is still a page that was asked."*
+
+Both halves of that are true. Neither says the set may be keyed by page, and it may not: a
+page number there is a **slot**, and deleting a page renumbers every slot after it. Answer
+slot 5, delete a page above it, and the page that was slot 6 is now slot 5 --- already in the
+set, never asked, and its comments read *Highlight, no comment* for the rest of the session.
+
+Measured before it was changed, because reading the code is what produced the wrong comment
+in the first place: two bare highlights on slots 5 and 6, one answered, one page deleted, and
+the walk returned **nothing** with a comment still wanting words.
+
+The key has to be something the item itself carries. A comment id does not move. Neither does
+a page id, which is what the redaction panel's own walk keys on --- it needs a page rather
+than an item, because one extraction answers every region on it, and `RedactionView.page` is
+an id rather than a slot for exactly this reason.
+
+Two things generalise past this instance:
+
+- **A justification can be true in every clause and still not support its conclusion.** The
+  comment argued about the unit of *work* --- a page --- and the reader takes it as an
+  argument about the unit of *identity*. Ask what a stored key has to survive, not what the
+  operation costs.
+- **The fix belongs where a test can reach it.** The walk lives in `App.svelte`, which no
+  unit test imports, so the defect was invisible to every gate. `pagesNeedingWords` now takes
+  the answered set and `wantingWordsOn` names the items a round will answer; the renumbering
+  case is a test in `comments.test.ts` with a mutation that puts the slot key back.
+
+Paid for on 2026-08-26.

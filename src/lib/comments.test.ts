@@ -8,6 +8,7 @@ import {
   noticeFor,
   onPage,
   pagesNeedingWords,
+  wantingWordsOn,
   rowsOf,
   summaryOf,
   turnedFor,
@@ -317,14 +318,53 @@ describe("which comments want the words they cover", () => {
 
   it("lists the pages that want words, once each and lowest first", () => {
     expect(
-      pagesNeedingWords([
-        bare({ id: 1, page: 4 }),
-        bare({ id: 2, page: 1 }),
-        bare({ id: 3, page: 4 }),
-        bare({ id: 4, page: 2, body: "written on" }),
-        comment({ id: 5, page: 0, kind: "text" }),
-      ]),
+      pagesNeedingWords(
+        [
+          bare({ id: 1, page: 4 }),
+          bare({ id: 2, page: 1 }),
+          bare({ id: 3, page: 4 }),
+          bare({ id: 4, page: 2, body: "written on" }),
+          comment({ id: 5, page: 0, kind: "text" }),
+        ],
+        new Set(),
+      ),
     ).toEqual([1, 4]);
+  });
+
+  it("leaves out a comment already answered, and keeps its page for the others", () => {
+    // Two on page 4, one of them answered. The page is still wanted, because
+    // the other comment on it has never been asked about.
+    const items = [bare({ id: 1, page: 4 }), bare({ id: 3, page: 4 })];
+    expect(pagesNeedingWords(items, new Set([1]))).toEqual([4]);
+    expect(pagesNeedingWords(items, new Set([1, 3]))).toEqual([]);
+  });
+
+  it("keeps asking for a comment a deletion moved into an answered slot", () => {
+    // The defect this set was keyed wrong for, measured on 2026-08-26 before it
+    // was fixed. Two bare highlights on slots 5 and 6; the walk answers the one
+    // on slot 5. A page before them is then deleted, so the second is on slot 5
+    // and the first is on slot 4 --- and with the set holding *slots*, the walk
+    // returned nothing at all and that comment read "Highlight, no comment" for
+    // the rest of the session.
+    const answered = new Set<number>();
+    const before = [bare({ id: 1, page: 5 }), bare({ id: 2, page: 6 })];
+    expect(pagesNeedingWords(before, answered)).toEqual([5, 6]);
+    for (const c of wantingWordsOn(before, 5)) answered.add(c.id);
+    // The same two comments, renumbered by a deletion above them.
+    const after = [bare({ id: 1, page: 4 }), bare({ id: 2, page: 5 })];
+    expect(pagesNeedingWords(after, answered)).toEqual([5]);
+  });
+
+  it("names the comments on a page whose words are worth asking for", () => {
+    // The selection `wordsForPage` makes, shared so that a walk cannot record
+    // one set of comments as answered while the extraction answers another.
+    const items = [
+      bare({ id: 1, page: 3 }),
+      bare({ id: 2, page: 3, body: "written on" }),
+      bare({ id: 3, page: 4 }),
+      bare({ id: 4, page: 3, quads: [] }),
+    ];
+    expect(wantingWordsOn(items, 3).map((c) => c.id)).toEqual([1]);
   });
 
   it("asks for a page's text once and answers every comment on it", async () => {

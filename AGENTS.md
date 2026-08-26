@@ -1693,6 +1693,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A control that cannot discriminate is not a failure, and calling it one made a documented command red
 - A guard written inline with an FFI call is reachable by nothing (the fix is a seam, not a harness)
 - The containment rule that makes a highlight readable makes a redaction dishonest (the centre rule forgives an overhang because an annotation's rectangle is drawn generously; a dragged region is a claim about what disappears, and the line below whose glyph tops it clips is the case that bites)
+- An "already asked" set keyed by a slot is renumbered by the next deletion (every clause of the comment defending it was true, and none of them was about identity; the walk lived in `App.svelte`, where no gate could see it)
 - Four answers, because a review panel may not say "nothing here" when it means "not yet" (the sibling panel's two states collapse three different things, and `?? ""` throws the distinction away in one character)
 - A request still in flight is not re-issued, so a mid-flight invalidation looks broken
 - A fixture no script writes gated ten guards, and the tests that skipped passed (the guards were correct; six SURVIVED mutations were one missing file, and the fix is not to obtain it)

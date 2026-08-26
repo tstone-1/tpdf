@@ -56,6 +56,14 @@ and Delete on a row does the same thing.
 
 The panel says what every row on it has in common: nothing has been removed yet.
 
+### Fixed: a highlight could stop showing the words it covers after a deletion
+
+The comments panel fills in the words under a highlight that was left blank, a
+page at a time, and kept track of which pages it had already read. It tracked
+them by position in the document --- so deleting a page, which moves every page
+after it up by one, could leave a page permanently marked as read when it never
+had been. The highlights on it went on saying *Highlight, no comment*.
+
 ### Fixed: a saved file no longer over-reports how many objects it contains
 
 A file records how many objects it holds. A save that removed some --- a
