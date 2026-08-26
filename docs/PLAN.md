@@ -1889,8 +1889,37 @@ what killed it. The population had to be the **output** rather than the source, 
 source sweep reported `hostile-trailing.pdf`, correctly, since that fixture exists to carry
 84 bytes past its `%%EOF`, and excluding it would have meant an exclusion list that rots.
 
-**Step 5 remains open for the thing it was written for.** Nothing in the shipped path
-validates a cross-reference table, and `docs/TRAPS.md` carries the entry.
+**The gap is exercised rather than merely disclosed**, by `examples/qpdf_probe.rs`: every
+fixture through the real `save::write_copy`, two plans each, and `qpdf --check` on every
+output. First clean run 2026-08-26 --- 66 rewrites checked, 3 plans refused by the writer, 0
+findings. Its two controls are the whole of its value: a planted stale `/Size` must be refused
+by qpdf, and planted trailing bytes must be refused by us, so neither reader can be silently
+absent. A finding is compared against the **source's** verdict, because a rewrite carries an
+input's defects faithfully --- the first run reported `outline-hostile.pdf` for a loop in its
+`/Outlines` tree, which is what that fixture is for.
+
+**qpdf's actual rule is now known, and it is implementable here.** It is *`/Size` equals one
+plus the highest object number*, not the entry count that was tried first --- and `lopdf`
+answers both halves for every form measured: classic tables, xref streams, object streams and
+incremental files, and it separates the planted defect from a healthy file. So the in-app gap
+is closable, at the price of a parse of the output.
+
+**It is not closed, and the reason is the third over-refusal in one session.** The cheap
+version --- assert `doc.max_id` equals the highest object number *before* serialising, which
+costs nothing because the writer already holds the graph --- fails on **both encrypted
+fixtures**, because `lopdf` removes the `/Encrypt` object when it authenticates while
+`max_id` stays where it was. Those files are correct and qpdf passes them. A carve-out for
+encrypted documents would sit on exactly the family this repository has already been caught by
+twice, and it would be unreachable anyway: the encryption guard refuses those saves first,
+which is the *"a caller that validates first cannot reach the guard beneath it"* shape.
+
+Doing it properly means the parse in a worker --- `Request::Reread` already re-parses a written
+file there for the append, and widening its reply from a page count to a small structural
+reading is the shape. That is the next increment for this step, and it is plumbing rather than
+a question: the measurement above says what to compare.
+
+**So step 5 stands as: narrow at run time, covered by qpdf before a release.** Nothing in the
+shipped path validates a cross-reference table. `docs/TRAPS.md` carries the entry.
 
 **Step 3 grew a piece on 2026-08-26, and it is smaller than it sounds.** `save::rewrite`
 now runs `sweep::collect` when the plan dropped or moved a page, so a page a reader removed

@@ -16176,3 +16176,47 @@ questioning, and it is exactly the sort of sentence that gets quoted afterwards 
 fact. It was written into a design argument before it was checked.
 
 Paid for on 2026-08-26.
+
+### Three structural rules, three over-refusals on correct files, and the third would have been unreachable anyway
+
+Chasing `docs/PLAN.md` §6 step 5 --- an independent check that a rewrite is structurally sound
+--- three rules were written in one session. Each is what the defect *looks like*. All three
+refuse files that are correct.
+
+**One: `/Size` must equal the number of entries the cross-reference table declares.** It is
+exactly the shape of spike 0.4's defect (`/Size 142`, 102 entries). It condemned a healthy
+swept rewrite of `links.pdf` --- 91 entries in three subsections against `/Size 102`, because
+sweeping makes object numbers sparse and an unlisted number is free --- and every `incr-*.pdf`
+fixture, whose `/Size` counts all revisions while the last section lists only what changed.
+`qpdf --check` exits 0 on all of them.
+
+**Two: the rewrite's output must satisfy a foreign parser.** Not a rule about structure at all
+once measured: PDFKit and `lopdf` both accept the planted defect. See the entry about no
+in-app parser catching it.
+
+**Three: `max_id` must equal the highest object number, asserted on the graph before
+serialising.** This one is *qpdf's own rule* --- its message is `reported number of objects
+(142) is not one plus the highest object number (101)` --- and it costs nothing, because the
+writer is already holding the graph. It fails on **both encrypted fixtures**,
+`hostile-encrypted.pdf` and `incr-encrypted-pw.pdf`. Not because those files are wrong:
+`lopdf` removes the `/Encrypt` object the moment it authenticates --- the trap already recorded
+one module over --- so the count it can see is one short while `max_id` is not. The file is
+fine and the reader is not.
+
+**The compounding lesson is the third one's second defect.** Even where the carve-out is
+obvious (skip encrypted documents), the guard would have been **unreachable**: the encryption
+guard refuses a rewrite of those documents several lines earlier, so nothing could ever reach
+the assertion, no mutation could redden it, and it would have read as covered. That is the
+*"a caller that validates first cannot reach the guard beneath it"* shape arriving on top of an
+over-refusal.
+
+What the three have in common is worth naming, because it is not carelessness: **a rule
+derived from one instance of a defect describes that instance, not the property.** The
+instance was `/Size 142` against 102 objects, and every rule above is a different way of
+restating it. The property --- what makes a cross-reference table right --- is qpdf's, it took
+qpdf's own error message to state it, and stating it correctly still left it unshippable here.
+
+Ship the narrow check, exercise the rest with the real validator before a release
+(`examples/qpdf_probe.rs`), and write down which is which.
+
+Paid for on 2026-08-26.
