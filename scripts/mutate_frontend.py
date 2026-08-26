@@ -4327,6 +4327,85 @@ MUTATIONS += [
     ),
 ]
 
+#: Redacting: the panel's warning, the pairing, and the sentence a reader gets.
+MUTATIONS += [
+    Mutation(
+        # Draw a warning for a region whose plan has not arrived. "Nothing to
+        # warn about" and "not asked yet" then look alike, which is the
+        # distinction the rest of this panel is built on.
+        "redactlist: warn about a region whose plan has not arrived",
+        "src/lib/redactlist.ts",
+        "  if (!plan || plan.unhandled.length === 0) return \"\";",
+        "  if (plan && plan.unhandled.length === 0) return \"\";",
+        "says nothing at all when the plan has not arrived",
+    ),
+    Mutation(
+        # Report every unhandled object as its own sentence. A page with three
+        # pictures then says the same thing three times, and a reader cannot
+        # tell three findings from one printed thrice.
+        "redactlist: repeat a kind rather than counting it",
+        "src/lib/redactlist.ts",
+        "    kinds.set(object.kind, (kinds.get(object.kind) ?? 0) + 1);",
+        "    kinds.set(`${object.kind}${object.at}`, 1);",
+        "counts objects of a kind rather than repeating the sentence",
+    ),
+    Mutation(
+        # Leave the kinds in PDFium's enumeration order, so two regions covering
+        # the same two kinds read differently depending on the file.
+        "redactlist: list the kinds in the order the file happened to draw them",
+        "src/lib/redactlist.ts",
+        "    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))",
+        "    .sort(() => 0)",
+        "names every kind, in an order that does not depend on the file",
+    ),
+    Mutation(
+        # Draw the warning on every row. The control in the panel test is what
+        # says a warning is a fact about the region rather than chrome.
+        "redactlist: draw a warning line whether or not there is a warning",
+        "src/lib/redactlist.ts",
+        "    if (warning) {",
+        "    if (warning !== undefined) {",
+        "draws the warning under the words, and nothing when there is none",
+    ),
+    Mutation(
+        # Zip a short reply onto the regions anyway. Every plan after the
+        # missing one then describes the wrong rectangle, which is a reader
+        # shown the wrong words beside the wrong region.
+        "pages: pair plans with regions even when the counts disagree",
+        "src/lib/pages.ts",
+        "  if (asked.length !== plans.length) return out;",
+        "  if (asked.length < plans.length) return out;",
+        "attaches nothing at all when the counts disagree",
+    ),
+    Mutation(
+        # Say nothing after a clean redaction, the way a copy does. The reader
+        # has just destroyed content on the strength of a claim they never see.
+        "recovery: stay silent after a redaction that verified",
+        "src/lib/recovery.ts",
+        "    ? `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.`",
+        "    ? ``",
+        "always says something, unlike a copy",
+    ),
+    Mutation(
+        # Drop the reasons. "Could not prove the file is clean" with nothing
+        # after it is the bare failure §6 forbids as firmly as the bare success.
+        "recovery: report a redaction as unproven without saying why",
+        "src/lib/recovery.ts",
+        "      `${applied.why.join(\"; \")}. Treat it as unredacted until you have checked it.`",
+        "      `. Treat it as unredacted until you have checked it.`",
+        "names every reason it could not prove the file clean",
+    ),
+    Mutation(
+        # Let the changed-source note replace the verdict rather than follow it.
+        # Two facts, and the reader needs both.
+        "recovery: let the changed-source note stand in for the verdict",
+        "src/lib/recovery.ts",
+        "    `${verdict} The original also changed on disk while you had it open, so this was ` +",
+        "    `The original also changed on disk while you had it open, so this was ` +",
+        "adds the changed-source note without dropping the verdict",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",

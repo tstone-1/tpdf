@@ -27,6 +27,7 @@ pub mod links;
 #[cfg(target_os = "macos")]
 pub mod menu;
 pub mod merge;
+pub mod objects;
 pub mod ocr;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
@@ -698,6 +699,174 @@ async fn page_crop_box(
     let (reply, rx) = reply_channel();
     service.crop_box(doc, page, rect, reply);
     await_reply("page_crop_box", rx).await
+}
+
+/// What removing each of one page's marked regions would take, and what it would miss.
+///
+/// **The one thing the redaction review panel cannot work out for itself.** The
+/// frontend knows which words a region *covers* --- it holds the character boxes
+/// --- and cannot know which text-showing operations those characters belong to,
+/// because that is a fact about the content stream. Route B removes a whole
+/// operation when any of its glyphs is inside, so the difference between the two
+/// answers is exactly the collateral a reader is reviewing for.
+///
+/// One call per page carrying every region on it, for `page_text`'s reason: the
+/// page load and the object walk are the cost and they are per page, while the
+/// comparison is per region. `regions` are in the file's display space, the
+/// space the model holds a pending redaction in, and the turn into the page's
+/// own space happens in the worker --- the same split [`page_crop_box`] exists
+/// for.
+///
+/// **Nothing is removed by asking.** The answer is a count, some sentences and
+/// the text those operations draw; the document is not touched, and there is no
+/// command that applies one of these yet.
+#[tauri::command]
+async fn redaction_plans(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    page: u32,
+    regions: Vec<[f32; 4]>,
+) -> Result<Vec<redact::RegionPlan>, String> {
+    let (reply, rx) = reply_channel();
+    service.redaction_plans(doc, page, regions, reply);
+    await_reply("redaction_plans", rx).await
+}
+
+/// Writes a copy of the document with every marked region removed, and verifies it.
+///
+/// **The destructive step, pointed at a new file.** `docs/PLAN.md` §6 describes
+/// apply as an in-place rewrite with the journal truncated; this is the same
+/// removal written somewhere else, which is the form that can ship first because
+/// nothing the reader has can be lost by it. The open document is untouched and
+/// the regions stay pending, so a reader who does not like the result closes the
+/// file and still has their marks.
+///
+/// Four steps, and the order is the safety of it:
+///
+/// 1. **Ask.** For each page holding regions, a worker computes what a removal
+///    would take --- against PDFium's own object list, behind the sandbox, which
+///    is where every parse of the reader's bytes belongs.
+/// 2. **Write.** The ordinals go into the plan and `save::write_copy` takes the
+///    ordinary rewrite path, which is what applies them --- see
+///    `save::apply_redactions` for why it is safe for that to happen last.
+/// 3. **Verify.** The written file is scanned for the words that were supposed
+///    to go, and every object the removal could not take is a reason of its own.
+///    The answer is *verified*, or *not verified* with every reason --- never a
+///    bare success, which is §6 step 4 and is why [`redact::Applied`] cannot
+///    carry the first without the second.
+///
+/// **An object the removal cannot take does not stop the write, and that is a
+/// decision rather than an oversight.** §6's deny-by-default rule says such an
+/// object is a verification failure and not a shrug, and it is honoured here as
+/// a failure to *verify*: the file is written with the text gone and the reader
+/// is told, in the sentence that lands afterwards, that it could not be proved
+/// clean and why. Refusing instead was tried first and measured: `text-base14`'s
+/// own region overlaps a path, and a rule under a line of text is what almost
+/// every real document has --- so refusing means tpdf can never redact anything
+/// and the reader is told the same thing with nothing to show for it. One rule,
+/// *never claim clean*, beats two.
+///
+/// # Errors
+///
+/// Nothing marked; the worker refusing to read a page; anything
+/// `save::write_copy` refuses (an encrypted source, a page count that disagrees
+/// with the baseline, writing over the source); or the written file not being
+/// readable back.
+#[tauri::command]
+async fn redact_copy(
+    edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    source: String,
+    path: String,
+) -> Result<redact::Applied, String> {
+    let targets = edits.redaction_targets(doc)?;
+    if targets.is_empty() {
+        return Err("nothing in this document is marked for removal".into());
+    }
+
+    let mut planned: Vec<edits::PlannedRedaction> = Vec::new();
+    let mut needles: Vec<String> = Vec::new();
+    // What the removal could not take. Not a refusal --- see the note above ---
+    // but a reason the file cannot be called clean, carried to the verdict.
+    let mut concerns: Vec<String> = Vec::new();
+    let mut regions = 0usize;
+    let mut shows_total = 0usize;
+
+    for target in targets {
+        let page = target.source;
+        regions += target.regions.len();
+        let (reply, rx) = reply_channel();
+        service.redaction_plans(doc, page, target.regions, reply);
+        let plans = await_reply("redaction_plans", rx).await?;
+        let mut shows: Vec<usize> = Vec::new();
+        // Every plan on a page reports the same count, because it is a fact
+        // about the page rather than about the region. Taken from the last
+        // rather than asserted equal across them: they come from one walk of one
+        // page in one reply, so a disagreement would be a defect in the worker
+        // and not something a caller can do anything about.
+        let mut text_objects = 0usize;
+        for plan in plans {
+            text_objects = plan.text_objects;
+            for object in &plan.unhandled {
+                concerns.push(format!("page {}: {}", page + 1, object.sentence()));
+            }
+            shows.extend(plan.shows.iter().copied());
+            let taking = plan.taking.trim();
+            if !taking.is_empty() {
+                needles.push(taking.to_string());
+            }
+        }
+        // Merged: two regions over one line name the same operator, and removing
+        // it twice is removing it once. Sorted because `remove_shows` walks them
+        // backwards and says so.
+        shows.sort_unstable();
+        shows.dedup();
+        shows_total += shows.len();
+        planned.push(edits::PlannedRedaction {
+            source: page,
+            shows,
+            text_objects,
+        });
+    }
+
+    let mut plan = edits.plan(doc)?;
+    plan.redactions = planned;
+
+    let out = std::path::PathBuf::from(path);
+    let from = std::path::PathBuf::from(source);
+    let written = out.clone();
+    let copied = tauri::async_runtime::spawn_blocking(move || save::write_copy(&from, &plan, &out))
+        .await
+        .map_err(|e| format!("the redaction did not run: {e}"))?
+        .map_err(|why| why.message)?;
+
+    // Read back rather than verified from what was written, which is the same
+    // rule the append's own verification follows: what matters is the file on
+    // disk, and the buffer that produced it agrees with itself.
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read(&written)
+            .map_err(|why| format!("the redacted file could not be read back: {why}"))
+            .map(|bytes| verify::scan(&bytes, &needles, None))
+    })
+    .await
+    .map_err(|e| format!("the verification did not run: {e}"))??;
+
+    // The objects the removal could not take come first, because they are the
+    // finding a reader can act on: a picture of the words in the region is a
+    // different problem from a scan that could not decode a stream, and only the
+    // first tells them the region is still readable.
+    let mut why = concerns;
+    if let verify::Verdict::NotVerified(reasons) = report.verdict() {
+        why.extend(reasons);
+    }
+    Ok(redact::Applied {
+        regions,
+        shows: shows_total,
+        changed: copied.changed,
+        verified: why.is_empty(),
+        why,
+    })
 }
 
 /// Removes one page from the working document, without touching the file.
@@ -2589,6 +2758,8 @@ pub fn run() {
             annot_remove,
             redact_mark,
             redact_remove,
+            redaction_plans,
+            redact_copy,
             annot_erase,
             annot_note,
             annot_recolor,

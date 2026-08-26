@@ -70,6 +70,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
                 crop: None,
             })
             .collect(),
+        redactions: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,

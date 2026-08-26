@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { afterCopy, afterFailedSave, afterMerge, beforeReload } from "./recovery";
+import {
+  afterCopy,
+  afterFailedSave,
+  afterMerge,
+  afterRedaction,
+  beforeReload,
+} from "./recovery";
 
 describe("afterFailedSave", () => {
   it("offers a copy and a reload when the file changed and the document survived", () => {
@@ -126,5 +132,55 @@ describe("afterCopy", () => {
     expect(said).not.toBeNull();
     expect(said).toContain("changed on disk");
     expect(said).toContain("written");
+  });
+});
+
+describe("what to say after a redaction", () => {
+  const clean = { regions: 2, shows: 3, verified: true, why: [] };
+
+  it("always says something, unlike a copy", () => {
+    // The asymmetry with `afterCopy`, pinned so that making the two agree is a
+    // decision somebody has to take rather than a tidy-up. A copy that worked
+    // is silent because the file appearing is the acknowledgement; a redaction
+    // has destroyed content on the strength of a claim, and the claim is what
+    // the reader needs to see.
+    expect(afterCopy({ changed: false })).toBeNull();
+    expect(afterRedaction(clean)).not.toBe("");
+  });
+
+  it("says the file was read back and the words are not in it", () => {
+    expect(afterRedaction(clean)).toBe(
+      "Redacted 2 regions, 3 removals. tpdf read the file back and none of the " +
+        "removed words are in it.",
+    );
+  });
+
+  it("counts one region and one removal without saying regions", () => {
+    expect(afterRedaction({ ...clean, regions: 1, shows: 1 })).toContain(
+      "1 region, 1 removal.",
+    );
+  });
+
+  it("names every reason it could not prove the file clean", () => {
+    // Never a bare success is half of `docs/PLAN.md` §6 step 4; this is the
+    // other half, and the sentence has to carry what the reader does next.
+    const said = afterRedaction({
+      regions: 1,
+      shows: 1,
+      verified: false,
+      why: ["page 3: object 0 is of kind image", "a stream would not decode"],
+    });
+    expect(said).toContain("could not prove the file is clean");
+    expect(said).toContain("page 3: object 0 is of kind image");
+    expect(said).toContain("a stream would not decode");
+    expect(said).toContain("Treat it as unredacted");
+  });
+
+  it("adds the changed-source note without dropping the verdict", () => {
+    // Two facts, and neither replaces the other: what was written, and which
+    // document it was built from.
+    const said = afterRedaction({ ...clean, changed: true });
+    expect(said).toContain("read the file back");
+    expect(said).toContain("changed on disk");
   });
 });

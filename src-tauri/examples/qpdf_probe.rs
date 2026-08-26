@@ -229,6 +229,7 @@ fn keeping(baseline: u32, kept: Vec<u32>) -> Plan {
                 crop: None,
             })
             .collect(),
+        redactions: Vec::new(),
         marks: Vec::new(),
     }
 }

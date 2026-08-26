@@ -66,6 +66,7 @@ import {
   type MarkKind,
   type MarkView,
   type StampName,
+  type RegionPlan,
 } from "./pages";
 import { Sidebar, SIDEBAR_CLASS } from "./sidebar";
 import { fetchRequiredTile, tileUrl } from "./tiles";
@@ -364,6 +365,8 @@ async function run(path: string): Promise<void> {
   const regionsRemoved: number[] = [];
   /** Every region a row press reported, in order. */
   const regionsPicked: number[] = [];
+  /** What the panel is told a removal of each region would take, by id. */
+  const regionPlans = new Map<number, RegionPlan>();
   /**
    * What the redactions panel is told each region covers, by id.
    *
@@ -402,6 +405,10 @@ async function run(path: string): Promise<void> {
       // phases before it made.
       onRemove: (id) => regionsRemoved.push(id),
       wordsFor: (id) => regionsCovered.get(id),
+      // Written by a phase, for `regionsCovered`'s reason: the objects a removal
+      // cannot take come from the backend, and a synthetic region on a fixture
+      // reaches only the arms that fixture happens to have.
+      planFor: (id) => regionPlans.get(id),
     },
     pages: {
       doc: doc.id,
@@ -3168,6 +3175,7 @@ async function appCommandChecks(
     saveDocument: () => fired.push("saveDocument"),
     isDirty: () => false,
     saveCopy: () => fired.push("saveCopy"),
+    redactCopy: () => fired.push("redactCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),

@@ -1640,9 +1640,14 @@ confident lie. The audit was hardest on this section and largely right.
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
    to catch an over- or under-selection. *Built: the panel, in page order, with the words
    the region covers and the only route off a region other than undo. The thumbnail is not.*
-3. **Apply.** Destructive, full-rewrite, journal truncated at that point.
+3. **Apply.** Destructive, full-rewrite, journal truncated at that point. *Built as
+   **Redact and save as**, which is the same removal pointed at a new file: the open
+   document is untouched and nothing is journalled, so a reader who does not like the
+   result still has their marks. In-place apply and the truncation are not built.*
 4. **Verify.** Mandatory. Reports *verified*, or *not verified* with specifics — never a
-   bare success.
+   bare success. *Built: the written file is read back and scanned for the words that
+   were supposed to go, and every object the removal could not take is a reason of its
+   own.*
 
 ### Redaction is whole-graph sanitation
 
@@ -1942,6 +1947,60 @@ annotation's containment rule*, which is the whole increment in one word --- and
 beside it survived, correctly: a `touchedText` assertion could not see the unplaced-box
 guard, because `readingOrder` drops an unplaced character before that assertion can look.
 
+#### Steps 3 and 4: the redaction a reader can run --- built 2026-08-26
+
+**Redact and save as**, in the palette and in File beside *Save a copy*. It writes a new
+file with every marked region's text removed and then reports what it could prove about
+it. Four steps, and the order is the safety of it.
+
+**Ask.** For each page holding regions, a worker computes what a removal would take ---
+against PDFium's own object list, behind the sandbox, which is where every parse of the
+reader's bytes belongs. `objects.rs` is that enumeration; it lived in `redact_probe` until
+today, which is to say the only thing that could produce a plan was a probe.
+
+**Write.** The ordinals go into `edits::Plan` and `save::write_copy` takes the ordinary
+rewrite path. `save::apply_redactions` runs **last**, after the page tree, the marks, the
+turns and the crops --- and that is a property rather than an ordering preference: the
+ordinals were worked out against the *file's* objects, so anything that reordered a content
+stream first would address the wrong words while reporting success. Nothing above it
+touches a content stream, which is what makes them still true.
+
+**Verify.** The written file is read back and scanned for the words that were supposed to
+go. `redact::Applied` cannot carry a `verified` without a reason beside it, which is step 4
+as a type.
+
+**The two predicates that could have shipped an unredacted file both needed a new clause,
+and neither mentions a redaction on its own.** `Plan::is_identity` is what lets the print
+path hand the original bytes over; `Plan::only_adds_marks` is what routes a save to the
+append, which adds objects and never touches a content stream. A plan that only redacts
+satisfies every other clause of both --- the reader has changed nothing else --- so each was
+one predicate away from writing a file with every word still in it. Both have mutations,
+and the second one's first test could not fail: with no mark in the plan the empty-marks
+clause refused the input before the new one was reached, which is this repository's
+*"a guard whose neighbour refuses the same input cannot be tested by it"* arriving in the
+predicate that decides whether a save removes anything.
+
+**An object the removal cannot take does not stop the write, and that is a decision.**
+§6's deny-by-default rule says such an object is a verification failure rather than a shrug,
+and it is honoured as a failure to *verify*: the file is written and the reader is told it
+could not be proved clean and why. Refusing instead was written first and measured ---
+`text-base14`'s own region overlaps a path, and a rule under a line of text is what almost
+every real document has, so refusing means tpdf can never redact anything and tells the
+reader the same thing with nothing to show for it. One rule, *never claim clean*, beats two.
+The panel warns before the reader commits, which is what the second line of a row is for.
+
+**`examples/redact_apply_probe.rs` is the evidence**, and it runs the whole path on
+`text-base14.pdf`: a rectangle built from the character boxes becomes a plan, becomes
+ordinals, becomes a written file. The needle is gone and a word on another line survives,
+asserted through **two independent readers** --- `verify::scan` over the bytes and PDFium
+re-extracting the written file. The survivor is the control: a scan that finds nothing
+because it cannot look is the failure this repository has recorded from several directions.
+
+What is **not** built: in-place apply and the journal truncation; the carriers beyond page
+text --- annotations, form values, metadata, the outline, embedded files --- every one of
+which §6's table names and none of which this removes; and a region over an image, which is
+reported and left.
+
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
 `src/redact.rs`, route B, headless and wired to no command yet. Given the objects PDFium
@@ -1975,10 +2034,10 @@ mis-addressed removal is one that deletes the wrong words and reports success.
 The over-redaction control is the half that keeps the rest honest: a word on **another line**
 must survive, because a removal that emptied the page would pass every other check perfectly.
 
-What is not built: images and paths (reported, not removed), annotations, form values,
-metadata, the outline, and everything else in the carrier table above --- and no command
-reaches any of this. Marking and reviewing are steps 1 and 2 and are still where the product
-feature lives.
+What is not built here: images and paths (reported, not removed), annotations, form values,
+metadata, the outline, and everything else in the carrier table above. **A command reaches
+this now** --- see the section above, which is what turned this from a primitive into a
+feature.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

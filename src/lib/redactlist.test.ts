@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RedactList, noticeFor, rowLineFor } from "./redactlist";
+import { RedactList, noticeFor, rowLineFor, warningFor } from "./redactlist";
 import {
   PageMap,
   pageId,
+  pairPlans,
   redactionRows,
   unedited,
   type RedactionView,
+  type RegionPlan,
 } from "./pages";
 import { installFakeDom, type FakeDom } from "./testdom";
 
@@ -115,6 +117,86 @@ describe("the four things a row can say about its words", () => {
   });
 });
 
+describe("what a row says a removal cannot take", () => {
+  /** A plan that takes some text and cannot take the objects named. */
+  function plan(kinds: string[]): RegionPlan {
+    return {
+      shows: [0],
+      taking: "clause 4",
+      unhandled: kinds.map((kind, at) => ({ at, kind })),
+    };
+  }
+
+  it("says nothing at all when the plan has not arrived", () => {
+    // The silence that matters: a warning that has not been computed and a
+    // region with nothing to warn about must not look alike, and the way they
+    // are told apart is that only one of them ever draws a line.
+    expect(warningFor(undefined)).toBe("");
+  });
+
+  it("says nothing when a removal would take everything in the region", () => {
+    expect(warningFor(plan([]))).toBe("");
+  });
+
+  it("names the one object a removal cannot take", () => {
+    expect(warningFor(plan(["image"]))).toBe(
+      "Also covers an image, which a removal cannot take",
+    );
+  });
+
+  it("counts objects of a kind rather than repeating the sentence", () => {
+    // A page with three pictures on it reports three findings, and a reader
+    // reading three identical sentences cannot tell that from one printed
+    // thrice.
+    expect(warningFor(plan(["image", "image", "image"]))).toBe(
+      "Also covers 3 images, which a removal cannot take",
+    );
+  });
+
+  it("names every kind, in an order that does not depend on the file", () => {
+    // Sorted rather than left in the object order PDFium enumerated, so two
+    // regions covering the same two kinds read the same way.
+    expect(warningFor(plan(["path", "image", "path"]))).toBe(
+      "Also covers an image and 2 paths, which a removal cannot take",
+    );
+  });
+});
+
+describe("pairing plans with the regions they were asked about", () => {
+  const region = (id: number): RedactionView => ({
+    id,
+    page: pageId(1),
+    area: [0, 0, 10, 10],
+  });
+  const plan = (taking: string): RegionPlan => ({
+    shows: [0],
+    taking,
+    unhandled: [],
+  });
+
+  it("attaches each plan to the region it was asked about", () => {
+    const paired = pairPlans([region(4), region(9)], [plan("first"), plan("second")]);
+    expect(paired.get(4)?.taking).toBe("first");
+    expect(paired.get(9)?.taking).toBe("second");
+  });
+
+  it("attaches nothing at all when the counts disagree", () => {
+    // The reply is a list in the order the request put the regions, so one plan
+    // too few attaches every later plan to the wrong region --- and a plan is a
+    // claim about what a removal takes, so a reader would be shown the wrong
+    // words beside the wrong rectangle. Empty is what the rows said before the
+    // reply arrived, which is the honest thing for them to go on saying.
+    expect(pairPlans([region(4), region(9)], [plan("first")]).size).toBe(0);
+    expect(
+      pairPlans([region(4)], [plan("first"), plan("second")]).size,
+    ).toBe(0);
+  });
+
+  it("attaches nothing for no regions, which is not a mismatch", () => {
+    expect(pairPlans([], []).size).toBe(0);
+  });
+});
+
 describe("what the panel says above the rows", () => {
   it("says nothing at all when there is nothing marked", () => {
     expect(noticeFor([])).toBe("");
@@ -153,12 +235,15 @@ describe("RedactList", () => {
   let removed: number[];
   /** What the panel is told each region covers, by id. */
   const words = new Map<number, string | null>();
+  /** What the panel is told a removal would take, by id. */
+  const plans = new Map<number, RegionPlan>();
 
   beforeEach(() => {
     dom = installFakeDom();
     picked = [];
     removed = [];
     words.clear();
+    plans.clear();
   });
 
   afterEach(() => {
@@ -173,6 +258,7 @@ describe("RedactList", () => {
       // region recorded as unreadable answers `null`. `get` alone collapses the
       // two, which is the defect this panel exists not to have.
       wordsFor: (id) => (words.has(id) ? words.get(id) : undefined),
+      planFor: (id) => plans.get(id),
     });
   }
 
@@ -197,6 +283,7 @@ describe("RedactList", () => {
     show(list, [region({ id: 7, page: pageId(3) })]);
     expect(list.rowText(7)).toEqual({
       words: "the sum of £4,200",
+      warning: null,
       page: "3",
       own: true,
     });
@@ -207,6 +294,7 @@ describe("RedactList", () => {
     show(list, [region({ id: 7 })]);
     expect(list.rowText(7)).toEqual({
       words: "Reading the page…",
+      warning: null,
       page: "1",
       own: false,
     });
@@ -222,6 +310,22 @@ describe("RedactList", () => {
     list.setWords();
     expect(list.rowText(7).words).toBe("clause 4");
     expect(list.rowCount).toBe(1);
+  });
+
+  it("draws the warning under the words, and nothing when there is none", () => {
+    const list = panel();
+    words.set(7, "clause 4");
+    plans.set(7, { shows: [0], taking: "clause 4", unhandled: [{ at: 2, kind: "image" }] });
+    show(list, [region({ id: 7 }), region({ id: 8, area: [10, 400, 90, 440] })]);
+    expect(list.rowText(7).warning).toBe(
+      "Also covers an image, which a removal cannot take",
+    );
+    // The control, on a row of the same panel: a region with no plan draws no
+    // second line **at all**, so the warning is a fact about the region rather
+    // than something every row carries. `null` rather than `""` on purpose --- a
+    // mutation that drew an empty warning element on every row survived a check
+    // that read the text, because an empty line and no line are the same string.
+    expect(list.rowText(8).warning).toBeNull();
   });
 
   it("says the count and the standing line above the rows", () => {

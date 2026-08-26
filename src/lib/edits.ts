@@ -48,6 +48,33 @@ export interface Copied {
 }
 
 /**
+ * What `redact_copy` reports about the file it wrote.
+ *
+ * Mirrors `redact::Applied`. **`verified` false always arrives with `why`
+ * non-empty**, which is `docs/PLAN.md` §6 step 4 as a shape rather than a rule
+ * somebody has to follow: a redaction that cannot be proved clean is a confident
+ * lie, and the reasons are what tell a reader whether the next step is another
+ * tool or giving up on the file.
+ */
+export interface Applied {
+  /** How many regions were removed from. */
+  regions: number;
+  /**
+   * How many text-showing operations went.
+   *
+   * Not the same number as {@link regions} in either direction: one region can
+   * cover several operations, and two regions on one line cover the same one.
+   */
+  shows: number;
+  /** {@link Copied.changed}, and it means the same thing. */
+  changed: boolean;
+  /** Whether the written file could be shown clean. */
+  verified: boolean;
+  /** Why not, one reason each. Empty exactly when {@link verified}. */
+  why: string[];
+}
+
+/**
  * What `merge_documents` reports about the file it wrote.
  *
  * `changed` is {@link Copied}'s field and means the same thing. The two counts
@@ -509,6 +536,22 @@ export class Edits {
    */
   async saveCopy(source: string, path: string): Promise<Copied> {
     return await invoke<Copied>("save_copy", { doc: this.doc, source, path });
+  }
+
+  /**
+   * Writes a copy with every marked region removed, and reports whether it
+   * could be proved clean.
+   *
+   * {@link saveCopy} for the destructive step, and it changes this document by
+   * nothing: the regions stay pending and the journal is untouched, so a reader
+   * who does not like the result still has their marks. The removal happens in
+   * the file that was written.
+   *
+   * The answer is never a bare success --- see `redact::Applied`, whose
+   * `verified` cannot be false without a reason beside it.
+   */
+  async redactCopy(source: string, path: string): Promise<Applied> {
+    return await invoke<Applied>("redact_copy", { doc: this.doc, source, path });
   }
 
   /**

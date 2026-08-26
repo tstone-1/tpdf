@@ -86,6 +86,7 @@ use crate::links::Links;
 use crate::outline::{self, Outline};
 use crate::progressive::{self, Bindings, CancelToken, Outcome, TileSpec};
 use crate::queue::{Claim, SharedQueue};
+use crate::redact;
 use crate::search::{self, PageMatches};
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::{self, PageText};
@@ -432,6 +433,12 @@ pub(crate) enum Job {
         page: u32,
         rect: [f32; 4],
         reply: Reply<[f32; 4]>,
+    },
+    RedactPlans {
+        doc: u32,
+        page: u32,
+        regions: Vec<[f32; 4]>,
+        reply: Reply<Vec<redact::RegionPlan>>,
     },
     Outline {
         doc: u32,
@@ -827,6 +834,33 @@ impl RenderService {
         }
     }
 
+    /// Asks what removing each of one page's regions would take, on a service thread.
+    ///
+    /// Asked when a reader opens the redactions panel and after an edit that
+    /// changes it, never on the path a page is drawn on: it costs a page load
+    /// and an object walk, and the pool that answers it is the pool drawing
+    /// tiles.
+    pub fn redaction_plans(
+        &self,
+        doc: u32,
+        page: u32,
+        regions: Vec<[f32; 4]>,
+        reply: Reply<Vec<redact::RegionPlan>>,
+    ) {
+        if self
+            .tx
+            .send(Job::RedactPlans {
+                doc,
+                page,
+                regions,
+                reply,
+            })
+            .is_err()
+        {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reads a document's outline, invoking `reply` on a service thread.
     ///
     /// One job for the whole tree rather than one per level, which is the
@@ -1029,6 +1063,12 @@ pub(crate) trait Engine {
     fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
         -> Result<CropGeometry, String>;
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String>;
+    fn redaction_plans(
+        &self,
+        doc: u32,
+        page: u32,
+        regions: &[[f32; 4]],
+    ) -> Result<Vec<redact::RegionPlan>, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
@@ -1085,6 +1125,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             rect,
             reply,
         } => reply(engine.crop_box(doc, page, rect)),
+        Job::RedactPlans {
+            doc,
+            page,
+            regions,
+            reply,
+        } => reply(engine.redaction_plans(doc, page, &regions)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
@@ -1120,6 +1166,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Content { reply, .. } => reply(Err(error.to_string())),
             Job::Geometry { reply, .. } => reply(Err(error.to_string())),
             Job::CropBox { reply, .. } => reply(Err(error.to_string())),
+            Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Links { reply, .. } => reply(Err(error.to_string())),
@@ -1286,6 +1333,15 @@ impl Engine for InProcess {
 
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String> {
         crop_box_of(open_slot(&self.docs.borrow(), doc)?, page, rect)
+    }
+
+    fn redaction_plans(
+        &self,
+        doc: u32,
+        page: u32,
+        regions: &[[f32; 4]],
+    ) -> Result<Vec<redact::RegionPlan>, String> {
+        redaction_plans_of(open_slot(&self.docs.borrow(), doc)?, page, regions)
     }
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
@@ -1622,6 +1678,64 @@ pub fn crop_box_of(document: &OpenDocument, page: u32, rect: [f32; 4]) -> Result
         page.crop_pt(),
         rect,
     ))
+}
+
+/// What removing each of a page's marked regions would take, and what it would miss.
+///
+/// **The one thing a reader reviewing a redaction cannot work out for
+/// themselves.** The frontend knows which words a region *covers* --- it holds
+/// the character boxes --- and it cannot know which text-showing operations
+/// those characters belong to, because that is a fact about the content stream.
+/// Route B removes a whole operation when any of its glyphs is inside, so the
+/// two answers differ by exactly the collateral, which is what `docs/PLAN.md`
+/// §6 step 2 calls an over-selection.
+///
+/// One call per page rather than per region, for the reason the comments panel's
+/// covered words are fetched a page at a time: the page load and the object walk
+/// are the cost and they are per page, while [`redact::covered`] is a pure
+/// comparison per region.
+///
+/// `regions` are in the **file's display space**, `[left, top, right, bottom]`
+/// with y downwards --- the space `Viewer.fileRectOn` produces and the model
+/// holds a pending redaction in. They are brought into the page's own space by
+/// [`crop_from_display`], which is the same conversion a dragged crop goes
+/// through and is shared rather than written twice: two rotation tables
+/// disagreeing at every turn but zero is a trap this repository has paid for.
+pub fn redaction_plans_of(
+    document: &OpenDocument,
+    page: u32,
+    regions: &[[f32; 4]],
+) -> Result<Vec<redact::RegionPlan>, String> {
+    let page = document.page(page)?;
+    let objects = crate::objects::read(&page)?;
+    let turns = page.quarter_turns();
+    let (width, height) = (page.width_pt(), page.height_pt());
+    let file_box = page.crop_pt();
+    Ok(regions
+        .iter()
+        .map(|region| {
+            let want = crop_from_display(turns, width, height, file_box, *region);
+            let plan = redact::covered(&objects.all, want);
+            redact::RegionPlan {
+                text_objects: objects.text.len(),
+                // Joined by a space, because a row shows one line and the
+                // operations either side of a break are two operations. What is
+                // deliberately not done here is trimming: an operation that
+                // draws only spaces is still an operation the removal deletes,
+                // and a caller flattening this for a row is what decides how it
+                // reads.
+                taking: plan
+                    .shows
+                    .iter()
+                    .filter_map(|ordinal| objects.text.get(*ordinal))
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                unhandled: plan.unhandled,
+                shows: plan.shows,
+            }
+        })
+        .collect())
 }
 
 /// Extracts one page's characters on the render thread.

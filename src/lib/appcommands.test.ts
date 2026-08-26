@@ -118,6 +118,7 @@ function harness(
     saveDocument: () => fired.push("saveDocument"),
     isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
+    redactCopy: () => fired.push("redactCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
@@ -792,6 +793,7 @@ describe("the window shortcuts for editing", () => {
       saveDocument: () => fired.push("saveDocument"),
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
+      redactCopy: () => fired.push("redactCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),

@@ -1025,10 +1025,12 @@ MUTATIONS = [
         # Say nothing about an object that cannot be removed. PLAN.md section 6's
         # deny-by-default rule inverted: the words go and the picture of the
         # words stays, and the plan calls itself complete.
+        # Re-aimed 2026-08-26, when the finding became a kind and a position
+        # rather than a sentence.
         "redact: pass over an image in the region without reporting it",
         "src/redact.rs",
-        "            plan.unhandled.push(format!(",
-        "            drop(format!(",
+        "            plan.unhandled.push(Unhandled {",
+        "            drop(Unhandled {",
         "an_image_in_the_region_makes_the_plan_incomplete",
     ),
     Mutation(
@@ -2551,10 +2553,11 @@ MUTATIONS = [
         # then hands over the original bytes, and a reader who highlighted a
         # document prints one without the highlights -- with nothing failing,
         # because what it printed is a perfectly good file.
+        # Re-aimed 2026-08-26, when a redaction clause joined the predicate.
         "edits: call a plan with marks in it the file itself",
         "src/edits.rs",
-        "        self.marks.is_empty() && self.pages_are_the_file()",
-        "        self.pages_are_the_file()",
+        "        self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
+        "        self.redactions.is_empty() && self.pages_are_the_file()",
         "a_plan_carrying_a_mark_is_not_the_file_on_disk",
     ),
     Mutation(
@@ -4737,10 +4740,11 @@ MUTATIONS += [
         # Call every plan with a mark appendable, so a deletion, a move, a turn
         # or a crop is written as an update section --- edits an update section
         # cannot express, and which spike 0.6 never put to any parser.
+        # Re-aimed 2026-08-26, when a redaction clause joined the predicate.
         "append: append any plan that carries a mark",
         "src/edits.rs",
-        "        !self.marks.is_empty() && self.pages_are_the_file()",
-        "        !self.marks.is_empty()",
+        "        !self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
+        "        !self.marks.is_empty() && self.redactions.is_empty()",
         "a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten",
     ),
     Mutation(
@@ -5037,6 +5041,62 @@ def main() -> int:
     )
     return 0 if problems == 0 else 1
 
+
+
+#: Redaction: the two predicates that could ship an unredacted file, and the
+#: writer's own guards. The first two are the ones to read --- each of them
+#: hands the reader a document that looks redacted and is not.
+MUTATIONS += [
+    Mutation(
+        # Call a plan that only redacts "the file". `is_identity` is what lets
+        # the print path hand the original bytes over, so this prints a redacted
+        # document with every word in it -- and nothing fails, because the file
+        # it printed is a perfectly good file.
+        "redact: call a plan that only redacts the file on disk",
+        "src/edits.rs",
+        "        self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
+        "        self.marks.is_empty() && self.pages_are_the_file()",
+        "a_plan_that_only_redacts_is_neither_the_file_nor_an_append",
+    ),
+    Mutation(
+        # The mirror, one predicate over: route a redaction to the append. An
+        # update section adds objects and never touches a content stream, so the
+        # file is written, is bigger, and has nothing taken out of it.
+        "redact: let a plan carrying a redaction be appended",
+        "src/edits.rs",
+        "        !self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
+        "        !self.marks.is_empty() && self.pages_are_the_file()",
+        "a_plan_that_only_redacts_is_neither_the_file_nor_an_append",
+    ),
+    Mutation(
+        # Remove from a page named twice. The second call runs against a stream
+        # the first already changed, so its ordinals name different operators.
+        "redact: remove twice from a page the plan names twice",
+        "src/save.rs",
+        "        if seen.contains(&redaction.source) {",
+        "        if false {",
+        "a_page_named_twice_by_the_redaction_plan_is_refused",
+    ),
+    Mutation(
+        # Take a page the plan does not keep as the last one it does. Removing
+        # text from a page nobody marked is the confident wrong answer.
+        "redact: clamp a redaction naming a page past the end",
+        "src/save.rs",
+        "        let Some(page) = pages.get(redaction.source as usize) else {",
+        "        let Some(page) = pages.get((redaction.source as usize).min(pages.len().saturating_sub(1))) else {",
+        "a_redaction_naming_a_page_that_is_not_kept_is_refused",
+    ),
+    Mutation(
+        # Act on each entry as it is checked rather than checking them all
+        # first. A refusal half way through then leaves a document with some
+        # pages redacted and some not, and the caller serialises it.
+        "redact: act on each redaction as it is validated",
+        "src/save.rs",
+        "        targets.push((*page, redaction));",
+        "        let took = crate::redact::remove_shows(doc, *page, &redaction.shows, redaction.text_objects).map_err(Refusal::from)?;\n        let _ = took;\n        targets.push((*page, redaction));",
+        "a_page_named_twice_by_the_redaction_plan_is_refused",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -16425,3 +16425,60 @@ Two things generalise past this instance:
   case is a test in `comments.test.ts` with a mutation that puts the slot key back.
 
 Paid for on 2026-08-26.
+
+### Two predicates decide whether a save removes anything, and neither mentions removal
+
+A redaction reaches the file through `save::write_copy`, which is the path a copy already
+takes. Two predicates stand between that call and the rewrite, and a plan that **only**
+redacts satisfies every clause of both --- because a reader who drags one region and
+redacts has changed nothing else about the document:
+
+- **`Plan::is_identity`** is what lets the print path hand the original bytes over
+  untouched. A redaction plan answering `true` prints a "redacted" document with every word
+  in it, and nothing fails, because the file it printed is a perfectly good file.
+- **`Plan::only_adds_marks`** is what routes a save to the append. An update section adds
+  objects and never touches a content stream, so a redaction plan answering `true` writes a
+  file that has been added to and has had nothing taken out.
+
+Both had to gain a clause. `is_identity`'s own doc already warned about this shape --- it
+calls itself *a list of the ways a document can differ from its file*, and says such a list
+is wrong the moment somebody adds a way, silently and in the reassuring direction. The crop
+had been the previous omission. A redaction is the next.
+
+**The mutation for the second one could not fail, and the reason is the recorded trap one
+level down.** `only_adds_marks` is `!marks.is_empty() && redactions.is_empty() && ...`, and
+the test was written with a plan carrying a redaction and no mark --- so the empty-marks
+clause refused the input before the new clause was reached, and deleting the new clause
+changed nothing. *A guard whose neighbour refuses the same input cannot be tested by it.*
+The input where it decides is a plan with **both**: a reader who highlights something and
+also redacts. That is not exotic, and it is the only case either clause distinguishes.
+
+The general form, worth applying to any predicate that gates a destructive path: **list the
+ways the caller can differ from the safe case, then ask which of them your test actually
+reaches.** A conjunction is tested by inputs that satisfy every term but one.
+
+Paid for on 2026-08-26.
+
+### An empty warning line and no warning line are the same string
+
+The redactions panel draws a second line under a row when a removal cannot take everything
+in the region. `if (warning) { ... }` builds the element; a mutation to
+`if (warning !== undefined)` builds it for every row, empty, on a `string` that is never
+undefined.
+
+The check written for it read the row's text back and asserted `""` for a row with nothing
+to warn about --- which is what an empty element's `textContent` is. The mutation survived a
+test written for exactly it.
+
+An empty line of chrome under every row is a real defect: it is a wasted line in a 260-pixel
+sidebar, and it is the difference between a warning that means something and a warning
+readers learn to ignore. What sees it is the **element**, not the text, so the accessor
+answers `string | null` --- `null` for a row with no second line, `""` for one that drew an
+empty one.
+
+The shape generalises past this panel: **whenever "absent" and "present but empty" are
+different outcomes, a string cannot be the observable.** A `?? ""` in the accessor collapses
+them in one character, which is the same collapse the four-state row exists to avoid one
+function away.
+
+Paid for on 2026-08-26.

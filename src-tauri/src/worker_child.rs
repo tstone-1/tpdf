@@ -492,6 +492,12 @@ fn handle(
             Ok(want) => Response::reply(Reply::CropBox(want)),
             Err(e) => Response::err(e),
         },
+        Request::RedactPlans { page, regions } => {
+            match render::redaction_plans_of(document, *page, regions) {
+                Ok(plans) => Response::reply(Reply::RedactPlans(plans)),
+                Err(e) => Response::err(e),
+            }
+        }
         Request::Outline => Response::reply(Reply::Outline(render::run_outline(document))),
         Request::Comments => match render::run_comments(document) {
             Ok(comments) => Response::reply(Reply::Comments(comments)),
