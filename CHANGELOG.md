@@ -19,17 +19,25 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
-### Added: the model behind redaction marking, with nothing yet to press
+### Added: mark a region for redaction
 
-A region marked for removal is now something the document model holds: it sits on
-a page, it appears in an ordered list for review, and undo takes it back off.
-Nothing is destroyed by marking one, and nothing is written to a file --- a
-pending redaction is an instruction about the document rather than something
-added to it, so it is kept apart from marks at every level and cannot be saved as
-an annotation by any route.
+**Redact region by dragging**, from the palette or Edit. Drag out a region and it
+joins a list, drawn in red over the page --- with the words still readable
+underneath, because a region you cannot see through is one you cannot check.
+Undo takes it back off.
 
-**No gesture reaches it yet, and no panel lists what it produces.** This is the
-half that had to exist before either of those could be built without guessing.
+**Nothing is removed, and no file is written.** Marking and removing are separate
+steps on purpose: the point of the first is that you look at what you marked
+before anything happens. The step that destroys content is not built yet.
+
+It is the same drag as **Crop page by dragging** and the opposite outcome, so the
+two never look alike: a crop shades what falls *outside* the rectangle, and a
+redaction shades what is *inside* it. A pending region is never black --- a black
+rectangle over words is what a redaction that did not work looks like.
+
+A pending redaction is an instruction about the document rather than something
+added to it. It is kept apart from your marks at every level and cannot be
+written into a saved file, a copy or an extract by any route.
 
 ### Fixed: a saved file no longer over-reports how many objects it contains
 

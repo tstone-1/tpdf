@@ -114,6 +114,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
   and written into a saved copy as a real `/CropBox`, so another reader opens the file
   cropped the way you left it.
   <!-- built: edit.cropToDrag edit.cropToContent edit.resetCrop -->
+- **Mark a region for redaction** --- and nothing more than mark it. Drag out a region and
+  it joins a list, drawn in red over the page with the words still readable underneath,
+  because a region you cannot see through is one you cannot check. Undo takes it back off.
+  **Nothing is removed, and no file is written**: the step that destroys content is not
+  built, which is why *True redaction* is still in the list below. A tpdf that could mark
+  and not remove must not look like one that removes, so a pending region is never black,
+  never saved, and never written into a copy --- see the two entries under *What Phase 0
+  established* for why this is the hardest thing here to get right.
+  <!-- built: edit.redactRegion -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.

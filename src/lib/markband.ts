@@ -621,6 +621,59 @@ export function boxQuad(
 }
 
 /**
+ * A rectangle to shade, in whatever units the caller handed in.
+ *
+ * `[x, y, width, height]`, which is `fillRect`'s own argument order --- these go
+ * straight into one, and a struct the caller had to unpack would be a shape to
+ * get right twice.
+ */
+export type Band = readonly [number, number, number, number];
+
+/**
+ * Which parts of a page a region gesture shades: what the drag is going to take.
+ *
+ * **The crop and the redaction are one drag with opposite meanings, and this is
+ * the one line that says which.** A crop keeps the rectangle and discards
+ * everything else, so the four bands *outside* it are shaded; a redaction
+ * destroys the rectangle's contents, so the rectangle *itself* is. Shading the
+ * same area for both would leave a reader with nothing on screen to tell them
+ * which tool is armed --- and the two differ by whether their document keeps the
+ * words or loses them.
+ *
+ * **Here rather than inline in the painter**, which is where it was first
+ * written. A branch inside a `CanvasRenderingContext2D` call sequence is
+ * reachable by no test in this project: the fake DOM's `getContext` answers
+ * `null`, so nothing that paints runs at all under vitest, and a window check
+ * needs a real screen. `docs/TRAPS.md` records the shape --- a guard written
+ * inline with a call nothing can drive is covered by a seam, not by a cleverer
+ * harness.
+ *
+ * Four bands rather than one path with a hole for the crop: the even-odd fill
+ * rule and a reversed sub-path are two more things to get right for a result a
+ * reader cannot tell apart. They are cut so that **no band overlaps another** ---
+ * the full width above and below, then the two sides between them --- because
+ * the shade is translucent and a doubled band draws a darker cross a reader
+ * would read as part of the gesture.
+ *
+ * A degenerate or inverted `kept` yields bands of zero or negative extent rather
+ * than a refusal: it is the caller's clamp that decides what a legal rectangle
+ * is, and `boxQuad` has already made it.
+ */
+export function scrimBands(
+  marking: boolean,
+  page: { x0: number; y0: number; x1: number; y1: number },
+  kept: { x0: number; y0: number; x1: number; y1: number },
+): Band[] {
+  if (marking) return [[kept.x0, kept.y0, kept.x1 - kept.x0, kept.y1 - kept.y0]];
+  return [
+    [page.x0, page.y0, page.x1 - page.x0, kept.y0 - page.y0],
+    [page.x0, kept.y1, page.x1 - page.x0, page.y1 - kept.y1],
+    [page.x0, kept.y0, kept.x0 - page.x0, kept.y1 - kept.y0],
+    [kept.x1, kept.y0, page.x1 - kept.x1, kept.y1 - kept.y0],
+  ];
+}
+
+/**
  * How big a comment's icon is, in points, before any zoom.
  *
  * The size a reader's `/Rect` gets, so the box drawn here is the box saved.

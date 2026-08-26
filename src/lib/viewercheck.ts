@@ -3115,6 +3115,7 @@ async function appCommandChecks(
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
+    redactRegion: () => fired.push("redactRegion"),
     movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
@@ -3739,6 +3740,19 @@ async function appCommandChecks(
       // mapping it ends in by `cropCommandChecks` against this backend.
       id: "edit.cropToDrag",
       ...shell("cropPage:drag"),
+      read: () => fired.join(","),
+    },
+    {
+      // The crop's twin, and aimed separately for the reason the three drawing
+      // tools above are aimed separately and more so: these two arm the same
+      // drag with opposite outcomes, so a copy-and-paste that left this one
+      // calling `cropPage` would crop a page a reader asked to redact --- and
+      // the palette entry would look correct throughout. What it reads is that
+      // the command exists and reaches its *own* action; that the action arms
+      // the redaction tool rather than the crop is `viewercrop.test.ts`'s,
+      // which can build a viewer and read `redactArmed` back.
+      id: "edit.redactRegion",
+      ...shell("redactRegion"),
       read: () => fired.join(","),
     },
     {

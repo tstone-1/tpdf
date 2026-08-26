@@ -946,7 +946,11 @@ MUTATIONS = [
         # this preview is not the same as every other one here.
         "viewer: preview a crop as an outline with no scrim",
         "src/lib/viewer.ts",
-        "    ctx.fillStyle = CROP_SCRIM;",
+        # Re-aimed 2026-08-26 when the redaction tool joined this painter and the
+        # fill became a choice of two. Still a mutation about the crop: the
+        # replacement is transparent for both, and the check named below drives
+        # the crop.
+        "    ctx.fillStyle = marking ? REDACT_FILL : CROP_SCRIM;",
         "    ctx.fillStyle = \"rgba(0, 0, 0, 0)\";",
         "a crop being dragged darkens the paper it would throw away",
         runner="viewer",
@@ -958,9 +962,14 @@ MUTATIONS = [
         # by a blanket, and a blanket hides the page the reader is aiming with.
         # Aimed at the inside reading, which is what says the scrim is a hole.
         "viewer: scrim the whole page rather than around the rectangle",
-        "src/lib/viewer.ts",
-        "    ctx.fillRect(px0, py0, px1 - px0, ky0 - py0);",
-        "    ctx.fillRect(px0, py0, px1 - px0, py1 - py0);",
+        # **Re-aimed into `markband.ts` on 2026-08-26**, where the geometry moved
+        # when the redaction tool needed the same bands inverted. It is the same
+        # edit --- the top band grown to the page's full height --- and it is now
+        # in the one place that decides which parts of a page a region gesture
+        # shades, rather than inside a `fillRect` call.
+        "src/lib/markband.ts",
+        "    [page.x0, page.y0, page.x1 - page.x0, kept.y0 - page.y0],",
+        "    [page.x0, page.y0, page.x1 - page.x0, page.y1 - page.y0],",
         "and leaves the part it would keep clear",
         runner="viewer",
     ),
