@@ -292,6 +292,25 @@ export function setMacSpelling(mac?: boolean): void {
 }
 
 /**
+ * Whether the web view is running on macOS.
+ *
+ * The same answer {@link render} spells modifiers from, and deliberately so: a
+ * second detector is a second thing to drift, which `docs/TRAPS.md` records
+ * under two resolvers agreeing with themselves. The only caller outside this
+ * file is the viewer's press guard, where the platform decides a *gesture*
+ * rather than a spelling --- a Control+click is a right-click here and an
+ * ordinary modified press everywhere else.
+ *
+ * So {@link setMacSpelling} drives this too, and its name is now narrower than
+ * what it moves. That is the intended shape rather than an oversight: there is
+ * one answer to what platform this is, and a test that forces it forces every
+ * rule that reads it.
+ */
+export function isMac(): boolean {
+  return MAC;
+}
+
+/**
  * What the reader's keyboard prints, by `KeyboardEvent.code`.
  *
  * Empty until {@link setPrintedKeys} is told otherwise, which is deliberate: a

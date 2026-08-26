@@ -1351,6 +1351,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A size is learned once, so a page turned before it was seen keeps a transposed one (the quietest of the eleven, and the only one that does not correct itself)
 - A framework can abort your whole test binary, and 470 passing tests report nothing (a SIGABRT is not a red test; `cargo test` is the multi-threaded caller)
 - A synthetic right-click posted to the window server never reaches the web view (three ways to post one, all silent; the check belongs inside the page)
+- A Control+click is the primary button, so a guard on the button number missed the commonest right-click on macOS (the comment above the guard already stated the rule it was failing to enforce; the two-finger tap worked throughout, which is what made it read as a broken menu, and neither half of the guard had a test)
 - A key handler is only as safe as the newest element inside it (the correct reasoning was already written down two files away, and did not transfer)
 - A label the platform writes is compared against a label we write by nothing (two "About tpdf" items, six weeks apart, and every test in both languages checks ids)
 
