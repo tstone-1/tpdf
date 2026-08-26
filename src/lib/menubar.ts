@@ -112,6 +112,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.save",
       "file.saveCopy",
       "file.extractPages",
+      // Between extract and merge rather than after them: the three read as
+      // one-out-of-one, several-out-of-one, one-out-of-several, and that is the
+      // order they answer "where does this document's content go".
+      "file.splitDocument",
       "file.mergeDocuments",
       SEPARATOR,
       "file.print",

@@ -98,6 +98,84 @@ function readPage(text: string, pageCount: number): number | string {
   return page;
 }
 
+/** Consecutive runs of pages a split would write, or why the text is not usable. */
+export type SplitPoints =
+  | { groups: number[][]; problem?: undefined }
+  | { groups?: undefined; problem: string };
+
+/**
+ * Reads `raw` as the pages a split cuts *after*, against a document of
+ * `pageCount` pages.
+ *
+ * `3,7` on ten pages is three files: 1-3, 4-7, 8-10. The numbers are the last
+ * page of a file rather than the first page of the next one, because that is
+ * how a reader describes a document --- "the report ends on page 7" --- and
+ * because it makes the first file's boundary sayable, which "first page of the
+ * next" cannot do without naming page 1 and meaning nothing.
+ *
+ * **Not the same grammar as {@link parsePageRange}, deliberately.** Extract
+ * takes a *set* and split takes *cuts*, so `1-3` has no meaning here and is
+ * refused rather than quietly read as two boundaries. Two commands whose
+ * argument boxes look identical and read the same text differently is worse
+ * than one of them being narrower.
+ *
+ * **"Every N pages" is not this and is not built.** It was the other candidate
+ * grammar and it collides: a bare `3` would have to mean either "cut after page
+ * 3" or "files of three pages", and only the first composes with a list. A
+ * reader who wants fives on a twenty-page document writes `5,10,15`.
+ */
+export function parseSplitPoints(raw: string, pageCount: number): SplitPoints {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    return { problem: `Pages to cut after, 1 to ${pageCount - 1}` };
+  }
+  if (pageCount < 2) {
+    return { problem: "A one-page document cannot be split" };
+  }
+
+  const cuts = new Set<number>();
+  for (const part of trimmed.split(",")) {
+    const piece = part.trim();
+    if (piece === "") return { problem: `"${trimmed}" has an empty part` };
+    // A hyphen is refused by name rather than by `readPage` failing on it. The
+    // reader has almost certainly typed an extract range into the wrong box,
+    // and `"1-3" is not a page number` sends them to look for a typo that is
+    // not there.
+    if (piece.includes("-")) {
+      return { problem: `Split takes the pages to cut after, not a range like "${piece}"` };
+    }
+    const page = readPage(piece, pageCount);
+    if (typeof page === "string") return { problem: page };
+    // The last page is not a cut. Allowing it writes a final file of no pages,
+    // and the reader who typed it meant the document they already have.
+    if (page === pageCount) {
+      return { problem: `Page ${pageCount} is the last page, so cutting after it makes nothing` };
+    }
+    if (cuts.has(page)) return { problem: `Page ${page} is named twice` };
+    cuts.add(page);
+  }
+
+  // Sorted, for `parsePageRange`'s reason and with the same limit: `7,3` and
+  // `3,7` name the same set of cuts, so ordering them is not a correction. A
+  // repeated cut *is* refused above, because that one cannot mean anything.
+  const ordered = [...cuts].sort((a, b) => a - b);
+  const groups: number[][] = [];
+  let from = 0;
+  for (const cut of [...ordered, pageCount]) {
+    const run: number[] = [];
+    for (let slot = from; slot < cut; slot += 1) run.push(slot);
+    groups.push(run);
+    from = cut;
+  }
+  return { groups };
+}
+
+/** What the palette shows under a valid split argument. */
+export function describeSplit(groups: number[][]): string {
+  const sizes = groups.map((group) => group.length);
+  return `${groups.length} files: ${sizes.join(" + ")} pages`;
+}
+
 /**
  * What the palette shows under the input while the text is still valid.
  *

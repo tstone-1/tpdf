@@ -118,6 +118,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.
   <!-- built: file.extractPages -->
+- **Split a document into several files**, naming the pages to cut after: `3,7` on a
+  ten-page document writes three files of 3, 4 and 3 pages. You choose one name and get
+  numbered siblings --- `report-1.pdf`, `report-2.pdf` --- and the name you chose is not
+  one of them. It refuses before writing anything if a file it would write is already
+  there, because those are names you never saw a dialog for.
+  <!-- built: file.splitDocument -->
 - **Merge documents**: pick any number of PDFs and get one file holding this document
   followed by all of them. The open document goes in as you have it --- edited, marked up,
   with deleted pages gone --- and the others go in as they are on disk. Each incoming page
@@ -171,8 +177,8 @@ are literals nowhere on disk. The scan this replaced was blind to all eleven of 
 including the four stamps the paragraph above is about, which it would have passed as
 unbuilt while they shipped.
 
-- The rest of the page operations: insert and split
-  <!-- not-built: edit.insertPages edit.splitDocument -->
+- The rest of the page operations: insert
+  <!-- not-built: edit.insertPages -->
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->

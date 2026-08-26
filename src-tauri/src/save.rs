@@ -293,6 +293,128 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<Copied, Refu
     })
 }
 
+/// A split that was written: the files, and whether the source had changed.
+///
+/// `paths` rather than a count, because the reader chose **one** name and got
+/// several --- the numbering rule is this module's and naming the files is the
+/// only way the reader learns where they went. `changed` is [`Copied`]'s field
+/// carrying that type's whole argument.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Split {
+    /// The source changed since it was opened, and the split was written anyway.
+    pub changed: bool,
+    /// Every file written, in order, as the reader will find them on disk.
+    pub paths: Vec<String>,
+}
+
+/// The names a split of `count` files writes, derived from the chosen `out`.
+///
+/// `report.pdf` and 3 gives `report-1.pdf`, `report-2.pdf`, `report-3.pdf`.
+///
+/// **The chosen name is never one of them**, and that is deliberate rather than
+/// an oversight in the numbering. A reader choosing `report.pdf` for a three-way
+/// split has not asked for a file called `report.pdf`; writing the first part
+/// there would make the set inconsistent --- one unnumbered file and two
+/// numbered ones --- and the part that is *not* numbered is the one that reads
+/// as the whole document. The cost is that the save dialog may have asked about
+/// replacing a file this never writes.
+///
+/// A `count` of zero gives no names, which the caller refuses before reaching
+/// here; the function has no opinion about it because "no files" is not a
+/// naming question.
+pub fn split_paths(out: &Path, count: usize) -> Vec<PathBuf> {
+    // `file_stem` drops the last extension only, so `report.v2.pdf` becomes
+    // `report.v2-1.pdf` rather than `report-1.pdf`. That is what a reader who
+    // put a dot in a name meant by it.
+    let stem = out
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "document".to_string());
+    let extension = out
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "pdf".to_string());
+    let parent = out.parent().unwrap_or_else(|| Path::new(""));
+    (1..=count)
+        .map(|n| parent.join(format!("{stem}-{n}.{extension}")))
+        .collect()
+}
+
+/// Writes one file per plan, numbered from the name the reader chose.
+///
+/// # Errors
+///
+/// Fewer than two plans; any destination is the source; **any destination
+/// already exists**; or everything [`planned_bytes`] refuses.
+///
+/// **The existence check covers every file before any is written**, and it is
+/// the one refusal here that does not exist for `write_copy`. A single save
+/// goes to the path the reader picked in a dialog, so the platform has already
+/// asked them about replacing it. A split derives `count - 1` further paths
+/// that no dialog ever showed, and [`write_atomically`] finishes with a rename,
+/// which replaces. Without this, splitting `report.pdf` into three in a
+/// directory that already holds `report-2.pdf` destroys it silently.
+///
+/// It is a check and not a guarantee: a file appearing between the check and
+/// the rename is still replaced. Closing that needs the shared write path to
+/// commit with `create_new`, which would change every save in this module, and
+/// the value here is turning "destroys files without saying so" into "refuses",
+/// not winning the race.
+///
+/// A failure part-way through leaves the files already written, and the message
+/// says which one failed and how many stand --- deleting them would be a second
+/// destructive act on a reader who has just been told something went wrong.
+pub fn write_split(source: &Path, plans: &[Plan], out: &Path) -> Result<Split, Refusal> {
+    if plans.len() < 2 {
+        return Err("a split writes at least two files".into());
+    }
+    let targets = split_paths(out, plans.len());
+    for target in &targets {
+        if same_file(source, target) {
+            return Err(
+                "tpdf cannot save over the document it is reading --- choose another name".into(),
+            );
+        }
+        if target.exists() {
+            return Err(format!(
+                "{} already exists, and a split would replace it --- choose another name",
+                target.display()
+            )
+            .into());
+        }
+    }
+
+    let mut changed = false;
+    let mut written: Vec<String> = Vec::new();
+    for (plan, target) in plans.iter().zip(&targets) {
+        let part = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN).map_err(|why| {
+            Refusal {
+                message: format!(
+                    "{} ({} of {} written)",
+                    why.message,
+                    written.len(),
+                    plans.len()
+                ),
+                changed: why.changed,
+            }
+        })?;
+        changed |= part.changed;
+        write_atomically(target, &part.bytes).map_err(|why| {
+            Refusal::from(format!(
+                "{why} ({} of {} written)",
+                written.len(),
+                plans.len()
+            ))
+        })?;
+        written.push(target.display().to_string());
+    }
+    Ok(Split {
+        changed,
+        paths: written,
+    })
+}
+
 /// A merge that was written: what it holds, and whether its source had changed.
 ///
 /// `changed` is [`Copied`]'s field and carries that type's whole argument ---
@@ -3844,6 +3966,147 @@ mod tests {
     /// dictionary, so a merged file would silently carry a
     /// permission-restricted document's pages with the restrictions gone.
     ///
+    #[test]
+    fn split_paths_number_from_one_and_never_use_the_chosen_name() {
+        let names = split_paths(Path::new("/tmp/report.pdf"), 3);
+        assert_eq!(
+            names
+                .iter()
+                .map(|p| p.file_name().expect("named").to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec!["report-1.pdf", "report-2.pdf", "report-3.pdf"],
+        );
+        // The chosen name is not among them, which is the decision the doc
+        // comment argues for rather than an accident of starting at one.
+        assert!(
+            !names
+                .iter()
+                .any(|p| p.file_name().is_some_and(|n| n == "report.pdf")),
+            "the name the reader picked must not also be a part: {names:?}"
+        );
+    }
+
+    #[test]
+    fn split_paths_keep_a_dot_that_is_inside_the_stem() {
+        // `file_stem` drops the last extension only. A reader who names a file
+        // `report.v2.pdf` means the `.v2`, and `report-1.pdf` would eat it.
+        let names = split_paths(Path::new("/tmp/report.v2.pdf"), 2);
+        assert_eq!(
+            names[0].file_name().expect("named").to_string_lossy(),
+            "report.v2-1.pdf"
+        );
+    }
+
+    /// Every page of the source comes out exactly once, in order, across the parts.
+    ///
+    /// `rotated.pdf` is the fixture for the reason its neighbour above gives:
+    /// its four pages carry 0/90/180/270 and are otherwise identical, so the
+    /// rotations *identify* the pages. A count per file is satisfied by a split
+    /// that wrote the same two pages twice; reading which pages landed where is
+    /// what makes an off-by-one in the group arithmetic visible here.
+    #[test]
+    fn a_split_writes_each_page_once_and_in_order() {
+        let Some(source) = fixture("rotated.pdf") else {
+            println!("[SKIP] a_split_writes_each_page_once: needs testdata/rotated.pdf");
+            return;
+        };
+        let total = page_count(&source) as u32;
+        assert_eq!(
+            total, 4,
+            "the fixture this test identifies pages by changed"
+        );
+        let scratch = Scratch::new("split-order");
+        let out = scratch.join("part.pdf");
+
+        let plans = [
+            keeping(total, &[(0, 0), (1, 0)]),
+            keeping(total, &[(2, 0), (3, 0)]),
+        ];
+        let done = write_split(&source, &plans, &out).expect("split");
+        assert_eq!(done.paths.len(), 2);
+
+        let mut seen: Vec<i64> = Vec::new();
+        for path in &done.paths {
+            let part = Document::load(path).expect("load a part");
+            assert_eq!(
+                part.get_pages().len(),
+                2,
+                "each part holds its own two pages"
+            );
+            for (_, id) in part.get_pages() {
+                seen.push(
+                    part.get_object(id)
+                        .and_then(Object::as_dict)
+                        .expect("page dictionary")
+                        .get(b"Rotate")
+                        .and_then(Object::as_i64)
+                        .unwrap_or(0),
+                );
+            }
+        }
+        // The source's own four rotations, in the source's order. Any page
+        // duplicated, dropped or reordered by the grouping changes this list.
+        assert_eq!(seen, vec![0, 90, 180, 270], "written: {:?}", done.paths);
+    }
+
+    /// The refusal a split needs and a copy does not, with its control.
+    ///
+    /// The reader picked one name in a dialog and the platform asked about that
+    /// one; every other part is a path this module invented, so replacing one is
+    /// destroying a file nobody was warned about.
+    #[test]
+    fn a_split_refuses_an_existing_part_and_writes_nothing() {
+        let Some(source) = fixture("rotated.pdf") else {
+            println!("[SKIP] a_split_refuses_an_existing_part: needs testdata/rotated.pdf");
+            return;
+        };
+        let total = page_count(&source) as u32;
+        let scratch = Scratch::new("split-exists");
+        let out = scratch.join("part.pdf");
+        let plans = [keeping(total, &[(0, 0)]), keeping(total, &[(1, 0)])];
+
+        // The *second* part, not the first: a guard that checks only as it goes
+        // would have written part one before noticing, and the whole point is
+        // that nothing is written.
+        let taken = scratch.join("part-2.pdf");
+        std::fs::write(&taken, b"not a pdf, and not to be destroyed").expect("plant");
+
+        let why = write_split(&source, &plans, &out).expect_err("refused");
+        assert!(why.message.contains("already exists"), "{why}");
+        assert!(
+            why.message.contains("part-2.pdf"),
+            "the refusal has to name which file it was: {why}"
+        );
+        assert_eq!(
+            std::fs::read(&taken).expect("still there"),
+            b"not a pdf, and not to be destroyed",
+            "the existing file is untouched"
+        );
+        assert!(
+            !scratch.join("part-1.pdf").exists(),
+            "and the part before it was never written"
+        );
+
+        // The control. Without it "refuses" is satisfied by a `write_split`
+        // that refuses everything, and this whole test would pass against a
+        // function whose body is one `Err`.
+        std::fs::remove_file(&taken).expect("unplant");
+        write_split(&source, &plans, &out).expect("the same call, with nothing in the way");
+        assert!(scratch.join("part-1.pdf").exists() && scratch.join("part-2.pdf").exists());
+    }
+
+    #[test]
+    fn a_split_into_one_file_is_refused() {
+        let Some(source) = fixture("rotated.pdf") else {
+            println!("[SKIP] a_split_into_one_file: needs testdata/rotated.pdf");
+            return;
+        };
+        let scratch = Scratch::new("split-one");
+        let plans = [keeping(page_count(&source) as u32, &[(0, 0)])];
+        let why = write_split(&source, &plans, &scratch.join("part.pdf")).expect_err("refused");
+        assert!(why.message.contains("at least two files"), "{why}");
+    }
+
     /// **No `examined > 0` control**, unlike its neighbours. This fixture needs
     /// pyhanko, which the plain fixture run does not install --- so a checkout
     /// that generated `testdata/` the ordinary way has every other fixture and

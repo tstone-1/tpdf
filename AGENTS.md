@@ -1513,6 +1513,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
 - Restoring a mutated file by *moving* a backup over it tests the mutated binary (the title names the wrong mechanism --- see the entry below it)
+- Piping the gate runner through `tail` ate the exit code and the evidence, about fifteen times (`14/18 gates passed` reported as `[exited with code 0]`, and the notification agreed; the mistake hides behind the thing it is for, and the 991 discarded lines are why one of the four failures is permanently undiagnosable)
 - A harness that prints only at the end cannot say where it stopped
 - A harness that prints as it goes writes nothing until it exits, under a redirect
 - A `pgrep -f` wait loop is defeated by the command that checks on it (observing the job is what kept it blocked)

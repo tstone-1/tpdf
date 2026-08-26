@@ -185,6 +185,48 @@ MUTATIONS = [
         "the_open_documents_edits_reach_the_merge",
     ),
     Mutation(
+        # Write the parts over any file already sitting at their names. The
+        # reader picked ONE name in a dialog and the platform asked about that
+        # one; every other part is a path this module invented, so this
+        # replaces files nobody was warned about. `write_atomically` finishes
+        # with a rename, which does exactly that.
+        "split: write over a part that already exists",
+        "src/save.rs",
+        "        if target.exists() {",
+        "        if false {",
+        "a_split_refuses_an_existing_part_and_writes_nothing",
+    ),
+    Mutation(
+        # Number the parts from zero. `report-0.pdf` is not what any reader
+        # expects, and the off-by-one is invisible in a page count -- every part
+        # holds the right pages under the wrong name.
+        "split: number the parts from zero",
+        "src/save.rs",
+        "    (1..=count)",
+        "    (0..count)",
+        "split_paths_number_from_one_and_never_use_the_chosen_name",
+    ),
+    Mutation(
+        # Take the whole file name as the stem, so `report.pdf` becomes
+        # `report.pdf-1.pdf`. `file_name` and `file_stem` differ only for a name
+        # that has an extension, which every one here does.
+        "split: build the part names from the whole file name",
+        "src/save.rs",
+        "        .file_stem()",
+        "        .file_name()",
+        "split_paths_keep_a_dot_that_is_inside_the_stem",
+    ),
+    Mutation(
+        # Let a one-plan split through. It writes `name-1.pdf` and nothing else,
+        # which is an extract wearing the wrong command's name -- and the reader
+        # asked to split a document and got one file back.
+        "split: accept a split that writes a single file",
+        "src/save.rs",
+        "    if plans.len() < 2 {",
+        "    if false {",
+        "a_split_into_one_file_is_refused",
+    ),
+    Mutation(
         # Let an encrypted document be merged in. `lopdf` writes plaintext and
         # drops the dictionary, so the merged file carries a
         # permission-restricted document's pages with the restrictions gone --

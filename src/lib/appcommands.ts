@@ -32,7 +32,12 @@
 
 import type { CommandRegistry } from "./commands";
 import { BINDINGS, inTextField, label, matches, type BoundCommand } from "./keys";
-import { describeRange, parsePageRange } from "./pageranges";
+import {
+  describeRange,
+  describeSplit,
+  parsePageRange,
+  parseSplitPoints,
+} from "./pageranges";
 import { PALETTE } from "./markcolors";
 import type { MarkKind, StampName } from "./pages";
 import type { Tab } from "./sidebar";
@@ -270,6 +275,8 @@ export interface AppActions {
   saveCopy(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
   extractPages(slots: number[]): void;
+  /** Ask for a stem and write the document to one numbered file per group. */
+  splitDocument(groups: number[][]): void;
   /** Ask for documents to combine with this one, and for a name to write to. */
   mergeDocuments(): void;
   /** Show what the document says about itself. */
@@ -922,6 +929,44 @@ export function registerAppCommands(
           // one is what actually writes a file.
           if (!range.slots) return;
           actions.extractPages(range.slots);
+        },
+      },
+    },
+    {
+      // Grouped with extract and merge, and a `file.` command for their reason:
+      // it changes nothing about the open document and what it produces is
+      // somewhere else.
+      //
+      // **The argument is the cuts, not the files.** `3,7` on ten pages writes
+      // three files, 1-3, 4-7 and 8-10. `parseSplitPoints` states why the
+      // numbers are the last page of a file rather than the first of the next,
+      // and why "every N pages" is a different grammar that is not this one.
+      //
+      // The parse runs twice, in `problem` and again in `run`, which is
+      // `file.extractPages`' arrangement and carries its reason: the function
+      // is pure and cheap, and the alternative is a validated value cached
+      // between two callbacks the palette may invoke in either order.
+      id: "file.splitDocument",
+      title: "Split document...",
+      // No shortcut, for the reason extract and merge have none: no chord reads
+      // as "split", and this is reached deliberately.
+      enabled: withDocument,
+      argument: {
+        placeholder: "Cut after pages, e.g. 3,7",
+        problem: (raw: string) =>
+          parseSplitPoints(raw, actions.pageCount()).problem ?? null,
+        preview: (raw: string) => {
+          const split = parseSplitPoints(raw, actions.pageCount());
+          return split.groups ? describeSplit(split.groups) : "";
+        },
+        run: (raw: string) => {
+          const split = parseSplitPoints(raw, actions.pageCount());
+          // Unreachable through the palette, which refuses to run a command
+          // whose `problem` answered. A guard rather than a `!` for
+          // `file.extractPages`' reason: the two callbacks are independent
+          // entry points and this is the one that writes files.
+          if (!split.groups) return;
+          actions.splitDocument(split.groups);
         },
       },
     },

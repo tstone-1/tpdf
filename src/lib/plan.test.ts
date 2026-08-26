@@ -78,6 +78,12 @@ const NOT_COMMANDS: Record<string, string> = {
   // their absence, and it is correct.
   "edit.cropToRectangle": "named at :8800 as a predicted id that did not ship; the prose says so",
   "edit.addStamp": "the other half of that sentence, and what shipped is edit.stamp.*",
+  // The third of the same kind, and the reason this table is a table rather
+  // than two lines: *Splitting a document* records that the README's own
+  // `not-built` marker guessed this name while the command shipped as
+  // `file.splitDocument`, which is why the absence direction stayed green. The
+  // prose is about the guess, so the guess has to be sayable.
+  "edit.splitDocument": "named in the split section as the guess the README made and nothing used",
   // A placeholder filename inside a command line: `TPDF_AUTOBENCH=<file.pdf>`
   // at :450 and `cupsfilter -d <queue> file.pdf` at :4349. The pattern cannot
   // tell a filename from an id without knowing every id, which is the thing it

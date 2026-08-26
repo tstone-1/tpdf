@@ -15769,3 +15769,50 @@ recorded four times; this one asked.
 Paid for on 2026-08-26. The lesson is not that the check was wrong to want ---
 it is that half of it had no subject, and reading twenty-four sentences was
 enough to know that before writing any code.
+
+### Piping the gate runner through `tail` ate the exit code and the evidence, about fifteen times
+
+`python3 scripts/gates.py 2>&1 | tail -22` prints the summary block, which is all a
+reader wants. The exit status of `a | b` is **b's**, so the pipeline reports
+`tail`'s 0 whatever the gates did.
+
+Used for every gate run in one session on 2026-08-26. It cost nothing while the
+runs were green, and then:
+
+    [FAIL] fmt     [FAIL] test     [FAIL] docs     [FAIL] vitest
+    14/18 gates passed
+    [exited with code 0]
+
+The harness's own completion notice read *"completed (exit code 0)"* --- that number
+is the pipeline's --- so a run that failed four gates announced itself as a success.
+Nothing but reading the summary text distinguished it, and the summary is exactly
+what a `tail` is used to reach, which is why this survived so long: **the mistake
+hides behind the thing it is for.**
+
+**The second half is worse and is the half with no workaround.** `tail -22` also
+*discarded* 991 lines. Three of the four failures were reproducible and diagnosed in
+one command each. The fourth --- `test`, exit 101 --- was not: a clean re-run passes
+826/826, and the log that would have said which test failed no longer exists. So it
+is recorded as an **unexplained observation**, which is all the evidence supports.
+That is the corpus's `| tail -30 destroyed the log's head` arriving on this
+repository's own gate runner.
+
+**The fix is a file, not a longer tail:**
+
+    python3 scripts/gates.py > gates.log 2>&1 ; echo "exit: $?"
+    sed -n '/=== summary/,$p' gates.log      # the block you wanted
+    grep -c 'FAILED\|panicked\|\[FAIL\]' gates.log
+
+The third line matters as much as the first: a summary saying `18/18` and a log
+holding zero failure strings are two claims, and this run makes both. The one that
+was believed for an hour made neither.
+
+**And the general shape, which is why this is written down rather than just fixed.**
+The cross-repo rule *"never pipe a long command through `tail`"* was already written,
+already read, and violated on every single invocation for a whole session --- a rule
+you wrote down is not a rule you enforce. What made it invisible is that the pipeline
+succeeded at its visible job every time. A display step that also silently answers
+"did it work" is the composition to look for; here it answered wrong exactly once,
+and once is the number that matters.
+
+Paid for on 2026-08-26.

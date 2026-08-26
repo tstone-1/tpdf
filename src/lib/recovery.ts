@@ -124,6 +124,41 @@ export function afterCopy(copied: { changed?: boolean }): string | null {
 }
 
 /**
+ * What to say after a split, which is always something.
+ *
+ * {@link afterMerge}'s exception for {@link afterCopy}'s reason, arriving from
+ * the other direction. A copy and an extract go to the name the reader typed,
+ * so the file appearing is the acknowledgement. A split goes to names the
+ * reader never typed and never saw: `save::split_paths` derives them from the
+ * chosen one, and the chosen one is not among them. A reader told nothing would
+ * look for the file they named and not find it.
+ *
+ * So the first and last names are the report. Not all of them --- a split can
+ * make sixty files and this is one line --- and not a count alone, which says
+ * how many without saying where.
+ */
+export function afterSplit(split: { changed?: boolean; paths: string[] }): string {
+  const count = split.paths.length;
+  const first = basenameOf(split.paths[0] ?? "");
+  const last = basenameOf(split.paths[count - 1] ?? "");
+  const said =
+    count === 0
+      ? "Nothing was written."
+      : `Wrote ${count} file${count === 1 ? "" : "s"}, ${first} to ${last}.`;
+  if (!split.changed) return said;
+  return (
+    `${said} The original changed on disk while you had it open, so your edits ` +
+    "were applied to the newer version. Check them before relying on them."
+  );
+}
+
+/** The last path segment, for either platform's separator. */
+function basenameOf(path: string): string {
+  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return at === -1 ? path : path.slice(at + 1);
+}
+
+/**
  * What to say after a merge, which is always something.
  *
  * The one write path whose success is **not** silent, and the exception is

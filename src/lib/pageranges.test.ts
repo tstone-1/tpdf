@@ -1,6 +1,99 @@
 import { describe, expect, it } from "vitest";
 
-import { describeRange, namePages, parsePageRange } from "./pageranges";
+import {
+  describeRange,
+  describeSplit,
+  namePages,
+  parsePageRange,
+  parseSplitPoints,
+} from "./pageranges";
+
+describe("parseSplitPoints", () => {
+  it("cuts after the page named, so the number is a file's last page", () => {
+    expect(parseSplitPoints("3", 10).groups).toEqual([
+      [0, 1, 2],
+      [3, 4, 5, 6, 7, 8, 9],
+    ]);
+  });
+
+  it("makes one file more than there are cuts", () => {
+    expect(parseSplitPoints("3,7", 10).groups).toEqual([
+      [0, 1, 2],
+      [3, 4, 5, 6],
+      [7, 8, 9],
+    ]);
+  });
+
+  it("covers every page exactly once, whatever the cuts", () => {
+    // The property the group arithmetic exists to hold, and the one a
+    // boundary mistake breaks in silence: a reader who loses page 6 to an
+    // off-by-one still gets files, and they still open.
+    const groups = parseSplitPoints("1,2,9", 10).groups ?? [];
+    expect(groups.flat()).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it("cuts after the first page, which is the smallest split there is", () => {
+    expect(parseSplitPoints("1", 3).groups).toEqual([[0], [1, 2]]);
+  });
+
+  it("cuts before the last page, which is the other end of the same bound", () => {
+    expect(parseSplitPoints("2", 3).groups).toEqual([[0, 1], [2]]);
+  });
+
+  it("orders the cuts however they were typed", () => {
+    expect(parseSplitPoints("7,3", 10).groups).toEqual(parseSplitPoints("3,7", 10).groups);
+  });
+
+  it("ignores the spaces people type around the separators", () => {
+    expect(parseSplitPoints(" 3 , 7 ", 10).groups).toEqual(parseSplitPoints("3,7", 10).groups);
+  });
+
+  it("refuses the last page, because cutting after it makes an empty file", () => {
+    expect(parseSplitPoints("10", 10).problem).toBe(
+      "Page 10 is the last page, so cutting after it makes nothing",
+    );
+  });
+
+  it("refuses a repeated cut rather than merging it, because it makes an empty file", () => {
+    // The one place this is stricter than `parsePageRange`, which merges an
+    // overlap. A set can contain a page twice and mean one page; a cut list
+    // cannot, because the second cut names a file with no pages in it.
+    expect(parseSplitPoints("3,3", 10).problem).toBe("Page 3 is named twice");
+  });
+
+  it("refuses a range, naming the box the reader meant", () => {
+    expect(parseSplitPoints("1-3", 10).problem).toBe(
+      'Split takes the pages to cut after, not a range like "1-3"',
+    );
+  });
+
+  it("refuses a one-page document, which has nowhere to cut", () => {
+    expect(parseSplitPoints("1", 1).problem).toBe("A one-page document cannot be split");
+  });
+
+  it("asks for input rather than complaining when the text is empty", () => {
+    expect(parseSplitPoints("", 10).problem).toBe("Pages to cut after, 1 to 9");
+  });
+
+  it("refuses an empty part, which is what a trailing comma is", () => {
+    expect(parseSplitPoints("3,", 10).problem).toBe('"3," has an empty part');
+  });
+
+  it("refuses a page past the end, naming the document's length", () => {
+    expect(parseSplitPoints("11", 10).problem).toBe("This document has 10 pages");
+  });
+
+  it("refuses page zero, because the numbers are the printed ones", () => {
+    expect(parseSplitPoints("0", 10).problem).toBe("This document has 10 pages");
+  });
+});
+
+describe("describeSplit", () => {
+  it("counts the files and the pages in each", () => {
+    const groups = parseSplitPoints("3,7", 10).groups ?? [];
+    expect(describeSplit(groups)).toBe("3 files: 3 + 4 + 3 pages");
+  });
+});
 
 describe("parsePageRange", () => {
   it("reads a single page as one zero-based slot", () => {

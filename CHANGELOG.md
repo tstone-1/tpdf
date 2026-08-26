@@ -19,6 +19,43 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Added: Split a document
+
+Name the pages to cut after and get several files. `3,7` on a ten-page document
+writes three files of 3, 4 and 3 pages. `Split document...` in the palette and in
+the File menu, between `Extract pages...` and `Merge documents...` --- the three
+read as one-out-of-one, several-out-of-one, one-out-of-several, and it borrows
+extract's shape exactly: it reads the working document and writes elsewhere, so
+nothing is journalled, nothing is dirty and there is nothing to undo.
+
+**The numbers are the cuts, not the files.** A cut names the *last page of a
+file*, because that is how you would describe a document out loud --- "the report
+ends on page 7" --- and because it makes the first file's boundary sayable at all,
+which "the first page of the next one" cannot do without naming page 1 and
+meaning nothing.
+
+"Every N pages" is a different grammar and is not this one: a bare `3` would have
+to mean either "cut after page 3" or "files of three pages", and only the first
+composes with a list. Fives on a twenty-page document is `5,10,15`.
+
+**You choose one name and get numbered siblings.** `report.pdf` gives
+`report-1.pdf`, `report-2.pdf`, `report-3.pdf`, and the name you chose is not one
+of them --- writing the first part there would leave one unnumbered file beside
+two numbered ones, and the unnumbered one is the one that reads as the whole
+document. So the split always says what it wrote and where; a save that succeeds
+is otherwise silent, and here the file you named is not among the files that
+appeared.
+
+**It refuses before writing anything if a file it would write is already there.**
+A save goes to the path you picked in a dialog, so the platform has already asked
+you about replacing it. A split derives every name after the first, and those are
+names no dialog ever showed you --- without this, splitting `report.pdf` in a
+folder that already holds `report-2.pdf` would replace it silently.
+
+Refused for the reasons extract is, and one more: a range like `1-3`, which is
+extract's grammar in the wrong box and is named as such rather than reported as a
+bad page number.
+
 ### Fixed: documents stayed open after the window reloaded
 
 The backend released a document only when the reader opened another one in its
