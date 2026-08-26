@@ -3831,6 +3831,48 @@ MUTATIONS += [
         'return "opens a web link --- not followed";',
         "holds no prose dash outside the separator sentinel",
     ),
+    # ------------------------------------------------------- docs/PLAN.md
+    # The plan names command ids in its prose, and a rename leaves those
+    # mentions behind. `PLAN.md:8800` records that happening twice already.
+    # `src/lib/plan.test.ts` is what reads it.
+    Mutation(
+        # A command renamed, with the plan left behind. This is the case the
+        # check exists for and the only one it can catch on its own.
+        "plan: name a command that is not registered",
+        "docs/PLAN.md",
+        "`edit.drawBox runs from the palette`",
+        "`edit.drawBoxen runs from the palette`",
+        "names only commands that exist",
+    ),
+    Mutation(
+        # A whole family renamed. No single id is named in the plan for these,
+        # so the exact-id check is structurally blind to it and the family
+        # check is the only thing standing there.
+        "plan: name a command family that is not registered",
+        "docs/PLAN.md",
+        "`edit.color.*`",
+        "`edit.colour.*`",
+        "names only command families that exist",
+    ),
+    Mutation(
+        # An exclusion outliving its subject. Left alone it becomes a blanket
+        # permission: the id it names stops appearing in the plan, and the
+        # entry goes on excusing nothing while looking deliberate.
+        "plan: keep an exclusion for a string the plan never mentions",
+        "src/lib/plan.test.ts",
+        '  "file.pdf": "a placeholder filename',
+        '  "edit.neverMentionedAnywhere": "planted",\n  "file.pdf": "a placeholder filename',
+        "keeps no exclusion for a string the plan no longer contains",
+    ),
+    Mutation(
+        # The emptiness control. A scan whose pattern stops matching agrees
+        # with every claim in the file, which is what a clean run looks like.
+        "plan: scan for ids under a namespace nothing uses",
+        "src/lib/plan.test.ts",
+        "/\\b(?:app|edit|file|find|nav|view)\\.",
+        "/\\b(?:zzz)\\.",
+        "finds command ids in the plan to check",
+    ),
 ]
 
 TEST_FILES = [
@@ -3971,6 +4013,8 @@ TEST_FILES = [
     "src/lib/readertext.test.ts",
     # Added 2026-08-25 with the two orphans mutations above, in the same edit.
     "src/lib/orphans.test.ts",
+    # Added 2026-08-26 with the four PLAN.md mutations above, in the same edit.
+    "src/lib/plan.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
