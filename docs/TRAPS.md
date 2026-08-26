@@ -11875,6 +11875,21 @@ a thumbnail to move a page*, *Draw freehand on a page*, *An ellipse*, *Stamp a d
 first habit's grep would have found each in one command, on the day. Nobody ran it, because
 nothing asks.
 
+⚠ **A sixth was found hours later, by the sweep's own blind spot.** `:5903` said *"splitting a
+document into several files at once, **and merging**"*; `file.mergeDocuments` had been
+registered since 2026-08-24 (`fb1c15d`). The sweep missed it because it grepped for
+`document.merge` and `fn split_document` --- **names it invented** --- so the absence it
+measured was the absence of its own guesses. That is the entry *"a gate over claimed absences
+only catches the name the claim guessed"*, committed by the same session that had just written
+a trap about it, one commit earlier.
+
+**The correct instrument was one command away and is the one the check built that day already
+uses:** print every registered id (`node -e` over `appcommands.ts`, sixty-eight of them) and
+read the list. A capability is a fact about the registry; a grep for a plausible symbol is a
+question about your own vocabulary. The five found first were all found by reading commit
+subjects, which is the same discipline --- the sixth was the one where the search went back to
+guessing.
+
 **Two of the five had already been maintained by hand, and went stale again.** 6302 and 7731
 do not merely carry an ageing sentence: each carries a *parenthetical added later to correct
 it* --- "(Ink, the box, the ellipse, squiggly and text boxes have all landed since; stamps are

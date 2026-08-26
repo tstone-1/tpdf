@@ -5902,11 +5902,23 @@ reads exactly like the strong one, and the whole point of the sweep asserting
 identical name sets is that a skip is visible where a quietly diminished check
 is not.
 
-**Not done:** splitting a document into several files at once, and merging. Split
+**Not done:** splitting a document into several files at once. Split
 is this operation repeated and needs a second question answered --- how the files
-are named --- rather than new machinery. Merge is its inverse and is the larger
+are named --- rather than new machinery. ~~Merge is its inverse and is the larger
 one: nothing in the model creates a page, and `docmodel`'s note has the
-id-allocator property that would need proving first.
+id-allocator property that would need proving first.~~ (Merge done 2026-08-24 ---
+`fb1c15d`, *Merge documents into a new file*, registered as `file.mergeDocuments`.
+Checked 2026-08-26.)
+
+⚠ **This is the sixth stale claim in this file and the one that says most about how
+they are found.** The sweep two commits ago checked the greppable notes against the
+tree and reported split *and merge* as open, because it grepped for `document.merge`
+and `fn split_document` --- names it made up. `file.mergeDocuments` had been
+registered for two days. That is the failure the entry *"a gate over claimed
+absences only catches the name the claim guessed"* describes, committed in the same
+session that wrote a trap about it. **Check a capability against the registry, not
+against a name you invented for it:** `node -e` over `appcommands.ts` prints all
+sixty-eight ids in one command, and reading that list is what found this.
 
 #### Highlighting a selection --- done 2026-08-18
 
