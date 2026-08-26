@@ -231,6 +231,52 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example password-prob
 #                             writer, 0 findings, both controls fired
 cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 
+# Redaction: does removing a region remove the words, and ONLY those words?
+# src/redact.rs is asserted against hand-built content streams, which is right
+# for "which operator gets deleted" and says nothing about a real document -- a
+# fixture agrees with whatever its author had in mind. This is the corpus
+# control: the same two functions, real files, through PDFium, with verify::scan
+# asked whether the words left the FILE rather than the page.
+#
+# Five checks, and the three that assert LIMITS are the valuable ones:
+#
+#   text-base14.pdf   the account number is removed, and "Sphinx of black
+#                     quartz" on another line survives -- the over-redaction
+#                     control, without which emptying the page would pass.
+#   links.pdf         eight pages drawing the same words, so the needle names
+#                     its page. The first run of this probe marked a word that
+#                     lives on every page, removed it from one, and correctly
+#                     reported it still in the file.
+#   text-marked.pdf   the same line, in a document that ALSO holds it as
+#                     /ActualText. The removal is asserted to be INSUFFICIENT:
+#                     the drawing goes and the words stay. That is PLAN.md
+#                     section 6's thesis -- redaction is whole-graph sanitation,
+#                     not a page edit -- as a measurement. The day this clears
+#                     the carriers too, that check goes red and says to move the
+#                     fixture into CASES.
+#   hostile-scan.pdf  a region over a /DCTDecode image reports an INCOMPLETE
+#                     plan naming each object it cannot remove. Deny by default:
+#                     taking the words and leaving a picture of the words is the
+#                     confident lie section 6 opens by forbidding.
+#   text-cid.pdf      the blind spot, asserted in both directions -- PDFium
+#                     extracts the account number and verify::scan cannot see
+#                     it, because Identity-H stores glyph ids. A run where the
+#                     scan DOES find it means the instrument grew a capability
+#                     its own documentation denies.
+#
+# Route B eats the line: PLAN.md section 6 removes the whole text-showing
+# operation containing any redacted glyph, so a word beside the target goes with
+# it. Every control word is on a different line for that reason, and the run
+# prints how many of the page's operators went.
+#
+# It needs the fonttools fixtures (text-base14, text-marked, text-cid), which a
+# hosted runner does not have -- see scripts/ci_fixtures.py. Without them the
+# cases print [SKIP] and the run reports that nothing was checked rather than
+# passing.
+#
+#   macOS arm64, 2026-08-26   2 cases ran, 0 failures, all three limits asserted
+cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
+
 # Signatures: does PDFium agree with us about the same signatures?
 # `docinfo.rs` walks /AcroForm /Fields with lopdf; PDFium implements that walk
 # in C++ and exports the result. Neither knows about the other, which is what

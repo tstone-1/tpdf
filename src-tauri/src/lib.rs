@@ -41,6 +41,7 @@ pub mod progressive;
 mod protocol;
 mod queue;
 pub mod recentdocs;
+pub mod redact;
 pub mod render;
 /// Windows containment, which is what `worker_child`'s `sandbox_init` is on the
 /// other platform. Gated because job objects, integrity levels and attribute

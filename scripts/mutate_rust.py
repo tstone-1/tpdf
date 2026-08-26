@@ -958,6 +958,92 @@ MUTATIONS = [
         "a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them",
     ),
     Mutation(
+        # Number the ordinals by every object rather than by text objects. An
+        # image between two lines then shifts the numbering, and the redaction
+        # removes a line the reader did not mark while reporting success.
+        "redact: count every page object when numbering the text ones",
+        "src/redact.rs",
+        "        let is_text = object.kind == \"text\";\n        let ordinal = text_ordinal;\n        if is_text {\n            text_ordinal += 1;\n        }",
+        "        let is_text = object.kind == \"text\";\n        let ordinal = text_ordinal;\n        text_ordinal += 1;",
+        "an_image_between_two_lines_does_not_shift_the_text_ordinals",
+    ),
+    Mutation(
+        # Delete front-first. The second removal then lands on whatever moved
+        # into the slot -- invisible with two lines, wrong with three.
+        "redact: remove show operators front-first instead of back-first",
+        "src/redact.rs",
+        "    for at in positions.into_iter().rev() {",
+        "    for at in positions.into_iter() {",
+        "removing_two_operators_removes_the_two_that_were_named",
+    ),
+    Mutation(
+        # Proceed when PDFium's object count and the operator count disagree,
+        # which is a redaction that removes the wrong words and says it worked.
+        "redact: remove by position even when the two counts disagree",
+        "src/redact.rs",
+        "    if shows.len() != text_objects {",
+        "    if false {",
+        "a_count_that_disagrees_with_pdfium_refuses_and_removes_nothing",
+    ),
+    Mutation(
+        # Treat a shared edge as an overlap, so a region drawn flush against a
+        # line silently eats it.
+        "redact: treat two rectangles that only touch as overlapping",
+        "src/redact.rs",
+        "    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]",
+        "    a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]",
+        "a_region_flush_against_a_line_does_not_eat_it",
+    ),
+    Mutation(
+        # Say nothing about an object that cannot be removed. PLAN.md section 6's
+        # deny-by-default rule inverted: the words go and the picture of the
+        # words stays, and the plan calls itself complete.
+        "redact: pass over an image in the region without reporting it",
+        "src/redact.rs",
+        "            plan.unhandled.push(format!(",
+        "            drop(format!(",
+        "an_image_in_the_region_makes_the_plan_incomplete",
+    ),
+    Mutation(
+        # Forget the two quote forms, so a redaction passes over any line drawn
+        # with one.
+        "redact: stop recognising the quote text-showing operators",
+        "src/redact.rs",
+        "    matches!(operator, \"Tj\" | \"TJ\" | \"'\" | \"\\\"\")",
+        "    matches!(operator, \"Tj\" | \"TJ\")",
+        "the_two_quote_operators_are_show_operators",
+    ),
+    Mutation(
+        # Trust the corners' order. A region arriving with either pair the other
+        # way round then overlaps nothing at all, and the redaction quietly
+        # removes nothing.
+        "redact: assume a region's corners arrive in the order PDFium uses",
+        "src/redact.rs",
+        "        rect[0].min(rect[2]),\n        rect[1].min(rect[3]),",
+        "        rect[0],\n        rect[1],",
+        "a_region_with_its_corners_the_other_way_round_still_overlaps",
+    ),
+    Mutation(
+        # Normalise the region and not the object. The mirror, and the reason
+        # there is one function rather than two copies: the first version of
+        # this mutation survived because a test reversing both axes let the
+        # other copy rescue it.
+        "redact: normalise the region a reader drew and not the object it covers",
+        "src/redact.rs",
+        "    let a = normalised(a);\n    let b = normalised(b);",
+        "    let b = normalised(b);",
+        "an_object_with_its_corners_the_other_way_round_is_still_found",
+    ),
+    Mutation(
+        # Act on a repeated ordinal twice, so the second pass deletes whatever
+        # moved into the slot.
+        "redact: act on a repeated ordinal twice",
+        "src/redact.rs",
+        "    positions.dedup();",
+        "    positions.reverse();\n    positions.sort_unstable();",
+        "the_same_ordinal_twice_removes_one_operator",
+    ),
+    Mutation(
         # Leave max_id where the graph left it, which is spike 0.4's defect:
         # /Size then claims objects the file does not contain. Nothing in this
         # process reads that -- only qpdf does -- so the assertion has to be on

@@ -2070,7 +2070,7 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
 /// # Errors
 ///
 /// `lopdf` refusing to serialise, or the bytes it produced failing the check.
-pub(crate) fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
+pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
     // **`/Size` made right rather than checked**, and the difference is the
     // whole reason this is two lines instead of a guard.
     //
