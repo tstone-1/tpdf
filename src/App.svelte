@@ -49,7 +49,12 @@
   import type { Properties } from "./lib/properties";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
-  import { pagesNeedingWords, wordsForPage, type Comments } from "./lib/comments";
+  import {
+    pagesNeedingWords,
+    wantingWordsOn,
+    wordsForPage,
+    type Comments,
+  } from "./lib/comments";
   import { touchedText } from "./lib/reading";
   import { noticeFor as linkNotice, type Link, type Links } from "./lib/links";
   import type { Outline } from "./lib/outline";
@@ -232,11 +237,23 @@
   let rawLinks: readonly Link[] = [];
   let rawComments: Comments | null = null;
   /**
-   * Pages whose covered words have been asked for, so no page is asked twice.
+   * Comments whose covered words have been asked for, so none is asked twice.
    *
-   * Pages rather than comments: one extraction answers every comment on a page,
-   * and a page that came back with nothing is still a page that was asked.
-   * Cleared with the document, since a slot means nothing across two files.
+   * **Comment ids, and until 2026-08-26 this held page slots.** The comment
+   * that justified that was half right and the half it got wrong decided the
+   * key: one extraction does answer every comment on a page, and a page that
+   * came back with nothing is a page that was asked --- both true, and neither
+   * says the *set* may be keyed by page. A page number here is a slot, and
+   * deleting a page renumbers every slot after it, so a walk that had answered
+   * slot 5 would then refuse the page that moved into slot 5 and its comments
+   * would read *no comment* for the rest of the session. Measured before it was
+   * changed: two bare highlights, one answered, one page deleted, and the walk
+   * returned nothing with a comment still wanting words.
+   *
+   * A comment id is what the annotation carries and it does not move ---
+   * `redactionPagesRead` below reaches the same conclusion from the other end,
+   * keying on the page *id* rather than the slot for regions that carry one.
+   * Cleared with the document, since an id means nothing across two files.
    */
   const wordsAsked = new Set<number>();
   /**
@@ -836,13 +853,19 @@
         // text and hand it to the comment that used to be there. Wrong words on
         // a real row, which is the failure that looks entirely plausible.
         const items = commentsIn(source.items, edits?.map ?? NO_PAGES);
-        const page = pagesNeedingWords(items).find((at) => !wordsAsked.has(at));
+        const page = pagesNeedingWords(items, wordsAsked)[0];
         if (page === undefined) return;
         // The document that was open when this page was asked for. A second file
         // opened mid-walk replaces `rawComments`, and writing this one's
         // sentences onto its rows has the same shape as the slot problem above.
         if (rawComments !== source) return;
-        wordsAsked.add(page);
+        // The comments this round will answer, recorded before the await so a
+        // page that cannot be read is not asked for again on the next edit.
+        // **Their ids, not the page**: a page number here is a slot, and a
+        // deletion renumbers every slot after it --- see `pagesNeedingWords`,
+        // which now takes this set and states what went wrong when it held
+        // slots.
+        for (const comment of wantingWordsOn(items, page)) wordsAsked.add(comment.id);
         const words = await wordsForPage(items, page, (at) =>
           viewer ? viewer.unturnedText(at) : Promise.resolve(null),
         );
