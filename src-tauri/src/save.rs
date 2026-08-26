@@ -2071,6 +2071,32 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
 ///
 /// `lopdf` refusing to serialise, or the bytes it produced failing the check.
 pub(crate) fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
+    // **`/Size` made right rather than checked**, and the difference is the
+    // whole reason this is two lines instead of a guard.
+    //
+    // `lopdf` writes `/Size` as `max_id + 1` and nothing keeps `max_id` in step
+    // with the objects a rewrite removed: spike 0.4's defect is exactly that,
+    // and `qpdf --check` states the rule in its own words --- *reported number
+    // of objects (142) is not one plus the highest object number (101)*. PDFium
+    // renders such a file pixel-identically to a correct one, and measurement
+    // on 2026-08-26 found no parser in this process that objects either.
+    //
+    // **The guard was written first and could not be shipped.** Asserting
+    // `max_id == highest` fails on both encrypted fixtures --- `lopdf` removes
+    // the `/Encrypt` object the moment it authenticates while `max_id` stays, so
+    // the count it can see is one short and the *file* is fine. Refusing to save
+    // a correct document is worse than the defect. And the obvious carve-out
+    // would have been unreachable anyway: the encryption guard refuses those
+    // rewrites several lines earlier, so no mutation could redden the
+    // assertion and it would have read as covered. `docs/TRAPS.md` carries all
+    // three rules that were tried and all three over-refusals.
+    //
+    // Lowering it is safe and is the tightest legal value: `/Size` has only to
+    // exceed every object number written, and where `lopdf` allocates an object
+    // of its own for an xref stream it takes `max_id + 1`, which this leaves
+    // free. `sweep::collect` already does this for the graph it collects; here
+    // it holds for every path, including a copy that dropped nothing.
+    doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes)
         .map_err(|e| format!("could not serialise {what}: {e}"))?;
@@ -5127,6 +5153,88 @@ mod tests {
             "only {examined} fixtures were rewritten, which is too few to have tested \
              anything --- run scripts/make_fixtures.py"
         );
+    }
+
+    /// `/Size` comes out as one plus the highest object number, whatever the
+    /// graph's `max_id` said.
+    ///
+    /// **qpdf's rule, and the one defect spike 0.4 found.** Its own message is
+    /// *reported number of objects (142) is not one plus the highest object
+    /// number (101)*, and nothing else reads it: `lopdf`'s loader and PDFKit
+    /// both accept such a file, PDFium renders it pixel-identically to a correct
+    /// one. So this is the direction that can be tested here --- the *detection*
+    /// belongs to `examples/qpdf_probe.rs`, which owns the only reader that
+    /// performs it.
+    ///
+    /// The input is reachable, which is what separates this from the structural
+    /// check beside it: a `Document` with an inflated `max_id` is one line, and
+    /// it is exactly what a sweep leaves behind when nothing lowers it.
+    #[test]
+    fn a_serialised_document_reports_the_size_its_objects_justify() {
+        let Some(path) = fixture("links.pdf") else {
+            println!("[SKIP] links.pdf not generated");
+            return;
+        };
+        let mut doc = Document::load(&path).expect("load");
+        let highest = doc.objects.keys().map(|id| id.0).max().expect("objects");
+        // Spike 0.4's defect: claim forty objects that are not there.
+        doc.max_id = highest + 40;
+
+        let bytes = serialise(&mut doc, "the document").expect("serialise");
+        let back = Document::load_mem(&bytes).expect("reload what was written");
+        let written = back.objects.keys().map(|id| id.0).max().expect("objects");
+        let size = back
+            .trailer
+            .get(b"Size")
+            .ok()
+            .and_then(|entry| entry.as_i64().ok())
+            .expect("a trailer with a /Size");
+        assert_eq!(
+            size,
+            i64::from(written) + 1,
+            "/Size {size} against a highest object number of {written}"
+        );
+    }
+
+    /// And it is not lowered past what the file needs.
+    ///
+    /// The over-correction control, and it is not hypothetical: the repair
+    /// *lowers* a number, so the failure it can introduce is a `/Size` that no
+    /// longer covers every object written --- the same defect in the opposite
+    /// direction, and just as invisible to every reader in this process.
+    /// Asserted against the objects the output actually holds, not against the
+    /// ones it was built from.
+    #[test]
+    fn no_object_is_written_at_or_past_the_size_that_was_declared() {
+        let Some(path) = fixture("comments.pdf") else {
+            println!("[SKIP] comments.pdf not generated");
+            return;
+        };
+        let count = page_count(&path);
+        assert!(count > 1, "the fixture needs a page to spare");
+        let scratch = Scratch::new("size-floor");
+        let out = scratch.join("out.pdf");
+        let kept: Vec<(u32, u8)> = (0..count as u32 - 1).map(|source| (source, 0)).collect();
+        write_copy(&path, &keeping(count as u32, &kept), &out).expect("write");
+
+        let back = Document::load(&out).expect("reload");
+        let size = back
+            .trailer
+            .get(b"Size")
+            .ok()
+            .and_then(|entry| entry.as_i64().ok())
+            .expect("a trailer with a /Size");
+        assert!(
+            !back.objects.is_empty(),
+            "the control needs objects to compare against"
+        );
+        for id in back.objects.keys() {
+            assert!(
+                i64::from(id.0) < size,
+                "object {} is at or past the declared /Size of {size}",
+                id.0
+            );
+        }
     }
 
     /// Deleting one of two page numbers that are one page is refused.

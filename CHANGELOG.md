@@ -19,6 +19,17 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Fixed: a saved file no longer over-reports how many objects it contains
+
+A file records how many objects it holds. A save that removed some --- a
+deleted page, an extract --- left that number where it was, so the file claimed
+more than it had. No reader in tpdf notices, and neither does the operating
+system's PDF reader; a strict validator does, and calls the file damaged.
+
+The number is now computed from what is actually written, on every save, copy,
+extract, split, merge and print job. No file tpdf writes can carry the old
+defect.
+
 ### Changed: every PDF tpdf writes is checked before it is written
 
 A save, a copy, an extract, a split, a merge and a print job all become bytes in
