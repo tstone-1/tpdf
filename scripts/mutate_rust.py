@@ -141,6 +141,11 @@ FILTERS = [
     # mutations rather than after them, which is the whole lesson of the five
     # times this list was forgotten and the sixth time it was not even noticed.
     "recentdocs::",
+    # Added 2026-08-26 with the verification module, at the same time as the
+    # mutations rather than after them. Seventh time this list has needed an
+    # entry, and the first time it was written without the guard having to say
+    # so -- which is what the six notes above are for.
+    "verify::",
 ]
 
 
@@ -2784,6 +2789,52 @@ MUTATIONS = [
         "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map(|after| after.get_pages().len())",
         "            password: None,\n            ..Default::default()\n        },\n    )\n    .map(|after| after.get_pages().len())",
         "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
+    ),
+    Mutation(
+        # Classify a filter chain by its FIRST entry. `/Filter` is applied in
+        # decoding order, so the last entry is the one that produces the
+        # content: `[/ASCII85Decode /DCTDecode]` is an ASCII-armoured JPEG.
+        # Reading the first calls it scannable, and the byte scan is then handed
+        # a decoded JPEG to look for words in.
+        "verify: classify a filter chain by its first entry",
+        "src/verify.rs",
+        "    let Some(last) = filters.last() else {",
+        "    let Some(last) = filters.first() else {",
+        "an_armoured_image_is_still_an_image",
+    ),
+    Mutation(
+        # Stop recognising raster carriers at all. They then fall through to the
+        # unrecognised arm, which is blind rather than deferred -- so the report
+        # says no instrument can help where OCR would, and every scanned
+        # document becomes uncertifiable for the wrong reason.
+        "verify: stop recognising a raster carrier",
+        "src/verify.rs",
+        "    if IMAGE.contains(last) {\n        return Carrier::Image { filter: name() };\n    }",
+        "    if false {\n        return Carrier::Image { filter: name() };\n    }",
+        "the_raster_filters_are_deferred_to_a_different_instrument",
+    ),
+    Mutation(
+        # Let a picture nobody read certify. THE one that would ship a lie: a
+        # scanned document is nothing but image carriers, so a `deferred` list
+        # that did not withhold the verdict would hand a reader the word
+        # "verified" for a file where nothing read the only thing in it.
+        "verify: certify a document whose pictures nobody read",
+        "src/verify.rs",
+        "        why.extend(self.deferred.iter().cloned());",
+        "        // why.extend(self.deferred.iter().cloned());",
+        "an_image_carrier_does_not_certify",
+    ),
+    Mutation(
+        # Forget which filters are merely missing a decoder here. They become
+        # "unrecognised", which is the deny-by-default arm and still withholds
+        # certification -- so the verdict is unchanged and only the REASON is
+        # wrong, telling a reader nobody has looked at a filter the format has
+        # always had.
+        "verify: conflate a missing decoder with an unknown filter",
+        "src/verify.rs",
+        '    const KNOWN: &[&[u8]] = &[b"ASCIIHexDecode", b"RunLengthDecode", b"Crypt"];',
+        "    const KNOWN: &[&[u8]] = &[];",
+        "a_filter_we_cannot_decode_is_blind_rather_than_deferred",
     ),
 ]
 

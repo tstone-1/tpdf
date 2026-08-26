@@ -46,6 +46,7 @@ The output is gitignored. Usage:
 """
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -658,6 +659,75 @@ def build_filters(path: str) -> "list[dict]":
     ]
 
 
+# A baseline 8x8 grey JPEG, 319 bytes, embedded rather than generated.
+#
+# Made once with `sips -s format jpeg` from a hand-built PNG and then stripped of
+# every APPn segment -- Exif, an ICC profile and a Photoshop block, which were
+# 94% of the file. What is left is SOF0, the quantisation and Huffman tables, the
+# scan and EOI, and `sips` still reads it back as 8x8, so it is a real decodable
+# image rather than bytes wearing a JPEG's name.
+#
+# Embedded because this generator is standard library only. Pillow would encode
+# one in a line and is not a dependency this fixture is worth taking.
+JPEG_8X8_GREY = base64.b64decode(
+    "/9j/wAALCAAIAAgBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAA"
+    "AgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+    "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWG"
+    "h4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl"
+    "5ufo6erx8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgI"
+    "CAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/90ABAAB/9oACAEBAAA/ACv/2Q=="
+)
+
+
+def build_scan(path: str) -> "list[dict]":
+    """A page whose only content is a raster image, as every scanner produces.
+
+    **The case the whole carrier split exists for, and the corpus did not have.**
+    `hostile-filters.pdf` next door covers two filters the rewriter cannot
+    decode, and both of them carry bytes -- so the correct answer there is that
+    nothing can read them. A `/DCTDecode` image is different in kind: even a
+    decoder for it would hand back *pixels*, and a byte scan cannot find a word
+    in pixels. The instrument that could is OCR, and saying so is the difference
+    between a verifier that refuses every scanned document and one that says
+    which tool to reach for.
+
+    So the needle here is deliberately **not in the file at all**. Writing it
+    into the stream would make the byte scan find it and the fixture would then
+    be testing the scan rather than the classification. What is being asserted is
+    that a `/DCTDecode` carrier lands in `deferred` rather than `blind`, and that
+    the file does not certify either way.
+    """
+    hidden = needle("inkonly")
+
+    pdf = Pdf()
+    image = pdf.reserve()
+    catalog, _, _ = skeleton(
+        pdf,
+        visible_content(
+            "scan",
+            (
+                "The grey square below is a /DCTDecode image. Nothing in this",
+                "file can read what a picture shows; that is what OCR is for.",
+            ),
+        )
+        + "q 120 0 0 120 60 480 cm /Ix1 Do Q\n",
+        resources=b" /XObject << /Ix1 %d 0 R >>" % image,
+    )
+    pdf.put(
+        image,
+        stream_body(
+            b"<< /Type /XObject /Subtype /Image /Width 8 /Height 8"
+            b" /ColorSpace /DeviceGray /BitsPerComponent 8"
+            b" /Filter /DCTDecode >>",
+            JPEG_8X8_GREY,
+            compress=False,
+        ),
+    )
+
+    write(path, pdf.serialize(catalog))
+    return [carrier(hidden, "text visible only in a /DCTDecode image", "needs-ocr")]
+
+
 def build_encrypted(path: str) -> "list[dict]":
     """The orphan fixture, encrypted with AES-256 and an empty user password.
 
@@ -730,7 +800,7 @@ def carrier(text: str, where: str, expect: str) -> dict:
       unverifiable  Nothing can decide either way under a sane resource bound, so
                     the only honest verdict is *not verified*.
     """
-    if expect not in ("removed", "survives", "unverifiable"):
+    if expect not in ("removed", "survives", "unverifiable", "needs-ocr"):
         raise ValueError(f"unknown expectation {expect}")
     return {"needle": text, "where": where, "expect": expect}
 
@@ -752,6 +822,7 @@ BUILDERS = {
     "hostile-unused-form.pdf": build_unused_form,
     "hostile-bomb.pdf": build_bomb,
     "hostile-filters.pdf": build_filters,
+    "hostile-scan.pdf": build_scan,
     "hostile-encrypted.pdf": build_encrypted,
 }
 

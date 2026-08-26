@@ -8833,6 +8833,39 @@ The comment is the durable part. It now records the wrong reason, the measuremen
 that there is no test to add — because the next person to run mutation coverage will find the
 same survivor and, without it, will re-derive the same wrong explanation.
 
+### A count taken from the input, asserted against the output --- red on a clean tree
+
+The spike guards that a fixture with an unreadable carrier must produce a non-empty
+`blind` list, so no route can announce a verdict on bytes nothing read. Adding a second
+carrier kind meant proving that guard still fires, and the mutation that inverts the
+classification --- call `/ASCIIHexDecode` a picture --- **did not fire it**.
+`hostile-filters.pdf` has *two* unreadable carriers, so misclassifying one leaves the other
+in `blind` and an existence check is satisfied by the carrier that is still right. The same
+shape as this file's entry about a page-wide grep that grows with the page.
+
+The obvious sharpening is to count: require as many blind spots as the fixture has
+unreadable carriers. It fires for that mutation, and it was **red on a clean tree**, on two
+routes, for a reason that is not a defect at all --- **`qpdf` re-encodes `/ASCIIHexDecode`
+into Flate**, so its rewrite of that fixture genuinely has one undecodable carrier where the
+input had two. The carrier became *readable*. That is the rewrite working.
+
+**The error is a category one and it is easy to repeat: the count is a property of the
+INPUT and the report is about the OUTPUT.** Every other number in that table --- objects,
+bytes, `%%EOF`s --- is read from the file the route produced, and the manifest's carrier
+list describes the file that went in. A route is allowed to change how many carriers are
+unreadable; that is what several of them are for.
+
+So it is back to an existence check, with the limitation written down rather than papered
+over: it cannot discriminate *within* a fixture holding two carriers of one kind. What
+closes that is the fixture rather than the assertion --- `hostile-scan.pdf` carries exactly
+**one** carrier, and on a single-carrier fixture existence and count are the same test, so
+the check aimed at it is fully discriminating and the inverting mutation goes red.
+
+Worth carrying past this corpus: before strengthening an assertion about a transformed
+artifact, ask which side of the transformation each operand comes from. An assertion whose
+two operands straddle it is not stronger, it is wrong in whichever direction the
+transformation is allowed to move.
+
 ### A control refused by a different guard than the one it was written for, again --- and the verdict was green
 
 `worker-probe` gained a check that the save's new worker-side read-back refuses a file

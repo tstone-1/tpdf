@@ -1491,6 +1491,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
 - A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
 - A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
+- A count taken from the input, asserted against the output --- red on a clean tree (the sharpening fired for the mutation and failed on a clean corpus; qpdf re-encoding a filter is the rewrite working, and the fix is a single-carrier fixture rather than a cleverer assertion)
 - A control refused by a different guard than the one it was written for, again --- and the verdict was green (both halves of the boolean were true and the two refusals came from different parsers; the evidence was printed beside the verdict from the first run)
 - A differential between two readers cannot tell you which mechanisms ran (three checks that would all pass if the worker secretly delegated to the coordinator; ask for something only one path needs)
 - A denominator that is constant in one dimension cannot compare areas (twelve orderly `[SKIP]` lines, and a percentage above 100 that went unread for a round)
