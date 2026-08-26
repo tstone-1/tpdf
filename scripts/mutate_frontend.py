@@ -1127,6 +1127,20 @@ MUTATIONS = [
         "does not follow the page being read while a pointer is down on a row",
     ),
     Mutation(
+        # The fourth roving list to get this fix, and the last. `focused` is a
+        # mirror of the DOM's focus and a window without system focus moves
+        # `activeElement` without delivering `focusin`, so a handler that steps
+        # from the mirror steps from a row the reader is not on. Enter carried
+        # the whole explanation in this file while the arrows read the mirror;
+        # deleting the reconciliation restores that, and the arrow test goes red
+        # on the row it lands on rather than on the one it left.
+        "thumbnails: step the arrows from the tracked row, not the one the key reached",
+        "src/lib/thumbnails.ts",
+        "    if (from !== this.focused && this.rows.has(from)) this.focus(from);\n",
+        "",
+        "steps from the row the key reached, not the one it last tracked",
+    ),
+    Mutation(
         # Scrolling per event rather than per frame, so the speed follows the
         # pointer's report rate --- and a reader holding still at the edge stops
         # moving, which is the case the loop exists for.

@@ -15577,3 +15577,84 @@ either direction.
 
 Paid for on 2026-08-26, and the outcome is a paragraph in the gate's docstring
 instead of an arm in its scan.
+
+### The fourth copy carried the explanation and not the fix
+
+The third instance of one defect, and this time the previous entry's own closing
+instruction is why it survived. Read it with the two above it.
+
+`focused` is a mirror of the DOM's focus, kept by a `focusin` listener. A window
+without system focus moves `activeElement` without delivering `focusin`, so a
+handler that reads the mirror acts on a row the reader is not on. Four panels in
+this frontend are that widget: `commentlist.ts`, `marklist.ts`, `sidebar.ts`,
+`thumbnails.ts`.
+
+    01293a4  2026-07-30  fixed Enter in TWO classes -- sidebar and thumbnails
+    7d27428  2026-08-08  fixed all six call sites in ONE of them -- sidebar
+    (today)  2026-08-26  thumbnails' arrows, 18 days later
+
+**`7d27428` is the commit that wrote the lesson, and it is the commit that left
+this behind.** Its trap ends: *"'Fixed' is a claim about a call site, not about a
+class. The previous change fixed Enter in two classes and recorded it as fixing
+the defect. Enumerate the call sites that read the shared piece of state --- there
+were six here, one per key --- rather than the classes that contain them."* That
+is correct, it was learned the expensive way, and it names the axis that had just
+bitten. Following it enumerated six call sites inside `sidebar.ts` --- and the
+sentence it had just written down told you the other class existed.
+
+So the complete instruction is **both** axes: every call site, in every class that
+implements the widget. A lesson phrased as *this* axis rather than *that* one
+steers the next reader away from the axis it de-emphasised, and it does so most
+effectively when it is right.
+
+**The fourth copy carried the whole explanation.** `thumbnails.ts` had eleven
+lines above its Enter case setting out the mirror, the missing `focusin`, and why
+the event's target is authoritative --- correct, and attached to the one key that
+already had the fix, while `move()` three lines up read `this.focused`. **So the
+search is not "which file lacks the comment".** All four have it. It is "which
+file's `move()` reads the mirror with no reconciliation above it", which is a
+question about the handler's first line rather than about its prose.
+
+**Home and End are exempt, and the obvious comment gets that wrong.** They are
+`move(-pageCount)` and `move(pageCount)`; the clamp in `move` swallows the
+starting row, so they land on 0 and `pageCount - 1` from anywhere. A comment
+claiming the stale mirror broke them too was written here and deleted before it
+shipped, after enumerating the clamp over four starting rows. Only the arrows are
+affected, which is why the test is about ArrowDown alone.
+
+**The extraction the duplication suggests was measured and declined.** Three of
+the four `move()` bodies are byte-identical modulo one accessor (`row.comment.id`,
+`row.mark.id`, `row.id`), and `idOf` is byte-identical in two files. But
+`thumbnails` is windowed --- its rows map holds only mounted rows, and it indexes
+pages against `pageCount` --- so it cannot share the array-backed step; and the
+four key switches differ irreducibly (tree expand/collapse, Delete, drag-Escape).
+Most decisive: **the defect lives in `onKeyDown`, which no extraction of
+`move`/`focus` would own.** The refactor the duplication argues for would not have
+prevented the thing that motivated it. What enforces the invariant is a
+behavioural test per list, in the place where each one can fail --- three had one,
+and the fourth now does.
+
+**The window harness could not see it either, and must not be made to.**
+`viewercheck.ts`'s `navigateFromStrip` drives the strip's keyboard --- with
+`Enter`, from a row it deliberately focuses rather than the mirror's, recording
+`activeElement`, the roving tabindex and `document.hasFocus()` as three separate
+observables precisely because of this trap. It never sends an arrow key. So all
+three layers covered Enter and none covered the arrows. The tempting repair is an
+arrow check in `thumbnailChecks`, and it is the wrong one twice over: in a real
+webview `element.focus()` *does* deliver `focusin`, so the divergence only appears
+when the window lacks system focus --- the one-run-in-three shape --- and forcing
+it deterministically would just be the unit test with a slower harness. The
+strip's own `dragFromStrip` states the rule: put in the window only what a window
+can uniquely answer. The unit test is the right home, and it now exists.
+
+**The population is four, and three other files look like it under a grep.**
+Checked rather than asserted, because this entry states the number. `palette.ts`
+and `contextmenu.ts` step a selection with ArrowDown and keep no focus mirror and
+no `focusin` listener. `viewer.ts` has `focusedLink` --- fourteen mentions, no
+`focusin` --- and it is not a mirror at all: no DOM element holds focus, the ring
+is drawn from that field, so the field *is* the truth rather than a copy of
+somebody else's. A grep for `ArrowDown` finds eight files; the discriminator is a
+`focusin` listener writing a field the key handler reads.
+
+Paid for on 2026-08-26. Found by asking, of a duplicated widget, not "are these
+alike" but "did the last fix reach all of them".

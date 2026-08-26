@@ -1157,6 +1157,26 @@ export class Thumbnails {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    // The event's target is authoritative: it *is* the element the key landed
+    // on, while `focused` is a mirror kept by the `focusin` listener, and a
+    // document without system focus moves `activeElement` without delivering
+    // that event. Enter derived this for itself and every other key read the
+    // mirror, so whenever it was stale the arrows stepped from a row the reader
+    // was not on. Reconciled once here instead, so `move` and `onNavigate`
+    // agree about which row the key reached. The mirror stays as the fallback
+    // for a key that arrived on the list rather than on a row. The outline tree
+    // had the same defect and the same fix; see the trap, and note that the
+    // explanation was already in this file, on Enter, while the arrows went on
+    // reading the mirror.
+    //
+    // Only the arrows. Home and End are `move(-pageCount)` and
+    // `move(pageCount)`, and the clamp in `move` swallows the starting row, so
+    // they land on 0 and `pageCount - 1` from anywhere -- which is why the test
+    // below is about ArrowDown and there is no Home/End case to write.
+    const slot = (event.target as HTMLElement | null)?.dataset?.page;
+    const from = slot === undefined ? this.focused : Number(slot);
+    if (from !== this.focused && this.rows.has(from)) this.focus(from);
+
     switch (event.key) {
       case "ArrowDown":
       case "ArrowRight":
@@ -1182,20 +1202,12 @@ export class Thumbnails {
         this.move(this.opts.pageCount);
         break;
       case "Enter":
-      case " ": {
-        // The row the key actually reached, not the one this class believes has
-        // focus. `focused` is a mirror of the DOM's focus kept up to date by the
-        // `focusin` listener, and a mirror can be stale: a document without
-        // system focus moves `activeElement` without delivering the focus event,
-        // so the mirror still says page 0 while the key lands on another row --
-        // and activating page 0 is indistinguishable from Enter doing nothing.
-        // The event's own target is authoritative in every case, because that
-        // *is* the focused element; the mirror is only the fallback for a key
-        // that arrived on the list rather than on a row.
-        const from = (event.target as HTMLElement | null)?.dataset?.page;
-        this.opts.onNavigate(from === undefined ? this.focused : Number(from));
+      case " ":
+        // `from` is resolved once at the top of this handler, for the reason
+        // stated there. It used to be derived here and nowhere else, which is
+        // how the arrows kept reading the stale mirror for as long as they did.
+        this.opts.onNavigate(from);
         break;
-      }
       default:
         return;
     }

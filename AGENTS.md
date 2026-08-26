@@ -1429,6 +1429,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
 - A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
 - A synchroniser is not a fix, and the entry above called the arrows fixed anyway (it is the entry above that was wrong, six days later)
+- The fourth copy carried the explanation and not the fix (the third instance of the two entries above, and the second one's closing lesson --- enumerate the call sites rather than the classes --- is why it survived 18 days; all four lists carry the comment, so the search is which `move()` reads the mirror with no reconciliation above it, the extraction the duplication argues for would not have owned the defect, and the window harness must NOT be given an arrow check even though it is the layer that also missed it)
 - A page fitted to the element's own width is measured under the scrollbar
 - Fit-width rescales every page when one of them becomes the widest (the check's observable moved for an innocent reason; it was written and watched pass on one corpus)
 - A synthetic heading that does not reach the second column tests nothing
