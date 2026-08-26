@@ -213,10 +213,23 @@ and the compiler is what enforces that rather than the attribute alone, since `F
 implements neither `Serialize` nor `Deserialize`. `Request`'s standing property holds: it names
 nothing the worker could act on.
 
+⚠ **Only half of it moved that day, and the other half moved on 2026-08-26.** Preparing the
+update is one parse; *verifying* what was written is another, and `save::append_in_place`
+re-read the whole file and parsed it here. It is `save::Reread` now --- a seam taking the
+written file's handle, its length and the password --- and `save::InWorker` maps that handle
+read-only into a sandboxed child, asks `Request::Reread` and drops it. So the append is out of
+the coordinator in both directions, and it gained the deadline and the memory bound this
+section says need a process. Residual risk 18 has the full account, including what stayed.
+
 Evidence, external to our own account of it: `worker-probe` builds an update section through a
 real contained worker and appends it to the fixture, then re-parses the result --- **865 bytes
 on a 775-page document, re-read as 775 pages**, with the length it was built against compared
-against the file's own (macOS, 2026-08-22, 17/17).
+against the file's own (macOS, 2026-08-22, 17/17). Four more checks since 2026-08-26 put the
+same worker on the *verification* side: it and the coordinator are asked the identical question
+about identical bytes and have to agree in both directions, the refusal has to be `lopdf`'s
+rather than PDFium's at open --- which the first draft of that check got wrong while reading as
+a pass --- and a fourth asks for something only the worker path needs, since two readers
+agreeing says nothing about whether a worker was involved at all (23/23).
 
 What has **not** moved is the rewrite: a deletion, a move, a turn or a crop still reserialises
 the whole document in the coordinator, and so do Save a copy and Extract. The reason is memory
@@ -1864,11 +1877,35 @@ which is what makes it evidence rather than a milestone.
 
     **That half is fixed the same day.** The whole `landed` match is on the blocking pool
     now, which moves the rewrite's own work with it: `verify_before_commit` hashes every
-    byte of the file, and it was on the runtime too. What is *not* fixed is the process:
-    the append's read-back still parses attacker-derived bytes in the coordinator, and
-    closing that needs the worker to be handed the file it just wrote --- the
-    output-channel problem this entry names for the rewriting save, arriving one path
-    early. `docs/PLAN.md` ranks it.
+    byte of the file, and it was on the runtime too.
+
+    ⚠ **And the process half closed 2026-08-26, so the append is off this list entirely.**
+    The read-back is `save::Reread`, a seam taking the written file's **handle**, a length
+    and the password; `save::InWorker` maps that handle read-only, spawns a sandboxed child
+    on it, asks `Request::Reread` and drops it. The coordinator no longer holds the bytes,
+    so there is nothing there to parse --- carried by the type rather than by anyone
+    remembering, which is what makes it checkable: `the_coordinator_does_not_parse_the_file_
+    it_wrote` writes a file that does not parse, hands over a verifier that says it is fine,
+    and requires the save to succeed. It goes red on the code this replaced.
+
+    Three things about that are worth stating rather than implying. **It gains the bounds
+    the coordinator could not offer** --- the deadline and the memory bound this entry says
+    need a separate process, which the append's read-back now has along with `MAX_DECODE`.
+    **The obstacle `docs/PLAN.md` recorded was not the real one**: it said the worker "holds
+    a mapping of the file as it was", and `save_document` closes the document before the
+    write, so there is no such mapping --- the real constraint was that a child has to be
+    started, at one spawn per in-place append. **And `lopdf` is deliberately still the
+    parser**, where `Request::Open` already answers a page count: what is being tested is
+    whether the cross-reference *chained*, and PDFium is lenient about exactly that.
+    Measured on the day, not inherited --- `worker-probe` plants a trailer pointing at
+    offset 999999999, PDFium opens it without complaint, and `lopdf` names the
+    cross-reference table.
+
+    **What is not closed.** `save::Here` still parses in the coordinator, and it is what a
+    platform with no sandbox gets --- refusing would make such a platform useless rather
+    than uncontained, which is the rule `Backend::default_here` already follows, and
+    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. The rewriting
+    save, the two copy paths and Merge are all unchanged and are the rest of this entry.
 
     The general shape is the one this entry already records --- **a mitigation that moved
     half a path reads exactly like one that moved the path**, and the half that stayed is

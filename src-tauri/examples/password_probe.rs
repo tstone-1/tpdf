@@ -342,7 +342,7 @@ fn save_a_mark(service: &RenderService, scratch: &Path) -> Result<String, String
     // The document is closed first for the reason `save_document` closes it:
     // the file is about to change under a mapping the worker still holds.
     let _ = ask(|reply| service.close(doc.id, reply));
-    save::append_in_place(&appended, scratch, held.as_deref())?;
+    save::append_in_place(&appended, scratch, held.as_deref(), &save::Here)?;
 
     // The claim, and it is about the file rather than about what we wrote: it
     // still needs the same key, it still has its pages, and the first one lists

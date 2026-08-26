@@ -1377,6 +1377,26 @@ a reason, rather than exiting 1 the way the shipped 26.8.8 did, and the reason m
 engine rather than being the parent's epitaph for a dead child. The fixture is a directory with
 no PDFium in it, so it needs nothing generated.
 
+**Four more on 2026-08-26, so the number is now 23** --- measured **23/23 with none not
+applicable on macOS**; the Windows figure was 19/19 before they existed and has not been
+re-run. They put a worker on the save's *verification* side, which nothing exercised until
+then: `save::InWorker` was reachable only from `lib.rs`, so every test and every other probe
+passed `save::Here` and the shipped verifier was proved by compiling.
+
+What they assert is a differential --- the worker and the coordinator asked the identical
+question about identical bytes --- plus the two things a differential cannot say on its own.
+That the worker's refusal is **`lopdf`'s and not PDFium's at document-open**: the fixture is a
+real document with a trailer pointing at offset 999999999, which PDFium reconstructs and opens
+happily while `lopdf` names the cross-reference table, so the two messages differ and the
+assertion pins the wording. And that a **worker was involved at all**, which no comparison of
+answers can establish, since an `InWorker` delegating to `Here` would agree everywhere; that
+one points the verifier at a directory with no PDFium in it, where `Here` still answers and
+`InWorker` cannot start a child.
+
+Both of those exist because the first draft got it wrong in the reassuring direction --- it
+planted a file that was not a PDF, the worker refused it at open, and the check reported `[OK]`
+having never run `lopdf`. `docs/TRAPS.md` has both entries.
+
 Reverting `worker_child`'s bind arm to `bind(&library_dir)?` turns both red with
 `worker stopped answering (exited with 1 (0x00000001))` --- which is the string the reader who
 reported it saw, reproduced from the other end. That is the mutation to re-run if either check

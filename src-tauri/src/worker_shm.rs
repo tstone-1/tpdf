@@ -125,6 +125,39 @@ impl Shm {
         Self::map(file, len, false)
     }
 
+    /// Maps a file that is already open, without naming it again.
+    ///
+    /// **The seam the save's verification needs, and the pathname is the point.**
+    /// `save::append_through` guarantees everything it guarantees about the file
+    /// its *handle* holds, never about whatever the name resolves to now, so a
+    /// verifier that called [`Shm::map_file`] on the source path would check
+    /// whichever file has that name at that moment --- reintroducing exactly the
+    /// race that function exists to close.
+    ///
+    /// The handle is duplicated rather than borrowed, so the caller keeps theirs
+    /// and goes on using it: the roll-back after a failed verification writes
+    /// through it.
+    ///
+    /// `len` is passed rather than measured. The caller knows how long the file
+    /// it just wrote should be, and asking the filesystem again would map
+    /// whatever length something else has since given it.
+    ///
+    /// # Errors
+    ///
+    /// A zero length, the handle not duplicating, or the mapping failing.
+    pub fn map_open_file(file: &std::fs::File, len: usize) -> Result<Self, String> {
+        if len == 0 {
+            return Err("the file to map is empty".to_string());
+        }
+        let dup = file
+            .try_clone()
+            .map_err(|e| format!("could not duplicate the handle to map it: {e}"))?;
+        // Read-only for the reason `map_file` gives, and with one more here: the
+        // caller is holding a *writable* handle to this same file, so a writable
+        // mapping would be a second way to reach it from inside the sandbox.
+        Self::map(dup, len, false)
+    }
+
     /// Adopts a descriptor the parent passed in, and maps it.
     ///
     /// # Errors
@@ -321,9 +354,6 @@ impl Shm {
     ///
     /// The file not opening, being empty, or not mapping.
     pub fn map_file(path: &Path) -> Result<Self, String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::System::Memory::{CreateFileMappingW, PAGE_READONLY};
-
         let file =
             std::fs::File::open(path).map_err(|e| format!("could not open {path:?}: {e}"))?;
         let len = file
@@ -333,6 +363,48 @@ impl Shm {
         if len == 0 {
             return Err(format!("{path:?} is empty"));
         }
+        Self::section(file, len).map_err(|e| format!("could not map {path:?}: {e}"))
+    }
+
+    /// Maps a file that is already open, without naming it again.
+    ///
+    /// **The seam the save's verification needs, and the pathname is the point.**
+    /// `save::append_through` guarantees everything it guarantees about the file
+    /// its *handle* holds, never about whatever the name resolves to now, so a
+    /// verifier that called [`Shm::map_file`] on the source path would check
+    /// whichever file has that name at that moment --- reintroducing exactly the
+    /// race that function exists to close.
+    ///
+    /// The handle is duplicated rather than borrowed, so the caller keeps theirs
+    /// and goes on using it: the roll-back after a failed verification writes
+    /// through it.
+    ///
+    /// `len` is passed rather than measured. The caller knows how long the file
+    /// it just wrote should be, and asking the filesystem again would map
+    /// whatever length something else has since given it.
+    ///
+    /// # Errors
+    ///
+    /// A zero length, the handle not duplicating, or the mapping failing.
+    pub fn map_open_file(file: &std::fs::File, len: usize) -> Result<Self, String> {
+        if len == 0 {
+            return Err("the file to map is empty".to_string());
+        }
+        let dup = file
+            .try_clone()
+            .map_err(|e| format!("could not duplicate the handle to map it: {e}"))?;
+        Self::section(dup, len)
+    }
+
+    /// Builds a read-only section over an open file and maps it.
+    ///
+    /// The half [`Shm::map_file`] and [`Shm::map_open_file`] share. Split out
+    /// rather than written twice: the `PAGE_READONLY` below is a security
+    /// property, and a second copy of it is a second place for it to stop being
+    /// read-only.
+    fn section(file: std::fs::File, len: usize) -> Result<Self, String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Memory::{CreateFileMappingW, PAGE_READONLY};
 
         let mut attributes = inheritable_attributes();
         // `PAGE_READONLY`, for the reason the POSIX side gives: a worker holding
@@ -355,10 +427,7 @@ impl Shm {
             )
         };
         if mapping.is_null() {
-            return Err(format!(
-                "could not map {path:?}: {}",
-                std::io::Error::last_os_error()
-            ));
+            return Err(std::io::Error::last_os_error().to_string());
         }
         // Dropped deliberately: the section holds its own reference to the file,
         // so the mapping outlives this handle and the child never needs it.

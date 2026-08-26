@@ -9445,7 +9445,7 @@ run. Its own comments say when it can be deleted --- when no supported upgrade
 path starts at 26.8.8 --- and that the file and the `installerHooks` line go
 together.
 
-#### Ranked: the append's read-back parses in the coordinator, on the async runtime
+#### The append's read-back left the coordinator --- done 2026-08-26
 
 Found by step 6 of the release checklist while cutting `26.8.8`, by reading
 `docs/THREAT-MODEL.md`'s residual risk 18 against the code it describes.
@@ -9490,17 +9490,52 @@ Two things to do, and they are separable:
    failure instead of decorating it --- which loses `changed`, the field that
    decides whether the window offers Reload, while leaving the message anybody
    reads looking perfect.
-2. **Move the read-back into the worker**, which is the version that closes the
-   entry rather than narrowing it. It is the same shape the preparation took ---
-   the answer is a page count and a verdict, which fits in a reply --- but the
-   worker would have to be handed the *written* file, and it holds a mapping of
-   the file as it was. That is the output-channel problem risk 17 names for the
-   rewriting save, arriving one path early.
+2. ~~**Move the read-back into the worker**, which is the version that closes the
+   entry rather than narrowing it.~~ **Done 2026-08-26**, and the obstacle this
+   entry named was not the real one. It said the worker "holds a mapping of the
+   file as it was"; `save_document` closes the document before the write --- and
+   asks the worker everything it asks before that close --- so there is no such
+   mapping by then. There is no worker at all, which is the actual constraint:
+   the verification spawns one of its own, at one spawn per in-place append.
 
-Not done on the day it was found, deliberately: rethreading the save path with
-no check that can observe the difference is the riskier of the two actions
-immediately before a tag. The document says what is true now, which is the
-standard that entry sets for itself.
+   `save::Reread` is a seam taking the written file's **handle**, a length and
+   the password; never a pathname, because everything `append_through`
+   guarantees is about that difference, and re-opening by name would check
+   whichever file has the name now. `save::InWorker` maps the handle read-only
+   through the new `Shm::map_open_file`, spawns a contained child on it, unlocks
+   it if there is a password, asks `Request::Reread` and drops it. `save::Here`
+   is the in-process fallback, chosen from `service.backend()` the same way the
+   render backend is.
+
+   **The blocker was never the threading, it was the observable**, which is what
+   the deferral above was really about. Step 1 could not be seen by any test and
+   said so. This one can, two ways. Structurally, the coordinator no longer holds
+   the bytes, so there is nothing left to parse --- carried by the type rather
+   than by a grep, which this repository has a trap about. Behaviourally,
+   `the_coordinator_does_not_parse_the_file_it_wrote` writes a file that does not
+   parse, hands over a verifier claiming it is fine, and requires the save to
+   succeed: red on the code this replaced, proved by the mutation that reinstates
+   it.
+
+   **`lopdf`, deliberately not PDFium.** `Request::Open` already answers a page
+   count and reusing it would have made this three lines --- and would have
+   replaced the check with a parser that repairs the defect it exists to catch.
+   Measured rather than inherited: `worker-probe` plants a trailer pointing at
+   offset 999999999, PDFium opens it without complaint, and `lopdf` names the
+   cross-reference table.
+
+   **Two corrections came out of proving it**, both recorded in `docs/TRAPS.md`.
+   The probe's first refusal check passed on PDFium's message from
+   `Worker::spawn_shared`, before `Request::Reread` was ever sent --- a control
+   refused by a different guard than the one it was written for, green the whole
+   time. And a differential between two readers cannot say a worker was
+   involved, since an `InWorker` delegating to `Here` answers identically on
+   every fixture; the fourth check asks for something only the worker path needs.
+
+   What did **not** change: the rewriting save, Save a copy, Extract and Merge
+   all still parse in the coordinator, for the output-channel reason risk 18
+   gives. And `save::Here` is still reachable --- it is what a platform with no
+   sandbox gets, marked rather than refused.
 
 #### Back and Forward grey when there is nowhere to go --- done 2026-08-23
 

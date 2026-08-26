@@ -510,6 +510,10 @@ fn handle(
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
+        Request::Reread => match render::run_reread(document) {
+            Ok(pages) => Response::reply(Reply::Reread(pages)),
+            Err(e) => Response::err(e),
+        },
         // Reached when the document opened without one --- a reader who typed a
         // password for a file that did not need it, or a second worker for a
         // document whose encryption an empty user password already satisfied.

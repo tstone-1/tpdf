@@ -8833,6 +8833,125 @@ The comment is the durable part. It now records the wrong reason, the measuremen
 that there is no test to add — because the next person to run mutation coverage will find the
 same survivor and, without it, will re-derive the same wrong explanation.
 
+### A control refused by a different guard than the one it was written for, again --- and the verdict was green
+
+`worker-probe` gained a check that the save's new worker-side read-back refuses a file
+`lopdf` cannot parse. It planted a file that was not a PDF at all, asked both readers, and
+printed:
+
+```
+[OK] and both refuse one that does not parse   coordinator Err("failed parsing cross
+     reference table: invalid start value"), worker Err("This file is not a PDF, or it is
+     damaged beyond reading.")
+```
+
+Green, and it had tested nothing. Those are **two different parsers' messages**. The
+coordinator's is `lopdf`'s. The worker's is **PDFium's**, raised by `Worker::spawn_shared`
+when it opened the document --- so the child refused before `Request::Reread` was ever sent,
+and the `lopdf` re-read that the whole check exists to exercise never ran.
+
+**The verdict cannot show this and the detail line can.** Both halves of `mine.is_err() &&
+theirs.is_err()` were true; nothing about a boolean pair says which guard produced either.
+The evidence was printed beside it from the first run, and reading the verdict rather than
+the line beneath it is what nearly shipped a check that could only pass.
+
+**The discriminating fixture is the one where the two parsers disagree**, which for this
+pair is the whole reason `lopdf` was chosen: a real document with `\nstartxref\n999999999\n%%EOF\n`
+appended. PDFium reconstructs the broken cross-reference table and opens it happily, so the
+worker starts and serves the request; `lopdf` refuses. Both sides now say `failed parsing
+cross reference table: invalid start value`, and the assertion pins that wording, because
+the difference between the two messages *is* the evidence about which parser answered.
+
+That also turned a claim into a measurement. The design rests on PDFium being lenient about
+cross-reference damage, which until then was inherited from the entry *PDFium accepting a
+file is not evidence the file is well formed* --- a different defect (`/Size`) in a different
+year. This run is the direct observation, on the specific failure the guard is for.
+
+**The general form**: when a check asserts that two implementations both refuse, assert
+*why* each refused. A refusal is not a fact about your code path; it is a fact about
+whichever guard got there first, and the earliest one is usually not the one under test.
+
+### A differential between two readers cannot tell you which mechanisms ran
+
+The same probe, one check later. Three checks compared `save::InWorker` against
+`save::Here` --- agree on a good file, both refuse a broken one, and the worker's refusal is
+the parser's. All three pass, and **all three would still pass if `InWorker` secretly
+delegated to `Here`**, because the two would then produce identical answers on every
+fixture. An outcome two mechanisms can produce cannot test either one, and a differential is
+exactly such an outcome: it compares *answers*, and the thing being claimed is about
+*processes*.
+
+Nothing in the answers can close this. The refusal text is `lopdf`'s either way --- that is
+what makes the entry above's fix work --- so the very property that proved the parser also
+made the two paths indistinguishable.
+
+**The fix is to ask for something only one path needs.** Pointed at a directory with no
+PDFium in it, `Here` still answers `Ok(4)`, because it parses in this process and this
+process has no engine to load; `InWorker` cannot start a child at all and says so. The two
+disagreeing is the evidence, and it is the only check of the four that fails if the worker
+is removed.
+
+Worth carrying: a differential is evidence about *equivalence*, never about *mechanism*. If
+what you are claiming is "this ran over there", one of the checks has to be one that the
+other side cannot pass.
+
+### A refactor orphans mutations nobody can see, and the gate is what finds them
+
+Moving the append's read-back behind a seam left **three** pre-existing entries in
+`mutate_rust.py` aimed at code that no longer exists. None of them is visible in `git
+status`, none affects a build, and each would have sat dead until somebody ran a
+twenty-minute harness --- where a mutation aimed at nothing is refused far too late to
+matter. `scripts/check_mutation_anchors.py` reported all three in under a second.
+
+Their three fates are the useful part, because they are not the same repair:
+
+- **Superseded.** `save: verify an append without the password` aimed at the inline parse.
+  The same intent, re-registered against `save::reread_pages` where the parse now lives.
+- **Re-aimed.** `append: accept a saved file that parses, whatever it has lost` still means
+  what it meant; only the spelling of the arm changed, from a parsed document to a count.
+- **Deleted, because it can no longer be written.** `save: verify the saved file by name
+  rather than through the handle` replaced `read_whole(file, expected)` with
+  `std::fs::read(source)`, to prove the read goes through the handle. Neither `Reread`
+  implementation *receives* a path --- the trait passes a handle, a length and a password ---
+  so reading by name is not a weaker version of the code, it is unexpressible. This file
+  already records the rule: a guard the type system makes unsayable has no mutation to
+  write, and the answer is to delete the mutation rather than weaken the code so one
+  compiles. The test it named stays, since it still covers the final `FileId::at(source)`
+  check.
+
+The third is the one to look for after any change that narrows an interface. A seam that
+removes a class of defect removes the mutation that watched for it in the same motion, and
+deleting that mutation is the correct bookkeeping rather than a loss of coverage --- but it
+reads identically to an anchor that has merely drifted, so the distinction has to be made by
+hand.
+
+### A stale Windows resource artifact disables the cross-check and reads as a broken checkout
+
+`scripts/check_windows.py` is the only instrument on a Mac that can see a `#[cfg(windows)]`
+line. On 2026-08-26 it failed before compiling anything:
+
+```
+cargo:rerun-if-changed=../vendor/pdfium/bin/pdfium.dll
+File exists (os error 17)
+[FAIL] the Windows tree does not type-check (exit 101)
+```
+
+The cause is this repository's own trailing-slash trap in local form.
+`target/x86_64-pc-windows-msvc/debug/pdfium` was a **file** --- the 7.2 MB DLL, left from
+when the resource map produced a file of that name --- and `tauri.windows.conf.json` now maps
+`"../vendor/pdfium/bin/pdfium.dll": "pdfium/pdfium.dll"`, so the build script tries to create
+a *directory* where that file sits. Removing the stale artifact fixed it; it is gitignored
+build output and is regenerated.
+
+**Why it is worth an entry rather than a shrug.** The same leftover shipped to readers in
+26.8.8 and has an NSIS hook written to clear it, so the *installed* case is handled and the
+*developer* case was not. And the failure lands on the one check that stands in for a
+platform you cannot otherwise test: the error names the build script and a DLL path, so it
+reads as a broken checkout or a bad `xwin` splat, and the natural response is to re-run the
+one-time setup, which changes nothing. A stand-in for another platform that fails for a
+local reason is worse than one that fails loudly, because the cost of investigating it is
+what makes people stop running it.
+
 ### A synthetic right-click posted to the window server never reaches the web view
 
 Right-clicking a page thumbnail offered WKWebView's own menu, whose one entry reloads the

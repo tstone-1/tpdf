@@ -1491,6 +1491,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A caller that validates first cannot reach the guard beneath it (the test passed, and so did the mutation that deleted the guard)
 - A coverage figure over the union of several quads measures the line spacing (and two more statistics that were right for one input and meaningless for another)
 - A control refused by a different guard than the one it was written for (it failed, which was the lucky case)
+- A control refused by a different guard than the one it was written for, again --- and the verdict was green (both halves of the boolean were true and the two refusals came from different parsers; the evidence was printed beside the verdict from the first run)
+- A differential between two readers cannot tell you which mechanisms ran (three checks that would all pass if the worker secretly delegated to the coordinator; ask for something only one path needs)
 - A denominator that is constant in one dimension cannot compare areas (twelve orderly `[SKIP]` lines, and a percentage above 100 that went unread for a round)
 - A band check can pass by two hundredths of a point, and a passing run does not say so (compute the margin in the check's own units; green looks identical at 0.02 pt and at 1 pt)
 - A probe that writes one colour cannot measure a mark drawn in another (a zero reading that reads as the renderer ignoring our appearance stream; derive the classifier from the value sent, do not correct the constant)
@@ -1521,6 +1523,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A wait built on `pgrep -f` outlives the job, and every later check agrees with it (the instrument agreed with the truth, and would have agreed with anything)
 - A mutation harness that dies leaves the mutation in the tree (a `finally` does not survive `pkill`, and on a feature branch the leftover is invisible in `git status`)
 - A mutation aimed at deleted code is refused far too late to matter
+- A refactor orphans mutations nobody can see, and the gate is what finds them (three at once, with three different repairs --- and the third is DELETED rather than re-aimed, because a seam that removes a class of defect removes the mutation watching for it)
 - A cross-check that counts names against a count of tests is wrong wherever two tests share a name (three mutations condemned by an off-by-one the SUITE put there; the same run's other end had learned about the duplicates two days earlier)
 - A mutation harness knows only the tests it was told to run (three lists in one increment; the guard is loud, and the fix for one of them was to move the function)
 - A verification chained after a failed edit reports success for work that is not there
@@ -1609,6 +1612,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An uninhabited type carries its impossibility into every caller
 - A `null` that means "inferred" is not a `null` that means "unknown"
 - A directory that exists is not the library you need
+- A stale Windows resource artifact disables the cross-check and reads as a broken checkout (the 26.8.8 trailing-slash leftover in local form; the installed case has a hook and the developer case did not)
 - The comment naming the grep that would have caught it, four times running (the fix for a stale COUNT was a stale RULE, and the doc comment even wrote out the command; four probes could not bind on Windows and it was found by accident -- if a command is short enough for a comment it is short enough for a test)
 - A list of documented blockers can be wrong in the direction that looks thorough
 - A gate list that never links a binary cannot see a link error
