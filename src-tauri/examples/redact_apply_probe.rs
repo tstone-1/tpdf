@@ -40,6 +40,16 @@ fn main() -> ExitCode {
         .skip_while(|a| a != "--library")
         .nth(1)
         .map_or_else(default_library, PathBuf::from);
+    if std::env::args().any(|a| a == "--survey") {
+        return match survey(&library) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::from(1),
+            Err(e) => {
+                eprintln!("[FAIL] {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
     match run(&library) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
@@ -151,6 +161,113 @@ fn run(library: &Path) -> Result<bool, String> {
         }
     );
     Ok(ok)
+}
+
+/// How often the correspondence guard would refuse, across the whole corpus.
+///
+/// **The one number that decides whether this feature works on real files.**
+/// `redact::remove_shows` refuses when the show operators `lopdf` decodes
+/// disagree with the text objects PDFium counted, because nothing connects the
+/// two lists but order and a mis-addressed removal deletes the wrong words while
+/// reporting success. Spike 0.3 measured 4:4 on four fixtures built for it and
+/// said plainly that a `TJ` split across objects or a Form XObject contributing
+/// from another stream breaks it.
+///
+/// What that spike could not say is how often it breaks. This walks every page
+/// of every fixture in `testdata/` and counts, so *"the guard may refuse on real
+/// documents"* becomes a fraction instead of a worry. It asserts nothing --- a
+/// page that disagrees is a fact about the corpus, not a defect --- and prints
+/// the pages that do, because those are the ones worth reading.
+fn survey(library: &Path) -> Result<bool, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("no repo root")?
+        .to_path_buf();
+    let bindings = bind(library)?;
+    let mut agree = 0usize;
+    let mut differ = 0usize;
+    let mut unreadable = 0usize;
+    let mut files = 0usize;
+
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(root.join("testdata"))
+        .map_err(|why| why.to_string())?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "pdf"))
+        .collect();
+    paths.sort();
+
+    for path in paths {
+        let Ok(document) = OpenDocument::open(bindings, &path, None) else {
+            // An encrypted or malformed fixture. Counted rather than skipped
+            // silently: a survey that quietly drops what it cannot open reports
+            // a cleaner corpus than it measured.
+            unreadable += 1;
+            continue;
+        };
+        let Ok(mut lopdf) = lopdf::Document::load(&path) else {
+            unreadable += 1;
+            continue;
+        };
+        files += 1;
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let pages: Vec<lopdf::ObjectId> = lopdf.get_pages().values().copied().collect();
+        for (at, page_id) in pages.iter().enumerate() {
+            let Ok(page) = document.page(at as u32) else {
+                continue;
+            };
+            let Ok(objects) = tpdf_lib::objects::read(&page) else {
+                continue;
+            };
+            let shows = show_operators(&mut lopdf, *page_id);
+            if shows == objects.text.len() {
+                agree += 1;
+            } else {
+                differ += 1;
+                println!(
+                    "    {name} page {}: {} show operator(s), {} text object(s)",
+                    at + 1,
+                    shows,
+                    objects.text.len()
+                );
+            }
+        }
+    }
+
+    let total = agree + differ;
+    println!("[..] {files} readable file(s), {unreadable} not opened; {total} page(s) compared");
+    println!(
+        "[..] {agree} agree, {differ} differ --- a removal is refused on {:.1}% of pages",
+        if total == 0 {
+            0.0
+        } else {
+            100.0 * differ as f64 / total as f64
+        }
+    );
+    Ok(true)
+}
+
+/// How many text-showing operators one page's content stream holds.
+///
+/// The same count `redact::remove_shows` derives, and derived here through the
+/// same decode rather than through a second rule: what is being measured is
+/// whether the two *populations* agree, so a private notion of what counts as a
+/// show operator would be measuring this file's opinion instead.
+fn show_operators(doc: &mut lopdf::Document, page: lopdf::ObjectId) -> usize {
+    let Ok(data) = doc.get_page_content_with_limit(page, redact::MAX_CONTENT_BYTES) else {
+        return usize::MAX;
+    };
+    let Ok(content) = lopdf::content::Content::decode(&data) else {
+        return usize::MAX;
+    };
+    content
+        .operations
+        .iter()
+        .filter(|operation| matches!(operation.operator.as_str(), "Tj" | "TJ" | "'" | "\""))
+        .count()
 }
 
 /// The save plan the redact command builds: the file as it is, plus the removal.

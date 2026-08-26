@@ -302,6 +302,27 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 #   macOS arm64, 2026-08-26   9 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
+# --survey answers the one question that decides whether the feature works on
+# real files: how often does the correspondence guard REFUSE? redact.rs removes
+# by position and refuses when the show operators lopdf decodes disagree with
+# the text objects PDFium counted, because nothing connects the two lists but
+# order. Spike 0.3 measured 4:4 on four fixtures built for it and said a TJ
+# split across objects, or a Form XObject contributing from another stream,
+# breaks it -- without saying how often.
+#
+# It asserts nothing. A page that disagrees is a fact about the corpus rather
+# than a defect, and the pages that disagree are printed because those are the
+# ones worth reading.
+#
+#   macOS arm64, 2026-08-26   48 files, 1720 pages, 0 disagreements
+#
+# Read that with its limit: testdata/ is mostly fixtures this project generates,
+# so it is not a sample of the wild. It does include the hostile set, the signed
+# contracts and the multi-column and multilingual pages. What the number
+# supports is "the guard did not fire once across everything here", not "it
+# never fires".
+cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe -- --survey
+
 # Signatures: does PDFium agree with us about the same signatures?
 # `docinfo.rs` walks /AcroForm /Fields with lopdf; PDFium implements that walk
 # in C++ and exports the result. Neither knows about the other, which is what
