@@ -19,6 +19,30 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Fixed: a page you removed no longer travels on inside the file
+
+Extract, Split and Delete-then-save left the removed pages' content in the file
+they wrote. The page tree said the page was gone, every reader agreed, and the
+text was still there as an object nothing pointed at --- recoverable by anyone
+who opens the file with a tool that walks the cross-reference table rather than
+the page tree.
+
+Measured on an eight-page document: **extracting page 1 produced a one-page file
+carrying all eight pages' text**, 4,139 bytes apiece. Deleting a page and saving
+left that page's text the same way.
+
+A rewrite that drops or moves a page now collects what it made unreachable. Two
+checks hold it from both sides --- the pages that went are absent, the pages that
+stayed still have their content --- because a collection that deleted everything
+would satisfy the first one perfectly.
+
+**What this does not do**, and the difference is worth having: it removes what
+*this save* orphaned. A document that arrived with unreachable objects in it
+still comes back with them, and none of the other places a redaction has to
+reach --- a comment's text, a form field's value, alternate text, a page
+thumbnail --- is touched. Saving a copy is still a copy. True redaction is its
+own command and is not built.
+
 ### Added: Split a document
 
 Name the pages to cut after and get several files. `3,7` on a ten-page document

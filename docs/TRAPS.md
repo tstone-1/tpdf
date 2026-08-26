@@ -16030,3 +16030,61 @@ succeeded at its visible job every time. A display step that also silently answe
 and once is the number that matters.
 
 Paid for on 2026-08-26.
+
+### A disclosed risk names the operation you had in mind, and the path it describes keeps acquiring callers
+
+`docs/THREAT-MODEL.md` residual risk 16, written 2026-08-17: *"a reader who deletes a page
+and sends the copy on has removed it from the document and not from the file."* True, honest,
+in the right document, and cross-referenced from `docs/PLAN.md` §5 with a paragraph explaining
+why the mark-and-sweep on the print path was deliberately not on the save path. Nothing about
+it was careless.
+
+It was also, for nine days, the reason nobody looked at **Extract pages**, which was already
+shipped, goes through the same `planned_bytes` -> `rewrite`, and is the stronger case in every
+respect. Measured on `links.pdf`, extracting page 1 of 8:
+
+```
+extracted 1 of 8 pages -> 94 objects, 1 pages
+  page 1's content stream survives: 4139 bytes
+  ...
+  page 8's content stream survives: 4139 bytes
+leaked content streams: 8 of 8
+```
+
+A file reporting one page, carrying eight pages of text, every stream decodable. **Split**
+landed on the same path in 26.8.11 and was covered by nothing at all.
+
+**The sentence that did it is the one that sounds most like diligence.** The entry closed
+*"deleting is the first operation where a reader could plausibly believe otherwise"* --- a
+claim about the population, written while thinking about one member of it, and it reads as
+having surveyed the others. Extract's own name states the exclusion; there is no belief to be
+plausible about. The author was not wrong about deletion, and was wrong that deletion was the
+frontier.
+
+**Three things follow, and the third is the cheap one.**
+
+A disclosure that names an *operation* silently scopes itself to that operation while the
+defect lives in a *path*. Write the path: "every rewrite that drops a page" would have
+caught extract on the day it was written and split on the day it landed.
+
+A residual risk is not re-derived when a new command is built on the path it describes. It
+was written once, it is prose, and no gate diffs it against the callers. `sweep::collect` had
+been sitting one module away, called by `print.rs`, the whole time.
+
+And it took one scratch test to settle --- twenty lines: load the source, note each page's
+`/Contents` object id, run the plan through `write_copy`, ask the output which ids are still
+there. **Do not read the object graph to answer a question about the object graph.** The
+paragraph in `docs/PLAN.md` that explained why the sweep was absent was accurate about the
+code and could not say what the code produced.
+
+The `strings` reflex would have certified the leak, incidentally: the streams are Flate, so a
+byte scan over the output finds nothing. That is the same rule §6 reached from the other
+direction --- *a check that cannot decode a carrier has not verified anything*.
+
+Fixed by calling `sweep::collect` in `save::rewrite` when the plan dropped or moved a page,
+with two mutations pinning it in opposite directions: never sweeping reddens the two leak
+checks, always sweeping reddens the control that says a plain copy still carries the orphans
+it was handed. The second is the one worth having --- without it the *scope* of the condition
+is decoration.
+
+Paid for on 2026-08-26.

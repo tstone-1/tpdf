@@ -1715,7 +1715,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A module header that says "and nothing more", under a `use` block that says otherwise (the header was true when written and five features each added one field to the type that already had the document; measure the seam on BOTH axes -- 7 fields touched once or twice against 38 signatures in 32 files -- because they disagree about how big the job is, and a door beats forwarding methods)
 - The obvious name for the new type was already taken, and the error count climbed instead of falling (`lopdf::Document` is imported in nine of the thirty files a document-shaped refactor reaches; a type-name collision is worse than a field-name one because it compiles wherever the wrong type has a method of the same shape, and 43 -> 32 -> 32 is the signal to revert rather than run the pass again)
 - A document's spelling of an em dash is not a string's, and the comment above the line legitimises it (eighteen shipped; the same `switch` wrote both spellings twenty-six lines apart, a regex over the sources reported 73 hits where there are 9, and both of the check's own exemptions held by construction until a synthetic module distinguished them)
-
+- A disclosed risk names the operation you had in mind, and the path it describes keeps acquiring callers (extract page 1 of 8, get a one-page file holding all eight content streams; the entry named the deletion and missed the two commands whose own names state the exclusion, and one twenty-line scratch test settled what a correct paragraph about the code could not say about its output)
 ## Repository facts
 
 - GitHub: `tstone-1/tpdf`, **public**, MIT (`LICENSE`).

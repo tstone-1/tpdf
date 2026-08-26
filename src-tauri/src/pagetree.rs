@@ -544,10 +544,14 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
 /// are written onto it first, so that it takes its own size, box, resources and
 /// rotation with it.
 ///
-/// The intermediate `/Pages` nodes are left in the file, unreachable. That is the
-/// same position `save.rs` takes about a deleted page's content --- a copy is a
-/// serialisation, not a sanitation --- and the print path's `sweep::collect`
-/// removes them because a print job is rewritten anyway.
+/// The intermediate `/Pages` nodes are left unreachable rather than removed, and
+/// the caller collects. `print::build` and `save::rewrite` both run
+/// `sweep::collect` after this --- the save path since 2026-08-26, which is when
+/// measuring found that a plan dropping pages left every dropped page's content
+/// stream in the file. This function does not sweep itself because a mark-and-
+/// sweep is a statement about the whole document and a reorder is a statement
+/// about the page tree; the caller is the one that knows whether anything else
+/// it did also orphaned something.
 ///
 /// **Call it only when the order really differs.** A plan in document order that
 /// went through here would flatten a nested tree, write inherited attributes onto
