@@ -15277,3 +15277,86 @@ and a warning list that is one platform's opinion. Each looked like a rename and
 each needed undoing. The tell in every case is the same --- **the error count did
 not fall** --- and the cheapest defence is to key the pass on something that
 cannot mean two things, or to let the compiler enumerate the sites instead.
+
+### A wrapper that exits zero on a run that ran nothing, while both its callers guard themselves
+
+`viewer_check.py` launches the app, waits, and decides. Everything in it was
+built around a run that *failed*: a non-zero exit, the timeout, the suspended
+page behind a lock screen, the module audit that refuses a peak of zero because
+an enumeration that read nothing reports "not mapped" exactly as containment
+does. Nothing in it asked whether the viewer's check had run at all. So on a
+zero exit it echoed the transcript, printed the containment verdict and returned
+0 --- whatever the transcript held, including nothing.
+
+**On Windows that is a reachable state rather than a hypothetical.** Single
+instance makes a second launch forward its argv to the window already open and
+exit 0 immediately, so the transcript is empty, the exit code is the one a
+full-marks run produces, and the only check-shaped line in the whole run is the
+wrapper's own `[OK] the app process never mapped the PDF parser`. A corpus was
+certified by a process that never opened it. A stray window from an earlier run
+is enough to produce it, which is why `_kill_leftovers()` exists in the two
+callers --- and killing leftovers is a way of avoiding the state, not a way of
+detecting it.
+
+**Both callers were protected, which is why the hole lasted.** `viewer_sweep.py`
+refuses a run that printed no `CHECK-NAMES-JSON` line, with the corpus named and
+the run's last eight lines quoted. `mutate_viewer.py`'s `verdict()` refuses one
+with no summary line, and says which silence it was. Each of those was written
+for its own layer and each works. What neither of them is, is evidence about the
+shared code underneath --- and the caller with no guard of its own was the human
+one, a direct `scripts/viewer_check.py <app> <file.pdf>`, which is exactly the
+invocation `BUILD.md` prints.
+
+That is the inverse of *A check bound to one caller covers only that caller*, and
+it is quieter: there the uncovered callers are visibly missing something, here
+every caller has a guard and the callee has none. The question to ask of a guard
+written at a call site is whether it belongs at the call site at all. This one
+did not: whether a run happened is a property of the run, not of who asked for it.
+
+**The observable is the name roll, not a count of check-shaped lines.**
+`checkreport.ts` emits `CHECK-NAMES-JSON [...]` after its duplicate-name check
+and immediately before the summary, so its presence says the check reached its
+own end and its length says how much it recorded. Counting printed labels instead
+would count the wrapper's own containment line --- which is the confusion the
+stdout/stderr split above it already exists to prevent, and which would make a
+forwarded launch read as a run with one check in it. The roll-versus-summary
+arithmetic stays in `viewer_sweep.py` and is deliberately not repeated: two
+copies of one distinction drift, and that layer needs the numbers while this one
+needs only the fact.
+
+**Neither guard is made dead by the other.** The sweep searches for the roll
+before it looks at the exit code, so a corpus that produced none still gets the
+sweep's own report; this one fires underneath it and is what a single hand-run
+corpus shows. The condition is shared and the two reports are not.
+
+**And it names no cause.** An empty transcript is produced by a forwarded launch,
+a crash before the first check, a bundle predating the roll and an app that never
+started, and a message that picks one of those sends the reader to rebuild
+something that was current --- the failure the sweep's own message has an entry for.
+What is printed is what was seen: the exit code, the byte count, and how many
+`[FAIL]` lines were in the run.
+
+**Proved by mutation, and the control is on the control.** The guard is a pure
+function of the transcript, so `--self-test` exercises it with no screen, no
+bundle and no document, in the shape `mark_check.py` and `menu_check.py` already
+use --- six cases, one of them the accept, because a reader that refuses everything
+passes all five refusals and is useless. Returning `None` up front turns the five
+refusals red and leaves the accept green; accepting an empty roll reddens exactly
+the empty-roll case; swallowing a malformed roll reddens exactly that one; and
+breaking the accepting branch reddens the accept and nothing else.
+
+**The wiring is proved separately, and the first control did not discriminate.**
+A pure function passing its own cases says nothing about whether anything calls
+it, so the guard was also driven through the real launch path with a stand-in
+binary in place of the app. The first stand-in was `whoami.exe`, which exits 0
+having printed a line that is not a roll --- and the pre-change script refused it
+too, at `0 samples, 0 modules seen`, because the process died before the module
+sampler took a reading. That is *A control refused by a different guard than the
+one it was written for*, and it failed, which is the lucky direction: a passing
+control would have been read as agreement. A stand-in that lives two seconds
+separates them cleanly. Pre-change: **exit 0**, and the only line in the run is
+`[OK] the app process never mapped the PDF parser 13 modules at peak over 42
+samples` --- a full certification of a document that was never opened. With the
+guard: exit 1.
+
+Paid for on 2026-08-26, from a run that printed one check and passed.

@@ -21,7 +21,9 @@ is true and cost an afternoon.)
 
 import argparse
 import atexit
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -87,10 +89,92 @@ def _kill_tree(pid: int) -> None:
         pass
 
 
+#: A transcript of a run that recorded two checks, as `checkreport.ts` prints
+#: one. The self-test's control.
+#:
+#: Hand-written rather than captured, deliberately: it is what this script
+#: *claims* to accept, so a change to the reader that broke the shape has
+#: something to fail against. The padding does not match the real column width,
+#: because nothing here may depend on one.
+GREEN = """[OK]   a document is open                          8 page(s)
+[SKIP] a second window                            not applicable --- one window
+CHECK-NAMES-JSON ["a document is open", "a second window"]
+
+1/1 checks passed, 1 not applicable
+"""
+
+#: The wrapper's own containment verdict, which is the only check-shaped line a
+#: forwarded launch produces --- and it is on stderr, which is what kept it from
+#: ever being counted as a check by the harnesses above. It must not be counted
+#: as one here either.
+CONTAINMENT = "[OK]   the app process never mapped the PDF parser 45 modules at peak over 12 samples\n"
+
+
+def self_test() -> int:
+    """Every transcript this script must refuse on an exit of zero, and the one
+    it accepts.
+
+    None of it needs a screen or a bundle, which is why it is here: the launch
+    half of this script cannot be exercised on a locked machine or without a
+    build, and this half can be exercised anywhere, so the guard is never
+    entirely unproved. Same reasoning, and the same `--self-test` spelling, as
+    `mark_check.py` and `menu_check.py`.
+
+    The load-bearing case is the last one. A reader that refuses everything
+    passes all five refusals and is useless, so the accepting branch is proved
+    first; and a reader keyed on *any* check-shaped line would accept a forwarded
+    launch, because that run does print one.
+    """
+    cases = [
+        ("a transcript with a check-name roll is accepted", True, GREEN, ""),
+        ("a transcript with no roll at all is refused", False, "", ""),
+        (
+            "a roll listing no checks is refused",
+            False,
+            GREEN.replace('["a document is open", "a second window"]', "[]"),
+            "",
+        ),
+        (
+            "a roll that is not readable JSON is refused, not skipped over",
+            False,
+            GREEN.replace('["a document is open", "a second window"]', "[not json]"),
+            "",
+        ),
+        (
+            "a summary with no roll above it is refused",
+            False,
+            "\n1/1 checks passed\n",
+            "",
+        ),
+        (
+            "a forwarded launch, whose only check-shaped line is the wrapper's own",
+            False,
+            "",
+            CONTAINMENT,
+        ),
+    ]
+
+    ok = True
+    for name, accept, out, err in cases:
+        refusal = _transcript(out, err, 0)
+        if (refusal is None) == accept:
+            print(f"[OK]   {name}")
+        else:
+            got = "accepted" if refusal is None else f"refused: {refusal.splitlines()[0]}"
+            print(f"[FAIL] {name}: {got}")
+            ok = False
+    return 0 if ok else 2
+
+
 def main() -> int:
     # Before anything prints: a redirected run is block-buffered otherwise,
     # and then a partial transcript is an empty file. See `live_output`.
     stream_results()
+    if "--self-test" in sys.argv[1:]:
+        # Before the argument parser, which requires a binary and a document.
+        # Demanding either would make the one part runnable without a screen the
+        # part that needs a build.
+        return self_test()
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
     parser.add_argument("pdf")
@@ -256,7 +340,81 @@ def main() -> int:
     for line in (completed.stderr or "").splitlines():
         if "[WARN]" in line:
             print(line, file=sys.stderr)
+
+    # Before the containment verdict, and before returning 0: a run that never
+    # ran a check must not be reported as a run that passed. See `_transcript`.
+    refusal = _transcript(completed.stdout or "", completed.stderr or "", completed.returncode)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
     return _report_containment(watcher)
+
+
+#: The roll `checkreport.ts` prints just before its summary, listing every check
+#: the run recorded. Machine-readable on purpose --- the printed column is
+#: `LABEL name.padEnd(46) detail`, so a long name runs into its detail and cannot
+#: be parsed back out. `viewer_sweep.py` reads the same line for the same reason.
+NAMES_JSON = re.compile(r"^CHECK-NAMES-JSON (\[.*\])$", re.MULTILINE)
+
+
+def _transcript(out: str, err: str, code: int) -> str | None:
+    """Why this exit-zero run must not be read as a pass, or `None` if it may.
+
+    **A run that did nothing exits 0 and looks exactly like a run that passed.**
+    Everything above this decides what to do about a run that *failed* --- a
+    non-zero exit, a timeout, a suspended page --- and nothing asked whether the
+    viewer's check had run at all. On Windows it does not have to: single-instance
+    makes a second launch forward its argv to the window already open and exit 0
+    immediately, so the transcript is empty, the only check-shaped line in the run
+    is this wrapper's own containment `[OK]` on stderr, and the exit code is the
+    one a full-marks run produces. That is a wrapper certifying a corpus it never
+    opened, and it is the shape `viewer_sweep.py:349` already refuses one layer
+    up --- so the sweep was protected, `mutate_viewer.py` was protected by its own
+    missing-summary guard, and a direct run, which is what `BUILD.md` tells a
+    reader to make, was protected by nothing.
+
+    **Neither of those two is made dead by this.** The sweep searches for the
+    roll before it looks at the exit code, so on a corpus that produced none it
+    still raises its own refusal, which names the corpus and prints the run's
+    last eight lines; this one fires under it and is what a reader running a
+    single corpus by hand sees. The condition is shared and the reports are not.
+
+    The observable is the roll rather than the summary or a count of `[OK]`
+    lines. `finish()` emits it after the duplicate-name check and before the
+    summary, so its presence says the check reached its own end, and its length
+    says how much it recorded --- where a count of printed labels would also
+    count this wrapper's, which is the confusion the stream split above exists to
+    prevent. The roll-versus-summary arithmetic stays in `viewer_sweep.py` and is
+    deliberately not repeated here: two copies of one distinction drift, and that
+    one needs the numbers while this needs only the fact.
+
+    **It names no single cause.** An empty transcript is produced by a forwarded
+    launch, a crash before the first check, a bundle predating the roll, and an
+    app that refused to start, and a message picking one of those sends the
+    reader to rebuild something that was current. What is printed is what was
+    seen.
+    """
+    roll = NAMES_JSON.search(out)
+    if roll is not None:
+        try:
+            names = json.loads(roll.group(1))
+        except json.JSONDecodeError as broken:
+            return f"[FAIL] the run's check-name roll could not be read: {broken}"
+        if names:
+            return None
+        seen = "the run printed an empty check-name roll: it finished having recorded nothing"
+    else:
+        seen = "the run printed no check-name roll, so no check in it is known to have run"
+    failures = [line for line in (out + err).splitlines() if line.startswith("[FAIL]")]
+    return (
+        f"[FAIL] {seen}.\n"
+        f"       exit={code}  stdout={len(out)} bytes  [FAIL] lines={len(failures)}\n"
+        "       Causes that all look like this: on Windows a second launch\n"
+        "       forwarding its argv to a window already open (close it, or see\n"
+        "       `scripts/stray.py`), a crash before the first check, a bundle\n"
+        "       predating the roll (rebuild with `npm run tauri build`), or an\n"
+        "       app that never started."
+    )
 
 
 def _discard(path: str) -> None:

@@ -1596,6 +1596,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Narrowing a run made a shape the output parser had assumed away (with one file in the run nothing passed, and `Tests 2 failed (2)` read as a run that never finished)
 - A capability nobody could use is invisible to every check, including the mutation harness (four sibling readers, the identical one-line change, and only three had an observable; a mutation that reddens nothing indicts the harness)
 - An option whose value is optional swallows the next argument, and `vitest list --json` overwrote a test file (a filter that matched nothing and a destructive write look identical from stdout; `git status` was the only witness, and 50 files collected against 51 on disk read as a vitest quirk)
+- A wrapper that exits zero on a run that ran nothing, while both its callers guard themselves (the inverse of a check bound to one caller: the sweep refuses a missing name roll and the mutation harness refuses a missing summary, so the layer beneath them --- the hand-run one `BUILD.md` prints --- had no guard at all; the observable is the roll rather than a count of check-shaped lines, because a forwarded launch prints exactly one and it is the wrapper's own)
 
 ### Windows and portability
 - The gates had never run on the platform where they fail
