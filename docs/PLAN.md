@@ -3890,8 +3890,10 @@ All five corpora then reported the same **63 check names**: `outline-simple` 58/
 `outline-hostile` 58/58, `text-heavy` 52/52, `vector-heavy` 34/34, `vector-multi` 41/41,
 the differences being skips with their reasons. A sixth arrives in the entry below.
 
-Not done: reordering pages by dragging a thumbnail (that is Phase 2, and needs the
-editing model), a resizable panel, and any persistence of which tab was open.
+Not done: ~~reordering pages by dragging a thumbnail (that is Phase 2, and needs the
+editing model)~~ (done 2026-08-17 --- `23300f7`, *Let a reader drag a thumbnail to move
+a page*; the editing model it named arrived with it), a resizable panel, and any
+persistence of which tab was open. The last two are still open, checked 2026-08-26.
 
 #### A page that says `/Rotate`, and the two things that were wrong on it — 2026-07-27
 
@@ -6302,7 +6304,9 @@ changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
 **Not done:** the remaining markup kinds --- squiggly, and the ones that are not
 about a text selection at all (ink, shapes, text boxes, stamps), each of which
 needs a way to *draw* rather than a way to select. (Ink, the box, the ellipse,
-squiggly and text boxes have all landed since; stamps are what remain.) ~~A colour a reader can
+squiggly and text boxes have all landed since, and so have stamps --- 2026-08-23,
+`c9bdead`. Every kind named in this sentence is built; checked 2026-08-26, because
+this parenthetical had itself gone stale about stamps for three days.) ~~A colour a reader can
 choose, which is still the UI question the `MARK_COLORS` table's comment names
 rather than a missing constant.~~ (Done 2026-08-20 --- that comment was the
 brief, and `markcolors.ts` answers it.) And a keyboard route to a mark, unchanged from the last
@@ -6901,9 +6905,12 @@ width bound does. And one was aimed at an ordering that no reachable input can
 distinguish --- that one was removed and the comment claiming the ordering
 mattered was corrected, which is the finding.
 
-**Not done:** ink, which is the next consumer and needs the wire struct widened
-to a list of point lists; an ellipse, which is `/Circle` and the same rectangle
-with a different subtype; ~~a crop a reader drags, which now needs only a second
+**Not done:** ~~ink, which is the next consumer and needs the wire struct widened
+to a list of point lists~~ (done 2026-08-20 --- `22ad78f`, *Draw freehand on a page*,
+and the struct is a list of point lists: `save::user_strokes` returns one `(x, y)`
+list per stroke); ~~an ellipse, which is `/Circle` and the same rectangle
+with a different subtype~~ (done 2026-08-20 --- `5da94a3`, *An ellipse*, and it is
+`MarkKind::Ellipse => b"Circle"`, exactly as predicted); ~~a crop a reader drags, which now needs only a second
 caller of the primitive~~ (done 2026-08-23, and it needed a backend command too);
 a tool that stays armed for several boxes; ~~and a
 colour a reader can choose, still the UI question `MARK_COLORS` names~~ (done
@@ -7730,7 +7737,8 @@ Three findings, none about the mark itself:
 
 **Not done:** nothing in the markup family --- this is the last of the four. What remains
 of the kinds list is text boxes and stamps. (Text boxes landed the same day; see *A text
-box* below. Stamps are what is left.)
+box* below. Stamps landed 2026-08-23 --- `c9bdead` --- so nothing in the kinds list
+this sentence names is left; checked 2026-08-26.)
 
 #### A text box --- done 2026-08-20
 

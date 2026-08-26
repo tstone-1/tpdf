@@ -11859,6 +11859,48 @@ the sentence that remains true --- nothing *watches* the file while it is open, 
 learns at the moment they press Save --- is a much smaller thing than the one it was read as,
 and the difference between the two is the whole lesson.
 
+**Update 2026-08-26: the habit above was written and never run, and a sweep of every live
+*Not done* in the file found five more.** Prompted by checking one of them before
+recommending it --- which is the second habit, and that one was correct. The other twenty-odd
+had never been checked at all.
+
+    3893  reordering pages by dragging a thumbnail   built 2026-08-17  23300f7
+    6904  ink, "needs the wire struct widened"       built 2026-08-20  22ad78f
+    6904  an ellipse, "which is /Circle"             built 2026-08-20  5da94a3
+    6302  "stamps are what remain"                   built 2026-08-23  c9bdead
+    7731  "Stamps are what is left"                  built 2026-08-23  c9bdead
+
+**Every one of those commits has the capability in its subject line** --- *Let a reader drag
+a thumbnail to move a page*, *Draw freehand on a page*, *An ellipse*, *Stamp a document*. The
+first habit's grep would have found each in one command, on the day. Nobody ran it, because
+nothing asks.
+
+**Two of the five had already been maintained by hand, and went stale again.** 6302 and 7731
+do not merely carry an ageing sentence: each carries a *parenthetical added later to correct
+it* --- "(Ink, the box, the ellipse, squiggly and text boxes have all landed since; stamps are
+what remain.)" That was written when it was true, three days before stamps landed. So
+hand-maintaining a claim of absence does not converge; it produces a sentence that looks
+freshly checked and is not, which is worse than an obviously old one.
+
+**And the mirror, which cost a session the same day.** A review scored the `docs` gate as
+needing a Rust arm; four experiments established it must not have one. `PLAN.md:9534` had
+said so already --- *"the same rule for Rust, where it does not apply --- `///` lines merge
+into one block, so the failure mode does not exist"* --- and neither the review nor I read it.
+A *Not done* that is **correct** is exactly as invisible as one that is stale, and the cost
+is re-deriving an answer the project had already written down. The measurement was still
+worth having, because the plan asserted it and the docstring now proves it; the search was
+not.
+
+The common cause is that `docs/PLAN.md` is 9,800 lines with no index, so every claim in it is
+findable only by someone who already knows it is there --- the same problem `AGENTS.md`
+solved by moving its corpus to `docs/TRAPS.md` and keeping titles, and the same one the
+`traps` gate then made mechanical. The check that would work here is the one
+`readme.test.ts` already runs: a claim of absence is the one shape of prose a registry can
+contradict, so a *Not done* that names a **command** could be diffed against the command
+registry exactly as the README's `<!-- not-built: -->` markers are. That is a proposal, not a
+thing built --- and note it reaches only the markers that name a command, which is roughly
+half of them.
+
 ### A refusal the reader needs, reported on a channel that does not exist
 
 `tpdf` shipped four sentences a reader can act on --- *"This document needs a password, and
