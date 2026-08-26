@@ -132,6 +132,43 @@ export interface RedactionView {
 }
 
 /**
+ * What removing one region would take, and what it would miss.
+ *
+ * Mirrors `redact::RegionPlan`, and it is the one thing about a pending
+ * redaction the frontend cannot work out for itself: which text-showing
+ * operations the region's characters belong to is a fact about the content
+ * stream, and route B removes a whole operation when any of its glyphs is
+ * inside. So {@link taking} is at least the words the region covers and
+ * commonly the rest of the line --- which is exactly what a reviewer is looking
+ * for.
+ */
+export interface RegionPlan {
+  /**
+   * Which of the page's text-showing operations the removal would delete.
+   *
+   * Ordinals, and they mean nothing here: they address operators in a content
+   * stream this process has never parsed. What the panel reads is how many
+   * there are. They cross the boundary because the **coordinator** applies
+   * them, and it is one type for one answer rather than two shapes of it.
+   *
+   * `redact::RegionPlan` also carries `text_objects`, which is deliberately
+   * absent here: it is a fact about the page that only the writer needs, and a
+   * field nothing reads is a field that goes stale without anything saying so.
+   */
+  shows: number[];
+  /** What those operations draw, in the page's own object order. */
+  taking: string;
+  /**
+   * What the region covers that a removal could not take.
+   *
+   * Non-empty means the region is **not** redactable, which is the single most
+   * important thing this panel can say: the words gone and the picture of the
+   * words still there is the confident lie `docs/PLAN.md` §6 forbids.
+   */
+  unhandled: { at: number; kind: string }[];
+}
+
+/**
  * One mark a reader made, as the backend reports it.
  *
  * Mirrors `edits::MarkView`, and lives here rather than in `edits.ts` for the
@@ -527,6 +564,34 @@ export function markRows(items: readonly MarkView[], pages: PageMap): MarkRow[] 
     if (left.has(mark.id)) rows.push({ mark, page: null });
   }
   return rows;
+}
+
+/**
+ * Pairs the plans a backend answered with the regions they were asked about.
+ *
+ * **Refuses rather than zipping when the counts disagree**, and that is the
+ * whole reason this is a function. The reply is a list in the order the request
+ * put the regions, so one plan too few would attach every later plan to the
+ * wrong region --- and a plan is a claim about what a removal takes, so the
+ * failure is a reader shown the wrong words next to the wrong rectangle. The
+ * trap index calls the general shape *"a test cannot see the direction of an
+ * attachment it puts in index order"*; here the fix is that a mismatch produces
+ * nothing at all.
+ *
+ * Empty is the honest answer for a mismatch: the rows then say nothing about
+ * what a removal would take, which is what they said before the reply arrived.
+ */
+export function pairPlans(
+  asked: readonly RedactionView[],
+  plans: readonly RegionPlan[],
+): Map<number, RegionPlan> {
+  const out = new Map<number, RegionPlan>();
+  if (asked.length !== plans.length) return out;
+  asked.forEach((region, at) => {
+    const plan = plans[at];
+    if (plan) out.set(region.id, plan);
+  });
+  return out;
 }
 
 /** One row of the redactions panel: a region, and the slot it is drawn on. */

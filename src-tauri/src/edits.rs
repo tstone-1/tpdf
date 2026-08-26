@@ -967,7 +967,58 @@ impl Edits {
             // there is still one to read.
             marks: planned_marks(model, &pages),
             pages,
+            // Empty, always. See the field.
+            redactions: Vec::new(),
         })
+    }
+
+    /// The pending regions, grouped by the **baseline page** they are on.
+    ///
+    /// What the redact command asks a worker about: the worker addresses a page
+    /// by its position in the file it has mapped, and the model addresses one by
+    /// identity. This is the one translation between the two, and it is here
+    /// rather than in the command because it needs the model's page order --- the
+    /// same reason [`Plan::pages`] is built here.
+    ///
+    /// Ordered by baseline page, and within a page by the order the model
+    /// reports its regions, so the ordinals a worker answers with can be zipped
+    /// back onto the regions that produced them. A region on a page the reader
+    /// has deleted is not here at all: `Working::all_redactions` walks the live
+    /// page order, and a redaction on a page nobody is keeping removes nothing
+    /// from a file that will not contain it.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document.
+    pub fn redaction_targets(&self, doc: u32) -> Result<Vec<RedactionTarget>, String> {
+        let docs = self.docs.lock().expect("edits lock");
+        let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &open.model;
+        let state = snapshot(model);
+        let mut out: Vec<RedactionTarget> = Vec::new();
+        for region in &state.redactions {
+            // The page's position in the *file*, which is what a worker means by
+            // a page number. A region whose page is not in the kept list is
+            // skipped rather than defaulted to page 0 --- see the trap about a
+            // failure path that acts hardest where it knows least.
+            let Some(source) = state
+                .pages
+                .iter()
+                .find(|page| page.id == region.page)
+                .map(|page| page.source)
+            else {
+                continue;
+            };
+            match out.iter_mut().find(|target| target.source == source) {
+                Some(target) => target.regions.push(region.area),
+                None => out.push(RedactionTarget {
+                    source,
+                    regions: vec![region.area],
+                }),
+            }
+        }
+        out.sort_by_key(|target| target.source);
+        Ok(out)
     }
 
     /// A plan naming only the pages at `slots`, for extracting a subset.
@@ -1037,6 +1088,7 @@ impl Edits {
             opened_as: opened_as.clone(),
             pages,
             marks,
+            redactions: Vec::new(),
         })
     }
 }
@@ -1113,6 +1165,63 @@ pub struct Plan {
     /// a dangling reference**, which is what makes an extract of pages 1--3
     /// write the highlights on those three pages and nothing else.
     pub marks: Vec<PlannedMark>,
+    /// The regions to remove, by baseline page.
+    ///
+    /// **Always empty out of the model**, and that is the safety property rather
+    /// than an omission: the ordinals here address show operators in a content
+    /// stream, and nothing in the model has parsed one. They are filled in by
+    /// the one command that redacts, out of answers a worker computed against
+    /// the file's own objects --- so an ordinary save, copy, extract or print
+    /// carries none and destroys nothing.
+    ///
+    /// `#[serde(default)]` so a plan written before this existed still parses as
+    /// the un-redacted one it meant. It crosses the worker boundary with the
+    /// rest of the plan for an append, where it is always empty: a plan carrying
+    /// a redaction is never an append, which [`Plan::only_adds_marks`] is what
+    /// enforces.
+    #[serde(default)]
+    pub redactions: Vec<PlannedRedaction>,
+}
+
+/// One baseline page and the regions marked on it.
+///
+/// A named pair rather than a tuple, because a `Vec<(u32, Vec<[f32; 4]>)>` is a
+/// type nobody can read twice --- which is also what clippy says about it. The
+/// two halves are addressed differently on purpose: `source` is a page of the
+/// **file**, which is what a worker means by a page number, and `regions` are in
+/// the file's display space, which is what the model holds them in.
+#[derive(Clone, PartialEq, Debug)]
+pub struct RedactionTarget {
+    /// The page's position in the baseline file, zero-based.
+    pub source: u32,
+    /// Every marked region on it, in the order the model reports them.
+    ///
+    /// The order matters: a worker answers with one plan per region in the order
+    /// it was asked, so this is what the answers are zipped back onto.
+    pub regions: Vec<[f32; 4]>,
+}
+
+/// One page's worth of removal, as the writer needs it.
+///
+/// [`PlannedMark`]'s counterpart for the other direction, and it names its page
+/// the same way and for the same reason: a writer walking the page tree has
+/// baseline positions, and a `PageId` means nothing to `lopdf`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct PlannedRedaction {
+    /// Which baseline page this removes from, zero-based.
+    pub source: u32,
+    /// Ordinals among that page's **text objects**, as PDFium enumerated them.
+    ///
+    /// Every region on the page, merged: two regions covering one line of text
+    /// name the same operator, and removing it twice is removing it once.
+    pub shows: Vec<usize>,
+    /// How many text objects PDFium found on the page.
+    ///
+    /// Carried because `redact::remove_shows` refuses when it disagrees with
+    /// what `lopdf` finds in the content stream. Nothing connects the two lists
+    /// but order, and a mis-addressed removal deletes the wrong words while
+    /// reporting success --- see `redact.rs`, which is where that refusal lives.
+    pub text_objects: usize,
 }
 
 /// One mark as the writer needs it.
@@ -1176,7 +1285,7 @@ impl Plan {
         // leaving it out would let the print path hand over the original bytes
         // for a document the reader has highlighted --- which prints, correctly
         // and confusingly, without the highlights.
-        self.marks.is_empty() && self.pages_are_the_file()
+        self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
     }
 
     /// Whether the only thing this adds to the file is marks.
@@ -1196,7 +1305,7 @@ impl Plan {
     /// is a thing that has already happened here once.
     #[must_use]
     pub fn only_adds_marks(&self) -> bool {
-        !self.marks.is_empty() && self.pages_are_the_file()
+        !self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
     }
 
     /// Whether the pages are the file's, in the file's order and shape.

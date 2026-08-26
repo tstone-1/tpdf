@@ -56,6 +56,28 @@ and Delete on a row does the same thing.
 
 The panel says what every row on it has in common: nothing has been removed yet.
 
+### Added: redact, for real
+
+**Redact and save as** writes a new file with the marked regions' text removed
+from the page's own instructions. Not covered over, not hidden --- the
+instruction that drew the words is deleted, so there is nothing left to
+uncover.
+
+It then reads that file back and tells you what it found: either that none of
+the removed words are in it, or that it could not prove the file is clean and
+why. It never just says it worked.
+
+The document you have open is untouched and your regions stay marked, so if you
+do not like the result you still have everything you had.
+
+Two things it does not do, and says so rather than leaving you to find out. It
+removes **text**, so a region covering a picture or a drawing leaves that where
+it is --- the row in the redactions panel says so before you commit, and the
+report says so afterwards. And it takes whole lines: removing part of a line
+means removing the instruction that drew it, so a word beside the one you
+marked goes with it. That is deliberate. The alternative is re-encoding the
+surviving text, which can silently draw the wrong glyphs.
+
 ### Fixed: a highlight could stop showing the words it covers after a deletion
 
 The comments panel fills in the words under a highlight that was left blank, a

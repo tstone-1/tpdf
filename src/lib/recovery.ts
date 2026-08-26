@@ -124,6 +124,55 @@ export function afterCopy(copied: { changed?: boolean }): string | null {
 }
 
 /**
+ * What to say after a redaction, which is **always** something.
+ *
+ * {@link afterCopy}'s opposite, and the asymmetry is the whole of
+ * `docs/PLAN.md` §6. A copy that worked is silent, because the file appearing
+ * where the reader put it is the acknowledgement. A redaction is never silent:
+ * the reader has just destroyed content on the strength of a claim, and the
+ * claim is the thing they need to see. §6 step 4 puts it as *reports verified,
+ * or not verified with specifics --- never a bare success*, and the second half
+ * is what this exists for.
+ *
+ * The counts are both said because they answer different questions. *Regions* is
+ * what the reader marked, so it is what they can check against the panel;
+ * *removals* is what actually came out of the content stream, and the two differ
+ * whenever a region covers several lines or two regions share one.
+ *
+ * A source that changed under the reader is appended rather than replacing
+ * anything, because it is a fact about a *different* thing --- which document
+ * this was built from --- and dropping either sentence loses something a reader
+ * has to act on.
+ */
+export function afterRedaction(applied: {
+  regions: number;
+  shows: number;
+  verified: boolean;
+  why: string[];
+  changed?: boolean;
+}): string {
+  const removed = `${count(applied.regions, "region")}, ${count(applied.shows, "removal")}`;
+  const verdict = applied.verified
+    ? `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.`
+    : // Named as a failure to *prove* rather than as a failure to remove,
+      // because those are different and only one of them is known. A blind spot
+      // is a scan that could not look, and telling a reader their words are
+      // still there when nothing said so would be its own confident lie.
+      `Redacted ${removed}, but tpdf could not prove the file is clean: ` +
+      `${applied.why.join("; ")}. Treat it as unredacted until you have checked it.`;
+  if (!applied.changed) return verdict;
+  return (
+    `${verdict} The original also changed on disk while you had it open, so this was ` +
+    "built from the newer version."
+  );
+}
+
+/** `1 region` or `4 regions`, so a sentence does not say "1 regions". */
+function count(many: number, noun: string): string {
+  return many === 1 ? `1 ${noun}` : `${many} ${noun}s`;
+}
+
+/**
  * What to say after a split, which is always something.
  *
  * {@link afterMerge}'s exception for {@link afterCopy}'s reason, arriving from

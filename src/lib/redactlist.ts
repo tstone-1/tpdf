@@ -50,7 +50,7 @@
 
 import { placeholder } from "./panelrow";
 import { flatten } from "./rowline";
-import type { RedactionRow } from "./pages";
+import type { RedactionRow, RegionPlan } from "./pages";
 
 /** Side of the swatch standing for the region, in CSS pixels. */
 const SWATCH = 9;
@@ -156,6 +156,52 @@ export interface RedactListOptions {
    * it does for the comments panel's covered words.
    */
   wordsFor: (id: number) => string | null | undefined;
+  /**
+   * What a removal would take from a region, or `undefined` before the backend
+   * has been asked.
+   *
+   * Separate from {@link wordsFor} because they answer different questions and
+   * arrive by different routes: the words are geometry the frontend already
+   * holds, and this is a reading of the page's content stream that only the
+   * worker can do. What it is *for* is the second line of a row --- the objects
+   * a removal cannot take, which is the one thing a reader must know before
+   * they destroy anything.
+   */
+  planFor: (id: number) => RegionPlan | undefined;
+}
+
+/**
+ * The row's second line: what a removal of this region would not take.
+ *
+ * `""` when there is nothing to say, which is the ordinary case and includes
+ * every region whose plan has not arrived yet. **Silence is the right default
+ * here and is not the right default for the first line**: a row with no words
+ * says so because a reader is waiting for them, and a row with no warning is
+ * simply a row with no warning.
+ *
+ * Grouped by kind and counted, because a page with three pictures on it reports
+ * three findings and a reader reading three identical sentences cannot tell
+ * that from one printed thrice. `redact::Unhandled` carries the position for
+ * exactly that reason; this panel has no room for it and the count says the
+ * same thing.
+ */
+export function warningFor(plan: RegionPlan | undefined): string {
+  if (!plan || plan.unhandled.length === 0) return "";
+  const kinds = new Map<string, number>();
+  for (const object of plan.unhandled) {
+    kinds.set(object.kind, (kinds.get(object.kind) ?? 0) + 1);
+  }
+  const said = [...kinds.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    // `an image`, `a path`. A rule rather than a table, because the kinds are
+    // PDFium's words and a table here would be a second list to keep in step
+    // with `objects.ts` --- which is the drift this panel has already avoided
+    // once by taking the kind rather than a sentence.
+    .map(([kind, many]) =>
+      many === 1 ? `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}` : `${many} ${kind}s`,
+    )
+    .join(" and ");
+  return `Also covers ${said}, which a removal cannot take`;
 }
 
 /** The redactions panel: a row per pending region, in page order. */
@@ -231,14 +277,31 @@ export class RedactList {
    * reason every sibling panel gives: a getter answering from the source agrees
    * with itself whatever the row actually contains.
    */
-  rowText(id: number): { words: string; page: string; own: boolean } {
+  rowText(id: number): {
+    words: string;
+    /**
+     * The second line, or `null` where the row has none.
+     *
+     * **`null` rather than `""`**, because an empty warning element and no
+     * warning element are different rows and read the same through a string: a
+     * row that draws an empty line has a line of chrome nobody can see, and a
+     * check that could not tell them apart let exactly that ship.
+     */
+    warning: string | null;
+    page: string;
+    own: boolean;
+  } {
     const row = this.elements.get(id);
-    if (!row) return { words: "", page: "", own: false };
+    if (!row) return { words: "", warning: null, page: "", own: false };
     const [, page, text] = [...row.children] as HTMLElement[];
+    const parts = [...(text?.children ?? [])] as HTMLElement[];
+    const words = parts.find((part) => part.dataset?.part === "words");
+    const warning = parts.find((part) => part.dataset?.part === "warning");
     return {
-      words: text?.textContent ?? "",
+      words: words?.textContent ?? "",
+      warning: warning ? (warning.textContent ?? "") : null,
       page: page?.textContent ?? "",
-      own: text?.dataset?.own === "yes",
+      own: words?.dataset?.own === "yes",
     };
   }
 
@@ -334,22 +397,26 @@ export class RedactList {
       "flex:none;min-width:3ch;text-align:right;opacity:0.5;" +
       "font-variant-numeric:tabular-nums;";
 
-    const line = rowLineFor(this.opts.wordsFor(redaction.id));
+    // A column rather than a line, because a row can have two things to say.
     const text = document.createElement("div");
-    text.dataset.part = "words";
+    text.style.cssText = "flex:1;min-width:0;";
+
+    const line = rowLineFor(this.opts.wordsFor(redaction.id));
+    const words = document.createElement("div");
+    words.dataset.part = "words";
     // Whether the line is the document's own words, said rather than left to be
     // read off the styling. Both come from `line.own`, so they cannot disagree.
-    text.dataset.own = line.own ? "yes" : "no";
-    text.textContent = line.text;
-    // **The words are drawn plainly and only the two fallbacks are dimmed**,
-    // which inverts `marklist.ts`. There, dimmed-and-italic separates a sentence
-    // a person typed from words the document supplied, and both appear. Here
+    words.dataset.own = line.own ? "yes" : "no";
+    words.textContent = line.text;
+    // **The words are drawn plainly and only the fallbacks are dimmed**, which
+    // inverts `marklist.ts`. There, dimmed-and-italic separates a sentence a
+    // person typed from words the document supplied, and both appear. Here
     // nobody typed anything, so dimming the document's words would dim every
     // row that has any and leave the styling saying nothing at all.
-    text.style.cssText =
-      "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;" +
-      "white-space:nowrap;" +
+    words.style.cssText =
+      "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
       (line.own ? "" : "opacity:0.6;font-style:italic;");
+    text.append(words);
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -370,6 +437,21 @@ export class RedactList {
       event.stopPropagation();
       this.opts.onRemove(redaction.id);
     });
+
+    const warning = warningFor(this.opts.planFor(redaction.id));
+    if (warning) {
+      // Under the words rather than beside them, and dimmed rather than red:
+      // this is a fact about what will survive, not an error, and a row that
+      // shouts is a row a reader stops reading after the third one. The
+      // sentence is what carries the weight.
+      const said = document.createElement("div");
+      said.dataset.part = "warning";
+      said.textContent = warning;
+      said.style.cssText =
+        "opacity:0.6;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;" +
+        "white-space:nowrap;";
+      text.append(said);
+    }
 
     element.append(swatch, page, text, remove);
 

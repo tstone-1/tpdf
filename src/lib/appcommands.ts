@@ -286,6 +286,15 @@ export interface AppActions {
   isDirty(): boolean;
   /** Ask for a name and write the working document to it. */
   saveCopy(): void;
+  /**
+   * Writes a copy with every marked region removed.
+   *
+   * Separate from {@link saveCopy} rather than a flag on it, and the reason is
+   * that one of them destroys content: a reader reaching for *Save a copy* must
+   * never get a redaction, and a reader reaching for a redaction must be able to
+   * find it by that word. Two commands is what makes both true.
+   */
+  redactCopy(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
   extractPages(slots: number[]): void;
   /** Ask for a stem and write the document to one numbered file per group. */
@@ -928,6 +937,23 @@ export function registerAppCommands(
       keys: label("file.saveCopy"),
       enabled: withDocument,
       run: () => actions.saveCopy(),
+    },
+    {
+      // **"Redact and save as", not "Redact".** Nothing here changes the open
+      // document, and a command called Redact reads as one that does --- which
+      // is the difference between a reader who checks the new file and one who
+      // closes the old one believing it is clean. The name says where the
+      // result goes, which is the whole of what is safe about this step.
+      //
+      // Guarded on the document rather than on there being a region marked: the
+      // palette is how a command is *found*, and a reader who wants to know
+      // whether tpdf can redact should meet it and be told what to do, rather
+      // than not meet it at all. `lib.rs` refuses with "nothing in this document
+      // is marked for removal", which is the sentence that answers them.
+      id: "file.redactCopy",
+      title: "Redact and save as\u2026",
+      enabled: withDocument,
+      run: () => actions.redactCopy(),
     },
     {
       // Takes a selection where `file.saveCopy` takes none, and is otherwise

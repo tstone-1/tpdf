@@ -265,7 +265,11 @@ fn incomplete(pdfium: &Pdfium, root: &Path) -> Result<String, String> {
     }
     Ok(format!(
         "the plan is incomplete and names why: {}",
-        plan.unhandled.join("; ")
+        plan.unhandled
+            .iter()
+            .map(redact::Unhandled::sentence)
+            .collect::<Vec<_>>()
+            .join("; ")
     ))
 }
 

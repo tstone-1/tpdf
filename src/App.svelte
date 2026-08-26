@@ -30,6 +30,7 @@
   } from "./lib/markcolors";
   import {
     afterCopy,
+    afterRedaction,
     afterSplit,
     afterMerge,
     afterFailedSave,
@@ -64,10 +65,12 @@
     markRows,
     NO_PAGES,
     outlineIn,
+    pairPlans,
     redactionRows,
     type MarkKind,
     type StampName,
     type PageId,
+    type RegionPlan,
   } from "./lib/pages";
   import { nameOf } from "./lib/markpopup";
   import { sweepLabel } from "./lib/markband";
@@ -294,6 +297,16 @@
    * A `PageId` is what the region itself carries and it does not move.
    */
   const redactionPagesRead = new Set<number>();
+  /**
+   * What a removal would take from each pending region, by redaction id.
+   *
+   * Separate from {@link redactionWords} because they answer different
+   * questions and come from different places: the words a region *covers* are
+   * geometry this process already holds, and this is a reading of the page's
+   * content stream that only a worker can do. What it is for is the row's
+   * second line --- the objects a removal cannot take.
+   */
+  const redactionPlans = new Map<number, RegionPlan>();
   /** Whether {@link fillRedactionWords} is walking, so a second call stands down. */
   let fillingRedactionWords = false;
   let rawOutline: Outline | null = null;
@@ -404,6 +417,7 @@
     saveDocument: () => void saveDocument(),
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
+    redactCopy: () => void redactCopy(),
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
     mergeDocuments: () => void mergeDocuments(),
@@ -925,12 +939,37 @@
         const text =
           slot === undefined ? null : ((await viewer?.unturnedText(slot)) ?? null);
         if (edits !== model) return;
-        for (const region of model.state.redactions) {
-          if (region.page !== next.page) continue;
+        const asked = model.state.redactions.filter(
+          (region) => region.page === next.page,
+        );
+        for (const region of asked) {
           redactionWords.set(
             region.id,
             text === null ? null : touchedText(text, region.area),
           );
+        }
+        // The page of the *file*, which is what the backend means by a page
+        // number: `slot` is a position in the document as the reader has it,
+        // and a deletion above this page makes the two different numbers.
+        const source = slot === undefined ? undefined : model.map.sourceOf(slot);
+        if (source !== undefined) {
+          try {
+            const plans = await invoke<RegionPlan[]>("redaction_plans", {
+              doc: model.doc,
+              page: source,
+              regions: asked.map((region) => region.area),
+            });
+            if (edits !== model) return;
+            for (const [id, plan] of pairPlans(asked, plans)) {
+              redactionPlans.set(id, plan);
+            }
+          } catch (e) {
+            // Not raised to the reader. The rows keep saying what they said,
+            // which is nothing about what a removal would take --- and the
+            // command that actually redacts asks again and reports its own
+            // failures, so a reader is never left acting on this silence.
+            console.warn(`could not read what a removal would take: ${e}`);
+          }
         }
         sidebar?.setRedactionWords();
       }
@@ -1045,6 +1084,38 @@
       const said = afterCopy(await edits.saveCopy(openPathName, chosen));
       if (said) say(said);
     } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /**
+   * Asks for a name and writes a redacted copy of the document to it.
+   *
+   * `saveCopy`'s shape and one deliberate difference: **success is not silent**.
+   * A copy that worked says so by appearing where the reader put it; a redaction
+   * has destroyed content on the strength of a claim, and `docs/PLAN.md` §6 step
+   * 4 says the claim is reported either way. `afterRedaction` is the sentence.
+   *
+   * The open document is untouched --- the regions stay pending and nothing is
+   * journalled --- so a reader who does not like the result still has their
+   * marks and can try again somewhere else.
+   */
+  async function redactCopy(): Promise<void> {
+    if (!edits || !openPathName) return;
+    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+    try {
+      const chosen = await saveDialog({
+        title: "Redact and save as",
+        defaultPath: `${suggested} redacted.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      // Cancelled, which is an answer rather than an error.
+      if (!chosen) return;
+      say(afterRedaction(await edits.redactCopy(openPathName, chosen)));
+    } catch (e) {
+      // Every refusal reaches here, and the one worth the room is the region
+      // that covers something a removal cannot take: `lib.rs` refuses before
+      // writing anything and names what and where.
       say(String(e));
     }
   }
@@ -2183,6 +2254,7 @@
       wordsAsked.clear();
       commentWords.clear();
       redactionWords.clear();
+      redactionPlans.clear();
       redactionPagesRead.clear();
       properties = null;
       propertiesDialog?.close();
@@ -2239,6 +2311,12 @@
           // nobody has looked at yet: `Map.get` answering `undefined` is what
           // separates *not read* from a page read and found to hold nothing.
           wordsFor: (id) => redactionWords.get(id),
+          // Absent until a worker has answered for the region's page, which is
+          // why the row draws nothing rather than "no objects": a warning that
+          // has not arrived and a region with nothing to warn about must not
+          // look alike, and the way they are told apart here is that only one
+          // of them ever produces a line.
+          planFor: (id) => redactionPlans.get(id),
         },
         pages: {
           doc: doc.id,

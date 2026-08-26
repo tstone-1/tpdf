@@ -301,6 +301,7 @@ fn whole(pages: u32) -> Plan {
                 crop: None,
             })
             .collect(),
+        redactions: Vec::new(),
         marks: Vec::new(),
     }
 }

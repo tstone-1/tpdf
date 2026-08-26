@@ -1999,6 +1999,17 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         .collect();
     crop_pages(&mut doc, &crops, &written)?;
 
+    // **Last, and everything above it is a reason this can be last rather than
+    // an accident of ordering.** A redaction's ordinals were worked out against
+    // the *file's* objects, by PDFium, in the worker --- so anything that
+    // reordered the page's content stream before this ran would address the
+    // wrong words while reporting success. Nothing above does: deleting and
+    // reordering pages edits the page tree, a mark adds annotation objects, and
+    // a turn and a crop write entries in the page dictionary. Not one of them
+    // touches a content stream, which is the property that makes the ordinals
+    // still true here.
+    apply_redactions(&mut doc, &pages, &plan.redactions)?;
+
     // **Only what this rewrite orphaned, and only when it orphaned something.**
     // `drop_pages` unlinks a page object and every reference to it, and
     // `reorder_pages` flattens the tree and leaves the intermediate `/Pages`
@@ -2070,6 +2081,66 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
 /// # Errors
 ///
 /// `lopdf` refusing to serialise, or the bytes it produced failing the check.
+/// Removes the planned show operators from each page that has any.
+///
+/// The destructive half of a redaction, and the only place in this module that
+/// takes content *out* of a page. Everything about which operators go was
+/// decided by `redact::covered` against PDFium's own object list; this addresses
+/// them and nothing else.
+///
+/// **A page named twice is refused rather than removed from twice.** The second
+/// call would run against a content stream the first had already changed, so its
+/// ordinals would name different operators --- and `remove_shows`'s own guard
+/// would probably catch it, which is not the same as this being safe. Refusing
+/// here says what happened; relying on the other guard would report a
+/// correspondence failure for a caller's duplicate.
+///
+/// # Errors
+///
+/// A redaction naming a page the plan does not keep, a page named twice, or
+/// `redact::remove_shows` refusing --- which it does when the operators `lopdf`
+/// decodes disagree with the text objects PDFium counted.
+fn apply_redactions(
+    doc: &mut Document,
+    pages: &[lopdf::ObjectId],
+    redactions: &[crate::edits::PlannedRedaction],
+) -> Result<usize, Refusal> {
+    // **Every entry checked before any of them is acted on**, which is the half
+    // that is about damage rather than about correctness. A refusal discovered
+    // half way through leaves a document with some pages redacted and some not,
+    // and this function's caller is about to serialise it --- so a plan that
+    // cannot be carried out in full is refused before the first removal.
+    let mut seen: Vec<u32> = Vec::new();
+    let mut targets: Vec<(lopdf::ObjectId, &crate::edits::PlannedRedaction)> = Vec::new();
+    for redaction in redactions {
+        if seen.contains(&redaction.source) {
+            return Err(format!(
+                "page {} is named twice by the redaction plan",
+                redaction.source + 1
+            )
+            .into());
+        }
+        seen.push(redaction.source);
+        let Some(page) = pages.get(redaction.source as usize) else {
+            return Err(format!(
+                "a redaction names page {} of a document that has {}",
+                redaction.source + 1,
+                pages.len()
+            )
+            .into());
+        };
+        targets.push((*page, redaction));
+    }
+
+    let mut removed = 0usize;
+    for (page, redaction) in targets {
+        let took = crate::redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
+            .map_err(Refusal::from)?;
+        removed += took.removed;
+    }
+    Ok(removed)
+}
+
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
     // **`/Size` made right rather than checked**, and the difference is the
     // whole reason this is two lines instead of a guard.
@@ -3908,6 +3979,7 @@ mod tests {
                     crop: None,
                 })
                 .collect(),
+            redactions: Vec::new(),
             marks: Vec::new(),
         }
     }
@@ -3929,6 +4001,7 @@ mod tests {
                     crop: None,
                 })
                 .collect(),
+            redactions: Vec::new(),
             marks: Vec::new(),
         }
     }
@@ -6552,6 +6625,7 @@ mod tests {
                 turns: 0,
                 crop: None,
             }],
+            redactions: Vec::new(),
             marks: vec![PlannedMark {
                 kind,
                 // The biconditional the model enforces, restated here because
@@ -7987,6 +8061,7 @@ mod tests {
                     crop: None,
                 },
             ],
+            redactions: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
@@ -8035,6 +8110,7 @@ mod tests {
                     crop: None,
                 })
                 .collect(),
+            redactions: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
@@ -8088,10 +8164,146 @@ mod tests {
                 turns: 0,
                 crop: None,
             }],
+            redactions: Vec::new(),
             marks: Vec::new(),
         };
         assert!(plain.is_identity());
         assert!(!plan_with_mark(one_quad()).is_identity());
+    }
+
+    /// A plan that only redacts is not the file, and is never an append.
+    ///
+    /// **The two predicates that could ship an unredacted file**, and neither
+    /// mentions a redaction unless somebody adds the clause. `is_identity` is
+    /// what lets the print path hand the original bytes over; a plan with a
+    /// redaction answering `true` there would produce a "redacted" print of the
+    /// document with every word in it. `only_adds_marks` is what routes a save
+    /// to the append, which writes an update section and never touches a content
+    /// stream --- so the same plan answering `true` there writes a file that has
+    /// been added to and had nothing taken out.
+    ///
+    /// Both are reached with **no other edit at all**, which is the case that
+    /// matters: a reader who opens a document, drags one region and redacts has
+    /// changed nothing else, so every other clause of both predicates is
+    /// satisfied and only the new one can refuse.
+    #[test]
+    fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
+        let mut plan = Plan {
+            opened_as: None,
+            baseline: 1,
+            pages: vec![PageView {
+                id: 1,
+                source: 0,
+                turns: 0,
+                crop: None,
+            }],
+            redactions: Vec::new(),
+            marks: Vec::new(),
+        };
+        assert!(plan.is_identity(), "the control: nothing is edited");
+        plan.redactions = vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: vec![0],
+            text_objects: 4,
+        }];
+        assert!(
+            !plan.is_identity(),
+            "a redaction is a change the file does not have"
+        );
+        assert!(
+            !plan.only_adds_marks(),
+            "and it is not something an append could do"
+        );
+        assert_eq!(
+            mode_for(&plan, 1_000),
+            Mode::Rewrite,
+            "so a save carrying one takes the rewrite whatever the file's size"
+        );
+
+        // **A mark AND a redaction**, which is the only input where the
+        // redaction clause of `only_adds_marks` decides anything. Without it the
+        // predicate is short-circuited by the empty marks and a mutation
+        // deleting the clause survived --- the trap about a guard whose
+        // neighbour refuses the same input, arriving in the predicate that
+        // routes a save to the append. A reader who highlights something and
+        // also redacts is the case: an update section adds objects and never
+        // touches a content stream, so that save would be written, be bigger,
+        // and have nothing taken out of it.
+        let mut both = plan_with_mark(one_quad());
+        assert!(both.only_adds_marks(), "the control: a mark alone appends");
+        both.redactions = vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: vec![0],
+            text_objects: 4,
+        }];
+        assert!(
+            !both.only_adds_marks(),
+            "a mark beside a redaction is not an append"
+        );
+        assert!(!both.is_identity(), "and it is not the file either");
+    }
+
+    /// A page named twice by the redaction plan is refused, not removed twice.
+    ///
+    /// The second call would run against a stream the first had already changed,
+    /// so its ordinals would name different operators. `remove_shows` has a
+    /// guard of its own that would probably catch it --- which is not the same as
+    /// this being safe, and it would report a correspondence failure for what is
+    /// actually a caller's duplicate.
+    #[test]
+    fn a_page_named_twice_by_the_redaction_plan_is_refused() {
+        let twice = vec![
+            crate::edits::PlannedRedaction {
+                source: 0,
+                shows: vec![0],
+                text_objects: 1,
+            },
+            crate::edits::PlannedRedaction {
+                source: 0,
+                shows: vec![0],
+                text_objects: 1,
+            },
+        ];
+        let mut doc = Document::with_version("1.7");
+        let why = apply_redactions(&mut doc, &[(1, 0)], &twice)
+            .expect_err("one page named twice must be refused");
+        assert!(why.message.contains("named twice"), "{why}");
+    }
+
+    /// A redaction naming a page the plan does not keep is refused.
+    ///
+    /// Unreachable from the model as it stands --- `Edits::redaction_targets`
+    /// walks the live pages --- and the failure it guards against is the one
+    /// worth refusing loudly: an index past the end would otherwise be an
+    /// arithmetic accident away from naming a *different* page, and removing
+    /// text from a page nobody marked is the confident wrong answer this
+    /// subsystem exists to prevent.
+    #[test]
+    fn a_redaction_naming_a_page_that_is_not_kept_is_refused() {
+        let past = vec![crate::edits::PlannedRedaction {
+            source: 4,
+            shows: vec![0],
+            text_objects: 1,
+        }];
+        let mut doc = Document::with_version("1.7");
+        let why = apply_redactions(&mut doc, &[(1, 0)], &past)
+            .expect_err("a page the plan does not keep must be refused");
+        assert!(why.message.contains("page 5"), "{why}");
+        assert!(why.message.contains("that has 1"), "{why}");
+    }
+
+    /// Nothing to redact removes nothing, and says so by not refusing.
+    ///
+    /// The emptiness control for the two refusals above: a guard that fired on
+    /// an empty list would make every ordinary save refuse, and one that could
+    /// not fire at all would look exactly like this.
+    #[test]
+    fn a_plan_with_no_redactions_removes_nothing() {
+        let mut doc = Document::with_version("1.7");
+        assert_eq!(
+            apply_redactions(&mut doc, &[(1, 0)], &[]).expect("no redactions is not a refusal"),
+            0
+        );
     }
 
     #[test]

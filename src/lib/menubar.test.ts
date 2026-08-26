@@ -218,8 +218,10 @@ describe("buildMenu", () => {
       "command",
       "command",
       "separator",
-      // Save, Save a copy, Extract, Split, Merge --- the five that write a
-      // file. Split joined them on 2026-08-26.
+      // Save, Save a copy, Redact and save as, Extract, Split, Merge --- the six
+      // that write a file. Split joined them on 2026-08-26 and the redaction
+      // later the same day.
+      "command",
       "command",
       "command",
       "command",

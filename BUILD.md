@@ -277,6 +277,31 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 #   macOS arm64, 2026-08-26   2 cases ran, 0 failures, all three limits asserted
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 
+# Redaction, end to end: does the whole path actually remove the words?
+# redact-probe proves the primitive -- given ordinals, the operators go. This
+# proves the PATH: a rectangle built from the character boxes becomes a plan
+# against PDFium's own object list, becomes ordinals in a save plan, becomes a
+# written file, and the words are not in it. Everything between the drag and the
+# file except the dialog and the command's own glue.
+#
+# TWO READERS, and the control is the point. The needle must be gone and a word
+# on another line must survive, asserted through verify::scan over the bytes AND
+# through PDFium re-extracting the written file. A scan that finds nothing
+# because it cannot look is the failure this repository has recorded from
+# several directions; the survivor is what says it can see the file at all.
+#
+# The region deliberately overlaps a path -- make_text_pdf.py draws four
+# unrelated non-text objects -- so the plan is INCOMPLETE and the probe asserts
+# that too. A rule under a line of text is what almost every real document has,
+# which is why the command writes the file and reports it as unproven rather
+# than refusing; see PLAN.md section 6.
+#
+# It needs text-base14.pdf, which a hosted runner does not have. Without it the
+# run prints [SKIP] and says so rather than passing.
+#
+#   macOS arm64, 2026-08-26   9 checks, 0 failures
+cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
+
 # Signatures: does PDFium agree with us about the same signatures?
 # `docinfo.rs` walks /AcroForm /Fields with lopdf; PDFium implements that walk
 # in C++ and exports the result. Neither knows about the other, which is what

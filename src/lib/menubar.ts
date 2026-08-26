@@ -111,6 +111,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "file.save",
       "file.saveCopy",
+      // Beside the copy, because it is one --- and after it rather than before,
+      // because the reader reaching for this group most often wants the
+      // ordinary one and a destructive item above it is a slip waiting to be
+      // made.
+      "file.redactCopy",
       "file.extractPages",
       // Between extract and merge rather than after them: the three read as
       // one-out-of-one, several-out-of-one, one-out-of-several, and that is the

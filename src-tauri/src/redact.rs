@@ -87,7 +87,98 @@ pub struct Plan {
     /// Non-empty means the region is **not** redactable by this module, and a
     /// caller that acts anyway ships a page whose words are gone and whose
     /// picture of those words is not.
-    pub unhandled: Vec<String>,
+    pub unhandled: Vec<Unhandled>,
+}
+
+/// One object a region covers that this cannot remove.
+///
+/// **The kind and the position rather than a sentence**, which is what this
+/// held until 2026-08-26. A refusal wants a sentence and a panel wants the word
+/// *image*, and building the sentence first makes the second reader parse the
+/// first reader's prose --- the shape that drifts the moment somebody rewords
+/// it. One decision, made in [`covered`], rendered by whoever is showing it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Unhandled {
+    /// Its position in PDFium's enumeration of the page's objects.
+    ///
+    /// Carried because a page with three pictures on it otherwise reports the
+    /// same thing three times and a reader cannot tell whether that is three
+    /// findings or one printed thrice.
+    pub at: usize,
+    /// What PDFium calls it: `image`, `path`, `shading`, `form`, `unsupported`.
+    ///
+    /// A string for [`PageObject::kind`]'s reason, and it is the same string:
+    /// this is that field, carried through.
+    pub kind: String,
+}
+
+impl Unhandled {
+    /// The sentence a refusal says.
+    ///
+    /// Here rather than at the call site so that every refusal about an object
+    /// this cannot remove reads the same way, and so that the panel's shorter
+    /// phrasing is a second *rendering* rather than a second decision.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        let Unhandled { at, kind } = self;
+        format!("object {at} is of kind {kind} and overlaps the region; only text is removed here")
+    }
+}
+
+/// What removing one region would take, as somebody outside this process reads it.
+///
+/// [`Plan`] with the ordinals replaced by what they *draw*. A caller across the
+/// IPC boundary cannot do anything with an ordinal --- it addresses a show
+/// operator in a content stream this process parsed --- and what a reader
+/// reviewing a redaction needs is the words and the refusals.
+///
+/// **`taking` is not the words the region covers**, and the difference is the
+/// whole reason this crosses the boundary at all. Route B removes a whole
+/// text-showing operation when any of its glyphs is inside the region, so this
+/// is at least what the reader selected and commonly the rest of the line. The
+/// frontend computes the covered words itself, from geometry it already holds;
+/// what it cannot compute is this.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RegionPlan {
+    /// Which of the page's text-showing operations the removal would delete.
+    ///
+    /// [`Plan::shows`], carried through. Meaningless to the frontend, which
+    /// reads only how many there are --- and meaningful to the **coordinator**,
+    /// which parses the same file with `lopdf` and is what hands them to
+    /// [`remove_shows`]. That is the whole reason they cross the boundary
+    /// rather than being counted here.
+    pub shows: Vec<usize>,
+    /// How many text objects PDFium found on the page this region is on.
+    ///
+    /// Not about the region at all, and carried anyway: [`remove_shows`] refuses
+    /// when this disagrees with the operators `lopdf` finds, and the caller that
+    /// applies a plan has no other way to learn it.
+    pub text_objects: usize,
+    /// What those operations draw, in the page's own object order.
+    ///
+    /// One string rather than one per operation: a row shows a line and a
+    /// caller wanting them apart would be reconstructing the ordinals this type
+    /// exists to keep out of the reply.
+    pub taking: String,
+    /// What the region covers that this cannot remove, one sentence each.
+    ///
+    /// Non-empty means the region is **not** redactable, and the sentences are
+    /// what lets a caller say so rather than reporting a number. Deny by
+    /// default: `docs/PLAN.md` §6 calls an object the sanitiser does not
+    /// understand a verification failure, not a shrug.
+    pub unhandled: Vec<Unhandled>,
+}
+
+impl RegionPlan {
+    /// Whether acting on this removes everything in the region.
+    ///
+    /// [`Plan::is_complete`] on the far side of the boundary, and deliberately
+    /// the same question rather than a field: a caller that reads `unhandled`
+    /// itself has to decide what empty means, and the two decisions would drift.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.unhandled.is_empty()
+    }
 }
 
 impl Plan {
@@ -100,6 +191,35 @@ impl Plan {
     pub fn is_complete(&self) -> bool {
         self.unhandled.is_empty()
     }
+}
+
+/// What a redaction did, and whether it can be proved.
+///
+/// **Never a bare success**, which is `docs/PLAN.md` §6 step 4 stated as a type:
+/// a redaction that cannot be shown clean is a confident lie, and the reasons
+/// are what tell a reader whether the next step is OCR, a different tool, or
+/// giving up on the file. So `verified` false always arrives with `why`
+/// non-empty, and a caller cannot report the first without the second.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Applied {
+    /// How many regions were removed from.
+    pub regions: usize,
+    /// How many text-showing operations went.
+    ///
+    /// Not the same as `regions`, in either direction: one region can cover
+    /// several operations, and two regions on one line cover the same one.
+    pub shows: usize,
+    /// The source changed on disk since the reader opened it.
+    ///
+    /// [`crate::save::Copied`]'s field, carried for its reason: a copy written
+    /// from a document that is no longer the one on screen is a fact the reader
+    /// has to be told rather than a failure.
+    pub changed: bool,
+    /// Whether the written file could be shown clean.
+    pub verified: bool,
+    /// Why not, one reason each. Empty exactly when `verified`.
+    pub why: Vec<String>,
 }
 
 /// Which of a page's objects a region covers.
@@ -128,13 +248,10 @@ pub fn covered(objects: &[PageObject], region: Rect) -> Plan {
         if is_text {
             plan.shows.push(ordinal);
         } else {
-            // Numbered, because a page with three pictures on it otherwise
-            // reports the same sentence three times and a reader cannot tell
-            // whether that is three findings or one printed thrice.
-            plan.unhandled.push(format!(
-                "object {at} is of kind {} and overlaps the region; only text is removed here",
-                object.kind
-            ));
+            plan.unhandled.push(Unhandled {
+                at,
+                kind: object.kind.clone(),
+            });
         }
     }
     plan
@@ -273,7 +390,7 @@ fn is_show(operator: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{covered, is_show, overlaps, remove_shows, PageObject, Plan};
+    use super::{covered, is_show, overlaps, remove_shows, PageObject, Plan, Unhandled};
     use lopdf::content::Content;
     use lopdf::{dictionary, Document, Object, Stream};
 
@@ -413,10 +530,20 @@ mod tests {
             !plan.is_complete(),
             "and the picture over it is not, so the region is not redactable here"
         );
+        assert_eq!(
+            plan.unhandled,
+            vec![Unhandled {
+                at: 1,
+                kind: "image".to_string()
+            }],
+            "the finding names which object and what it is"
+        );
         assert!(
-            plan.unhandled[0].contains("object 1 is of kind image"),
-            "the message names WHICH object: {:?}",
-            plan.unhandled
+            plan.unhandled[0]
+                .sentence()
+                .contains("object 1 is of kind image"),
+            "and the sentence it renders as names both: {:?}",
+            plan.unhandled[0].sentence()
         );
     }
 

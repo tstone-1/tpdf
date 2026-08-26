@@ -110,6 +110,23 @@ pub enum Request {
     /// space; the answer is in the page's own, which is the space a crop box is
     /// stored and saved in.
     CropBox { page: u32, rect: [f32; 4] },
+    /// What removing each of one page's marked regions would take.
+    ///
+    /// **A parse, so it belongs here rather than in the coordinator**, and it is
+    /// the parse that decides what a redaction destroys: the answer comes from
+    /// PDFium's object list for the page, which is a reading of attacker-chosen
+    /// bytes and is exactly what this boundary exists to contain.
+    ///
+    /// One request per page carrying every region on it, because the page load
+    /// and the object walk are the cost and they are per page. `regions` are in
+    /// the file's display space, the space the model holds them in; the turn
+    /// into the page's own space is the worker's, which is the same split
+    /// [`Request::CropBox`] is here for.
+    ///
+    /// It names nothing the worker could act on, which is this type's standing
+    /// property: rectangles in, sentences and a count out. Nothing is removed by
+    /// answering it.
+    RedactPlans { page: u32, regions: Vec<[f32; 4]> },
     /// Read the document's outline.
     Outline,
     /// Read every comment in the document.
@@ -266,6 +283,7 @@ pub enum Reply {
     Geometry(crate::render::CropGeometry),
     /// The rectangle a proposed crop would actually produce.
     CropBox([f32; 4]),
+    RedactPlans(Vec<crate::redact::RegionPlan>),
     /// The document's bookmarks.
     Outline(crate::outline::Outline),
     /// Every annotation a reader can be shown.
@@ -512,6 +530,13 @@ mod tests {
                 },
                 carry: None,
             },
+            // A `Vec` of arrays, which no other request in this list carries:
+            // the shapes that fail a round trip are the ones a serializer can
+            // flatten or default away, and a list of four-number arrays is one.
+            Request::RedactPlans {
+                page: 2,
+                regions: vec![[10.0, 20.0, 300.0, 400.0], [0.0, 0.0, 1.0, 1.0]],
+            },
             Request::Outline,
             Request::Comments,
             Request::Links,
@@ -596,9 +621,35 @@ mod tests {
                 built_against: 888,
             }),
             Reply::Reread(2),
+            Reply::RedactPlans(Vec::new()),
             Reply::Unlocked,
             Reply::Warm,
         ] {
+            // **The list above is manual, and this match is what makes leaving
+            // a variant out of it a compile error at the place that says what
+            // to do about it.** It does not prove the list is complete --- an
+            // arm can be added here and the sample forgotten --- and no
+            // mutation is written for it, because a missing arm is
+            // `error[E0004]` rather than a red test. What it converts is an
+            // invisible omission into one the compiler puts a cursor on.
+            match &reply {
+                Reply::Open { .. }
+                | Reply::Text(_)
+                | Reply::Search(_)
+                | Reply::Content(_)
+                | Reply::CropBox(_)
+                | Reply::RedactPlans(_)
+                | Reply::Geometry(_)
+                | Reply::Outline(_)
+                | Reply::Comments(_)
+                | Reply::Links(_)
+                | Reply::Mapping(_)
+                | Reply::Properties(_)
+                | Reply::Append(_)
+                | Reply::Reread(_)
+                | Reply::Unlocked
+                | Reply::Warm => {}
+            }
             let line = serde_json::to_string(&reply).expect("serialise");
             let back: Reply = serde_json::from_str(&line).expect("deserialise");
             assert_eq!(

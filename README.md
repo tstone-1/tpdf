@@ -131,6 +131,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   drew is not reachable that way. It says what every row here has in common: nothing has
   been removed yet.
   <!-- built: view.showRedactions -->
+- **Redact and save as** writes a new file with the marked regions' text removed from the
+  page's instructions --- not covered over, removed --- and then reads that file back and
+  tells you what it found. It says *verified*, or it says it could not prove the file is
+  clean and why. It never says nothing. The document you have open is untouched, so if you
+  do not like the result you still have your marks. If a region covers a picture or a
+  drawing, it refuses before writing anything and names what it could not take: a file with
+  the words gone and a picture of the words still in it is worse than no redaction at all.
+  <!-- built: file.redactCopy -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.

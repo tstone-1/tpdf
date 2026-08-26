@@ -1605,6 +1605,24 @@ impl Engine for Workers {
         }
     }
 
+    fn redaction_plans(
+        &self,
+        doc: u32,
+        page: u32,
+        regions: &[[f32; 4]],
+    ) -> Result<Vec<crate::redact::RegionPlan>, String> {
+        match self.ask(
+            doc,
+            &Request::RedactPlans {
+                page,
+                regions: regions.to_vec(),
+            },
+        )? {
+            Reply::RedactPlans(plans) => Ok(plans),
+            other => Err(mismatched("redaction plans", &other)),
+        }
+    }
+
     fn outline(&self, doc: u32) -> Result<Outline, String> {
         match self.ask(doc, &Request::Outline)? {
             Reply::Outline(outline) => Ok(outline),
