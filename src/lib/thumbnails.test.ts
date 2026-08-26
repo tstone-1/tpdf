@@ -591,6 +591,30 @@ describe("Thumbnails keyboard activation", () => {
     pages.destroy();
   });
 
+  it("steps from the row the key reached, not the one it last tracked", () => {
+    // Enter had the reconciliation above and the arrows did not, so the same
+    // stale mirror that would have sent Enter to page 0 stepped ArrowDown from
+    // page 0 as well: the reader on page 3 pressed Down and the roving tabindex
+    // went to page 1. Three of the four roving lists in this frontend fixed
+    // this; this was the fourth, and the explanation was already in this file
+    // attached to Enter alone.
+    const navigated: number[] = [];
+    const pages = stripWithRows(navigated);
+    const row = pages.elementFor(3) as unknown as (typeof dom.root | null);
+    expect(row).not.toBeNull();
+
+    const list = row!.parent!.parent!;
+    list.dispatch("keydown", { key: "ArrowDown", target: row });
+
+    expect(pages.elementFor(4)?.tabIndex).toBe(0);
+    expect(pages.elementFor(3)?.tabIndex).toBe(-1);
+    // The row the defect moved to. Asserted by name rather than left to the
+    // two above, because "4 is tabbable" is also satisfied by a class that
+    // makes every row tabbable, and 1 is the wrong answer this is about.
+    expect(pages.elementFor(1)?.tabIndex).toBe(-1);
+    pages.destroy();
+  });
+
   it("falls back to the tracked row when the key did not come from one", () => {
     // The control on the assertion above: the fallback still has to work, or
     // "use the event's row" would be satisfied by a class that never activates
