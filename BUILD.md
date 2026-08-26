@@ -2228,6 +2228,27 @@ the failure is silent: no error, no crash report, a blank window. Build one with
 and the environment that `open -a` does not. The *profile* genuinely does not matter --- the
 check asserts behaviour rather than timing it --- so a debug bundle is only slower.
 
+**On a zero exit it now asks whether the run happened**, which it could not until 2026-08-26.
+Every guard in it was aimed at a run that failed, and a run that did *nothing* exits 0: on
+Windows, single instance makes a second launch forward its argv to a window already open and
+exit immediately, so an empty transcript came back as a pass, with the wrapper's own
+containment `[OK]` as the only check-shaped line in it. A blank-window bundle failure produces
+the same silence, so the paragraph above is no longer describing a failure with no report. The
+observable is the `CHECK-NAMES-JSON` roll `checkreport.ts` prints before its summary, and the
+refusal names no single cause --- it prints the exit code, the byte count and the number of
+`[FAIL]` lines, and lists the four things that look identical from here. Both callers already
+guarded themselves (`viewer_sweep.py` on the same roll, `mutate_viewer.py` on the summary),
+which is why the layer they share had nothing; neither is made dead by this, since the sweep
+looks for the roll before it looks at the exit code.
+
+That guard is a pure function of the transcript, so it can be proved without a screen, a
+bundle or a document --- six cases, one of them the acceptance, since a reader that refuses
+everything passes all five refusals:
+
+```
+scripts/viewer_check.py --self-test
+```
+
 It also requires an unlocked screen, for the reason `scroll_bench.py` does: WebKit suspends
 a page whose window is not visible, so behind a lock screen the check does not fail, it
 stops. Both scripts share that guard (`scripts/webview_guard.py`).
