@@ -288,8 +288,8 @@ MUTATIONS = [
         # strokes is empty.
         "save: draw every stroke as one path rather than one each",
         "src/save.rs",
-        "            for stroke in strokes {",
-        "            for stroke in strokes.iter().take(1) {",
+        "    for stroke in strokes {",
+        "    for stroke in strokes.iter().take(1) {",
         "each_stroke_is_its_own_path_in_the_appearance_stream",
     ),
     Mutation(
@@ -444,19 +444,30 @@ MUTATIONS = [
         # for both halves can tell.
         "save: draw a stamp's word without its border",
         "src/save.rs",
-        '                content.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n                if inner_w <= 0.0 || inner_h <= 0.0 {',
-        "                if inner_w <= 0.0 || inner_h <= 0.0 {",
+        '        out.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n        if inner_w <= 0.0 || inner_h <= 0.0 {',
+        "        if inner_w <= 0.0 || inner_h <= 0.0 {",
         "a_stamp_is_a_border_and_a_word_rather_than_either_alone",
     ),
     Mutation(
-        # Draw the reader's note instead of the stamp's own name. The stamp is
+        # Say a word other than the one the stamp was made with. The stamp is
         # still bordered, still says something, and says the wrong thing --- which
         # is why the test asserts the encoded word rather than that any text was
         # drawn.
-        "save: draw a stamp's note rather than the name it was made with",
+        #
+        # **This drew the reader's *note* until the Paint arms were extracted on
+        # 2026-08-26**, which was the same defect in its most tempting spelling.
+        # `draw_stamp` is handed `stamp: Option<StampName>` rather than the mark,
+        # so the note is not in scope there any more and that mutation stopped
+        # compiling -- `error[E0425]: cannot find value 'note'`, which the harness
+        # reports as "not caught" and is right to, since a build failure is not a
+        # red test. Re-aimed rather than deleted: the compiler removed one
+        # spelling of the defect and not the class, because a stamp can still be
+        # made to say the wrong word. The trap index has the rule under a guard
+        # the type system makes unexpressible.
+        "save: draw a word other than the name a stamp was made with",
         "src/save.rs",
-        '                content.push_str(&format!("<{}> Tj\\n", winansi_hex(word)));',
-        '                content.push_str(&format!("<{}> Tj\\n", winansi_hex(&mark.note)));',
+        '        out.push_str(&format!("<{}> Tj\\n", winansi_hex(word)));',
+        '        out.push_str(&format!("<{}> Tj\\n", winansi_hex("stamped")));',
         "a_stamp_is_a_border_and_a_word_rather_than_either_alone",
     ),
     Mutation(
@@ -465,8 +476,8 @@ MUTATIONS = [
         # obvious implementation would reach for.
         "save: set every stamp at the text box's fixed size",
         "src/save.rs",
-        "                let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);",
-        "                let size = textbox::SIZE;",
+        "        let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);",
+        "        let size = textbox::SIZE;",
         "a_stamp_fills_the_rectangle_it_was_dragged_out_at",
     ),
     Mutation(
@@ -2676,8 +2687,8 @@ MUTATIONS = [
         # Wrap to the page's width again, which is what shipped.
         "turned marks: a text box wraps to the page's width",
         "src/save.rs",
-        "                let width = seen.width - textbox::INSET * 2.0;",
-        "                let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
+        "        let width = seen.width - textbox::INSET * 2.0;",
+        "        let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
         "a_text_box_wraps_to_the_width_the_reader_dragged_however_the_page_is_turned",
     ),
     Mutation(
@@ -2706,8 +2717,8 @@ MUTATIONS = [
         # the left edge of the words.
         "turned marks: a rule sits on the page's bottom edge",
         "src/save.rs",
-        "                let (base, band) = line_rect(mark.kind, 0.0, seen.height);\n                let [x, y, width, height] = seen.rect(",
-        "                let (base, band) = line_rect(mark.kind, 0.0, quad[3] - quad[1]);\n                let [x, y, width, height] = seen.rect(",
+        "        let (base, band) = line_rect(kind, 0.0, seen.height);\n        let [x, y, width, height] = seen.rect(",
+        "        let (base, band) = line_rect(kind, 0.0, quad[3] - quad[1]);\n        let [x, y, width, height] = seen.rect(",
         "a_rule_sits_under_the_words_however_the_page_is_turned",
     ),
     Mutation(
@@ -2716,8 +2727,8 @@ MUTATIONS = [
         # placement one.
         "turned marks: a stamp is sized by the page's box",
         "src/save.rs",
-        "                let inner_w = seen.width - STAMP_INSET * 2.0;\n                let inner_h = seen.height - STAMP_INSET * 2.0;",
-        "                let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;\n                let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;",
+        "        let inner_w = seen.width - STAMP_INSET * 2.0;\n        let inner_h = seen.height - STAMP_INSET * 2.0;",
+        "        let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;\n        let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;",
         "a_stamps_word_is_sized_by_the_box_the_reader_dragged",
     ),
 ]
@@ -2900,8 +2911,8 @@ MUTATIONS += [
         # needed until the stamp arrived**: a stamp is bordered by the same
         # `re S` line, so the bare string now matches twice. The box's is the one
         # that ends its arm; the stamp's is followed by the word it draws.
-        'content.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n            }',
-        'content.push_str(&format!("{x} {y} {width} {height} re f\\n"));\n            }',
+        'out.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n    }',
+        'out.push_str(&format!("{x} {y} {width} {height} re f\\n"));\n    }',
         "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
     ),
     Mutation(
@@ -2912,8 +2923,8 @@ MUTATIONS += [
         # could land in either of two places is one nobody can reason about.
         "save: stroke a wash rather than filling it",
         "src/save.rs",
-        '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re f',
-        '                let (x, y) = (quad[0], quad[1]);\n                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n                content.push_str(&format!("{x} {y} {width} {height} re S',
+        '        let (x, y) = (quad[0], quad[1]);\n        let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n        out.push_str(&format!("{x} {y} {width} {height} re f',
+        '        let (x, y) = (quad[0], quad[1]);\n        let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n        out.push_str(&format!("{x} {y} {width} {height} re S',
         "the_wash_and_the_rules_fill_rather_than_stroke",
     ),
     Mutation(
@@ -3054,8 +3065,8 @@ MUTATIONS += [
         # instead -- a nick in a thick stroke rather than a missing curve.
         "save: leave an ellipse's path open rather than closing it",
         "src/save.rs",
-        '                content.push_str("h S',
-        '                content.push_str("S',
+        '        out.push_str("h S',
+        '        out.push_str("S',
         "an_ellipse_is_drawn_as_four_curves_and_not_as_a_rectangle",
     ),
     Mutation(
