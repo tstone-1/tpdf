@@ -1,0 +1,60 @@
+# Line endings, pinned at the repository rather than per machine.
+#
+# Without this file the answer is `core.autocrlf`, which is a setting on whoever
+# happens to be cloning. On Windows it defaults to `true`, and this repository
+# was developed with it on: every blob in git is LF -- 289 of 289 text files,
+# checked rather than assumed -- while a Windows working tree held 236 files as
+# CRLF and 52 as LF, the split being simply which files a tool had rewritten
+# since the last checkout. Nothing was wrong in git and nothing was consistent
+# on disk.
+#
+# **It was not only cosmetic, and the exception is the reason this file names
+# `*.pdf` explicitly.** `src-tauri/src/warm.pdf` is a tracked PDF that
+# `worker_child.rs` pulls in with `include_bytes!`, so it ships inside the
+# binary. Git classifies a file as text when its first 8000 bytes hold no NUL,
+# and a small uncompressed PDF holds none -- so `autocrlf` converted it on
+# checkout, and every Windows clone compiled a *different* file into the
+# executable than the one in git:
+#
+#     blob          571 bytes   qpdf --check: no syntax or stream encoding errors
+#     working tree  603 bytes   qpdf --check: file is damaged, xref not found,
+#                               attempting to reconstruct cross-reference table
+#
+# The 32 inserted bytes move every object past them, so the offsets in the xref
+# table no longer address what they name. PDFium reconstructs at least as
+# willingly as qpdf did, and `warm_fonts` returns silently when a load fails, so
+# this had no symptom anybody could see -- which is what let it last.
+#
+# The default: git decides what is text, and every text file checks out LF on
+# every platform. Both halves matter. `eol=lf` alone would still let git guess
+# wrongly about a file like the one above; `binary` below is what stops the
+# guess being made at all where we already know the answer.
+* text=auto eol=lf
+
+# Bytes we know are bytes. `binary` is `-diff -merge -text`: no conversion, and
+# no attempt to show a diff that would be noise. Listed by extension rather than
+# by path so a second icon or fixture is covered the day it arrives, and the
+# extensions here are the tracked ones plus the near neighbours somebody will
+# add without thinking about this file.
+*.pdf   binary
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.dll   binary
+*.dylib binary
+*.so    binary
+
+# Shell scripts get their own line for a reason that is not tidiness: a CRLF
+# `.sh` is not merely different, it is unrunnable under WSL bash, which fails at
+# the first line with `$'\r': command not found` while Git Bash tolerates it --
+# so the same file works in one shell and is broken in another. None is tracked
+# today; this is here so the first one to arrive is right.
+*.sh    text eol=lf
