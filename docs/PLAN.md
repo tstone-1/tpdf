@@ -1837,8 +1837,46 @@ the instrument. Reading it as "images are fine" is the one way to turn this into
 confident lie the section opens by forbidding, so `an_image_carrier_does_not_certify` pins
 it and a mutation that lets it through goes red.
 
-Steps 1, 2 and 4 are not built. **Step 5 is now partly built and its ceiling is measured**,
-which is worth more than the part that shipped --- see below.
+Steps 1 and 2 are not built. **Step 3's text primitive is built and headless** as of
+2026-08-26, and **step 5 is partly built with its ceiling measured** --- both below.
+
+#### Step 3's primitive: removing text from a region --- built 2026-08-26
+
+`src/redact.rs`, route B, headless and wired to no command yet. Given the objects PDFium
+enumerated on a page and a rectangle, [`covered`] names which show operators the region
+covers; `remove_shows` deletes them from the content stream and leaves every other byte of
+it alone. That last part is the point: spike 0.3 measured PDFium's own
+`FPDFPage_GenerateContent` rewriting *every* operator on the page for a single edit,
+discarding the marked-content span and its `/ActualText` as a side effect. Surgical removal
+keeps them, which is what makes the carriers a problem this section can still see.
+
+**The correspondence it rests on has a guard rather than a hope.** Nothing connects PDFium's
+object list to `lopdf`'s operator list but order. Spike 0.3 measured 4:4 on all four of its
+fixtures and said plainly that a `TJ` split across objects or a Form XObject contributing
+objects from another stream breaks it. So `remove_shows` takes the count the caller saw from
+PDFium and **refuses** when it disagrees. A refusal is a redaction that did not happen; a
+mis-addressed removal is one that deletes the wrong words and reports success.
+
+**Three limits are asserted rather than described**, by `examples/redact_probe.rs`:
+
+- **The carriers are untouched, and that is checked.** `text-marked.pdf` holds the same line
+  as `/ActualText`; after the show operator goes, `verify::scan` still finds it. The check
+  asserts the removal is *insufficient* there, so the day this clears the carriers it goes
+  red and says to move the fixture across.
+- **A region over a picture is not redactable here**, and the plan says which objects it
+  could not remove. Deny by default: the words gone and a picture of the words left is the
+  confident lie this section opens by forbidding.
+- **A CID document cannot be verified by this instrument at all.** `text-cid.pdf` draws the
+  same line through Identity-H, so PDFium extracts the account number and `verify::scan`
+  cannot see it. Asserted in both directions.
+
+The over-redaction control is the half that keeps the rest honest: a word on **another line**
+must survive, because a removal that emptied the page would pass every other check perfectly.
+
+What is not built: images and paths (reported, not removed), annotations, form values,
+metadata, the outline, and everything else in the carrier table above --- and no command
+reaches any of this. Marking and reviewing are steps 1 and 2 and are still where the product
+feature lives.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

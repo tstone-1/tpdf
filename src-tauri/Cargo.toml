@@ -381,3 +381,7 @@ path = "examples/password_probe.rs"
 [[example]]
 name = "qpdf-probe"
 path = "examples/qpdf_probe.rs"
+
+[[example]]
+name = "redact-probe"
+path = "examples/redact_probe.rs"
