@@ -19,6 +19,7 @@ use std::time::Instant;
 use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::progressive::{self};
+use tpdf_lib::save;
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Reply, Request, Worker};
 
@@ -641,6 +642,119 @@ fn main() {
         },
     }
     let _ = std::fs::remove_dir_all(&nowhere);
+
+    // --- The save's read-back, across the boundary -------------------------
+    //
+    // **The shipped verifier, which nothing else exercises.** Every test in
+    // `save.rs` and every other probe passes `save::Here`, so before these
+    // checks `save::InWorker` was proved only by compiling --- the shape of a
+    // check that cannot fail. What is asserted is a *differential*: the worker
+    // and the coordinator are asked the identical question about the identical
+    // bytes, and have to agree in both directions.
+    //
+    // Agreement alone would not be enough, and the second pair is why. Two
+    // readers that both answer "fine" agree perfectly on a file neither
+    // examined, so the refusal is the half with teeth: a file `lopdf` cannot
+    // parse has to come back as a refusal *through the pipe*, which only a
+    // worker that really parsed it can produce.
+    let here: &dyn save::Reread = &save::Here;
+    let in_worker = save::InWorker::at(library_dir.clone());
+
+    let good = std::env::temp_dir().join("tpdf-worker-probe-reread-good.pdf");
+    let bad = std::env::temp_dir().join("tpdf-worker-probe-reread-bad.pdf");
+    // **A real document with a trailer pointing into nothing**, which is the
+    // failure this whole path exists to catch, and the first draft of this probe
+    // got it wrong in a way worth recording. It planted a file that was not a PDF
+    // at all --- and the worker duly refused it, with *PDFium's* message, from
+    // `Worker::spawn_shared`, before `Request::Reread` was ever sent. Both
+    // checks passed and neither had exercised `lopdf`: a control refused by a
+    // different guard than the one it was written for.
+    //
+    // The discriminating fixture is the one where the two parsers *disagree*.
+    // PDFium reconstructs a broken cross-reference table and opens this happily,
+    // so the worker starts and the request is served; `lopdf` refuses it, which
+    // is the answer that has to cross back. It is the same shape
+    // `an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was` plants,
+    // and it is why this check is `lopdf` rather than the page count
+    // `Request::Open` already returns.
+    let planted = std::fs::copy(&document, &good).and_then(|_| {
+        let mut broken = std::fs::read(&document)?;
+        broken.extend_from_slice(b"\nstartxref\n999999999\n%%EOF\n");
+        std::fs::write(&bad, broken)
+    });
+
+    match planted {
+        Err(e) => {
+            check(
+                "the worker and the coordinator agree on a good file",
+                false,
+                format!("could not plant the fixtures: {e}"),
+            );
+        }
+        Ok(()) => {
+            let ask = |who: &dyn save::Reread, at: &Path| -> Result<usize, String> {
+                let mut handle = std::fs::File::open(at).map_err(|e| e.to_string())?;
+                let len = handle.metadata().map_err(|e| e.to_string())?.len() as usize;
+                who.pages(&mut handle, len, None)
+            };
+
+            let mine = ask(here, &good);
+            let theirs = ask(&in_worker, &good);
+            check(
+                "the worker and the coordinator agree on a good file",
+                matches!((&mine, &theirs), (Ok(a), Ok(b)) if a == b && *a > 0),
+                format!("coordinator {mine:?}, worker {theirs:?}"),
+            );
+
+            let mine = ask(here, &bad);
+            let theirs = ask(&in_worker, &bad);
+            check(
+                "and both refuse a trailer that points into nothing",
+                mine.is_err() && theirs.is_err(),
+                format!("coordinator {mine:?}, worker {theirs:?}"),
+            );
+            // **The refusal has to be `lopdf`'s.** Without this the check above
+            // is satisfied by a worker that never started, or by one PDFium
+            // refused at open --- and the second is not hypothetical, it is what
+            // the first version of this probe measured while reading as a pass.
+            // The two parsers word it differently, and that difference is the
+            // evidence: PDFium says the file is not a PDF, `lopdf` names the
+            // cross-reference table.
+            check(
+                "and the worker's refusal came from the re-read, not from opening it",
+                match &theirs {
+                    Err(said) => said.contains("cross reference"),
+                    Ok(_) => false,
+                },
+                format!("worker said {theirs:?}"),
+            );
+
+            // **And that a worker is genuinely involved**, which none of the
+            // three above can say: they compare two answers, and an `InWorker`
+            // secretly delegating to `Here` would produce identical ones on
+            // every fixture. An outcome two mechanisms can produce cannot test
+            // either of them.
+            //
+            // So it is asked for something only the worker path needs. Pointed
+            // at a directory with no PDFium in it, `Here` still answers --- it
+            // parses in this process, which has no engine to load --- and
+            // `InWorker` cannot start a child at all. The two disagreeing is the
+            // evidence.
+            let nowhere = std::env::temp_dir().join("tpdf-worker-probe-reread-no-engine");
+            let _ = std::fs::create_dir_all(&nowhere);
+            let engineless = save::InWorker::at(nowhere.clone());
+            let without = ask(&engineless, &good);
+            let still = ask(here, &good);
+            check(
+                "and the worker path really needs a worker",
+                without.is_err() && matches!(&still, Ok(pages) if *pages > 0),
+                format!("worker {without:?}, coordinator {still:?}"),
+            );
+            let _ = std::fs::remove_dir_all(&nowhere);
+        }
+    }
+    let _ = std::fs::remove_file(&good);
+    let _ = std::fs::remove_file(&bad);
 
     println!(
         "\n{}/{checks} checks passed, {skipped} not applicable to this platform",

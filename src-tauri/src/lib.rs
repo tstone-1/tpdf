@@ -969,6 +969,7 @@ impl SaveFailure {
 /// written to.
 #[tauri::command]
 async fn save_document(
+    app: tauri::AppHandle,
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
@@ -1124,6 +1125,22 @@ async fn save_document(
     // 17 said the append had moved into the worker; its *preparation* had, and
     // this is the half that had not.
     //
+    // **Who re-reads the file the append writes**, chosen the same way the
+    // render backend is and for the same reason: the previous revision of that
+    // file is the document the reader opened, so the parse belongs in a
+    // sandboxed child wherever there can be one. A platform with none still
+    // saves --- refusing would make it useless rather than uncontained, which is
+    // the rule `Backend::default_here` already follows --- and it is not silent:
+    // `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable.
+    //
+    // Built here rather than inside `save::append_in_place`, because choosing it
+    // needs the app handle and that function is reachable from `cargo test`,
+    // where there is none.
+    let reread: Box<dyn save::Reread> = match service.backend() {
+        render::Backend::Worker => Box::new(save::InWorker::at(pdfium_library_dir(&app))),
+        render::Backend::InProcess => Box::new(save::Here),
+    };
+
     // `prepared` is consumed rather than borrowed, which is what lets it cross
     // into the closure, and nothing after this line reads it.
     let landed = tauri::async_runtime::spawn_blocking(move || match prepared {
@@ -1158,7 +1175,7 @@ async fn save_document(
         // `fingerprint.rs` says so in its own header, and `docs/TRAPS.md` has
         // had *Equal length is not no change* since before either was written.
         Prepared::Append(appended) => {
-            save::append_in_place(&appended, Path::new(&source), password.as_deref())
+            save::append_in_place(&appended, Path::new(&source), password.as_deref(), &*reread)
                 .map_err(SaveFailure::after_close)
         }
     })

@@ -155,6 +155,29 @@ pub enum Request {
         /// What to write. Never a path, never a destination.
         plan: crate::edits::Plan,
     },
+    /// How many pages `lopdf` finds in the mapped document.
+    ///
+    /// **The other half of [`Request::Append`]'s move.** That one builds a
+    /// save's update section here because it is a parse of attacker-controlled
+    /// bytes; this one re-reads the file that update was written into, and the
+    /// previous revision of that file is the same attacker's document verbatim.
+    /// `docs/THREAT-MODEL.md` residual risk 17 read as closed while only the
+    /// preparation had moved.
+    ///
+    /// **Answered by `lopdf`, deliberately not by PDFium**, which is what makes
+    /// this a request of its own rather than a reuse of [`Request::Open`] ---
+    /// whose reply already carries a page count, and which would have made the
+    /// move three lines. What is being tested is whether the cross-reference
+    /// *chained*, and PDFium is deliberately lenient about exactly that:
+    /// `docs/TRAPS.md` records it rendering a structurally broken file
+    /// pixel-identically to a correct one. A parser that repairs the defect
+    /// cannot be the instrument that detects it. See `crate::save::reread_pages`,
+    /// which is the one statement of the question and is shared with the
+    /// coordinator's own fallback.
+    ///
+    /// A worker answering this holds the **written** file, not the document the
+    /// reader opened --- it is spawned for the verification and dropped after it.
+    Reread,
     /// Try the document again with a reader's password.
     ///
     /// **The one request that carries a secret**, which is worth stating against
@@ -267,6 +290,11 @@ pub enum Reply {
     ///
     /// Carries nothing: [`Request::Unlock`] asks a yes-or-no question, and the
     /// no is a [`Response::locked`] rather than a variant here.
+    /// How many pages `lopdf` finds in the file that was just written.
+    ///
+    /// A count and nothing else: the bytes it was read from stay in the worker,
+    /// which is the whole point of asking. See [`Request::Reread`].
+    Reread(usize),
     Unlocked,
     /// A pre-spawned worker has finished warming and has no document yet.
     ///
@@ -567,6 +595,7 @@ mod tests {
                 pages: 2,
                 built_against: 888,
             }),
+            Reply::Reread(2),
             Reply::Unlocked,
             Reply::Warm,
         ] {

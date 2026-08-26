@@ -1692,6 +1692,19 @@ pub(crate) fn run_append(
     document.graph().append(plan)
 }
 
+/// Re-reads the mapped document with `lopdf` and counts its pages.
+///
+/// The counterpart of [`run_append`] on the verification side --- see
+/// `worker_proto::Request::Reread` for why the check belongs here and why it is
+/// `lopdf` rather than the PDFium already holding this file open.
+///
+/// Deliberately **not** cached, where the read-only facts above are: the whole
+/// question is what is in the file *now*, and a worker answering it is spawned
+/// for that one answer and dropped.
+pub(crate) fn run_reread(document: &OpenDocument) -> Result<usize, String> {
+    document.graph().reread_pages()
+}
+
 /// Reads a document's links on the render thread.
 ///
 /// Cached inside [`crate::docgraph::DocumentGraph`] like the comments are, so the `lopdf` parse

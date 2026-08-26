@@ -1243,6 +1243,7 @@ pub fn append_in_place(
     appended: &Appended,
     source: &Path,
     password: Option<&str>,
+    reread: &dyn Reread,
 ) -> Result<(), String> {
     // **Opened once, and everything below goes through this handle.** The check,
     // the writes, the read-back and the roll-back are all about *this* file, not
@@ -1266,7 +1267,7 @@ pub fn append_in_place(
         .write(true)
         .open(source)
         .map_err(|e| format!("could not open {source:?} to save it: {e}"))?;
-    append_through(&mut file, appended, source, password)
+    append_through(&mut file, appended, source, password, reread)
 }
 
 /// [`append_in_place`] with the handle supplied.
@@ -1284,6 +1285,7 @@ fn append_through(
     appended: &Appended,
     source: &Path,
     password: Option<&str>,
+    reread: &dyn Reread,
 ) -> Result<(), String> {
     // Which file this is, taken before a byte is written and compared after the
     // last one. See `FileId`, and the failure it reports at the end.
@@ -1349,36 +1351,18 @@ fn append_through(
     // one reason: a read by name would parse whichever file has that name now,
     // so a replacement would be checked in place of the file we wrote.
     let expected = usize::try_from(appended.was).unwrap_or(0) + appended.update.len();
-    let bytes = match read_whole(file, expected) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return Err(cut_back(
-                file,
-                format!("the saved file could not be read back: {e}"),
-            ))
-        }
-    };
-    // **The password again, and forgetting it here would roll every encrypted
-    // save back.** `lopdf` parses no objects at all for a document it cannot
-    // authenticate, so the read-back would report 0 pages against the 2 it
-    // expects, decide the cross-reference was mis-chained, and truncate a file
-    // that is in fact correct. The failure would be a refusal rather than a
-    // corruption, which is the safe direction and still wrong.
-    match Document::load_mem_with_options(
-        &bytes,
-        lopdf::LoadOptions {
-            max_decompressed_size: Some(MAX_DECODE),
-            password: password.map(str::to_string),
-            ..Default::default()
-        },
-    ) {
-        Ok(after) if after.get_pages().len() == appended.pages => {}
-        Ok(after) => {
+    // **Asked, never computed here**, and the bytes never enter this process ---
+    // see [`Reread`], which is where that guarantee is written down. The handle
+    // is what is handed over, not `source`: a read by name would parse whichever
+    // file has that name now, so a replacement would be checked in place of the
+    // file we wrote.
+    match reread.pages(file, expected, password) {
+        Ok(pages) if pages == appended.pages => {}
+        Ok(pages) => {
             return Err(cut_back(
                 file,
                 format!(
-                    "the saved file has {} page(s) and should have {}",
-                    after.get_pages().len(),
+                    "the saved file has {pages} page(s) and should have {}",
                     appended.pages
                 ),
             ))
@@ -1410,6 +1394,210 @@ fn append_through(
         ));
     }
     Ok(())
+}
+
+/// Who re-reads a file that has just been written, and says how many pages it has.
+///
+/// **A seam, and the guarantee is what it takes away.** [`append_through`] used
+/// to read the whole written file into this process and parse it here. The
+/// previous revision of that file is the document the reader opened --- attacker
+/// bytes, verbatim --- so every in-place append parsed untrusted input in the
+/// coordinator, which is the case `docs/THREAT-MODEL.md` residual risk 17 reads
+/// as having been closed when only the *preparation* had moved.
+///
+/// Passing the answer in rather than computing it here means the coordinator no
+/// longer holds the bytes at all. That is carried by the type: there is nothing
+/// to parse, so no later edit can quietly reintroduce a parse. A source-level
+/// assertion that the call had moved would prove a shape rather than an
+/// ordering, which this repository has a trap about.
+///
+/// **The handle, never the pathname.** Everything [`append_through`] guarantees
+/// is about the difference between the two, so an implementation that reopens by
+/// name reintroduces exactly the race that function exists to close --- it would
+/// check whichever file has that name now, rather than the one just written.
+///
+/// **`Send`, because the save runs on the blocking pool.** Every arm of the
+/// coordinator's save does real file work on a file the size of the reader's
+/// document, so the whole match crossed into `spawn_blocking` on 2026-08-23 ---
+/// and a verifier chosen before that call has to travel with it. The bound is
+/// stated here rather than at the one call site so that an implementation which
+/// cannot cross is a compile error where it is written, not where it is used.
+pub trait Reread: Send {
+    /// How many pages the written file has, or why it could not be read.
+    ///
+    /// `len` is how long the file should now be: a capacity hint to
+    /// [`read_whole`] for [`Here`], and the length to map for a worker, which
+    /// cannot ask a handle how long its file is. It is passed rather than
+    /// measured so that the answer is about the file this save produced.
+    ///
+    /// **`&mut`, because reading through a handle moves it.** [`Here`] seeks to
+    /// the start, so this is not the read-only borrow it looks like it could be
+    /// --- and saying so in the signature is better than a worker
+    /// implementation that happens not to need it making the requirement look
+    /// gratuitous.
+    ///
+    /// # Errors
+    ///
+    /// The file could not be read back, or the parser refused it --- which is
+    /// what a mis-chained cross-reference produces and is the answer this is
+    /// here for.
+    fn pages(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+        password: Option<&str>,
+    ) -> Result<usize, String>;
+}
+
+/// Re-reads in the coordinator, which is the process that just did the writing.
+///
+/// **The fallback rather than the shipped path**, and named so it cannot be
+/// mistaken for either. It is what a platform with no sandbox gets, the same way
+/// `render::Backend::InProcess` is, and it is what the tests in this module use
+/// --- a `cargo test` cannot spawn a contained worker holding a real document,
+/// so the worker path is proved by `worker-probe` instead.
+///
+/// Using it is not silent. See `crate::render::UNSANDBOXED_MARK`, which exists so
+/// that an uncontained run stays distinguishable from a contained one.
+pub struct Here;
+
+impl Reread for Here {
+    fn pages(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+        password: Option<&str>,
+    ) -> Result<usize, String> {
+        let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
+        reread_pages(&bytes, password)
+    }
+}
+
+/// Re-reads in a sandboxed worker spawned for the purpose, and dropped after it.
+///
+/// **The shipped path.** The file it maps is the one just written, and its
+/// previous revision is the document the reader opened --- attacker bytes,
+/// verbatim --- so the parse belongs behind the same boundary as every other
+/// parse of them.
+///
+/// **A worker of its own, because there is none left to ask.** `save_document`
+/// closes the document before the write happens, and every question put to the
+/// document's own worker --- `append_ready`, `Request::Append`, the password ---
+/// is asked before that close. `docs/PLAN.md` recorded the obstacle as the
+/// worker "holding a mapping of the file as it was"; there is no such mapping by
+/// this point, and the real constraint is simply that a child has to be started.
+///
+/// It costs one spawn per in-place append. That child pays PDFium's
+/// initialisation for a job that only needs `lopdf`, which is a real cost and
+/// not a large one against a save that has already written the file and waited
+/// for the platter twice.
+pub struct InWorker {
+    /// Where `libpdfium` lives, which is all a worker needs to be started.
+    library_dir: std::path::PathBuf,
+}
+
+impl InWorker {
+    /// A verifier that will spawn its workers against this library directory.
+    #[must_use]
+    pub fn at(library_dir: std::path::PathBuf) -> Self {
+        Self { library_dir }
+    }
+}
+
+impl Reread for InWorker {
+    fn pages(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+        password: Option<&str>,
+    ) -> Result<usize, String> {
+        use crate::worker_proto::{Reply, Request};
+
+        // The handle, never `source`. See [`Reread`]: mapping by name would
+        // verify whichever file has that name now.
+        let mapped = crate::worker_shm::Shm::map_open_file(file, len)?;
+        let mut worker =
+            crate::worker::Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+
+        // **Before the question, and only when there is one.** A locked document
+        // that is not unlocked first parses to zero objects, so the count would
+        // come back as 0 against the pages the save expects and roll back a file
+        // that is correct --- the same failure `reread_pages` names, arriving one
+        // process further out.
+        if let Some(password) = password {
+            let answered = worker.call(&Request::Unlock {
+                password: password.to_string(),
+            })?;
+            if !answered.ok {
+                return Err(format!(
+                    "the worker could not take the document's password: {}",
+                    answered.error
+                ));
+            }
+        }
+
+        let answered = worker.call(&Request::Reread)?;
+        if !answered.ok {
+            return Err(answered.error);
+        }
+        match answered.reply {
+            Some(Reply::Reread(pages)) => Ok(pages),
+            // A well-formed message answering a different question. Nothing in
+            // the protocol checks that a reply matches its request --- `Reply`'s
+            // own documentation says so --- so the caller does, and says which it
+            // got rather than reporting a parse failure for a protocol one.
+            other => Err(format!(
+                "the worker answered the re-read with {}",
+                match other {
+                    Some(reply) => format!("{reply:?}"),
+                    None => "no payload at all".to_string(),
+                }
+            )),
+        }
+    }
+}
+
+/// How many pages `lopdf` finds in a file that has just been appended to.
+///
+/// **The one question the read-back asks**, in one place, because it is asked
+/// from two processes now: here, and in the worker that
+/// [`Request::Reread`](crate::worker_proto::Request::Reread) answers. Two copies
+/// of it would be two statements of what a valid save looks like, and this
+/// repository has the trap about a second copy drifting.
+///
+/// **`lopdf` and deliberately not PDFium**, which is the finding that decided
+/// the shape of this. The worker protocol already answers a page count ---
+/// `Request::Open` replies with one --- and reusing it would have made the move
+/// three lines. It would also have replaced this check with a parser that
+/// repairs the exact defect it exists to catch: PDFium is deliberately lenient,
+/// and `docs/TRAPS.md` records it rendering a structurally broken file
+/// pixel-identically to a correct one while `qpdf --check` named the defect at
+/// once. What is being tested here is whether the cross-reference *chained*, and
+/// a parser that reconstructs a broken table answers yes either way. `lopdf`
+/// refuses, and its refusal is the whole instrument.
+///
+/// **The password is not optional, and forgetting it would roll every encrypted
+/// save back.** `lopdf` parses no objects at all for a document it cannot
+/// authenticate, so the read-back would report 0 pages against the 2 it expects,
+/// decide the cross-reference was mis-chained, and truncate a file that is in
+/// fact correct. A refusal rather than a corruption, which is the safe direction
+/// and still wrong.
+///
+/// # Errors
+///
+/// `lopdf` refusing the bytes, which is what a mis-chained cross-reference
+/// produces and is the answer this is here for.
+pub fn reread_pages(bytes: &[u8], password: Option<&str>) -> Result<usize, String> {
+    Document::load_mem_with_options(
+        bytes,
+        lopdf::LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
+            ..Default::default()
+        },
+    )
+    .map(|after| after.get_pages().len())
+    .map_err(|e| e.to_string())
 }
 
 /// Writes the body, gets it on the platter, then writes the trailer.
@@ -6163,7 +6351,7 @@ mod tests {
         let before = std::fs::read(&at).expect("read before");
 
         let appended = append_bytes(&at, &plan, None).expect("build the update");
-        append_in_place(&appended, &at, None).expect("append");
+        append_in_place(&appended, &at, None, &Here).expect("append");
 
         let after = std::fs::read(&at).expect("read after");
         assert!(after.len() > before.len(), "something was written");
@@ -6225,7 +6413,7 @@ mod tests {
 
             let appended = append_bytes(&at, &plan, Some(password))
                 .unwrap_or_else(|why| panic!("{name}: build the update: {why}"));
-            append_in_place(&appended, &at, Some(password))
+            append_in_place(&appended, &at, Some(password), &Here)
                 .unwrap_or_else(|why| panic!("{name}: append: {why}"));
 
             let after = std::fs::read(&at).expect("read after");
@@ -6326,7 +6514,7 @@ mod tests {
         let pages = page_count(&at);
 
         let appended = append_bytes(&at, &plan, None).expect("build the update");
-        append_in_place(&appended, &at, None).expect("append");
+        append_in_place(&appended, &at, None, &Here).expect("append");
 
         assert_eq!(page_count(&at), pages, "no page was added or lost");
         // Zero-based, which is `listed_on_page`'s own index into
@@ -6367,7 +6555,7 @@ mod tests {
         }
         let meddled = std::fs::read(&at).expect("read");
 
-        let refused = append_in_place(&appended, &at, None).expect_err("refused");
+        let refused = append_in_place(&appended, &at, None, &Here).expect_err("refused");
         // Derived from the fixture rather than transcribed, so a reworded
         // message keeps this honest and a message naming the wrong length
         // cannot pass: `docs/TRAPS.md`, *A test pinned a random value out of a
@@ -6561,7 +6749,7 @@ mod tests {
             .expect("stamp");
         drop(stamped);
 
-        let refused = append_in_place(&appended, &at, None).expect_err("must refuse");
+        let refused = append_in_place(&appended, &at, None, &Here).expect_err("must refuse");
         assert!(
             refused.contains("nothing was written"),
             "and must say so: {refused}"
@@ -6616,7 +6804,8 @@ mod tests {
         let intruder = b"this is not a PDF at all\n".repeat(64);
         std::fs::write(&at, &intruder).expect("put a different file there");
 
-        let refused = append_through(&mut file, &appended, &at, None).expect_err("must report");
+        let refused =
+            append_through(&mut file, &appended, &at, None, &Here).expect_err("must report");
         drop(file);
         assert!(
             refused.contains("renamed or removed it"),
@@ -6663,12 +6852,115 @@ mod tests {
         // `startxref` and then points at a cross-reference that is not there.
         appended.update = b"\nstartxref\n999999999\n%%EOF\n".to_vec();
 
-        let refused = append_in_place(&appended, &at, None).expect_err("the re-read refuses");
+        let refused =
+            append_in_place(&appended, &at, None, &Here).expect_err("the re-read refuses");
         assert!(refused.contains("put back"), "{refused}");
         assert_eq!(
             std::fs::read(&at).expect("read after"),
             before,
             "the file is exactly what it was"
+        );
+    }
+
+    /// A [`Reread`] that answers what it is told to and records what it was asked.
+    ///
+    /// The double that makes the seam observable. Without it the only way to ask
+    /// "did the coordinator delegate the verification or do it itself" is to read
+    /// the source, and a source-level assertion proves a shape rather than an
+    /// ordering.
+    struct Fake {
+        answer: Result<usize, String>,
+        asked: std::cell::RefCell<Vec<(usize, Option<String>)>>,
+    }
+
+    impl Fake {
+        fn saying(answer: Result<usize, String>) -> Self {
+            Self {
+                answer,
+                asked: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Reread for Fake {
+        fn pages(
+            &self,
+            _file: &mut std::fs::File,
+            len: usize,
+            password: Option<&str>,
+        ) -> Result<usize, String> {
+            self.asked
+                .borrow_mut()
+                .push((len, password.map(str::to_string)));
+            self.answer.clone()
+        }
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_file_it_wrote() {
+        // **The keystone, and it is red on the code this replaced.** The file
+        // written here does not parse --- the same trailer pointing into nothing
+        // that `an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was`
+        // plants --- so a coordinator holding the bytes refuses it, whatever any
+        // verifier says. The save succeeding on exactly those bytes is what says
+        // the parse is somewhere else now: the answer is the verifier's, and
+        // this process has nothing to second-guess it with.
+        //
+        // It is the accounting observable for a property that is otherwise
+        // invisible. Every number a caller can see is identical whether the
+        // parse happened here or in a worker, because the two agree wherever
+        // both answer --- so the thing to assert is *who was asked*.
+        let scratch = Scratch::new("append-delegates");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
+            return;
+        };
+        let mut appended = append_bytes(&at, &plan, None).expect("build the update");
+        appended.update = b"\nstartxref\n999999999\n%%EOF\n".to_vec();
+        let fake = Fake::saying(Ok(appended.pages));
+
+        append_in_place(&appended, &at, None, &fake).expect("the verifier's answer is the answer");
+
+        assert_eq!(
+            fake.asked.borrow().len(),
+            1,
+            "asked exactly once, so the write path has one verification and not two"
+        );
+    }
+
+    #[test]
+    fn the_re_read_is_asked_for_the_length_the_save_produced() {
+        // **The `len` argument has no failing case under `Here`**, which is the
+        // reason this exists. `Here` passes it to `read_whole` as a capacity
+        // hint, and a capacity that is wrong costs an allocation and changes no
+        // answer --- so every test above would pass with that term computed any
+        // way at all. It is the *map* length for a worker, where being wrong
+        // means verifying a prefix of the file, or refusing to map it.
+        //
+        // So the term is pinned here against the two numbers it is made of,
+        // rather than left to be discovered by the implementation that cannot
+        // shrug it off.
+        let scratch = Scratch::new("append-asks-for-length");
+        let Some((at, plan)) = appendable(&scratch, "comments.pdf") else {
+            println!("[SKIP] comments.pdf: fixture not generated");
+            return;
+        };
+        let appended = append_bytes(&at, &plan, None).expect("build the update");
+        let want =
+            usize::try_from(appended.was).expect("a length that fits") + appended.update.len();
+        let fake = Fake::saying(Ok(appended.pages));
+
+        append_in_place(&appended, &at, None, &fake).expect("append");
+
+        assert_eq!(
+            fake.asked.borrow().as_slice(),
+            &[(want, None)],
+            "the file as it was, plus what was appended to it --- and no password for a plain document"
+        );
+        assert_eq!(
+            std::fs::metadata(&at).expect("stat").len(),
+            want as u64,
+            "and that is the length the file actually has, so the two cannot drift apart quietly"
         );
     }
 
@@ -6728,7 +7020,7 @@ mod tests {
             .expect("build the bad update");
         appended.update = sink.tail;
 
-        let refused = append_in_place(&appended, &at, None).expect_err("the count refuses");
+        let refused = append_in_place(&appended, &at, None, &Here).expect_err("the count refuses");
         assert!(refused.contains("page(s) and should have"), "{refused}");
         assert!(refused.contains("put back"), "{refused}");
         assert_eq!(
@@ -6821,7 +7113,7 @@ mod tests {
             };
 
             let appended = append_bytes(&at, &plan, None).expect("build the update");
-            append_in_place(&appended, &at, None).expect("append");
+            append_in_place(&appended, &at, None, &Here).expect("append");
 
             let after = os_pdf::read(&std::fs::read(&at).expect("read after"))
                 .expect("the OS parser reads the appended document");
@@ -6999,7 +7291,7 @@ mod tests {
                 let clock = std::time::Instant::now();
                 let update = append_bytes(&fresh, &this, None).expect("build the update");
                 let added = update.len();
-                append_in_place(&update, &fresh, None).expect("append");
+                append_in_place(&update, &fresh, None, &Here).expect("append");
                 appends.push((clock.elapsed().as_secs_f64() * 1000.0, added));
 
                 let clock = std::time::Instant::now();

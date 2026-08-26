@@ -1047,17 +1047,6 @@ MUTATIONS = [
         "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
     ),
     Mutation(
-        # Read the written file back without the key. It parses -- `lopdf`
-        # returns `Ok` for a document it could not authenticate -- and reports
-        # zero pages, so a correct save is rolled back and the reader is told
-        # the file lost every page.
-        "save: verify an append without the password",
-        "src/save.rs",
-        "            max_decompressed_size: Some(MAX_DECODE),\n            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    ) {\n        Ok(after) if after.get_pages().len() == appended.pages => {}",
-        "            max_decompressed_size: Some(MAX_DECODE),\n            ..Default::default()\n        },\n    ) {\n        Ok(after) if after.get_pages().len() == appended.pages => {}",
-        "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
-    ),
-    Mutation(
         # Accept a plan that does not describe the file on disk. The turns then
         # land on whichever pages happen to be in those positions.
         "save: accept a plan of the wrong length",
@@ -2148,17 +2137,6 @@ MUTATIONS = [
         "an_append_writes_through_its_handle_and_says_so_when_the_name_moves",
     ),
     Mutation(
-        # Read the saved file back by name rather than through the handle. What
-        # is verified is then whatever has that name, not what was written --- so
-        # a replacement is checked in place of the file the update went into, and
-        # a roll-back triggered by it truncates the wrong one.
-        "save: verify the saved file by name rather than through the handle",
-        "src/save.rs",
-        "    let bytes = match read_whole(file, expected) {",
-        "    let bytes = match std::fs::read(source) {",
-        "an_append_writes_through_its_handle_and_says_so_when_the_name_moves",
-    ),
-    Mutation(
         # Write the update at the file offset the handle opens with, which is
         # zero, rather than seeking to the end. It overwrites the previous
         # revision's first bytes instead of adding to it -- and the reason this
@@ -2772,6 +2750,40 @@ MUTATIONS = [
         "        let inner_w = seen.width - STAMP_INSET * 2.0;\n        let inner_h = seen.height - STAMP_INSET * 2.0;",
         "        let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;\n        let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;",
         "a_stamps_word_is_sized_by_the_box_the_reader_dragged",
+    ),
+    Mutation(
+        # Parse the written file in the coordinator again, which is the code
+        # this replaced. Nothing about the save's outcome changes on a good
+        # file -- both readers agree wherever both answer -- so the only thing
+        # that can notice is a test asserting WHO was asked.
+        "save: verify the append in the coordinator instead of the worker",
+        "src/save.rs",
+        "    match reread.pages(file, expected, password) {",
+        "    match Here.pages(file, expected, password) {",
+        "the_coordinator_does_not_parse_the_file_it_wrote",
+    ),
+    Mutation(
+        # Ask about the update alone rather than the whole file. Harmless under
+        # `Here`, where the number is a capacity hint that costs an allocation
+        # and changes no answer; a worker maps exactly this many bytes, so it
+        # would verify a prefix of the file it is meant to be checking.
+        "save: ask the re-read about the update rather than the file",
+        "src/save.rs",
+        "    let expected = usize::try_from(appended.was).unwrap_or(0) + appended.update.len();",
+        "    let expected = appended.update.len();",
+        "the_re_read_is_asked_for_the_length_the_save_produced",
+    ),
+    Mutation(
+        # Drop the password on the way to the re-read. `lopdf` parses no objects
+        # at all for a document it cannot authenticate, so an encrypted append
+        # is verified as having zero pages and a correct save is rolled back --
+        # a refusal rather than a corruption, which is the safe direction and
+        # still wrong.
+        "save: re-read an encrypted append without its password",
+        "src/save.rs",
+        "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map(|after| after.get_pages().len())",
+        "            password: None,\n            ..Default::default()\n        },\n    )\n    .map(|after| after.get_pages().len())",
+        "an_encrypted_document_can_be_appended_to_and_stays_encrypted",
     ),
 ]
 
@@ -4403,9 +4415,14 @@ MUTATIONS += [
         # count is never compared. The test that reaches this arm builds a real
         # update section whose catalog names an empty page tree -- a file that
         # opens, and is empty.
+        #
+        # Re-aimed 2026-08-26 when the read-back moved behind `save::Reread`:
+        # the comparison is the same comparison, and the parse it used to be
+        # written beside is in a worker now, so the arm names a count rather
+        # than a parsed document.
         "append: accept a saved file that parses, whatever it has lost",
         "src/save.rs",
-        "        Ok(after) if after.get_pages().len() == appended.pages => {}",
+        "        Ok(pages) if pages == appended.pages => {}",
         "        Ok(_) => {}",
         "an_append_that_parses_and_has_lost_pages_is_also_put_back",
     ),

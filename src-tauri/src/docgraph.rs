@@ -276,6 +276,25 @@ impl DocumentGraph {
             .map_err(|why| why.message)
     }
 
+    /// How many pages `lopdf` finds in these bytes.
+    ///
+    /// Uncached, like [`DocumentGraph::append`] and for a related reason: those
+    /// above are facts about a document that does not change, and this is a
+    /// question about a file that has *just* been written. A cached answer here
+    /// would be the previous revision's, which is a perfectly plausible number
+    /// and the wrong one.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable, or `lopdf` refuses them --- which is what a
+    /// mis-chained cross-reference produces and is the answer this is here for.
+    pub fn reread_pages(&self) -> Result<usize, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        crate::save::reread_pages(&bytes, self.password())
+    }
+
     /// Whether the page tree has been parsed for this document yet.
     ///
     /// **An accounting observable.** `RawDocument::original_box` is meant to
