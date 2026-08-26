@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Outline, OutlineItem } from "./outline";
 import { Sidebar } from "./sidebar";
 import { installFakeDom, type FakeDom } from "./testdom";
+import { pageId, redactionRows, unedited } from "./pages";
+
+/** What the redactions panel is told each region covers, by id. */
+const covered = new Map<number, string>();
 
 const tiles = vi.hoisted(() => ({
   fetchTile: vi.fn(),
@@ -35,6 +39,7 @@ describe("Sidebar keyboard activation", () => {
     tiles.fetchTile.mockReset();
     tiles.cancelTile.mockReset();
     tiles.nextRequestId.mockImplementation(() => 1);
+    covered.clear();
     tiles.fetchTile.mockImplementation(() => new Promise(() => {}));
   });
 
@@ -48,6 +53,11 @@ describe("Sidebar keyboard activation", () => {
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
       marks: { onPick: () => {}, onRemove: () => {}, coveredFor: () => "" },
+      redactions: {
+        onPick: () => {},
+        onRemove: () => {},
+        wordsFor: (id) => covered.get(id),
+      },
       onTab: (tab) => tabs.push(tab),
       pages: {
         doc: 1,
@@ -74,6 +84,40 @@ describe("Sidebar keyboard activation", () => {
     bar.selectTab("marks");
     expect(tabs).toEqual(["outline", "comments", "marks"]);
     expect(bar.tab).toBe("marks");
+  });
+
+  it("puts the regions in the redactions panel and nothing in the marks one", () => {
+    // Two panels rather than one with two sources, for the reason `docmodel.rs`
+    // gives about the two id types: a mark is written into a saved file as an
+    // annotation and a region marked for removal must never be. A single panel
+    // holding both would be the first place a reader could confuse them, and a
+    // single setter would be the first place the code could --- so the second
+    // half of this is the assertion with teeth.
+    const tabs: string[] = [];
+    const bar = tree([], tabs);
+    bar.selectTab("redactions");
+    expect(bar.tab).toBe("redactions");
+    expect(tabs).toEqual(["outline", "redactions"]);
+    bar.setRedactions(
+      redactionRows([{ id: 4, page: pageId(1), area: [10, 20, 30, 40] }], unedited(2)),
+    );
+    expect(bar.redactions.rowCount).toBe(1);
+    expect(bar.marks.rowCount).toBe(0);
+  });
+
+  it("redraws the regions when words arrive, without being given the list again", () => {
+    // The two setters are separate because the rows and the words change for
+    // different reasons: a region is listed the moment it is dragged, and the
+    // page under it is extracted afterwards. A forwarder that dropped this
+    // would leave every row saying it was still reading, for ever.
+    const bar = tree([]);
+    bar.setRedactions(
+      redactionRows([{ id: 4, page: pageId(1), area: [10, 20, 30, 40] }], unedited(2)),
+    );
+    expect(bar.redactions.rowText(4).words).toBe("Reading the page…");
+    covered.set(4, "clause 4");
+    bar.setRedactionWords();
+    expect(bar.redactions.rowText(4).words).toBe("clause 4");
   });
 
   it("activates the row the key reached, not the one it last tracked", () => {
@@ -113,6 +157,11 @@ describe("Sidebar keyboard activation", () => {
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
       marks: { onPick: () => {}, onRemove: () => {}, coveredFor: () => "" },
+      redactions: {
+        onPick: () => {},
+        onRemove: () => {},
+        wordsFor: (id) => covered.get(id),
+      },
       onTab: () => {},
       pages: {
         doc: 1,

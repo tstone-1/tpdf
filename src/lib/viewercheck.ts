@@ -360,6 +360,20 @@ async function run(path: string): Promise<void> {
    * which this harness cannot reach at all --- the command probe stubs it.
    */
   const marksCovered = new Map<number, string>();
+  /** Every region the redactions panel's remove control asked to take off. */
+  const regionsRemoved: number[] = [];
+  /** Every region a row press reported, in order. */
+  const regionsPicked: number[] = [];
+  /**
+   * What the redactions panel is told each region covers, by id.
+   *
+   * `marksCovered`'s arrangement and its reason, plus one of its own: the
+   * application computes these from the page's text, and the four answers a row
+   * can draw include two --- not read yet, could not be read --- that a real
+   * document reaches only by failing. Writing them here is how a phase gets to
+   * see all four.
+   */
+  const regionsCovered = new Map<number, string | null | undefined>();
   /** Every tab the sidebar has reported showing, in order. */
   const tabsSeen: string[] = [];
   const panel = document.createElement("div");
@@ -376,6 +390,18 @@ async function run(path: string): Promise<void> {
       // off would change what the phases after it are looking at.
       onRemove: (id) => marksRemoved.push(id),
       coveredFor: (id) => marksCovered.get(id) ?? "",
+    },
+    redactions: {
+      // Recorded rather than scrolled. What the application does with a pick is
+      // `showRedaction`, which needs the edit model to turn a region into a
+      // slot; what no unit test can reach is whether pressing a row in a real
+      // web view arrives here at all, carrying the region it landed on.
+      onPick: (id) => regionsPicked.push(id),
+      // Recorded rather than applied, for `marks.onRemove`'s reason: this
+      // harness opens one document and every later phase reads the regions the
+      // phases before it made.
+      onRemove: (id) => regionsRemoved.push(id),
+      wordsFor: (id) => regionsCovered.get(id),
     },
     pages: {
       doc: doc.id,

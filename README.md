@@ -123,6 +123,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   never saved, and never written into a copy --- see the two entries under *What Phase 0
   established* for why this is the hardest thing here to get right.
   <!-- built: edit.redactRegion -->
+- **Review what you marked**, in a sidebar tab that lists every pending region down the
+  document with the words under it, so you can check six regions across forty pages
+  without scrolling to each one. A region covering no text says so, which is worth
+  knowing: it means a removal would take nothing out of that rectangle. The panel is
+  where a region comes off again --- undo is chronological, and the second of six you
+  drew is not reachable that way. It says what every row here has in common: nothing has
+  been removed yet.
+  <!-- built: view.showRedactions -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.

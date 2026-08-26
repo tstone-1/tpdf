@@ -62,6 +62,7 @@
 import {
   charQuad,
   coveredIndices,
+  touchedIndices,
   type IndexRange,
   type PageText,
   type Quad,
@@ -922,7 +923,35 @@ export function readingTextOf(text: PageText, from: number, to: number): string 
  * arrive in whatever sequence its producer wrote them.
  */
 export function coveredText(text: PageText, quads: readonly number[]): string {
-  const wanted = new Set(coveredIndices(text, quads));
+  return inReadingOrder(text, coveredIndices(text, quads));
+}
+
+/**
+ * The words a set of rectangles touches, in the order the page reads them.
+ *
+ * {@link coveredText} for a region marked for removal rather than for an
+ * annotation, and the whole of the difference is which containment rule picks
+ * the characters --- see {@link touchedIndices}, which argues why a redaction
+ * may not borrow the annotation rule. The ordering and the assembly are shared,
+ * so the two answers are always the same page read the same way.
+ */
+export function touchedText(text: PageText, quads: readonly number[]): string {
+  return inReadingOrder(text, touchedIndices(text, quads));
+}
+
+/**
+ * A set of character indices, read out in the page's own order.
+ *
+ * The two-step {@link coveredText} describes: filtering the reading order by a
+ * set is what makes the order the page's rather than the caller's, and a
+ * caller's indices arrive in whatever sequence its own scan produced them.
+ *
+ * Chunked because `String.fromCodePoint` is spread into a call, and a page with
+ * a hundred thousand characters in one rectangle is an argument list nothing
+ * promises to accept.
+ */
+function inReadingOrder(text: PageText, indices: readonly number[]): string {
+  const wanted = new Set(indices);
   if (wanted.size === 0) return "";
   const order = readingOrder(text).filter((index) => wanted.has(index));
   let out = "";

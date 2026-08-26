@@ -6,9 +6,13 @@
  * one for exactly this reason: the *second* tab is otherwise the one that has to
  * introduce it, by which point something else is positioned against its absence.
  *
- * There are five. The fifth lists the reader's *own* marks, and it is not one of
+ * There are six. The fifth lists the reader's *own* marks, and it is not one of
  * the four because when they were specified the reader could not make any; see
  * `marklist.ts` for why it is not the comments panel with a different source.
+ * The sixth lists the regions marked for removal, and it is `docs/PLAN.md` §6
+ * step 2 --- a review of what a redaction is about to take, which is a different
+ * subject from what the reader has drawn on the page and a different type all
+ * the way down; see `redactlist.ts`.
  *
  * ## The tabs are not equals, and the code says so
  *
@@ -60,7 +64,8 @@ import {
 import { CommentList, type CommentListOptions } from "./commentlist";
 import type { Comments } from "./comments";
 import { MarkList, type MarkListOptions } from "./marklist";
-import type { MarkRow } from "./pages";
+import { RedactList, type RedactListOptions } from "./redactlist";
+import type { MarkRow, RedactionRow } from "./pages";
 import { Results, type ResultsOptions } from "./results";
 import { Thumbnails, type ThumbnailOptions } from "./thumbnails";
 
@@ -71,7 +76,13 @@ const INDENT = 14;
 const WIDTH = 260;
 
 /** Which panel is showing. */
-export type Tab = "outline" | "pages" | "results" | "comments" | "marks";
+export type Tab =
+  | "outline"
+  | "pages"
+  | "results"
+  | "comments"
+  | "marks"
+  | "redactions";
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
@@ -96,6 +107,8 @@ export interface SidebarOptions {
   onTab: (tab: Tab) => void;
   /** What the marks tab needs. */
   marks: MarkListOptions;
+  /** What the redactions tab needs. */
+  redactions: RedactListOptions;
   /**
    * What the page strip needs, or absent for no strip at all.
    *
@@ -128,6 +141,7 @@ export class Sidebar {
   private readonly hits: Results;
   private readonly notes: CommentList;
   private readonly mine: MarkList;
+  private readonly pending: RedactList;
   private showing: Tab = "outline";
   private visibleNow = true;
 
@@ -168,16 +182,19 @@ export class Sidebar {
     this.tablist = document.createElement("div");
     this.tablist.setAttribute("role", "tablist");
     this.tablist.setAttribute("aria-label", "Sidebar");
-    // **Wraps, because five labels do not fit across 260 pixels.** Measured in
-    // a real window: the buttons want 293 px of content --- Outline 58, Pages
-    // 50, Results 57, Comments 78, Marks 50 --- and with the row's own padding
-    // and gaps that is 318 against 247 available. Without wrapping the last tab
-    // is clipped by the host's `overflow:hidden`: still in the DOM, still
-    // `role="tab"`, and unreachable by a pointer. A second row is the honest
-    // outcome and it self-adjusts, where trimming the padding would fit today
-    // by 6 px and break on the next label or the next system font.
-    // `viewer_check.py`'s "every sidebar tab fits inside the panel" is what says
-    // so; it found this on its first run.
+    // **Wraps, because the labels do not fit across 260 pixels.** Measured in a
+    // real window on 2026-08-25, when there were five: the buttons wanted 293 px
+    // of content --- Outline 58, Pages 50, Results 57, Comments 78, Marks 50 ---
+    // and with the row's own padding and gaps that is 318 against 247 available.
+    // Without wrapping the last tab is clipped by the host's `overflow:hidden`:
+    // still in the DOM, still `role="tab"`, and unreachable by a pointer.
+    //
+    // There are six now and the sixth has not been measured, which changes
+    // nothing about the decision and is the reason wrapping was chosen over
+    // trimming the padding: that fit by 6 px at five labels and would have
+    // broken on the next one. Wrapping is correct at every width and takes a
+    // second row exactly when it needs one. `viewer_check.py`'s "every sidebar
+    // tab fits inside the panel" is what says so, and it needs a screen.
     this.tablist.style.cssText =
       "flex:none;display:flex;flex-wrap:wrap;gap:0.2rem;padding:0.3rem 0.4rem;" +
       "border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);";
@@ -226,6 +243,10 @@ export class Sidebar {
     const marksPanel = this.panel("marks", "Marks");
     this.host.appendChild(marksPanel);
     this.mine = new MarkList(marksPanel, opts.marks);
+
+    const redactionsPanel = this.panel("redactions", "Redactions");
+    this.host.appendChild(redactionsPanel);
+    this.pending = new RedactList(redactionsPanel, opts.redactions);
 
     root.appendChild(this.host);
     this.selectTab("outline");
@@ -300,6 +321,26 @@ export class Sidebar {
   /** The panel listing the reader's own marks. */
   get marks(): MarkList {
     return this.mine;
+  }
+
+  /** The panel listing the regions marked for removal. */
+  get redactions(): RedactList {
+    return this.pending;
+  }
+
+  /**
+   * Replaces the regions shown, already ordered and placed.
+   *
+   * Rows rather than `RedactionView`s for {@link setMarks}'s reason: placing one
+   * needs the page order and the sidebar does not hold it.
+   */
+  setRedactions(rows: readonly RedactionRow[]): void {
+    this.pending.setRedactions(rows);
+  }
+
+  /** Redraws the regions against words that have since arrived. */
+  setRedactionWords(): void {
+    this.pending.setWords();
   }
 
   /**

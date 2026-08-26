@@ -1638,8 +1638,8 @@ confident lie. The audit was hardest on this section and largely right.
    destroyed and everything is undoable. *Built for a dragged region: the model, the
    gesture, the overlay and the undo. Marking by selection or by pattern is not.*
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
-   to catch an over- or under-selection. *The data is built --- page and region, in page
-   order. The text, the thumbnail and the panel are not.*
+   to catch an over- or under-selection. *Built: the panel, in page order, with the words
+   the region covers and the only route off a region other than undo. The thumbnail is not.*
 3. **Apply.** Destructive, full-rewrite, journal truncated at that point.
 4. **Verify.** Mandatory. Reports *verified*, or *not verified* with specifics — never a
    bare success.
@@ -1839,8 +1839,9 @@ the instrument. Reading it as "images are fine" is the one way to turn this into
 confident lie the section opens by forbidding, so `an_image_carrier_does_not_certify` pins
 it and a mutation that lets it through goes red.
 
-Steps 1 and 2 are not built. **Step 3's text primitive is built and headless** as of
-2026-08-26, and **step 5 is partly built with its ceiling measured** --- both below.
+Steps 1 and 2 are built as of 2026-08-26 --- marking by dragged region, and the panel that
+reviews what was marked. **Step 3's text primitive is built and headless**, and **step 5 is
+partly built with its ceiling measured** --- both below.
 
 #### Steps 1 and 2: the marking model --- built 2026-08-26
 
@@ -1877,16 +1878,69 @@ trap of that name.
 
 Neither has a keyboard binding, for the reason `edit.deletePage` has none.
 
-**What is not built**: no panel lists the regions, so the review of §6 step 2 is a list the
-model holds and nothing displays. Nothing applies them --- `redact.rs` below is still
-reachable from no command. A region is a rectangle a reader dragged; marking by selection or
-by pattern is step 1's other two shapes and is not here.
+**What is not built**: nothing applies them --- `redact.rs` below is still reachable from no
+command. A region is a rectangle a reader dragged; marking by selection or by pattern is
+step 1's other two shapes and is not here.
 
 Twelve mutations stand behind it, nine in Rust and three in the frontend, and the one worth
 naming is *snapshot a document without its pending redactions*: `SNAPSHOT_EVERY` is 32, so a
 rebuild that dropped them would be correct on every short journal and would silently empty
 the review list on a long one. That is the failure this subsystem must never have, and it
 would arrive with the document looking entirely normal.
+
+#### Step 2's review panel --- built 2026-08-26
+
+A sixth sidebar tab, `redactlist.ts`, listing every pending region down the document with
+the page it is on and the words under it. It is what turns marking into a reviewable act:
+six red rectangles across forty pages were previously checkable only by scrolling to each
+one and trusting your eyes about which words were underneath.
+
+**Two things it says that no other panel has to.** *Nothing has been removed yet*, in the
+notice above the rows, because that is the standing fact about every row and §6's thesis is
+that a redaction which looks done and is not is worse than none. And **a row with no words
+under it is a finding**: for a mark it means a square was drawn on a photograph, which is
+fine; for a region it means the removal takes no text out of that rectangle, and `redact.rs`
+reports whatever is there as unhandled.
+
+**It is also the only way a region comes off other than undo**, which is chronological: a
+reader who drew six and wants the second one back cannot get there by undoing. That is why
+the remove control is on every row including one the model could not place --- listed rather
+than dropped, because a review panel that silently loses a row tells a reader a pending
+redaction is no longer pending.
+
+**The words are the document's, taken with a different containment rule from an
+annotation's,** and that is the design decision of this increment rather than a detail.
+`coveredIndices` takes a character whose box's *centre* is inside the rectangle, which is
+right for a highlight and dishonest for a region; `touchedIndices` takes every character the
+rectangle touches. Both share `placedBox` and the reading order. The trap of that name has
+the argument and the case that decides it, which is vertical: a rectangle dragged four
+points too deep clips the tops of the next line and the centre rule reports that line as
+untouched.
+
+They are **what the region covers, not what applying would remove**, and the panel does not
+pretend otherwise. Route B deletes a whole text-showing operation when any of its glyphs is
+inside, so an apply takes at least these words and commonly the rest of the line. What a
+removal would actually take is a plan against the page's own objects, and it belongs with
+step 3.
+
+**A row has four states rather than the sibling panel's two** --- words, no words, not read
+yet, could not be read. The second trap named for this increment says why none of them may
+be collapsed, and the one-character version of the mistake is `?? ""` on the lookup.
+
+The extraction is scheduled the way the comments panel's covered words are: one page at a
+time, awaited, and only once somebody opens the tab --- and additionally after an edit, so a
+region just dragged fills in while the reader is looking at it. Its *asked* set is keyed by
+**page id** rather than by slot, which the comments walk is not; a slot is renumbered by
+every deletion.
+
+**What is not built here**: the thumbnail §6 step 2 also asks for. That is a render call per
+region on the thread drawing the page, and it wants the scheduling argument the strip already
+had to have.
+
+Twenty-one mutations stand behind it. The one worth naming is *review a region with the
+annotation's containment rule*, which is the whole increment in one word --- and one written
+beside it survived, correctly: a `touchedText` assertion could not see the unplaced-box
+guard, because `readingOrder` drops an unplaced character before that assertion can look.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 

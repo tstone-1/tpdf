@@ -1221,6 +1221,16 @@ export function registerAppCommands(
       run: () => actions.showTab("marks"),
     },
     {
+      // "Show redactions", not "Show regions": a reader looking for this has the
+      // word *redact* in mind --- it is what the tool that made these is called
+      // --- and "region" names the shape rather than the purpose. The panel's
+      // own tab carries the same word for the same reason.
+      id: "view.showRedactions",
+      title: "Show redactions",
+      enabled: withDocument,
+      run: () => actions.showTab("redactions"),
+    },
+    {
       // "Invert page colours", not "Dark mode". The chrome is already dark when
       // the desktop is, so a command called dark mode would appear to do nothing
       // for the reader who most expects it to --- and what this actually does is

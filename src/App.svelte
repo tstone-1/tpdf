@@ -50,6 +50,7 @@
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
   import { pagesNeedingWords, wordsForPage, type Comments } from "./lib/comments";
+  import { touchedText } from "./lib/reading";
   import { noticeFor as linkNotice, type Link, type Links } from "./lib/links";
   import type { Outline } from "./lib/outline";
   import {
@@ -58,6 +59,7 @@
     markRows,
     NO_PAGES,
     outlineIn,
+    redactionRows,
     type MarkKind,
     type StampName,
     type PageId,
@@ -256,6 +258,27 @@
   const commentWords = new Map<number, string>();
   /** Whether {@link fillCommentWords} is walking, so a second call stands down. */
   let fillingWords = false;
+  /**
+   * The words each pending region covers, by redaction id.
+   *
+   * `null` for a region whose page could not be read, which is a different
+   * thing to tell a reader than an empty string --- `redactlist.ts` states the
+   * four answers and why none of them may be collapsed. A region with no entry
+   * has not been looked at yet.
+   */
+  const redactionWords = new Map<number, string | null>();
+  /**
+   * Pages whose text has been read for the regions on them, **by page id**.
+   *
+   * Not by slot, which is what {@link wordsAsked} does one field up, and the
+   * difference is a defect rather than a preference: a slot is renumbered by
+   * every deletion, so a set of slots says page 4 has been read and then a
+   * deletion moves an unread page into slot 4, where it is never asked again.
+   * A `PageId` is what the region itself carries and it does not move.
+   */
+  const redactionPagesRead = new Set<number>();
+  /** Whether {@link fillRedactionWords} is walking, so a second call stands down. */
+  let fillingRedactionWords = false;
   let rawOutline: Outline | null = null;
 
   /** Path of the open document, which is what a remembered place is keyed on. */
@@ -716,6 +739,13 @@
       // arrive with this answer, where the links, comments and outline are
       // answers about the *file* that this reconciles against a new page order.
       sidebar?.setMarks(markRows(after.marks, model.map));
+      // Two calls rather than one, because the rows and the words on them
+      // change for different reasons: marking a region changes the list at
+      // once, and the words under it arrive a page-extraction later. The
+      // scheduler is a no-op when every page in the list has already been read,
+      // which is every edit after the first on a given page.
+      sidebar?.setRedactions(redactionRows(after.redactions, model.map));
+      void fillRedactionWords();
       dirty = after.dirty;
       // Undo and Redo are the two menu items whose enablement moves on every
       // edit, which is why this is here rather than only at the ends of an open.
@@ -824,6 +854,65 @@
       }
     } finally {
       fillingWords = false;
+    }
+  }
+
+  /**
+   * Fills in the words each pending region covers, a page at a time.
+   *
+   * **Why it exists.** `docs/PLAN.md` §6 step 2 is a review, and a review of six
+   * red rectangles listed as *page 3, page 3, page 7* is not one. The words are
+   * in the page under the rectangle, and `touchedText` is what reads them out.
+   *
+   * **Why a page at a time, awaited.** {@link fillCommentWords}'s reason, which
+   * is the same reason: each page is a `page_text` extraction answered by the
+   * pool that draws tiles, and firing them all at once puts a document's worth
+   * of extractions in front of the page the reader is looking at.
+   *
+   * **Why every region on the page is answered at once.** The extraction is the
+   * cost and it is per page; two regions on one page are two rectangles over one
+   * `PageText`. Answering only the one that prompted the walk would read the
+   * same page again for its neighbour.
+   *
+   * **Why a page that could not be read is recorded as read.** Otherwise the
+   * walk asks for it again on the next edit, forever, and the row it belongs to
+   * says *reading* for the rest of the session. It is recorded as `null`
+   * instead, which is a state the row draws as what it is.
+   */
+  async function fillRedactionWords(): Promise<void> {
+    if (fillingRedactionWords) return;
+    const model = edits;
+    if (!model || !viewer) return;
+    fillingRedactionWords = true;
+    try {
+      for (;;) {
+        // The model that was open when this round started. A second document
+        // replaces `edits` mid-walk, and writing this one's words onto its rows
+        // is the same failure `fillCommentWords` guards against.
+        if (edits !== model) return;
+        const next = model.state.redactions.find(
+          (region) => !redactionPagesRead.has(region.page),
+        );
+        if (!next) return;
+        redactionPagesRead.add(next.page);
+        const slot = model.map.slotOfId(next.page);
+        // A region whose page is in no slot. Unreachable from the model as it
+        // stands --- see `RedactionRow.page` --- and answered rather than
+        // skipped, because a row left with no entry says "reading" for ever.
+        const text =
+          slot === undefined ? null : ((await viewer?.unturnedText(slot)) ?? null);
+        if (edits !== model) return;
+        for (const region of model.state.redactions) {
+          if (region.page !== next.page) continue;
+          redactionWords.set(
+            region.id,
+            text === null ? null : touchedText(text, region.area),
+          );
+        }
+        sidebar?.setRedactionWords();
+      }
+    } finally {
+      fillingRedactionWords = false;
     }
   }
 
@@ -1418,6 +1507,29 @@
   function showTab(tab: Tab) {
     if (!sidebarShown) toggleSidebar();
     sidebar?.selectTab(tab);
+  }
+
+  /**
+   * Scrolls to a pending region, named by its redaction id.
+   *
+   * The region's own top edge rather than the page's, so a reader checking the
+   * fourth region on a long page lands on it. `goToDestination` is what turns
+   * that into a scroll position: it owns the margin above a destination, and it
+   * owns the rule that a turned page has no vertical offset worth scrolling to
+   * --- both of which would be a second copy of a hard-won answer if this
+   * scrolled by itself.
+   *
+   * Silent when the region is gone or its page is in no slot. There is nowhere
+   * to go, and `redactlist.ts` refuses to activate such a row from either the
+   * pointer or the keyboard, so reaching here means the model changed under the
+   * press rather than that a reader needs telling.
+   */
+  function showRedaction(id: number): void {
+    const region = edits?.state.redactions.find((row) => row.id === id);
+    if (!region || !edits) return;
+    const slot = edits.map.slotOfId(region.page);
+    if (slot === undefined) return;
+    viewer?.goToDestination(slot, region.area[1]);
   }
 
   /**
@@ -2047,6 +2159,8 @@
       // kept would tell the next file's page 3 that its words are already known.
       wordsAsked.clear();
       commentWords.clear();
+      redactionWords.clear();
+      redactionPagesRead.clear();
       properties = null;
       propertiesDialog?.close();
       rawOutline = null;
@@ -2085,6 +2199,23 @@
           // What the selection said when the mark was made, or "" --- see
           // `covered` above for why this is held here and not in the model.
           coveredFor: (id) => covered.get(id) ?? "",
+        },
+        redactions: {
+          // Focus stays in the panel, which is the results list's arrangement
+          // rather than the marks list's, and for the results list's reason: a
+          // reader working down this list is *comparing* regions --- is that
+          // the right box, is that one too wide --- and taking the keyboard to
+          // the page after each row means clicking back to reach the next.
+          onPick: (id) => showRedaction(id),
+          // The only route off a pending region other than undo, and undo is
+          // chronological --- a reader who dragged six and wants the second one
+          // back cannot get there by undoing. `applyEdit` is the path every
+          // other edit takes, so this journals and undoes like the rest.
+          onRemove: (id) => void applyEdit((e) => e.unredact(id)),
+          // Four answers, and the map deliberately holds no entry for a region
+          // nobody has looked at yet: `Map.get` answering `undefined` is what
+          // separates *not read* from a page read and found to hold nothing.
+          wordsFor: (id) => redactionWords.get(id),
         },
         pages: {
           doc: doc.id,
@@ -2129,6 +2260,12 @@
         // a document opened, read and closed on the outline costs none of it.
         onTab: (tab) => {
           if (tab === "comments") void fillCommentWords();
+          // The same bargain for the same reason: the words under a region are
+          // a text extraction per page carrying one, and a reader who never
+          // opens this tab pays none of it. Unlike the comments walk this one
+          // is *also* driven from `runEdit`, because a region the reader has
+          // just dragged wants its words while they are looking at the panel.
+          if (tab === "redactions") void fillRedactionWords();
         },
       });
       sidebar.setVisible(sidebarShown);
@@ -2156,6 +2293,7 @@
           // to answer, not this file's to assume. Every later change comes
           // through `runEdit` above.
           sidebar?.setMarks(markRows(state.marks, opening.map));
+          sidebar?.setRedactions(redactionRows(state.redactions, opening.map));
         },
         (e) => {
           // Not raised to the reader. Nothing is wrong with their document ---

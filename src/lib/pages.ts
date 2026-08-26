@@ -449,12 +449,37 @@ export function markWalk(
     if (!rect) continue;
     walk.push({ id: mark.id, page: slot, rect });
   }
-  walk.sort((a, b) => {
+  return inPageOrder(walk);
+}
+
+/** Something the reader put on a slot, for {@link inPageOrder} to order. */
+interface OnPage {
+  id: number;
+  page: number;
+  rect: [number, number, number, number];
+}
+
+/**
+ * Slot, then top edge, then id --- sorted in place and handed back.
+ *
+ * The rule {@link markWalk} argues, applied to the redaction list as well, and
+ * one function because it is one rule rather than two lists that happen to agree
+ * today. **The id is not decoration**: two things can share a top edge exactly,
+ * a reader marking the same line twice or dragging two regions along one, and
+ * without it which comes first would depend on the sort's stability rather than
+ * on anything anybody decided.
+ *
+ * What the two callers do *not* share is which things get here at all: a mark
+ * with no rectangles is nowhere and a walk cannot stop on it, while a region
+ * always has one. That is a question about the item, asked before this.
+ */
+function inPageOrder<T extends OnPage>(items: T[]): T[] {
+  items.sort((a, b) => {
     if (a.page !== b.page) return a.page - b.page;
     if (a.rect[1] !== b.rect[1]) return a.rect[1] - b.rect[1];
     return a.id - b.id;
   });
-  return walk;
+  return items;
 }
 
 /** One row of the marks panel: a mark, and the slot it is drawn on. */
@@ -502,6 +527,56 @@ export function markRows(items: readonly MarkView[], pages: PageMap): MarkRow[] 
     if (left.has(mark.id)) rows.push({ mark, page: null });
   }
   return rows;
+}
+
+/** One row of the redactions panel: a region, and the slot it is drawn on. */
+export interface RedactionRow {
+  redaction: RedactionView;
+  /**
+   * Slot the region is drawn on, or `null` when nothing could place it.
+   *
+   * Not reachable from the model as it stands, for {@link MarkRow.page}'s exact
+   * reason --- `Working::all_redactions` walks the live page order, so a region
+   * on a deleted page is not in the list at all. It is here because this panel
+   * is the one place a reader can take a region off again, and a row silently
+   * dropped from *this* list says a redaction they cannot see is no longer
+   * pending. That is the one thing a redaction review must never say.
+   */
+  page: number | null;
+}
+
+/**
+ * The regions marked for removal, in the order they should be reviewed.
+ *
+ * `markRows`'s twin, and deliberately a second function rather than a generic
+ * over both: a mark's rectangle is the union of its quads and a region *is* a
+ * rectangle, so the shapes differ exactly where the two types are meant to
+ * differ. What they share --- the ordering, and the rule that nothing is
+ * dropped --- is shared as {@link inPageOrder} and as this comment.
+ *
+ * `docs/PLAN.md` §6 step 2 asks for the marks "listed with page", which is page
+ * order: down the document as the reader will read it, not the order the
+ * regions were dragged in.
+ */
+export function redactionRows(
+  items: readonly RedactionView[],
+  pages: PageMap,
+): RedactionRow[] {
+  const placed: (OnPage & { redaction: RedactionView })[] = [];
+  const lost: RedactionRow[] = [];
+  for (const redaction of items) {
+    const slot = pages.slotOfId(redaction.page);
+    if (slot === undefined) {
+      lost.push({ redaction, page: null });
+      continue;
+    }
+    placed.push({ id: redaction.id, page: slot, rect: redaction.area, redaction });
+  }
+  const rows: RedactionRow[] = inPageOrder(placed).map((step) => ({
+    redaction: step.redaction,
+    page: step.page,
+  }));
+  return [...rows, ...lost];
 }
 
 /** The smallest rectangle covering every quad, or `null` if there are none. */
