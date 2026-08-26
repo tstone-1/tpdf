@@ -15171,6 +15171,59 @@ before, refactor, run it again, diff. String-generating code is exactly where a
 "looks equivalent" reading is worth nothing --- the operators are the output, and
 `72 674 228 18 re f` is either identical or it is a different drawing.
 
+**Done on 2026-08-26, and the prepared shape was right except for its one
+prediction.** `appearance_stream` is 117 lines from 355, the arms are a function
+each at 6 to 47, and the `match` is nine calls:
+
+    Paint::Wash => draw_wash(&mut content, quads),
+    ...
+    Paint::Path => draw_path(&mut content, strokes),
+
+**No context type**, which is what the note above expected the extraction to
+cost. Measuring what each arm reads says otherwise --- at most a collection, one
+field of the mark and the turn --- so each signature names its own inputs, and
+that is *stronger* than the arrangement it replaced rather than a wash: with both
+collections in scope throughout the old `match`, an arm looping over the wrong
+one was prevented by none of them doing it, and now `draw_path` takes
+`&[Vec<(f64, f64)>]` where the seven per-quad styles take `&[[f64; 4]]`, so the
+mistake is `error[E0308]`. One shared struct would have handed that back.
+
+**The control worked and needed a control of its own, twice over.** The dump came
+out byte-identical --- 11,337 bytes, ten kinds at four rotations, same SHA-256 ---
+and identical output proves nothing until the dump has been shown to move, so
+three drawing operators were mutated: `re S` to `re f`, `re f` to `re S`, and the
+per-stroke `S` removed. All three changed the digest and **the first two at exactly
+the same byte length**, which is the whole argument against reading a size or a
+diffstat here. The first attempt to prove that had a fourth failure mode of its own:
+written through a shell heredoc, `re S\n` arrived as a real newline, the anchor
+matched nothing, and the unchanged digest read as a control that could not fail ---
+caught only because the harness printed the occurrence count.
+
+**Thirteen mutation anchors drifted, and re-aiming them is not a formality.** The
+arms moved from twelve spaces inside a `match` to four inside a function, and
+`content` became `out`; the `anchors` gate caught all thirteen. An anchor that
+*matches* is not an anchor that *kills*, so the ten in `mutate_rust.py` were run:
+nine still caught, and the tenth had become **inexpressible**. It drew the reader's
+note in place of the stamp's name, and `draw_stamp` is now handed
+`stamp: Option<StampName>` rather than the mark --- so the note is out of scope and
+the mutation stops compiling, which the harness correctly reports as not caught.
+That is the extraction's property showing up as a red harness. Re-aimed rather than
+deleted, at a wrong word literal, because the compiler removed one spelling of the
+defect and not the class. The three in `mutate_viewer.py` are re-aimed and **not
+re-run**: that harness needs a built bundle and an unlocked screen. Their twins in
+`mutate_rust.py` --- the same three defects, `turned marks:` rather than `turned:`
+--- did run and were caught, so what is unverified is the viewer-side anchor, not
+the code.
+
+**Do not keep the dump as a permanent test, and the tempting version of it is
+weaker than it looks.** The obvious way to make it assertive is "every drawing
+kind draws differently at each of the four rotations". That passes on an arm that
+ignores rotation entirely, because `user_quads` maps the reader's quad into page
+space *before* any arm sees it, so the four streams differ whatever the arm does
+with `turns`. The property it would appear to test is supplied by a function it
+is not testing. As bytes it is a golden file that reddens on every deliberate
+change to a drawing; either way it goes, and this entry is the recipe.
+
 ### A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets
 
 `close_document` has exactly one caller in the application: `App.svelte`, when a
@@ -15360,3 +15413,56 @@ samples` --- a full certification of a document that was never opened. With the
 guard: exit 1.
 
 Paid for on 2026-08-26, from a run that printed one check and passed.
+
+### A control that turns the page in the plan turns nothing the writer reads
+
+The byte-exact control for extracting `appearance_stream`'s arms has to exercise
+the four styles that read the page's rotation --- `Line`, `Text`, `Stamp` and
+`Wave` all ask `Upright::of(turns, quad)` --- or it certifies them without
+running one. The obvious way to turn a page is the field named for it:
+
+```rust
+let mut plan = plan_of_kind(kind, one_quad());
+plan.pages[0].turns = turns;                 // does nothing the writer can see
+```
+
+**It changes no byte, and the reason it changes no byte is that it is correct.**
+`write_marks` takes its rotation from `displayed_page`, which reads the file's
+own `/Rotate`. `PageView::turns` is the view the reader has *now*, and the test
+next door --- `a_mark_on_a_page_the_reader_turned_is_placed_by_the_rotation_they_made_it_against`
+--- asserts in so many words that a quarter turn of the view must not move a mark
+in the page's own space. So a control built this way is reading a true fact and
+drawing a false conclusion from it: forty form streams, ten kinds, four quarters,
+and every rotation path untouched.
+
+**The tell is not in the code, because both fields are called `turns` and both
+are about rotation.** What made it visible was one line asking the dump a
+question before trusting it --- do the four quarters differ at all?
+
+    Highlight  distinct drawings across four turns: 1     <- the plan's turn
+    Highlight  distinct drawings across four turns: 4     <- the source's /Rotate
+
+The fix is to put the turn where the writer looks: load the fixture, set
+`/Rotate` on its page, save it back, and write the marks over *that*.
+
+    let mut doc = Document::load_mem(&document_with_annots(AnnotShape::Absent))?;
+    let page = ordered_pages(&doc)[0];
+    doc.get_object_mut(page).and_then(Object::as_dict_mut)?
+        .set("Rotate", Object::Integer(quarters * 90));
+
+`Note` then gives one distinct drawing where every other kind gives four, which
+is right and is worth keeping in the dump rather than skipping: it is the one
+kind the caller builds no appearance for, so a kind that silently stopped
+producing one would otherwise leave the dump shorter in a way a diff of the
+streams alone cannot attribute.
+
+**The class.** Where the property you want to vary has two fields that could
+plausibly carry it, a control built on the wrong one passes while measuring
+nothing, and it passes *quietly* --- there is no error, no skip, and the output
+looks exactly like a subject that is genuinely insensitive to the input. Before
+trusting any control that varies a parameter, ask whether varying it changed the
+observable. One line, and it is the difference between a measurement and a
+ceremony. Same family as *Whatever a fixture is meant to discriminate, it needs
+two of*, arriving through a field name rather than through a fixture.
+
+Paid for on 2026-08-26, in the control for the `appearance_stream` extraction.

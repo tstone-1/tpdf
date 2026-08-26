@@ -1685,6 +1685,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A request still in flight is not re-issued, so a mid-flight invalidation looks broken
 - A fixture no script writes gated ten guards, and the tests that skipped passed (the guards were correct; six SURVIVED mutations were one missing file, and the fix is not to obtain it)
 - A test helper that reads through a parser that could not read (the same defect the increment was fixing, arriving in the harness first: a wrong baseline, then an index panic, and every message named the number rather than the blindness)
+- A control that turns the page in the plan turns nothing the writer reads (`PageView::turns` is the view the reader has now and the test next door asserts it must not move a mark, so the control was reading a true fact and concluding a false thing --- forty streams and every rotation path untouched; the turn has to be in the source's `/Rotate`, and the tell was one line asking whether the four quarters differed at all)
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent

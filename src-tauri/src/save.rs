@@ -2868,286 +2868,36 @@ fn appearance_stream(
         g = mark.color[1],
         b = mark.color[2],
     );
-    // **The loop is inside each arm rather than around the `match`**, so that no
-    // arm can be reached with the wrong collection and silently draw nothing ---
-    // and so that a new style is a compile error here, which is the whole reason
-    // this is a `match` on an enum and not a pair of booleans.
+    // **Each style draws in a function of its own, and the loop is inside it.**
+    // Two properties, and the signatures hold both rather than care holding
+    // them: an arm cannot be reached with the wrong collection, because
+    // `draw_path` takes strokes where the seven per-quad styles take quads and
+    // the types differ; and a tenth style is a compile error here, which is the
+    // whole reason this is a `match` on an enum rather than a pair of booleans.
     //
-    // Measured rather than stated, because this comment carried three counts and
-    // every one of them had gone stale: it said *five* styles, the loop *written
-    // out three times*, and a *sixth* style being the compile error. Today there
-    // are **nine arms, seven per-quad loops and one per-stroke**, and the tenth
-    // style is what the compiler would refuse. The argument was right the whole
-    // time and the arithmetic in it was wrong for six of them --- which is this
-    // repository's own lesson about a number in prose, arriving inside the
-    // comment that defends a design.
+    // **The extraction is what made the first property structural.** Until
+    // 2026-08-26 the nine bodies were written out inline --- 268 lines between
+    // this comment and the close --- and nothing stopped an arm looping over the
+    // wrong collection except that none of them did, with both in scope
+    // throughout. The comment defending that arrangement carried three counts and
+    // every one had gone stale: it said *five* styles, the loop *written out
+    // three times*, and a *sixth* style being the compile error, against nine
+    // arms, seven per-quad loops and a tenth. `docs/TRAPS.md` has that entry, and
+    // this is the extraction it measured.
     //
-    // Repeating the loop is what that argument buys, and it is not free to read:
-    // `docs/TRAPS.md` records the measurement of these nine arms --- 6 to 47 lines
-    // each, with genuinely different inputs --- and the shape a per-arm extraction
-    // would take. It keeps this property; it does not trade it away.
+    // **No context type, which that measurement expected to be the cost.** Each
+    // arm reads at most a collection, one field of the mark and the turn, so a
+    // parameter list per style says exactly what that style draws from --- which
+    // is the property, and is precisely what one shared struct would hand back.
     match style {
-        // The whole quad, filled.
-        Paint::Wash => {
-            for quad in quads {
-                let (x, y) = (quad[0], quad[1]);
-                let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
-                content.push_str(&format!("{x} {y} {width} {height} re f\n"));
-            }
-        }
-        // A band inside it, filled. Same operator, different rectangle.
-        //
-        // **Measured in the reader's frame, not the page's**, because "the
-        // bottom of the quad" is where a rule goes and a turned page has two
-        // bottoms. `line_rect` answers in a y-up frame, so it is handed the
-        // reader's box and its answer read back as a distance from the reader's
-        // own bottom edge.
-        Paint::Line => {
-            for quad in quads {
-                let seen = Upright::of(turns, *quad);
-                let (base, band) = line_rect(mark.kind, 0.0, seen.height);
-                let [x, y, width, height] = seen.rect(
-                    0.0,
-                    seen.height - base - band,
-                    seen.width,
-                    seen.height - base,
-                );
-                content.push_str(&format!("{x} {y} {width} {height} re f\n"));
-            }
-        }
-        // Its edge, stroked. `re S` rather than `re f`, and the path is
-        // inset so the stroke lands inside the /BBox -- see `outline_path`.
-        Paint::Outline => {
-            for quad in quads {
-                let [x, y, width, height] = outline_path(*quad);
-                content.push_str(&format!("{x} {y} {width} {height} re S\n"));
-            }
-        }
-        // The reader's words, one `Tj` per line, from the top of the box down.
-        //
-        // **The whole layout is in the reader's frame**, which is what the box's
-        // width has to be: `wrap` decides where the lines break, and handing it
-        // the page's width breaks them against the box's *height* on a turned
-        // page --- eighteen lines two glyphs wide where the model, which works in
-        // the reader's frame throughout, had made one. `Upright` records the
-        // measurement.
-        //
-        // Lines that would fall below the box are dropped rather than drawn: the
-        // /BBox clips them anyway, and emitting ink nobody can see makes the
-        // stream disagree with what the overlay shows. The rule is
-        // `viewer.ts`'s exactly --- a line is drawn while its baseline is still
-        // inside the box --- so the two renderers stop at the same line.
-        Paint::Text => {
-            for quad in quads {
-                let seen = Upright::of(turns, *quad);
-                let width = seen.width - textbox::INSET * 2.0;
-                let lines = textbox::wrap(&mark.note, textbox::SIZE, width.max(1.0));
-                if lines.is_empty() {
-                    continue;
-                }
-                let leading = textbox::SIZE * textbox::LEADING;
-                content.push_str(&format!(
-                    "BT /{TEXT_FONT} {size} Tf\n",
-                    size = textbox::SIZE
-                ));
-                for (index, line) in lines.iter().enumerate() {
-                    // The baseline sits one ascent below the top inset, not at
-                    // it: a line placed *at* the top edge hangs its whole body
-                    // above the box.
-                    let down = textbox::INSET + textbox::SIZE + leading * (index as f64);
-                    if down > seen.height {
-                        break;
-                    }
-                    content.push_str(&format!("{}\n", seen.text_matrix(textbox::INSET, down)));
-                    content.push_str(&format!("<{}> Tj\n", winansi_hex(line)));
-                }
-                content.push_str("ET\n");
-            }
-        }
-        // A border and one word, both in the mark's colour.
-        //
-        // **The size is computed rather than fixed**, which is the difference
-        // from `Paint::Text` above and the reason a stamp needs no wrapping. A
-        // stamp is one word and a reader who drags a large rectangle means a
-        // large stamp, so the size is whatever makes the word span the box
-        // between its insets --- bounded above by what the height can hold, so a
-        // wide flat rectangle gives a word that fits rather than one clipped by
-        // the /BBox.
-        //
-        // `advance` is the same Helvetica table `textbox.rs` wraps with, and
-        // `helvetica-probe` measures it against what PDFium actually inks. A
-        // stamp is the second consumer of it, which is worth noting because a
-        // wrong entry here is visible as a word that is off-centre rather than
-        // as a word in the wrong place.
-        Paint::Stamp => {
-            for quad in quads {
-                let Some(name) = mark.stamp else {
-                    continue;
-                };
-                let word = name.word();
-                // The reader's box, for `Paint::Text`'s reason and one of its
-                // own: the size is a ratio of width to height, so on a turned
-                // page the page's own box does not merely rotate the word, it
-                // sets it at the size a rectangle of the other shape would take.
-                // The border is unaffected and stays in page space --- a
-                // rectangle is the same set of points at every quarter.
-                let seen = Upright::of(turns, *quad);
-                let inner_w = seen.width - STAMP_INSET * 2.0;
-                let inner_h = seen.height - STAMP_INSET * 2.0;
-                let [x, y, width, height] = outline_path(*quad);
-                content.push_str(&format!("{x} {y} {width} {height} re S\n"));
-                if inner_w <= 0.0 || inner_h <= 0.0 {
-                    continue;
-                }
-                // The advance at one point, so the ratio is a division rather
-                // than a search. `max` guards a name that measured zero, which
-                // no entry in the list does and which a table edit could make
-                // true.
-                let unit = textbox::advance(word, 1.0).max(f64::EPSILON);
-                let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);
-                // Centred both ways. The baseline sits half a cap height below
-                // the middle, because a word centred *on* the middle hangs half
-                // its body below it.
-                let drawn = textbox::advance(word, size);
-                let across = (seen.width - drawn) / 2.0;
-                let down = (seen.height + size * STAMP_CAP) / 2.0;
-                content.push_str(&format!("BT /{TEXT_FONT} {size} Tf\n"));
-                content.push_str(&format!("{}\n", seen.text_matrix(across, down)));
-                content.push_str(&format!("<{}> Tj\n", winansi_hex(word)));
-                content.push_str("ET\n");
-            }
-        }
-        // A zigzag along the bottom of the quad, stroked.
-        //
-        // **Straight segments rather than curves, and that is a decision.** A
-        // squiggle could be drawn as arcs, and Acrobat's is; at this size the
-        // difference is invisible and the cost is not. A zigzag is exact -- `l`
-        // says what it means -- where a curve would put a second approximation
-        // constant beside `KAPPA` for a shape whose whole peak-to-trough height
-        // is under two points on body text.
-        //
-        // Its own `w`, because the header wrote one width for the stream and
-        // this thickness is a fraction of *this quad's* height. A run crossing a
-        // heading has quads of two sizes and would otherwise get one thickness.
-        //
-        // The trough sits half a stroke above the quad's bottom edge and the
-        // peak half a stroke below the band's top, for `outline_path`'s reason:
-        // the /BBox clips, and a stroke centred on the edge loses half its width
-        // in every reader -- which reads as a thinner wave rather than as a bug.
-        Paint::Wave => {
-            for quad in quads {
-                // The reader's frame, for the rule's reason: a wave runs along
-                // the words and climbs away from them, and both of those are
-                // directions rather than page axes.
-                let seen = Upright::of(turns, *quad);
-                let thickness = seen.height * LINE_FRACTION;
-                let (base, band) = line_rect(mark.kind, 0.0, seen.height);
-                let low = base + thickness / 2.0;
-                let high = base + band - thickness / 2.0;
-                let half = band * SQUIGGLE_PERIOD / 2.0;
-                // A quad too short to hold one climb would emit `m` and no
-                // segment, which strokes nothing; a degenerate band is dropped
-                // by `user_quads` long before this, and this guard is for the
-                // arithmetic rather than for the data.
-                if half <= 0.0 || high <= low {
-                    continue;
-                }
-                // `across` runs the way the words do and `up` measures from the
-                // reader's bottom edge, which is what `line_rect` answered in.
-                let point = |across: f64, up: f64| seen.at(across, seen.height - up);
-                content.push_str(&format!("{thickness} w\n"));
-                let (mx, my) = point(0.0, low);
-                content.push_str(&format!("{mx} {my} m\n"));
-                let mut along = 0.0;
-                let mut climbing = true;
-                while along < seen.width {
-                    let next = (along + half).min(seen.width);
-                    // The last segment is clipped to the quad's right edge, so
-                    // it ends part-way up its climb rather than overshooting.
-                    // Interpolated rather than snapped to the peak: a wave that
-                    // jumped to full height in a tenth of a period ends on a
-                    // near-vertical stroke, which looks like a stray tick.
-                    let reached = (next - along) / half;
-                    let (from, to) = if climbing { (low, high) } else { (high, low) };
-                    let (lx, ly) = point(next, from + (to - from) * reached);
-                    content.push_str(&format!("{lx} {ly} l\n"));
-                    along = next;
-                    climbing = !climbing;
-                }
-                content.push_str("S\n");
-            }
-        }
-        // Its inscribed ellipse, stroked. Four Bézier arcs, because a content
-        // stream has no ellipse operator -- `re` is the only built-in shape
-        // there is, and it is a rectangle.
-        //
-        // KAPPA is what makes four cubics look like an ellipse rather than
-        // nearly like one; `outline_path` insets first, for the reason it
-        // gives, so the stroke lands inside the /BBox exactly as the box's does.
-        Paint::Ellipse => {
-            for quad in quads {
-                let [x, y, width, height] = outline_path(*quad);
-                let (rx, ry) = (width / 2.0, height / 2.0);
-                let (cx, cy) = (x + rx, y + ry);
-                let (ox, oy) = (rx * KAPPA, ry * KAPPA);
-                // From the right of the ellipse, anticlockwise. `h` closes it
-                // rather than the fourth arc's endpoint being trusted to land
-                // back on the first: they agree to the last bit here, and a
-                // path left open joins with a cap instead of a join, which
-                // shows as a nick at three o'clock on a thick stroke.
-                content.push_str(&format!("{} {cy} m\n", cx + rx));
-                content.push_str(&format!(
-                    "{} {} {} {} {cx} {} c\n",
-                    cx + rx,
-                    cy + oy,
-                    cx + ox,
-                    cy + ry,
-                    cy + ry
-                ));
-                content.push_str(&format!(
-                    "{} {} {} {} {} {cy} c\n",
-                    cx - ox,
-                    cy + ry,
-                    cx - rx,
-                    cy + oy,
-                    cx - rx
-                ));
-                content.push_str(&format!(
-                    "{} {} {} {} {cx} {} c\n",
-                    cx - rx,
-                    cy - oy,
-                    cx - ox,
-                    cy - ry,
-                    cy - ry
-                ));
-                content.push_str(&format!(
-                    "{} {} {} {} {} {cy} c\n",
-                    cx + ox,
-                    cy - ry,
-                    cx + rx,
-                    cy - oy,
-                    cx + rx
-                ));
-                content.push_str("h S\n");
-            }
-        }
-        // The path itself: `m` to the first point, `l` to each of the rest, and
-        // one `S` per stroke. A single `S` after all of them would join the end
-        // of each stroke to the start of the next with a line the reader never
-        // drew --- which is precisely the join `/InkList` exists to keep apart,
-        // and it would look like a drawing rather than like a bug.
-        Paint::Path => {
-            for stroke in strokes {
-                let Some(((x0, y0), rest)) = stroke.split_first() else {
-                    continue;
-                };
-                content.push_str(&format!("{x0} {y0} m\n"));
-                for (x, y) in rest {
-                    content.push_str(&format!("{x} {y} l\n"));
-                }
-                content.push_str("S\n");
-            }
-        }
+        Paint::Wash => draw_wash(&mut content, quads),
+        Paint::Line => draw_line(&mut content, quads, mark.kind, turns),
+        Paint::Outline => draw_outline(&mut content, quads),
+        Paint::Text => draw_text(&mut content, quads, &mark.note, turns),
+        Paint::Stamp => draw_stamp(&mut content, quads, mark.stamp, turns),
+        Paint::Wave => draw_wave(&mut content, quads, mark.kind, turns),
+        Paint::Ellipse => draw_ellipse(&mut content, quads),
+        Paint::Path => draw_path(&mut content, strokes),
         // Nothing. Unreachable, because the caller does not build an
         // appearance stream for a kind that has none; written out rather
         // than caught by a wildcard so that a kind added later is a compile
@@ -3162,6 +2912,280 @@ fn appearance_stream(
     dictionary.set("BBox", numbers(rect));
     dictionary.set("Resources", Object::Dictionary(resources));
     doc.add_object(lopdf::Stream::new(dictionary, content.into_bytes()))
+}
+
+/// The whole quad, filled.
+fn draw_wash(out: &mut String, quads: &[[f64; 4]]) {
+    for quad in quads {
+        let (x, y) = (quad[0], quad[1]);
+        let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);
+        out.push_str(&format!("{x} {y} {width} {height} re f\n"));
+    }
+}
+
+/// A band inside it, filled. Same operator, different rectangle.
+///
+/// **Measured in the reader's frame, not the page's**, because "the
+/// bottom of the quad" is where a rule goes and a turned page has two
+/// bottoms. `line_rect` answers in a y-up frame, so it is handed the
+/// reader's box and its answer read back as a distance from the reader's
+/// own bottom edge.
+fn draw_line(out: &mut String, quads: &[[f64; 4]], kind: MarkKind, turns: u8) {
+    for quad in quads {
+        let seen = Upright::of(turns, *quad);
+        let (base, band) = line_rect(kind, 0.0, seen.height);
+        let [x, y, width, height] = seen.rect(
+            0.0,
+            seen.height - base - band,
+            seen.width,
+            seen.height - base,
+        );
+        out.push_str(&format!("{x} {y} {width} {height} re f\n"));
+    }
+}
+
+/// Its edge, stroked. `re S` rather than `re f`, and the path is
+/// inset so the stroke lands inside the /BBox -- see `outline_path`.
+fn draw_outline(out: &mut String, quads: &[[f64; 4]]) {
+    for quad in quads {
+        let [x, y, width, height] = outline_path(*quad);
+        out.push_str(&format!("{x} {y} {width} {height} re S\n"));
+    }
+}
+
+/// The reader's words, one `Tj` per line, from the top of the box down.
+///
+/// **The whole layout is in the reader's frame**, which is what the box's
+/// width has to be: `wrap` decides where the lines break, and handing it
+/// the page's width breaks them against the box's *height* on a turned
+/// page --- eighteen lines two glyphs wide where the model, which works in
+/// the reader's frame throughout, had made one. `Upright` records the
+/// measurement.
+///
+/// Lines that would fall below the box are dropped rather than drawn: the
+/// /BBox clips them anyway, and emitting ink nobody can see makes the
+/// stream disagree with what the overlay shows. The rule is
+/// `viewer.ts`'s exactly --- a line is drawn while its baseline is still
+/// inside the box --- so the two renderers stop at the same line.
+fn draw_text(out: &mut String, quads: &[[f64; 4]], note: &str, turns: u8) {
+    for quad in quads {
+        let seen = Upright::of(turns, *quad);
+        let width = seen.width - textbox::INSET * 2.0;
+        let lines = textbox::wrap(note, textbox::SIZE, width.max(1.0));
+        if lines.is_empty() {
+            continue;
+        }
+        let leading = textbox::SIZE * textbox::LEADING;
+        out.push_str(&format!(
+            "BT /{TEXT_FONT} {size} Tf\n",
+            size = textbox::SIZE
+        ));
+        for (index, line) in lines.iter().enumerate() {
+            // The baseline sits one ascent below the top inset, not at
+            // it: a line placed *at* the top edge hangs its whole body
+            // above the box.
+            let down = textbox::INSET + textbox::SIZE + leading * (index as f64);
+            if down > seen.height {
+                break;
+            }
+            out.push_str(&format!("{}\n", seen.text_matrix(textbox::INSET, down)));
+            out.push_str(&format!("<{}> Tj\n", winansi_hex(line)));
+        }
+        out.push_str("ET\n");
+    }
+}
+
+/// A border and one word, both in the mark's colour.
+///
+/// **The size is computed rather than fixed**, which is the difference
+/// from `Paint::Text` above and the reason a stamp needs no wrapping. A
+/// stamp is one word and a reader who drags a large rectangle means a
+/// large stamp, so the size is whatever makes the word span the box
+/// between its insets --- bounded above by what the height can hold, so a
+/// wide flat rectangle gives a word that fits rather than one clipped by
+/// the /BBox.
+///
+/// `advance` is the same Helvetica table `textbox.rs` wraps with, and
+/// `helvetica-probe` measures it against what PDFium actually inks. A
+/// stamp is the second consumer of it, which is worth noting because a
+/// wrong entry here is visible as a word that is off-centre rather than
+/// as a word in the wrong place.
+fn draw_stamp(
+    out: &mut String,
+    quads: &[[f64; 4]],
+    stamp: Option<crate::docmodel::StampName>,
+    turns: u8,
+) {
+    for quad in quads {
+        let Some(name) = stamp else {
+            continue;
+        };
+        let word = name.word();
+        // The reader's box, for `Paint::Text`'s reason and one of its
+        // own: the size is a ratio of width to height, so on a turned
+        // page the page's own box does not merely rotate the word, it
+        // sets it at the size a rectangle of the other shape would take.
+        // The border is unaffected and stays in page space --- a
+        // rectangle is the same set of points at every quarter.
+        let seen = Upright::of(turns, *quad);
+        let inner_w = seen.width - STAMP_INSET * 2.0;
+        let inner_h = seen.height - STAMP_INSET * 2.0;
+        let [x, y, width, height] = outline_path(*quad);
+        out.push_str(&format!("{x} {y} {width} {height} re S\n"));
+        if inner_w <= 0.0 || inner_h <= 0.0 {
+            continue;
+        }
+        // The advance at one point, so the ratio is a division rather
+        // than a search. `max` guards a name that measured zero, which
+        // no entry in the list does and which a table edit could make
+        // true.
+        let unit = textbox::advance(word, 1.0).max(f64::EPSILON);
+        let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);
+        // Centred both ways. The baseline sits half a cap height below
+        // the middle, because a word centred *on* the middle hangs half
+        // its body below it.
+        let drawn = textbox::advance(word, size);
+        let across = (seen.width - drawn) / 2.0;
+        let down = (seen.height + size * STAMP_CAP) / 2.0;
+        out.push_str(&format!("BT /{TEXT_FONT} {size} Tf\n"));
+        out.push_str(&format!("{}\n", seen.text_matrix(across, down)));
+        out.push_str(&format!("<{}> Tj\n", winansi_hex(word)));
+        out.push_str("ET\n");
+    }
+}
+
+/// A zigzag along the bottom of the quad, stroked.
+///
+/// **Straight segments rather than curves, and that is a decision.** A
+/// squiggle could be drawn as arcs, and Acrobat's is; at this size the
+/// difference is invisible and the cost is not. A zigzag is exact -- `l`
+/// says what it means -- where a curve would put a second approximation
+/// constant beside `KAPPA` for a shape whose whole peak-to-trough height
+/// is under two points on body text.
+///
+/// Its own `w`, because the header wrote one width for the stream and
+/// this thickness is a fraction of *this quad's* height. A run crossing a
+/// heading has quads of two sizes and would otherwise get one thickness.
+///
+/// The trough sits half a stroke above the quad's bottom edge and the
+/// peak half a stroke below the band's top, for `outline_path`'s reason:
+/// the /BBox clips, and a stroke centred on the edge loses half its width
+/// in every reader -- which reads as a thinner wave rather than as a bug.
+fn draw_wave(out: &mut String, quads: &[[f64; 4]], kind: MarkKind, turns: u8) {
+    for quad in quads {
+        // The reader's frame, for the rule's reason: a wave runs along
+        // the words and climbs away from them, and both of those are
+        // directions rather than page axes.
+        let seen = Upright::of(turns, *quad);
+        let thickness = seen.height * LINE_FRACTION;
+        let (base, band) = line_rect(kind, 0.0, seen.height);
+        let low = base + thickness / 2.0;
+        let high = base + band - thickness / 2.0;
+        let half = band * SQUIGGLE_PERIOD / 2.0;
+        // A quad too short to hold one climb would emit `m` and no
+        // segment, which strokes nothing; a degenerate band is dropped
+        // by `user_quads` long before this, and this guard is for the
+        // arithmetic rather than for the data.
+        if half <= 0.0 || high <= low {
+            continue;
+        }
+        // `across` runs the way the words do and `up` measures from the
+        // reader's bottom edge, which is what `line_rect` answered in.
+        let point = |across: f64, up: f64| seen.at(across, seen.height - up);
+        out.push_str(&format!("{thickness} w\n"));
+        let (mx, my) = point(0.0, low);
+        out.push_str(&format!("{mx} {my} m\n"));
+        let mut along = 0.0;
+        let mut climbing = true;
+        while along < seen.width {
+            let next = (along + half).min(seen.width);
+            // The last segment is clipped to the quad's right edge, so
+            // it ends part-way up its climb rather than overshooting.
+            // Interpolated rather than snapped to the peak: a wave that
+            // jumped to full height in a tenth of a period ends on a
+            // near-vertical stroke, which looks like a stray tick.
+            let reached = (next - along) / half;
+            let (from, to) = if climbing { (low, high) } else { (high, low) };
+            let (lx, ly) = point(next, from + (to - from) * reached);
+            out.push_str(&format!("{lx} {ly} l\n"));
+            along = next;
+            climbing = !climbing;
+        }
+        out.push_str("S\n");
+    }
+}
+
+/// Its inscribed ellipse, stroked. Four Bézier arcs, because a content
+/// stream has no ellipse operator -- `re` is the only built-in shape
+/// there is, and it is a rectangle.
+///
+/// KAPPA is what makes four cubics look like an ellipse rather than
+/// nearly like one; `outline_path` insets first, for the reason it
+/// gives, so the stroke lands inside the /BBox exactly as the box's does.
+fn draw_ellipse(out: &mut String, quads: &[[f64; 4]]) {
+    for quad in quads {
+        let [x, y, width, height] = outline_path(*quad);
+        let (rx, ry) = (width / 2.0, height / 2.0);
+        let (cx, cy) = (x + rx, y + ry);
+        let (ox, oy) = (rx * KAPPA, ry * KAPPA);
+        // From the right of the ellipse, anticlockwise. `h` closes it
+        // rather than the fourth arc's endpoint being trusted to land
+        // back on the first: they agree to the last bit here, and a
+        // path left open joins with a cap instead of a join, which
+        // shows as a nick at three o'clock on a thick stroke.
+        out.push_str(&format!("{} {cy} m\n", cx + rx));
+        out.push_str(&format!(
+            "{} {} {} {} {cx} {} c\n",
+            cx + rx,
+            cy + oy,
+            cx + ox,
+            cy + ry,
+            cy + ry
+        ));
+        out.push_str(&format!(
+            "{} {} {} {} {} {cy} c\n",
+            cx - ox,
+            cy + ry,
+            cx - rx,
+            cy + oy,
+            cx - rx
+        ));
+        out.push_str(&format!(
+            "{} {} {} {} {cx} {} c\n",
+            cx - rx,
+            cy - oy,
+            cx - ox,
+            cy - ry,
+            cy - ry
+        ));
+        out.push_str(&format!(
+            "{} {} {} {} {} {cy} c\n",
+            cx + ox,
+            cy - ry,
+            cx + rx,
+            cy - oy,
+            cx + rx
+        ));
+        out.push_str("h S\n");
+    }
+}
+
+/// The path itself: `m` to the first point, `l` to each of the rest, and
+/// one `S` per stroke. A single `S` after all of them would join the end
+/// of each stroke to the start of the next with a line the reader never
+/// drew --- which is precisely the join `/InkList` exists to keep apart,
+/// and it would look like a drawing rather than like a bug.
+fn draw_path(out: &mut String, strokes: &[Vec<(f64, f64)>]) {
+    for stroke in strokes {
+        let Some(((x0, y0), rest)) = stroke.split_first() else {
+            continue;
+        };
+        out.push_str(&format!("{x0} {y0} m\n"));
+        for (x, y) in rest {
+            out.push_str(&format!("{x} {y} l\n"));
+        }
+        out.push_str("S\n");
+    }
 }
 
 /// Appends an annotation to a page's `/Annots`, whatever shape that array is in.

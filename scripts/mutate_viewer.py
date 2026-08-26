@@ -1026,8 +1026,8 @@ MUTATIONS = [
         # which is a picture.
         "turned: a squiggle waves along the page's axis",
         "src-tauri/src/save.rs",
-        "                let point = |across: f64, up: f64| seen.at(across, seen.height - up);",
-        "                let point = |across: f64, up: f64| (quad[0] + across, quad[1] + up);",
+        "        let point = |across: f64, up: f64| seen.at(across, seen.height - up);",
+        "        let point = |across: f64, up: f64| (quad[0] + across, quad[1] + up);",
         "Squiggly: page 1 reads as page 0 does",
         "turned",
     ),
@@ -1037,8 +1037,8 @@ MUTATIONS = [
         # two failing together is what says the operand and the picture agree.
         "turned: a rule sits on the page's bottom edge",
         "src-tauri/src/save.rs",
-        "                let (base, band) = line_rect(mark.kind, 0.0, seen.height);\n                let [x, y, width, height] = seen.rect(",
-        "                let (base, band) = line_rect(mark.kind, 0.0, quad[3] - quad[1]);\n                let [x, y, width, height] = seen.rect(",
+        "        let (base, band) = line_rect(kind, 0.0, seen.height);\n        let [x, y, width, height] = seen.rect(",
+        "        let (base, band) = line_rect(kind, 0.0, quad[3] - quad[1]);\n        let [x, y, width, height] = seen.rect(",
         "Underline: page 1 reads as page 0 does",
         "turned",
     ),
@@ -1048,8 +1048,8 @@ MUTATIONS = [
         # the box.
         "turned: a text box wraps to the page's width",
         "src-tauri/src/save.rs",
-        "                let width = seen.width - textbox::INSET * 2.0;",
-        "                let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
+        "        let width = seen.width - textbox::INSET * 2.0;",
+        "        let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
         "TextBox: page 1 reads as page 0 does",
         "turned",
     ),
