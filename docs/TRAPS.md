@@ -15700,3 +15700,57 @@ somebody else's. A grep for `ArrowDown` finds eight files; the discriminator is 
 
 Paid for on 2026-08-26. Found by asking, of a duplicated widget, not "are these
 alike" but "did the last fix reach all of them".
+
+### The half of a check that could only ever agree with its own guess
+
+Proposed after five stale *Not done* notes were found in `docs/PLAN.md` (see the
+entry above), as two directions modelled on `readme.test.ts`:
+
+    A. a <!-- not-built: id --> marker on each absence claim, asserted unregistered
+    B. every command id the plan NAMES must be registered
+
+**A was approved and is not built, because no live `**Not done:**` in that file
+names a command id.** Inserting pages (`:9296`) and split/merge (`:5903`)
+describe machinery --- `Page::source` having to name a document, the id-allocator
+property needing proof --- and neither reaches for a name. So every marker would
+have been *my* guess at an id nobody has chosen, and the file would then contain
+guesses written there so a check could agree with them.
+
+That is not a hypothetical failure. The README's own bullet guessed
+`edit.addStamp`, four stamp commands shipped as `edit.stamp.*`, and the check
+stayed green throughout --- which is recorded two entries away and is why the
+README grew its second direction. `PLAN.md:8800` names the same two dead
+guesses, `edit.cropToRectangle` and `edit.addStamp`.
+
+**The general shape: before building a check over claims of absence, read the
+claims.** A marker scheme needs the prose to already commit to a name. Where the
+prose commits to a *capability* in English --- "ink", "an ellipse", "stamps" ---
+there is nothing for a registry to contradict, and a check that cannot be
+contradicted is one that reports a clean run for every state of the world. All
+five of the stale notes were of exactly that kind, so the proposed check would
+have caught none of them. Saying so is the deliverable; building it anyway would
+have produced a passing test and the impression of coverage.
+
+**And the mirror, which is the useful half: a scan's first false positives are
+candidates for a new check, not for the exclusion table.** B's first run
+reported two ids missing from the registry, `edit.stamp` and `edit.color`. Both
+came from the plan writing a *family* --- `edit.stamp.{approved,confidential,draft,final}`
+and `edit.color.*` --- and the obvious move was a line each in the exclusion
+table. That would have been wrong twice over: the family is a real claim, and
+excluding the prefix makes a renamed family invisible, which is the one case the
+exact-id check is structurally blind to. They became a second assertion instead:
+some registered id must start with that prefix. It has its own mutation, and it
+is the only thing standing between a renamed `edit.color.*` and a plan that
+still describes it.
+
+Four mutations, each proved to redden the check it is aimed at, and the fourth
+--- the emptiness control --- reddens three, because a scan that matches nothing
+also has no families and no live exclusions. The first was refused by the
+probe's own anchor guard for occurring zero times: the plan writes
+`edit.drawBox runs from the palette`, not the id in backticks alone. A probe
+that plants nothing and reports a kill is the failure this repository has
+recorded four times; this one asked.
+
+Paid for on 2026-08-26. The lesson is not that the check was wrong to want ---
+it is that half of it had no subject, and reading twenty-four sentences was
+enough to know that before writing any code.
