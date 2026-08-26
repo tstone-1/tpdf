@@ -19,6 +19,18 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Added: the model behind redaction marking, with nothing yet to press
+
+A region marked for removal is now something the document model holds: it sits on
+a page, it appears in an ordered list for review, and undo takes it back off.
+Nothing is destroyed by marking one, and nothing is written to a file --- a
+pending redaction is an instruction about the document rather than something
+added to it, so it is kept apart from marks at every level and cannot be saved as
+an annotation by any route.
+
+**No gesture reaches it yet, and no panel lists what it produces.** This is the
+half that had to exist before either of those could be built without guessing.
+
 ### Fixed: a saved file no longer over-reports how many objects it contains
 
 A file records how many objects it holds. A save that removed some --- a

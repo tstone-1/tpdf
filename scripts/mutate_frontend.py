@@ -2742,13 +2742,49 @@ MUTATIONS = [
         # now and there is no translation left to break, so the equivalent edit
         # is to put the lookup back. The anchor gate is what said so, on the
         # commit that removed it.
+        # **Widened 2026-08-26**, when `Edits.redact` was written with the same
+        # guard and the anchor started matching twice. The `invoke` line below
+        # is what tells the two doors apart; the mutation itself is unchanged.
         "edits: send a mark's slot rather than its page id",
         "src/lib/edits.ts",
-        "    if (!this.current.pages.some((view) => view.id === page)) return this.current;",
+        "    if (!this.current.pages.some((view) => view.id === page)) return this.current;\n"
+        "    return this.adopt(\n"
+        '      await invoke<EditState>("annot_mark", {',
         "    const at = this.current.pages[page as number];\n"
         "    if (!at) return this.current;\n"
-        "    page = at.id;",
+        "    page = at.id;\n"
+        "    return this.adopt(\n"
+        '      await invoke<EditState>("annot_mark", {',
         "sends the page's id rather than its slot when a mark is made",
+    ),
+    Mutation(
+        # Mark a region for a page the model no longer has. `Edits.mark`'s guard
+        # for the redaction door, and the damage is worse: a region is placed by
+        # coordinates, so this puts a marking on whatever page the backend
+        # resolves and offers it to the reader for review as if they had drawn
+        # it there.
+        "edits: mark a region without checking the page is still there",
+        "src/lib/edits.ts",
+        "    if (!this.current.pages.some((view) => view.id === page)) return this.current;\n"
+        "    return this.adopt(\n"
+        '      await invoke<EditState>("redact_mark", { doc: this.doc, page, area }),',
+        "    return this.adopt(\n"
+        '      await invoke<EditState>("redact_mark", { doc: this.doc, page, area }),',
+        "does not send a redaction for a page the model has never mentioned",
+    ),
+    Mutation(
+        # Send the redaction's position in the list rather than its identity.
+        # Correct for every reader who has removed nothing, and off by one for
+        # every reader who has -- which is precisely the case a review list is
+        # for.
+        "edits: address a redaction by its position rather than its id",
+        "src/lib/edits.ts",
+        '      await invoke<EditState>("redact_remove", { doc: this.doc, redaction }),',
+        '      await invoke<EditState>("redact_remove", {\n'
+        "        doc: this.doc,\n"
+        "        redaction: this.current.redactions.findIndex((r) => r.id === redaction),\n"
+        "      }),",
+        "sends the redaction's own id when one is taken back off",
     ),
     Mutation(
         # Merge each reply's marks into the cache instead of replacing it. Every

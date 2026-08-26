@@ -105,6 +105,33 @@ export function stampWord(name: StampName): string {
 }
 
 /**
+ * One region a reader has marked for removal, as the backend reports it.
+ *
+ * Mirrors `edits::RedactionView`, and lives here for {@link MarkView}'s reason:
+ * the overlay draws these and must not import the module that talks to Tauri.
+ *
+ * **A separate type from {@link MarkView} rather than another {@link MarkKind}**,
+ * and the reason is the one `docmodel.rs` states: a mark is written into the
+ * saved file as an annotation and a redaction must never be. Keeping them apart
+ * here as well as in Rust means nothing that paints marks can paint one of these
+ * by accident, and nothing that lists marks can offer one for saving.
+ */
+export interface RedactionView {
+  /** The model's identity, sent back verbatim to take it off again. */
+  id: number;
+  /** The page it is on, by {@link PageView.id} --- never a slot. */
+  page: PageId;
+  /**
+   * `left, top, right, bottom` in the page's **display** space, the same space
+   * {@link MarkView.quads} uses.
+   *
+   * One rectangle rather than a list: a redaction is a region a reader dragged
+   * out, not a run of words.
+   */
+  area: [number, number, number, number];
+}
+
+/**
  * One mark a reader made, as the backend reports it.
  *
  * Mirrors `edits::MarkView`, and lives here rather than in `edits.ts` for the

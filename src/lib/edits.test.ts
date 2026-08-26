@@ -39,6 +39,7 @@ function state(
       turns: turns[at] ?? 0,
     })),
     marks,
+    redactions: [],
     can_undo: Object.keys(turns).length > 0,
     can_redo: false,
     dirty: Object.keys(turns).length > 0,
@@ -427,6 +428,66 @@ describe("Edits", () => {
       mark: { kind: "ellipse", page: 3 },
     });
     expect(after.marks).toHaveLength(1);
+  });
+
+  it("sends the region and the page's own id when one is redacted", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce({
+      ...state(3),
+      redactions: [{ id: 1, page: pageId(3), area: [10, 20, 30, 40] }],
+    });
+    const after = await edits.redact(pageId(3), [10, 20, 30, 40]);
+    expect(core.invoke).toHaveBeenLastCalledWith("redact_mark", {
+      doc: 9,
+      page: 3,
+      area: [10, 20, 30, 40],
+    });
+    // The reply is adopted, so the review list a panel reads is the backend's
+    // answer rather than anything computed here.
+    expect(after.redactions).toHaveLength(1);
+    expect(edits.state.redactions.map((r) => r.area)).toEqual([[10, 20, 30, 40]]);
+    // The control that a redaction is not a mark: nothing arrived in the list a
+    // save writes from.
+    expect(edits.state.marks).toEqual([]);
+  });
+
+  it("does not send a redaction for a page the model has never mentioned", async () => {
+    // `Edits.mark`'s guard for the redaction door, and the consequence is
+    // sharper: a region is placed by coordinates, so a page the model has lost
+    // would put the marking somewhere the reader never looked.
+    core.invoke.mockResolvedValueOnce(state(2));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockClear();
+
+    await edits.redact(pageId(7), [10, 20, 30, 40]);
+    expect(core.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends the redaction's own id when one is taken back off", async () => {
+    core.invoke.mockResolvedValueOnce({
+      ...state(2),
+      redactions: [
+        { id: 4, page: pageId(1), area: [10, 20, 30, 40] },
+        { id: 5, page: pageId(2), area: [50, 60, 70, 80] },
+      ],
+    });
+    const edits = new Edits(3);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce({
+      ...state(2),
+      redactions: [{ id: 5, page: pageId(2), area: [50, 60, 70, 80] }],
+    });
+    await edits.unredact(4);
+    expect(core.invoke).toHaveBeenLastCalledWith("redact_remove", {
+      doc: 3,
+      redaction: 4,
+    });
+    expect(edits.state.redactions.map((r) => r.id)).toEqual([5]);
   });
 
   it("sends the mark's own id when one is removed", async () => {
