@@ -173,14 +173,21 @@ def main() -> int:
             if not target.exists():
                 problems.append(f"{path}: {mutation.name} -- {mutation.path} does not exist")
                 continue
-            # `read_text` translates newlines, so a CRLF checkout is counted as
-            # if it were LF -- which is what every anchor in every table is
-            # written with. That must stay the SAME convention the harnesses
-            # match under, and for a while it was not: they read bytes, and
-            # `mutate_viewer.py` had no normalisation, so this gate was green on
-            # 289 anchors while that harness could match none of the multi-line
-            # ones. A guard reading its subject differently from the thing it
-            # guards is measuring a different file. See `docs/TRAPS.md`.
+            # `read_text` translates newlines, so a CRLF file is counted as if it
+            # were LF -- which is what every anchor in every table is written
+            # with. That must stay the SAME convention the harnesses match under,
+            # and for a while it was not: they read bytes, and `mutate_viewer.py`
+            # had no normalisation, so this gate was green on 289 anchors while
+            # that harness could match none of the multi-line ones. A guard
+            # reading its subject differently from the thing it guards is
+            # measuring a different file. See `docs/TRAPS.md`.
+            #
+            # `.gitattributes` has pinned `* text=auto eol=lf` since 2026-08-26,
+            # so the two conventions no longer diverge at checkout on any
+            # platform. That removes the everyday case and not the requirement:
+            # what this comment asks for is that the gate and the harnesses agree
+            # about the file, whatever wrote it, and a tool rewriting a source in
+            # text mode on Windows still produces CRLF.
             found = target.read_text(encoding="utf-8").count(mutation.before)
             if found == 1:
                 intact += 1

@@ -1661,6 +1661,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
 - A `[SKIP]` whose stated reason is true can be the check you most need (the reason was true, the conclusion inverted, and the skip is what made it findable)
 - A capability absent through a struct default has no defect to find (`nMinPage == nMaxPage` greyed out the Windows print panel's Pages field; no wrong output, no log line, and the harness that drives the whole print path cannot reach a dialog --- and the flag two lines above states the rule the fix has to close)
+- A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary (571 bytes in git against 603 on disk, `qpdf --check` clean against *file is damaged, xref not found*; `git status` said unmodified and was not lying, because the filter normalises on read as well as on write --- and the load that would have failed returns silently. `eol=lf` alone does not close it: name the binary formats)
 
 ### Fixtures
 - The test fixtures are generated, not committed
@@ -1708,6 +1709,15 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 ## Repository facts
 
 - GitHub: `tstone-1/tpdf`, **public**, MIT (`LICENSE`).
+- **Line endings are pinned by `.gitattributes`, not by anyone's `core.autocrlf`.**
+  `* text=auto eol=lf`, plus `binary` for the image, font and PDF extensions. Added
+  2026-08-26; before it, every blob in git was LF while a Windows working tree held 236
+  files as CRLF and 52 as LF, and `src-tauri/src/warm.pdf` --- a tracked PDF that
+  `include_bytes!` puts inside the shipped executable --- was converted on checkout and
+  compiled in damaged. That entry in the trap index is worth reading before adding any
+  mostly-ASCII binary format to the tree, because `eol=lf` alone would not have caught it.
+  Do not set `core.autocrlf` per clone: the attributes override it, so a per-machine
+  setting is both unnecessary and a thing only one machine would have.
 - Public since 2026-08-02, and it needed no history scrub: all 108 commits across every
   ref were authored and committed as `48162401+tstone-1@users.noreply.github.com`, there
   were no tags, no `refs/pull/*`, no forks and no workflow run logs to become visible.

@@ -95,6 +95,15 @@ pub fn main(args: &[String]) -> ! {
 /// generated: every other PDF in this repository is a gitignored fixture, and
 /// this one has to be inside the shipped binary.
 ///
+/// **Those two numbers were false on every Windows clone until 2026-08-26**, and
+/// being inside the binary is exactly why. A small uncompressed PDF holds no NUL
+/// in its first 8000 bytes, so git sniffed this one as text and `core.autocrlf`
+/// converted it on checkout: 603 bytes, 32 CRLF, and `qpdf --check` reporting a
+/// damaged file with an unfindable xref. `.gitattributes` now says `*.pdf binary`.
+/// Nothing here could have reported it --- `warm_fonts` returns silently on a
+/// failed load, and `git status` called the file unmodified because the same
+/// filter normalises on read. The trap index has it.
+///
 /// It exists because of what `examples/prespawn_bench.rs` measured. A worker's fixed
 /// startup is ~6.6 ms, but a document that does *not* embed its fonts pays a
 /// further ~7.4 ms while PDFium goes looking for a system face --- which reads
