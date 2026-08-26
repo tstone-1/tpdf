@@ -2522,6 +2522,12 @@ MUTATIONS = [
         # Take a character whose box PDFium never placed. Four zeroes have their
         # centre at the page's top-left corner, which is inside any rectangle
         # anchored there -- and a highlight on a page's first line is one.
+        #
+        # It reddens two tests since 2026-08-26, one per reader of `placedBox`.
+        # The second was nearly written as a `touchedText` assertion, which
+        # could not have failed: `readingOrder` drops an unplaced character
+        # itself, so the guard's neighbour refuses the same input. Asserting on
+        # the indices is what makes this mutation reach it.
         "text: give an unplaced character to any rectangle at the page corner",
         "src/lib/text.ts",
         "  if (!(right > left) || !(bottom > top)) return null;",
@@ -2660,10 +2666,16 @@ MUTATIONS = [
         # compares false against every bound, so this marks the tail of an
         # over-long range as ordinary text --- or as a link, depending on which
         # comparison is written first.
+        # Re-aimed 2026-08-26: the guard it deletes moved out of
+        # `centreOfCharacter` into `placedBox`, which the redaction panel's own
+        # reader needs the same answer from. Both guards go, and they have to:
+        # with only the `undefined` one removed, an out-of-range read is four
+        # zeroes and the extent guard below refuses it anyway --- a mutation that
+        # changes nothing, which is the fourth way one can lie.
         "links: read a character box past the end of the array",
         "src/lib/text.ts",
-        "  if (\n    left === undefined ||\n    top === undefined ||\n    right === undefined ||\n    bottom === undefined\n  ) {\n    return null;\n  }\n  if (!(right > left) || !(bottom > top)) return null;\n  return { x: (left + right) / 2, y: (top + bottom) / 2 };",
-        "  return { x: ((left ?? 0) + (right ?? 0)) / 2, y: ((top ?? 0) + (bottom ?? 0)) / 2 };",
+        "  if (\n    left === undefined ||\n    top === undefined ||\n    right === undefined ||\n    bottom === undefined\n  ) {\n    return null;\n  }\n  if (!(right > left) || !(bottom > top)) return null;\n  return { left, top, right, bottom };",
+        "  return { left: left ?? 0, top: top ?? 0, right: right ?? 0, bottom: bottom ?? 0 };",
         "handles a range that runs past the boxes it has",
     ),
     Mutation(
@@ -4085,6 +4097,193 @@ MUTATIONS += [
     ),
 ]
 
+#: The redaction review panel --- `docs/PLAN.md` §6 step 2, built 2026-08-26.
+#:
+#: The two under `text.ts` and `reading.ts` are the ones worth reading: the whole
+#: design decision of this increment is that a region marked for removal may NOT
+#: be reviewed with the containment rule an annotation uses, and each of them
+#: reintroduces exactly that.
+MUTATIONS += [
+    Mutation(
+        # Review a region with the annotation rule. This is the defect the two
+        # rules exist to keep apart, and it is one word: a highlight's rectangle
+        # is drawn generously around its words, so the centre rule forgives an
+        # overhang; a dragged region is a claim about what disappears, so
+        # forgiving one understates what an apply takes.
+        "reading: review a region with the annotation's containment rule",
+        "src/lib/reading.ts",
+        "  return inReadingOrder(text, touchedIndices(text, quads));",
+        "  return inReadingOrder(text, coveredIndices(text, quads));",
+        "takes a character the rectangle cuts through, which the other rule leaves",
+    ),
+    Mutation(
+        # Require the glyph to be wholly inside, horizontally. The direction
+        # that under-reports: a reader approves a list of words and the removal
+        # takes the half-covered ones either side of it as well.
+        "text: touch only a character the rectangle wholly contains",
+        "src/lib/text.ts",
+        "    box.right >= left && box.left <= right && box.bottom >= top && box.top <= bottom",
+        "    box.left >= left && box.right <= right && box.bottom >= top && box.top <= bottom",
+        "takes a character the rectangle cuts through, which the other rule leaves",
+    ),
+    Mutation(
+        # The vertical half of the same rule, and the one that matters more: a
+        # rectangle dragged four points too deep clips the tops of the next
+        # line's glyphs, `redact.rs` removes the whole text object they belong
+        # to, and this list is the only place a reader could have seen it.
+        "text: ignore a line the rectangle's lower edge only clips",
+        "src/lib/text.ts",
+        "box.bottom >= top && box.top <= bottom",
+        "box.bottom >= top && box.bottom <= bottom",
+        "takes the line below when the rectangle's edge clips it",
+    ),
+    Mutation(
+        # Order two regions on one page by nothing. `Array.sort` is stable, so
+        # this is not a shuffle --- the list simply comes back in the order the
+        # regions were dragged, which is a plausible order and the wrong one.
+        "pages: order things on a page with no tiebreak at all",
+        "src/lib/pages.ts",
+        "    return a.id - b.id;\n  });\n  return items;",
+        "    return 0;\n  });\n  return items;",
+        "breaks a shared top edge by id rather than by the sort's stability",
+    ),
+    Mutation(
+        # Take a region's page id for its slot. The two are the same number
+        # until a page is moved or deleted, which is exactly when a reviewer
+        # most needs the list to be in the order they will meet the regions.
+        "pages: place a region by its page id rather than by its slot",
+        "src/lib/pages.ts",
+        "    const slot = pages.slotOfId(redaction.page);\n    if (slot === undefined) {",
+        "    const slot = redaction.page as number;\n    if (slot === undefined) {",
+        "lists regions down the document, not in the order they were dragged",
+    ),
+    Mutation(
+        # Drop a region nothing could place. A review panel that silently drops
+        # a row tells a reader a pending redaction is no longer pending, which
+        # is the one thing this subsystem must never say.
+        "pages: drop a region whose page is in no slot",
+        "src/lib/pages.ts",
+        "      lost.push({ redaction, page: null });\n      continue;",
+        "      continue;",
+        "keeps a region nothing could place, with no page against it",
+    ),
+    Mutation(
+        # Report a page that could not be read as a region with no words in it.
+        # A claim about the document, made from a failure to look at it.
+        "redactlist: call an unreadable page a region with no text",
+        "src/lib/redactlist.ts",
+        "  if (words === null) return { text: UNREADABLE, own: false };",
+        "  if (words === null) return { text: NO_TEXT, own: false };",
+        "says the page could not be read, which is not the same as empty",
+    ),
+    Mutation(
+        # The mirror: report a page still being extracted as one holding no
+        # words. The reassuring answer, arrived at before anything was read.
+        "redactlist: call an unread page a region with no text",
+        "src/lib/redactlist.ts",
+        "  if (words === undefined) return { text: READING, own: false };",
+        "  if (words === undefined) return { text: NO_TEXT, own: false };",
+        "says the page is still being read when nothing has answered yet",
+    ),
+    Mutation(
+        # Drop the standing line. The count alone reads as a list of things that
+        # have happened, and §6's thesis is that a redaction which looks done
+        # and is not is worse than none.
+        "redactlist: count the regions without saying nothing has been removed",
+        "src/lib/redactlist.ts",
+        "  const said = `${many}. Nothing has been removed yet.`;",
+        "  const said = `${many}.`;",
+        "counts the regions and says nothing has been removed",
+    ),
+    Mutation(
+        # Say nothing about regions that are on no page. They are listed with an
+        # em dash for a page and no explanation of what that means.
+        "redactlist: leave the unplaceable regions out of the notice",
+        "src/lib/redactlist.ts",
+        "  if (lost === 0) return said;",
+        "  return said;\n  if (lost === 0) return said;",
+        "names regions that are on no page, without dropping the standing line",
+    ),
+    Mutation(
+        # A words setter that redraws nothing. Every row then says it is still
+        # reading the page for the rest of the session, because the only other
+        # thing that repaints is the list changing.
+        "redactlist: accept words that have arrived and redraw nothing",
+        "src/lib/redactlist.ts",
+        "  setWords(): void {\n    this.paint();\n  }",
+        "  setWords(): void {}",
+        "shows a word that arrives after the row was drawn",
+    ),
+    Mutation(
+        # Answer Enter on a region with nowhere to go. The reader presses and
+        # the document does not move, which reads as a broken panel rather than
+        # as a row that says it is disabled.
+        "redactlist: answer Enter on a region that is on no page",
+        "src/lib/redactlist.ts",
+        "        if (from !== null && this.placed(from)) this.opts.onPick(from);",
+        "        if (from !== null) this.opts.onPick(from);",
+        "refuses to scroll to a region that is on no page",
+    ),
+    Mutation(
+        # The pointer half of the same refusal, which is a separate listener and
+        # therefore a separate defect.
+        "redactlist: let a region on no page be pressed",
+        "src/lib/redactlist.ts",
+        '      element.setAttribute("aria-disabled", "true");\n      element.style.opacity = "0.55";\n      return element;',
+        '      element.setAttribute("aria-disabled", "true");\n      element.style.opacity = "0.55";',
+        "refuses to scroll to a region that is on no page",
+    ),
+    Mutation(
+        # Guard removal on the same predicate. That would leave a region on no
+        # page listed for ever: undo is chronological, and this control is the
+        # only other way off.
+        "redactlist: refuse to remove a region that is on no page",
+        "src/lib/redactlist.ts",
+        "        if (from !== null) this.opts.onRemove(from);",
+        "        if (from !== null && this.placed(from)) this.opts.onRemove(from);",
+        "removes with Delete and with Backspace, including a region on no page",
+    ),
+    Mutation(
+        # Let a key pressed on the remove control fall through to the row.
+        # `idOf` finds no id on a button, so the fallback hands it the focused
+        # row and the panel scrolls instead of the region coming off.
+        "redactlist: let Enter on the remove control reach the row",
+        "src/lib/redactlist.ts",
+        '    if (part === "remove") return;\n\n    // The event',
+        '    if (part === "removed") return;\n\n    // The event',
+        "leaves a key pressed on the region's remove control to the control",
+    ),
+    Mutation(
+        # Name the control for nothing in particular. A screen reader walking
+        # the list then hears six identical buttons.
+        "redactlist: name the remove control without saying what it removes",
+        "src/lib/redactlist.ts",
+        'remove.setAttribute("aria-label", "Remove region");',
+        'remove.setAttribute("aria-label", "Remove");',
+        "names the control for what it takes off",
+    ),
+    Mutation(
+        # A sidebar forwarder that drops its argument. The panel is built, the
+        # tab is there, and every region the reader marks reaches nothing --- the
+        # inert-wiring defect this repository has a gate for one layer up.
+        "sidebar: accept the regions and hand them to no panel",
+        "src/lib/sidebar.ts",
+        "  setRedactions(rows: readonly RedactionRow[]): void {\n    this.pending.setRedactions(rows);\n  }",
+        "  setRedactions(rows: readonly RedactionRow[]): void {\n    void rows;\n  }",
+        "puts the regions in the redactions panel and nothing in the marks one",
+    ),
+    Mutation(
+        # The same for the words. A forwarder that drops this leaves every row
+        # saying it is still reading, which is the state the panel exists to
+        # distinguish from the others.
+        "sidebar: accept arriving words and redraw nothing",
+        "src/lib/sidebar.ts",
+        "  setRedactionWords(): void {\n    this.pending.setWords();\n  }",
+        "  setRedactionWords(): void {}",
+        "redraws the regions when words arrive, without being given the list again",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",
@@ -4225,6 +4424,12 @@ TEST_FILES = [
     "src/lib/orphans.test.ts",
     # Added 2026-08-26 with the four PLAN.md mutations above, in the same edit.
     "src/lib/plan.test.ts",
+    # Added 2026-08-26 with the redaction review panel, in the same edit as its
+    # mutations. `sidebar.test.ts` moved here out of `UNMUTATED` below on the
+    # same day: two mutations now aim at `sidebar.ts`, which is what that
+    # table's entry said had never been true.
+    "src/lib/redactlist.test.ts",
+    "src/lib/sidebar.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
@@ -4267,7 +4472,6 @@ UNMUTATED = {
     "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
     "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
     "src/lib/session.test.ts": "no mutation aims at src/lib/session.ts",
-    "src/lib/sidebar.test.ts": "no mutation aims at src/lib/sidebar.ts",
     "src/lib/tiles.test.ts": "no mutation aims at src/lib/tiles.ts",
 }
 

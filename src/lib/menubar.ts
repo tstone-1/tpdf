@@ -240,6 +240,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "view.showOutline",
       "view.showThumbnails",
       "view.showMarks",
+      "view.showRedactions",
       SEPARATOR,
       "view.invertPages",
     ],

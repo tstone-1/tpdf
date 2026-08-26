@@ -39,6 +39,23 @@ A pending redaction is an instruction about the document rather than something
 added to it. It is kept apart from your marks at every level and cannot be
 written into a saved file, a copy or an extract by any route.
 
+### Added: review what you marked, in the sidebar
+
+**Show redactions** opens a new sidebar tab listing every region you have marked,
+down the document, with the page it is on and the words underneath it. Checking
+six regions across forty pages no longer means scrolling to each one and reading
+the page through a red wash.
+
+A region covering no text says so. That is worth knowing rather than quiet: it
+means removing it would take no text out of that rectangle, so whatever is there
+is a picture or a drawing.
+
+It is also where a region comes off again. Undo works backwards, so the second
+region of six is not reachable that way; every row has its own remove control,
+and Delete on a row does the same thing.
+
+The panel says what every row on it has in common: nothing has been removed yet.
+
 ### Fixed: a saved file no longer over-reports how many objects it contains
 
 A file records how many objects it holds. A save that removed some --- a

@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 import {
   axesFor,
   coveredText,
+  touchedText,
   cutWidth,
   hasSideBySideLines,
   readingBlocks,
@@ -31,7 +32,7 @@ import {
   textOfRanges,
   usableRuns,
 } from "./reading";
-import { turnedView, type PageText, type TaggedRun } from "./text";
+import { touchedIndices, turnedView, type PageText, type TaggedRun } from "./text";
 
 /** Builds a page from `(character, [left, top, right, bottom])` pairs. */
 function page(
@@ -793,6 +794,71 @@ describe("a combining mark", () => {
     // disappears into the line above.
     const text = page([...word("ab", 60, 100), ...word("12", 60, 140)]);
     expect(linesAs(text)).toEqual(["ab", "12"]);
+  });
+});
+
+
+describe("touchedText", () => {
+  /** The same two lines `coveredText` is tested on, and deliberately so. */
+  function dragged(): PageText {
+    return page([...word("alpha", 100, 700), ...word("beta", 100, 720)]);
+  }
+
+  it("takes a character the rectangle cuts through, which the other rule leaves", () => {
+    // The one assertion that says these are two rules rather than one function
+    // with two names. Characters are ten points wide from x=100, so `h` runs
+    // 130 to 140 and its centre is at 135; a rectangle reaching 130 contains
+    // neither the centre nor most of the glyph, and takes half of it away.
+    //
+    // A highlight must not claim that `h`: its rectangle was drawn generously
+    // around words somebody selected. A region marked for removal must, because
+    // the glyph is going to be destroyed and the panel is where a reader checks
+    // what is going.
+    expect(coveredText(dragged(), [100, 700, 130, 712])).toBe("alp");
+    expect(touchedText(dragged(), [100, 700, 130, 712])).toBe("alph");
+  });
+
+  it("takes the line below when the rectangle's edge clips it", () => {
+    // The difference that matters more than the horizontal one, and it is the
+    // review's whole purpose: a rectangle dragged four points too deep eats the
+    // next line, `redact.rs` removes the text object it belongs to, and the
+    // only place a reader can see that coming is this list. Line two runs 720
+    // to 732 with centres at 726, so a rectangle stopping at 724 contains no
+    // centre on it at all.
+    expect(coveredText(dragged(), [100, 700, 150, 724])).toBe("alpha");
+    expect(touchedText(dragged(), [100, 700, 150, 724])).toBe("alphabeta");
+  });
+
+  it("reads several rectangles as one phrase, in the page's order", () => {
+    // Handed in bottom line first, so the answer cannot be the order they came.
+    // The ordering is shared with `coveredText`, which is the point: two rules
+    // for *which* characters, one for what order they read in.
+    expect(
+      touchedText(dragged(), [100, 720, 140, 732, 100, 700, 150, 712]),
+    ).toBe("alphabeta");
+  });
+
+  it("answers nothing for a rectangle with no words in it", () => {
+    // Not an error and not a silence: `redactlist.ts` draws this as a finding,
+    // because a region covering no text is a region a removal takes no text out
+    // of.
+    expect(touchedText(dragged(), [400, 400, 500, 440])).toBe("");
+  });
+
+  it("ignores a character PDFium gave no box", () => {
+    // A zero box sits at the origin, and a rectangle reaching the page's
+    // top-left corner would otherwise swallow every unplaced character on the
+    // page. The rule is `placedBox`'s, shared with the centre one.
+    //
+    // **Asserted on the indices, not on the text**, and the first draft was the
+    // other way round and could not fail: `inReadingOrder` filters by
+    // `readingOrder`, which drops an unplaced character itself, so deleting the
+    // box guard changed nothing a `touchedText` assertion could see. The trap
+    // index calls this *"a guard whose neighbour refuses the same input cannot
+    // be tested by it"*, and the mutation written for it survived, which is how
+    // it was found.
+    const text = page([["x", null], ...word("ab", 0, 0)]);
+    expect(touchedIndices(text, [0, 0, 20, 12])).toEqual([1, 2]);
   });
 });
 

@@ -564,6 +564,78 @@ export function coveredIndices(
 }
 
 /**
+ * The characters a set of rectangles *touches*, by index and in file order.
+ *
+ * The question {@link coveredIndices} answers, under the other containment rule,
+ * and the two live side by side because their callers are making different
+ * claims about the same geometry.
+ *
+ * **Centre containment is right for an annotation and wrong for a region marked
+ * for removal.** A highlight's `/QuadPoints` are drawn generously around the
+ * words and routinely touch the lines above and below, so a rule that took every
+ * glyph whose box overlapped would have a highlight claim a stray word at each
+ * end. A region a reader dragged out is not generous --- it is a claim about
+ * what is going to disappear --- and a glyph the rectangle cuts through is a
+ * glyph the removal takes. Reporting that one as untouched understates what
+ * applying does, which is the dangerous direction: a reader approves a list of
+ * words and more than the list goes.
+ *
+ * It still understates, and the panel says so rather than implying otherwise.
+ * `redact.rs` removes a whole text-showing operation when any of its glyphs is
+ * inside the region, so applying takes at least these characters and commonly
+ * the rest of the line with them. What this answers is what the region *covers*,
+ * which is the question a reader is asking when they check whether they dragged
+ * the right box.
+ */
+export function touchedIndices(
+  text: PageText,
+  quads: readonly number[],
+): number[] {
+  const out: number[] = [];
+  if (quads.length < 4) return out;
+  for (let at = 0; at < text.codes.length; at += 1) {
+    const box = placedBox(text.boxes, at);
+    if (!box) continue;
+    for (let quad = 0; quad + 3 < quads.length; quad += 4) {
+      if (overlapsBox(quads, quad, box)) {
+        out.push(at);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether the rectangle at `base` of a flat quad array overlaps a box.
+ *
+ * Inclusive on every edge, matching {@link coversPoint}: two rectangles that
+ * share exactly one edge touch, and the alternative is a glyph dropped for
+ * being flush with the boundary somebody dragged to it.
+ */
+export function overlapsBox(
+  quads: readonly number[],
+  base: number,
+  box: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  const left = quads[base];
+  const top = quads[base + 1];
+  const right = quads[base + 2];
+  const bottom = quads[base + 3];
+  if (
+    left === undefined ||
+    top === undefined ||
+    right === undefined ||
+    bottom === undefined
+  ) {
+    return false;
+  }
+  return (
+    box.right >= left && box.left <= right && box.bottom >= top && box.top <= bottom
+  );
+}
+
+/**
  * The centre of a character's box, or `null` where it has none.
  *
  * `null` rather than the origin for a character PDFium gave four zeroes ---
@@ -575,6 +647,29 @@ export function centreOfCharacter(
   boxes: readonly number[],
   at: number,
 ): { x: number; y: number } | null {
+  const box = placedBox(boxes, at);
+  if (!box) return null;
+  return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
+}
+
+/**
+ * A character's box, or `null` where it has none.
+ *
+ * The one place the *placed* rule is written: four values present, and a box
+ * with real extent in both directions. {@link centreOfCharacter} and
+ * {@link touchedIndices} both need it, and they need the same answer --- a
+ * character one of them called unplaced and the other measured would put a
+ * redaction's covered words and a highlight's out of step over the same page.
+ *
+ * `charQuad` is not this. It answers with zeroes for a character that has no
+ * box, which is what a caller drawing a run wants and exactly what a caller
+ * deciding whether a rectangle touches something must not have: a zero box at
+ * the origin is inside every rectangle that reaches the page's top-left corner.
+ */
+export function placedBox(
+  boxes: readonly number[],
+  at: number,
+): { left: number; top: number; right: number; bottom: number } | null {
   const base = at * 4;
   const left = boxes[base];
   const top = boxes[base + 1];
@@ -589,7 +684,7 @@ export function centreOfCharacter(
     return null;
   }
   if (!(right > left) || !(bottom > top)) return null;
-  return { x: (left + right) / 2, y: (top + bottom) / 2 };
+  return { left, top, right, bottom };
 }
 
 /**

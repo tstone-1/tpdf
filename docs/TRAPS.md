@@ -16325,3 +16325,69 @@ the two window-harness mutations aimed at this preview are still window-harness 
 geometry went.
 
 Paid for on 2026-08-26.
+
+### The containment rule that makes a highlight readable makes a redaction dishonest
+
+`coveredText` had been the one way to answer *what words are under this rectangle*, and the
+redaction review panel wanted exactly that question answered. Reusing it type-checks,
+produces plausible words, and is wrong.
+
+**A character is covered when its box's centre is inside the rectangle.** That rule is
+right, and `links.ts` argues it at length: an annotation's `/QuadPoints` are drawn
+generously around the words somebody selected and routinely touch the lines above and
+below, so an overlap rule makes a highlight claim a stray word at each end.
+
+A region a reader dragged out for removal is not generous. It is a claim about what
+disappears. A glyph the rectangle cuts through is a glyph the removal takes, and reporting
+it as uncovered understates what applying does --- **the dangerous direction, because a
+reader approves a list of words and more than the list goes.** The vertical case is the one
+that bites: a rectangle dragged four points too deep clips the tops of the next line's
+glyphs, whose centres are all outside it, so the centre rule reports the line below as
+untouched while `redact.rs` removes the text object it belongs to. That is precisely the
+over-selection §6 step 2 exists to catch, and the borrowed rule hides it.
+
+So there are two rules, `coveredIndices` and `touchedIndices`, sharing `placedBox` and
+sharing the reading order. The tests that say they are two rules rather than one function
+with two names run both against the same fixture and assert different answers.
+
+**It still understates, and the panel says so rather than implying otherwise.** Route B
+removes a whole text-showing operation when any of its glyphs is inside the region, so an
+apply takes at least the touched characters and commonly the rest of the line. The panel is
+a review of the *selection*; what a removal would actually take is a plan computed against
+the page's own objects, and that belongs with the apply.
+
+The general shape: **before reusing a predicate, ask what claim the new caller is making
+with it.** Two callers can want the same geometry answered and need opposite tolerances,
+and the one that is deciding whether to destroy something is never the one to inherit a
+rule tuned for forgiveness.
+
+Paid for on 2026-08-26.
+
+### Four answers, because a review panel may not say "nothing here" when it means "not yet"
+
+The words under a pending region arrive a page-extraction after the row is drawn, so the
+row has to say something in the meantime. `marklist.ts` has two states --- words, or a
+fallback --- and copying that shape into the redaction panel is what the first draft did.
+
+It collapses three different things into one sentence, and each of them is a different
+thing to tell somebody deciding whether to destroy content:
+
+- The page has **not been read yet**. Still arriving.
+- The page **could not be read**. Nothing is known about this region at all.
+- The page was read and the rectangle holds **no words**. A finding, not a silence: a
+  removal will take no text out of it, so whatever is under there is a picture, a drawing,
+  or nothing, and `redact.rs` reports every one of those as unhandled.
+
+An empty answer that might still be arriving is the reassuring reading, and §6 forbids it
+everywhere in this subsystem --- the same rule that makes a verification say *not verified*
+rather than nothing-found when it cannot decode a carrier. So `wordsFor` answers
+`string | null | undefined` and the row draws four lines. The lookup is `Map.get`, whose
+missing-key `undefined` is what separates the first case from the third for free; a caller
+writing `?? ""`, which is what the sibling panel does, throws that distinction away in one
+character.
+
+The scheduler has the mirror obligation. A page that **could not** be read is recorded as
+read, with `null` for every region on it --- otherwise the walk asks for it again on every
+edit, forever, and the row says *reading* for the rest of the session.
+
+Paid for on 2026-08-26.
