@@ -4516,11 +4516,19 @@ def main() -> int:
                 # UnicodeDecodeError on the first mutation and the harness never
                 # ran here at all.
                 #
-                # The newlines are normalised for matching only, because a
-                # Windows checkout is CRLF while the anchors are written with
-                # "\n" -- eight of them span lines. The file's own convention
-                # goes back on the way out, and the restore below is bytes, as
-                # docs/TRAPS.md requires.
+                # The newlines are normalised for matching only, because the
+                # anchors are written with "\n" and eight of them span lines.
+                # The file's own convention goes back on the way out, and the
+                # restore below is bytes, as docs/TRAPS.md requires.
+                #
+                # **This said "a Windows checkout is CRLF", and since 2026-08-26
+                # it is not**: `.gitattributes` pins `* text=auto eol=lf`, so
+                # every text file checks out LF on every platform. Kept anyway,
+                # and not as ceremony -- a checkout is not the only way a file
+                # gets written, and a tool that rewrites one in text mode on
+                # Windows produces CRLF whatever git checked out. The branch is
+                # two lines and its absence cost this harness every multi-line
+                # anchor once already.
                 raw = target.read_bytes().decode("utf-8")
                 crlf = "\r\n" in raw
                 source = raw.replace("\r\n", "\n") if crlf else raw

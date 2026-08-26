@@ -15466,3 +15466,63 @@ ceremony. Same family as *Whatever a fixture is meant to discriminate, it needs
 two of*, arriving through a field name rather than through a fixture.
 
 Paid for on 2026-08-26, in the control for the `appearance_stream` extraction.
+
+### A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary
+
+`src-tauri/src/warm.pdf` is 571 bytes, `qpdf --check` clean, and committed as
+source rather than generated because `worker_child.rs` pulls it in with
+`include_bytes!` --- it has to be inside the shipped executable. On this Windows
+desktop the file on disk was **603 bytes with 32 CRLF in it**, and had been on
+every Windows clone since it was written.
+
+    blob          571 bytes   qpdf --check: no syntax or stream encoding errors found
+    working tree  603 bytes   qpdf --check: file is damaged, xref not found,
+                              attempting to reconstruct cross-reference table
+
+**Git decides what is text by sniffing for a NUL in the first 8000 bytes**, and a
+small uncompressed PDF has none --- its header, its object dictionaries and its
+xref table are all ASCII. So with `core.autocrlf=true` and no `.gitattributes`,
+git converted a PDF on checkout. The 32 inserted bytes move every object past
+them, so the offsets in the xref table no longer address what they name.
+
+**Three things hid it, and each is the reassuring branch of something.**
+
+`git status` said the file was unmodified, and was not lying: `autocrlf`
+normalises on read as well as on write, so the damaged working copy round-trips
+back to the blob and compares equal. The one comparison that would have shown it
+--- the working copy's bytes against `git show HEAD:<path>` --- is the comparison
+a normalising filter exists to prevent you from needing.
+
+`warm_fonts` does `let Ok(document) = OpenDocument::open_bytes(...) else { return }`,
+so a document that fails to load produces no error, no log line and no
+difference a reader could see. Its own doc comment names that risk and points at
+`prespawn_bench --mode warm` as the instrument --- and on Windows the font walk
+is about 1.4 ms of an 8.4--9.6 ms saving, so a warm-up that had stopped working
+would sit inside that measurement's spread rather than moving it.
+
+And the file compiles in. `include_bytes!` takes whatever is on disk at build
+time, so nothing at runtime ever sees the file the repository holds.
+
+**No claim is made here that the warm-up was broken.** qpdf reconstructed the
+cross-reference table and PDFium reconstructs at least as willingly, so it very
+likely still loaded. What is established is that the bytes were damaged, that
+the doc comment above `WARM_DOCUMENT` asserted "571 bytes, `qpdf --check` clean"
+of a file that was neither on the platform it was read on, and that nothing in
+the repository could have told anyone.
+
+**The general shape is not about PDFs.** A content-sniffing heuristic decides
+silently, and the file it decides wrongly about is by construction the one nobody
+diffs --- because it is the one whose diff is unreadable. Any format that is
+mostly ASCII is exposed: PDF, EPS, some `.ico` variants, a certificate in PEM
+form, an uncompressed archive. **Name the binary formats explicitly rather than
+letting the sniff decide**, which is what `*.pdf binary` in `.gitattributes` does;
+`eol=lf` alone does not, because it still lets git guess what is text.
+
+The way to find one: compare every tracked file's working copy against its blob,
+byte for byte, which is two lines of Python and answers a question `git status`
+structurally cannot while a filter is in the loop. It also turned up a second,
+smaller instance in the same pass --- `testdata/make_form_pdf.py` held one CRLF
+among 81 LF on disk against a blob with none.
+
+Paid for on 2026-08-26, while adding the `.gitattributes` this repository had
+never had.

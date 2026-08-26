@@ -1818,8 +1818,8 @@ def main() -> int:
         path = ROOT / m.path
         original = path.read_bytes()
         digest = hashlib.sha256(original).hexdigest()
-        # Every anchor in the table above is written with "\n", and a Windows
-        # checkout is CRLF -- so a multi-line anchor matches ZERO times here and
+        # Every anchor in the table above is written with "\n", and the checkout
+        # was CRLF -- so a multi-line anchor matched ZERO times here and
         # the mutation is reported as unreadable, which reads as drift in the
         # source. `mutate_frontend.py` and `mutate_rust.py` were given this on
         # 2026-07-30 and this harness was not; the probe-path defect above stopped
@@ -1828,6 +1828,12 @@ def main() -> int:
         # universal-newline translation makes every anchor match. Normalise for
         # matching, put the file's own convention back, and leave the mutation as
         # the only difference on disk.
+        #
+        # **Since 2026-08-26 `.gitattributes` pins `* text=auto eol=lf`, so no
+        # checkout produces CRLF here on any platform.** Kept regardless: a
+        # checkout is not the only thing that writes a file, and this branch's
+        # absence is what cost this harness every multi-line anchor. `mutate_rust.py`
+        # carries the reasoning at greater length.
         raw = original.decode("utf-8")
         crlf = "\r\n" in raw
         source = raw.replace("\r\n", "\n") if crlf else raw

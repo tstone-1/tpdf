@@ -3991,8 +3991,16 @@ starts at 0 and increments within the month.
 
    The middle row is certain rather than inferred: the committed notices file is 469,298
    bytes over 9,197 lines, and 469,298 + 9,197 = 478,495 exactly --- the Windows runner
-   checks out with CRLF, so the shipped copy carries one extra byte per line. The other two
+   checked out with CRLF, so the shipped copy carried one extra byte per line. The other two
    are identified by size and elimination.
+
+   ⚠ **That arithmetic dates the measurement, and the next Windows build will not reproduce
+   it.** `.gitattributes` pins `* text=auto eol=lf` as of 2026-08-26, so the runner now checks
+   out LF and the shipped notices file is **469,298 bytes**, the same bytes the macOS bundle
+   has always carried. The row is left as measured rather than edited to the new number,
+   because it was measured and the new one is predicted; re-measure it at the next release.
+   The change is an improvement and is worth stating as one: an artifact that differed between
+   the two platforms for no reason now does not.
 
    **Settled 2026-08-19, and the answer is that a local MSI is not the MSI people get.** The
    released `26.8.4` payload is **three** files, `tpdf_lib.dll` not among them; a local `npm

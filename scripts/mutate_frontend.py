@@ -4886,10 +4886,15 @@ def main() -> int:
                 # the source rather than in this harness.
                 #
                 # Its newline translation was doing real work, though, and
-                # removing it alone takes three failures to twelve: a Windows
-                # checkout is CRLF and every anchor here is written with "\n".
-                # So normalise for matching and put the file's own convention
-                # back, leaving the mutation as the only difference on disk.
+                # removing it alone took three failures to twelve, because every
+                # anchor here is written with "\n" and the checkout was CRLF. So
+                # normalise for matching and put the file's own convention back,
+                # leaving the mutation as the only difference on disk.
+                #
+                # **The checkout is no longer CRLF**: `.gitattributes` has pinned
+                # `* text=auto eol=lf` since 2026-08-26. Kept regardless, because
+                # a checkout is not the only thing that writes a file -- see the
+                # longer note in `mutate_rust.py`.
                 raw = target.read_bytes().decode("utf-8")
                 crlf = "\r\n" in raw
                 source = raw.replace("\r\n", "\n") if crlf else raw
