@@ -1841,6 +1841,18 @@ Steps 1, 2, 4 and 5 are not built. Step 5's independent parser is the one worth 
 separately: `qpdf --check` runs in the spike today and nothing in the shipped path re-parses
 with anything but `lopdf`.
 
+**Step 3 grew a piece on 2026-08-26, and it is smaller than it sounds.** `save::rewrite`
+now runs `sweep::collect` when the plan dropped or moved a page, so a page a reader removed
+takes its content stream --- and anything only it referenced --- out of the file with it.
+That is the mark-and-sweep this section requires, on the path a reader already uses, and it
+was found by measuring rather than by reading: extracting page 1 of `links.pdf` produced a
+one-page file carrying all eight pages' content. What it is **not** is the sanitation this
+section is about. It collects what *that rewrite* orphaned, in a graph whose reachability
+is exactly `lopdf`'s idea of it, and touches none of the carriers in the table above ---
+`/ActualText`, an appearance stream, a form field's value, a thumbnail, a prior incremental
+revision. A reader who has to be told which of those two a command did is being told the
+wrong thing; the difference has to be in the command, which is what steps 1 and 2 are.
+
 ### Sanitized full rewrite — measured 2026-07-26
 
 Spike 0.4. Harness `src-tauri/examples/sanitize_rewrite.rs`, corpus
@@ -5470,13 +5482,22 @@ through.
   in it --- malformed rather than dead. A real loss, stated in `CHANGELOG.md` rather than
   hidden, and repairing it is `links.rs`'s resolver on the write side.
 
-**What a saved copy still carries, and it is worth being exact.** A deleted page's *content*
---- its stream, and anything only it referenced --- stays in the file as an unreachable
-object. `save.rs` deliberately does not run the mark-and-sweep the print path does, because
-"a saved copy is a serialisation, not a sanitation" is the position `docs/THREAT-MODEL.md`
-§T6.1 takes and this increment does not change it. Deleting is the first operation where a
-reader could plausibly believe otherwise, so it is residual risk 16 there rather than a
-footnote here, and §6 is where "removed" comes to mean removed.
+~~**What a saved copy still carries, and it is worth being exact.** A deleted page's
+*content* --- its stream, and anything only it referenced --- stays in the file as an
+unreachable object.~~ **Closed 2026-08-26, and the paragraph is kept because the reasoning
+in it is what made the hole survive.** It was right that `save.rs` did not run the print
+path's mark-and-sweep, right that §T6.1 takes that position, and wrong that the position
+applies here: "a saved copy is a serialisation, not a sanitation" was written about copying
+a document, and a plan that *drops* a page is not a copy of it. `save::rewrite` collects
+whenever the plan dropped or moved a page.
+
+The sentence that did the damage is the last one. Deleting was called *the first operation
+where a reader could plausibly believe otherwise* --- and Extract pages was already shipped
+on this same `planned_bytes` -> `rewrite` path, where the belief is not merely plausible but
+is the command's own name. Measured on `links.pdf`: extracting page 1 of 8 produced a file
+reporting one page and holding **all eight** content streams, 4,139 decodable bytes apiece.
+Split joined the path afterwards, covered by nothing. `docs/TRAPS.md` has the entry, and §6
+is still where "removed" comes to mean removed for everything that is not the page tree.
 
 ##### What the checks are built around, and what none of them covers
 

@@ -696,10 +696,19 @@ different kind of verb from the ones this surface had before.
 **The write is atomic** --- sibling temporary file, rename --- so an interrupted save leaves
 either the old file or the new one. The redaction path above needs the same property for a
 different reason and states it separately; this one is not that, and does not claim to be:
-**a saved copy is a serialisation, not a sanitation.** Nothing here garbage-collects an
-unreachable object or removes a prior incremental revision, so a copy of a document carries
-forward whatever the original carried. That is correct for "save a copy" and would be wrong
-for a redaction, and the two must not be confused when the redaction path is built on it.
+**a saved copy is a serialisation, not a sanitation.** Nothing here removes a prior
+incremental revision, and a copy that dropped no page garbage-collects nothing, so a copy of
+a document carries forward whatever the original carried. That is correct for "save a copy"
+and would be wrong for a redaction, and the two must not be confused when the redaction path
+is built on it.
+
+**One thing is collected, and stating the difference is the point.** Since 2026-08-26 a
+rewrite that **dropped or moved a page** runs `sweep::collect` over what it produced, so the
+content of a page the reader removed does not travel on inside the file. That is a promise
+about *tpdf's own leavings* --- the objects this rewrite made unreachable --- and not about
+the document's: an orphan the source arrived with is still carried forward. Extract pages and
+Split go through this same `rewrite`, which is why the distinction matters more than it
+sounds: their names state an exclusion the file has to honour. Residual risks 15 and 16.
 
 #### T6.2 — Deleting and moving a page, added 2026-08-17
 
@@ -1832,19 +1841,38 @@ which is what makes it evidence rather than a milestone.
     this can already reach `open_document` and the print path --- and it is listed because a
     write is a different verb from the ones this surface had, not because the CSP is believed
     to be weaker than it was yesterday.
-15. **A saved copy is a serialisation and not a sanitation** (§T6.1). Nothing on that path
-    collects an unreachable object or drops a prior incremental revision, so whatever the
-    source carried, the copy carries. That is right for "save a copy" and wrong for a
-    redaction, and the redaction path must not be built on it by assuming otherwise.
-16. **A copy that lost a page keeps the deleted page's content in every place that is not
-    the page tree** (§T6.2), added 2026-08-17. `pagetree::drop_pages` removes the page
-    object and every reference to it, and the mark-and-sweep that would collect what those
-    references *held* --- the content stream, the fonts, an embedded image --- runs on the
-    print path and not on the save path. So a reader who deletes a page and sends the copy
-    on has removed it from the document and not from the file. That is the same distinction
-    as risk 14 and is listed separately because deleting is the first operation where a
-    reader could plausibly believe otherwise: `docs/PLAN.md` §6 is where "removed" comes to
-    mean removed, and it is not built.
+15. **A saved copy is a serialisation and not a sanitation** (§T6.1), **narrowed
+    2026-08-26**. Nothing on that path drops a prior incremental revision, and a copy that
+    dropped no page collects nothing --- so whatever the source carried, the copy carries.
+    That is right for "save a copy" and wrong for a redaction, and the redaction path must
+    not be built on it by assuming otherwise. **The narrowing**: a save that dropped or moved
+    a page now collects what *that* made unreachable (risk 16), which is a promise about
+    tpdf's own leavings and not about the document's.
+16. ~~**A copy that lost a page keeps the deleted page's content in every place that is not
+    the page tree**~~ (§T6.2), added 2026-08-17, **closed 2026-08-26**. `pagetree::drop_pages`
+    removed the page object and every reference to it, and the mark-and-sweep that collects
+    what those references *held* --- the content stream, the fonts, an embedded image --- ran
+    on the print path and not on the save path. `save::rewrite` runs it now, whenever the plan
+    dropped or moved a page, and two checks pin it in opposite directions: the content of a
+    page that went is absent from the file, and the content of every page that stayed is
+    still there.
+
+    **What the entry got wrong is worth more than what it got right, because the wording is
+    what kept it from being found.** It named the *deletion*, on the reasoning that deleting
+    is the first operation where a reader could plausibly believe otherwise. Extract pages
+    was already shipped on the same `planned_bytes` -> `rewrite` path and is a stronger case
+    in every respect --- the command's own name states the exclusion, and the leak is total
+    rather than partial. Measured on `links.pdf` before the fix: extracting page 1 of 8
+    produced a file reporting **one** page and carrying **all eight** content streams, 4,139
+    decodable bytes each. Split, added in 26.8.11, joined the same path afterwards and was
+    covered by nothing. `docs/TRAPS.md` has the entry.
+
+    **What is not closed**, and it is the larger half: this collects what *this rewrite*
+    orphaned. A document that arrived with orphans in it still comes back with them (that is
+    §T6.1's position, and risk 15 above), and nothing here touches the carriers `docs/PLAN.md`
+    §6 lists --- `/ActualText`, an annotation's appearance stream, a form field's value, a
+    thumbnail. "Removed" means removed *from the page tree and everything only it held*, not
+    yet from the document.
 
 17. **A cropped page hides content and does not remove it** (§T6.6), added 2026-08-18.
     Everything outside the crop box is still in the saved file, still extractable, and still

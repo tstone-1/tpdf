@@ -958,6 +958,27 @@ MUTATIONS = [
         "a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them",
     ),
     Mutation(
+        # Never collect, which is what the save path did until 2026-08-26.
+        # Extracting one page of eight then produces a one-page file carrying all
+        # eight content streams --- `docs/THREAT-MODEL.md` residual risk 16, which
+        # named the deletion and missed the extract.
+        "save: leave a dropped page's content in the file",
+        "src/save.rs",
+        "    if !dropped.is_empty() || moved {",
+        "    if false {",
+        "extracting_a_page_leaves_the_other_pages_out_of_the_file",
+    ),
+    Mutation(
+        # Collect on every save, including one that dropped nothing. The two
+        # leak checks stay green -- this is the *scope* that has to be able to
+        # fail, and without a control for it the condition above is decoration.
+        "save: sanitize a plain copy as well as a save that removed something",
+        "src/save.rs",
+        "    if !dropped.is_empty() || moved {",
+        "    if dropped.is_empty() || !moved || true {",
+        "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
+    ),
+    Mutation(
         # Keep the outline after pages have gone. Its destinations name objects
         # that are not there, and `drop_pages` has already emptied the arrays
         # they lived in --- so what survives is a malformed destination rather

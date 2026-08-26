@@ -2002,6 +2002,32 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         .collect();
     crop_pages(&mut doc, &crops, &written)?;
 
+    // **Only what this rewrite orphaned, and only when it orphaned something.**
+    // `drop_pages` unlinks a page object and every reference to it, and
+    // `reorder_pages` flattens the tree and leaves the intermediate `/Pages`
+    // nodes behind --- so after either, objects the reader asked to be rid of
+    // sit in `doc.objects` reachable from nothing, and `lopdf` writes every
+    // object it holds. Measured on `links.pdf` before this call existed:
+    // extracting page 1 of 8 produced a one-page file carrying **all eight**
+    // content streams, 4,139 decodable bytes each, and a deletion left the
+    // dropped page's text in the same way. That is `docs/THREAT-MODEL.md`
+    // residual risk 16, which named the deletion and not the extract.
+    //
+    // Left alone when nothing was dropped or moved, and that is the position
+    // rather than an omission: a plain copy is a serialisation and not a
+    // sanitation (§T6.1), so a copy of somebody else's document carries their
+    // orphans forward untouched. What this guarantees is narrower and is the
+    // thing a reader can actually believe --- **tpdf does not leave behind what
+    // it was told to remove**. Whole-graph sanitation is `docs/PLAN.md` §6 and
+    // is a different promise about a different command.
+    //
+    // Costs what the print path's identical call costs: spike 0.4 measured the
+    // sweep at 3.6 ms over 2,445 objects and 70.3 ms over 25,583, against 4.6 ms
+    // and 66.6 ms for the plain save it is added to.
+    if !dropped.is_empty() || moved {
+        crate::sweep::collect(&mut doc)?;
+    }
+
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes)
         .map_err(|e| format!("could not serialise the document: {e}"))?;
@@ -4806,6 +4832,163 @@ mod tests {
                     .is_ok_and(|id| doc.get_object(id).is_ok())
             })
             .unwrap_or(false)
+    }
+
+    /// Every page's content stream object, by page number.
+    ///
+    /// Read from the *source* document, so the ids are the ones a leak would
+    /// survive under: a rewrite renumbers nothing, so an object that comes
+    /// through keeps the number it had.
+    fn content_streams(doc: &Document) -> Vec<(u32, ObjectId)> {
+        doc.get_pages()
+            .iter()
+            .filter_map(|(number, page)| {
+                let stream = doc
+                    .get_object(*page)
+                    .and_then(Object::as_dict)
+                    .and_then(|dict| dict.get(b"Contents"))
+                    .ok()?
+                    .as_reference()
+                    .ok()?;
+                Some((*number, stream))
+            })
+            .collect()
+    }
+
+    /// Extracting one page does not carry the other seven along inside the file.
+    ///
+    /// **The measurement this was written from.** Before the sweep in
+    /// [`rewrite`], extracting page 1 of `links.pdf` produced a file reporting
+    /// one page and holding all eight content streams --- 4,139 decodable bytes
+    /// each, `(Line 01 of page 2: ...)` among them. A reader who extracts a page
+    /// to send it on has stated an intent to exclude the rest, and the file said
+    /// otherwise.
+    ///
+    /// Asserted on the *objects* rather than on a byte scan, because the streams
+    /// are Flate-compressed: a `strings` over the output finds nothing and would
+    /// certify a file that leaks everything. That is the byte-scan rule
+    /// `docs/PLAN.md` §6 arrived at from the other direction.
+    #[test]
+    fn extracting_a_page_leaves_the_other_pages_out_of_the_file() {
+        let Some(path) = fixture("links.pdf") else {
+            println!("[SKIP] links.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("extract-sweep");
+        let before = Document::load(&path).expect("load source");
+        let streams = content_streams(&before);
+        assert!(
+            streams.len() >= 4,
+            "the fixture needs several pages to leak: {} found",
+            streams.len()
+        );
+        let count = streams.len() as u32;
+        let (kept_number, kept_stream) = streams[0];
+
+        let out = scratch.join("one.pdf");
+        write_copy(&path, &keeping(count, &[(0, 0)]), &out).expect("write");
+        let after = Document::load(&out).expect("load written");
+        assert_eq!(after.get_pages().len(), 1, "one page was asked for");
+
+        let carried: Vec<u32> = streams
+            .iter()
+            .filter(|(number, stream)| *number != kept_number && after.objects.contains_key(stream))
+            .map(|(number, _)| *number)
+            .collect();
+        assert!(
+            carried.is_empty(),
+            "pages {carried:?} were not extracted and their content is still in the file"
+        );
+
+        // The control, and the sweep needs it more than most: a collection that
+        // deleted the whole graph satisfies the assertion above perfectly.
+        assert!(
+            after.objects.contains_key(&kept_stream),
+            "the page that WAS extracted still has its content"
+        );
+    }
+
+    /// The same for a deletion, which is the operation risk 16 named.
+    #[test]
+    fn deleting_a_page_leaves_its_content_out_of_the_file() {
+        let Some(path) = fixture("links.pdf") else {
+            println!("[SKIP] links.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("delete-sweep");
+        let before = Document::load(&path).expect("load source");
+        let streams = content_streams(&before);
+        assert!(streams.len() >= 3, "the fixture needs a page to spare");
+        let count = streams.len() as u32;
+        let gone = streams[1];
+
+        let kept: Vec<(u32, u8)> = (0..count)
+            .filter(|source| *source != 1)
+            .map(|s| (s, 0))
+            .collect();
+        let out = scratch.join("rest.pdf");
+        write_copy(&path, &keeping(count, &kept), &out).expect("write");
+        let after = Document::load(&out).expect("load written");
+
+        assert!(
+            !after.objects.contains_key(&gone.1),
+            "page {}'s content survived the deletion",
+            gone.0
+        );
+        // Over-collection control, in the direction that matters here: every
+        // page that stayed still has the stream it had.
+        for (number, stream) in &streams {
+            if *number == gone.0 {
+                continue;
+            }
+            assert!(
+                after.objects.contains_key(stream),
+                "page {number} was kept and lost its content"
+            );
+        }
+    }
+
+    /// A copy that drops nothing is still a serialisation and not a sanitation.
+    ///
+    /// The scope control for the two checks above, and it pins a **position**
+    /// rather than an implementation detail: `docs/THREAT-MODEL.md` §T6.1 says a
+    /// saved copy carries forward whatever the original carried, so a document
+    /// somebody else left orphans in comes back with them. Sweeping every save
+    /// would be a different and larger promise --- see `docs/PLAN.md` §6.
+    ///
+    /// `hostile-orphan.pdf` is the fixture because its orphan is deliberate and
+    /// recorded in `hostile-manifest.json`; an ordinary document has none, so
+    /// the check would hold by construction and could not fail.
+    #[test]
+    fn a_copy_that_drops_nothing_keeps_the_orphans_it_was_given() {
+        let Some(path) = fixture("hostile-orphan.pdf") else {
+            println!("[SKIP] hostile-orphan.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("orphan-copy");
+        let before = Document::load(&path).expect("load source");
+        let reachable = crate::sweep::reachable(&before).expect("walk the source");
+        let orphans: Vec<ObjectId> = before
+            .objects
+            .keys()
+            .copied()
+            .filter(|id| !reachable.contains(id))
+            .collect();
+        assert!(
+            !orphans.is_empty(),
+            "the fixture discriminates: it has to carry an orphan for this to mean anything"
+        );
+
+        let count = before.get_pages().len();
+        let out = scratch.join("copy.pdf");
+        write_copy(&path, &plan_of(&vec![0u8; count]), &out).expect("write");
+        let after = Document::load(&out).expect("load written");
+        for orphan in &orphans {
+            assert!(
+                after.objects.contains_key(orphan),
+                "{orphan:?} was unreachable in the source and a plain copy dropped it"
+            );
+        }
     }
 
     /// Deleting one of two page numbers that are one page is refused.
