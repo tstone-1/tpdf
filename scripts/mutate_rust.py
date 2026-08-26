@@ -958,6 +958,85 @@ MUTATIONS = [
         "a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them",
     ),
     Mutation(
+        # Accept a file that does not begin with a PDF header.
+        "verify: let a file with no PDF header pass the structural check",
+        "src/verify.rs",
+        "    if !bytes.starts_with(b\"%PDF-\") {",
+        "    if false {",
+        "a_file_that_does_not_begin_with_a_pdf_header_is_refused",
+    ),
+    Mutation(
+        # Accept a file with no %%EOF at all.
+        "verify: let a file with no %%EOF pass the structural check",
+        "src/verify.rs",
+        "        0 => wrong.push(\"the file has no %%EOF marker\".to_string()),",
+        "        0 => {}",
+        "a_file_with_no_eof_marker_is_refused",
+    ),
+    Mutation(
+        # Accept several revisions, which PLAN.md section 6 forbids for a
+        # rewrite: an object an earlier revision held sits at its old offset,
+        # addressable by nothing and invisible to a graph walk.
+        "verify: let a rewrite hold more than one revision",
+        "src/verify.rs",
+        "    let eofs = count(bytes, b\"%%EOF\");",
+        "    let eofs = count(bytes, b\"%%EOF\").min(1);",
+        "a_second_revision_is_refused_and_the_count_is_reported",
+    ),
+    Mutation(
+        # Ignore bytes past the last %%EOF -- content belonging to no object,
+        # which is the other half of section 6's rule.
+        "verify: ignore bytes trailing the last %%EOF",
+        "src/verify.rs",
+        "        if trailing > 0 {",
+        "        if false {",
+        "bytes_after_the_last_eof_are_refused_and_whitespace_is_not",
+    ),
+    Mutation(
+        # Treat whitespace after %%EOF as trailing content. The over-refusal
+        # direction, and the one that would fire on every file every writer
+        # produces -- which is how the first draft of a /Size rule was caught.
+        "verify: count the newline every writer ends a file with as trailing content",
+        "src/verify.rs",
+        "        let trailing = bytes[last + 5..]\n            .iter()\n            .filter(|byte| !byte.is_ascii_whitespace())",
+        "        let trailing = bytes[last + 5..]\n            .iter()\n            .filter(|_byte| true)",
+        "bytes_after_the_last_eof_are_refused_and_whitespace_is_not",
+    ),
+    Mutation(
+        # Accept a startxref pointing past the end of the file.
+        "verify: accept a startxref offset past the end of the file",
+        "src/verify.rs",
+        "            Some(offset) if offset >= bytes.len() => wrong.push(format!(",
+        "            Some(offset) if false && offset >= bytes.len() => wrong.push(format!(",
+        "a_startxref_pointing_past_the_end_of_the_file_is_refused",
+    ),
+    Mutation(
+        # Accept a startxref with no number after it.
+        "verify: accept a startxref with no offset after it",
+        "src/verify.rs",
+        "            None => wrong.push(\"the file's startxref has no offset after it\".to_string()),",
+        "            None => {}",
+        "a_startxref_with_no_number_after_it_is_refused",
+    ),
+    Mutation(
+        # Accept a file with no startxref at all.
+        "verify: accept a file with no startxref",
+        "src/verify.rs",
+        "        None => wrong.push(\"the file has no startxref\".to_string()),",
+        "        None => {}",
+        "a_file_with_no_startxref_is_refused",
+    ),
+    Mutation(
+        # Complain about everything. The control's own control: without this the
+        # corpus sweep passes for a check that cannot fail, which is the shape
+        # the first /Size rule had in reverse.
+        "verify: report every file as malformed",
+        "src/verify.rs",
+        "pub fn structure(bytes: &[u8]) -> Vec<String> {\n    let mut wrong = Vec::new();",
+        "pub fn structure(bytes: &[u8]) -> Vec<String> {\n    let mut wrong = vec![String::from(\"planted\")];",
+        "every_rewritten_fixture_is_structurally_sound",
+    ),
+    Mutation(
         # Never collect, which is what the save path did until 2026-08-26.
         # Extracting one page of eight then produces a one-page file carrying all
         # eight content streams --- `docs/THREAT-MODEL.md` residual risk 16, which

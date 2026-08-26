@@ -302,10 +302,7 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
 
     sweep::collect(&mut doc)?;
 
-    let mut out = Vec::new();
-    doc.save_to(&mut out)
-        .map_err(|e| format!("could not serialise the print job: {e}"))?;
-    Ok(out)
+    crate::save::serialise(&mut doc, "the print job")
 }
 
 /// Checks a built job against what was asked for, before it reaches paper.

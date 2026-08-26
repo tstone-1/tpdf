@@ -16088,3 +16088,91 @@ it was handed. The second is the one worth having --- without it the *scope* of 
 is decoration.
 
 Paid for on 2026-08-26.
+
+### Nothing in this process catches the defect step 5 exists for, and the obvious repair condemned a healthy file
+
+`docs/PLAN.md` §6 step 5 wants an independent parser to re-check a rewrite, and spike 0.4
+is the reason: our own mark-and-sweep once left `/Size` claiming more objects than the file
+held, PDFium rendered it pixel-perfect, `qpdf --check` named it immediately.
+
+Reproducing that defect and putting four readers to it settles what step 5 can actually be:
+
+| reader | on a stale `/Size` |
+|---|---|
+| a byte scan (header, `%%EOF` count, trailing bytes, `startxref`) | silent |
+| `lopdf`'s loader --- the strict one, which refuses a mis-chained xref | *OK, 8 pages* |
+| PDFKit, a parser sharing no code with either | *OK, 8 pages* |
+| `qpdf --check` | **exit 3** |
+
+**No parser in the process catches it.** `lopdf` is the strict one by measurement --- it names
+a cross-reference table PDFium silently repairs --- and it does not validate `/Size`. So step 5
+cannot be delivered by asking a reader we already have; it needs a validator, and the only one
+available is qpdf, which is a C++ dependency and a Phase 3 decision.
+
+**Then the obvious repair was written, and it was worse than nothing.** The rule *the trailer's
+`/Size` must equal the number of entries the cross-reference table declares* is what the defect
+looks like: `/Size 142`, 102 entries. Run across the corpus it reported MISMATCH on:
+
+- **a healthy swept rewrite of `links.pdf`** --- 91 entries in three subsections against
+  `/Size 102`. Sweeping makes object numbers sparse, subsections list only the ranges that
+  are used, and an unlisted number is free. `qpdf --check` exits 0 on that file.
+- **every `incr-*.pdf` fixture**, from the other direction: an incremental file's `/Size`
+  counts every revision's objects while its last section lists only what changed.
+
+Both are correct PDF. A validator that fires on correct input is worse than none, and this one
+would have refused to save a file the reader had just edited.
+
+So the shipped check is only what **cannot be legitimate in a file this build wrote a moment
+ago** --- a header, exactly one `%%EOF`, nothing after it, a `startxref` whose offset is inside
+the file --- and it says in its own doc comment that it is not cross-reference validation.
+`docs/PLAN.md` §6 keeps the note that QPDF still has a place, and that place is now named.
+
+**Two things about the controls, and the second is the one that caught the bad rule.** The
+hand-built fixture agrees with whatever the check's author had in mind --- it is the
+writer-and-its-own-reader shape and it passed the wrong rule happily. What killed the rule was
+sweeping a corpus: 43 real documents, rewritten through the writer a reader actually uses. And
+the population had to be the *output*, not the source: sweeping sources first reported
+`hostile-trailing.pdf`, correctly, since that fixture exists to carry 84 bytes past its
+`%%EOF`. A control whose population includes deliberately malformed files needs an exclusion
+list, and an exclusion list rots; changing the population removes the question.
+
+Paid for on 2026-08-26.
+
+### PDFKit's first call costs 39 seconds in a debug build and 51 milliseconds in release, and the file it gets looks guilty
+
+Measuring the four readers above, PDFKit took **48.5 s** on a 16 KB file with a stale `/Size`
+and 0.1 ms on the intact one --- and then reported the broken file as fine. That reads
+unmistakably as a parser labouring over a malformed cross-reference table, and it was about to
+become a trap entry saying so, plus a design constraint that a foreign parser is unsafe to put
+on a save path unbounded.
+
+It is neither. Crossing profile with order:
+
+| profile | first call in the process | every later call |
+|---|---|---|
+| release | 50.9 ms (malformed) / 67.6 ms (intact) | 0.2 ms |
+| **debug** | **43.1 s (malformed) / 39.4 s (intact)** | 0.1 ms |
+
+The cost belongs to **whichever call is first**, and the malformed file only looked guilty
+because it happened to be first. Put the intact file first and it takes 39.4 s instead. The
+factor between profiles is roughly **770x** on a call whose work is inside a system framework,
+so the optimisation level of our own thin `objc2` wrapper is not the explanation and the cause
+is not established --- only the shape.
+
+Three things follow.
+
+**A debug number about a system framework is not a slow version of the release number, it is a
+different quantity.** This repository already has the rule for its own code --- *`cargo test` is
+a debug build, and a debug number in a doc comment is a lie* --- and the reflex that a
+framework call is unaffected by our build profile is what let this one through.
+
+**Vary the thing you are blaming.** One run gave a file and a duration; the file was the salient
+difference, so the file got the blame. Two more runs, differing only in order, removed it. The
+cost was three minutes and the alternative was a documented constraint that does not exist.
+
+**A conclusion that arrives with a mechanism attached is the dangerous kind.** *"A lenient
+parser scanning to repair a broken xref"* explains 48 seconds so well that it stops the
+questioning, and it is exactly the sort of sentence that gets quoted afterwards as a measured
+fact. It was written into a design argument before it was checked.
+
+Paid for on 2026-08-26.

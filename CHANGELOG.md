@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.8.11] - Unreleased
 
+### Changed: every PDF tpdf writes is checked before it is written
+
+A save, a copy, an extract, a split, a merge and a print job all become bytes in
+one place, and that place now looks at what it produced: a PDF header, exactly
+one revision, nothing after the end marker, and a cross-reference pointer that
+lands inside the file. Anything else is refused and nothing is written.
+
+**What this is not.** It is not validation of the cross-reference table, and
+that limit is measured rather than assumed. Given a file whose object count is
+deliberately wrong, `lopdf` reports it as fine, so does the operating system's
+own PDF reader, and only `qpdf` --- which tpdf does not ship --- objects. The
+rule that looks like the fix was tried and rejected: it refuses correct files,
+including tpdf's own output and every incrementally-updated document.
+
 ### Fixed: a page you removed no longer travels on inside the file
 
 Extract, Split and Delete-then-save left the removed pages' content in the file
