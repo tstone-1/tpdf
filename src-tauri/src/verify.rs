@@ -194,6 +194,112 @@ impl Report {
     }
 }
 
+/// What is certainly wrong with a file this build just wrote.
+///
+/// **The narrow half of `docs/PLAN.md` §6 step 5, and the narrowness is the
+/// finding.** That step asks for an independent parser to re-check a rewrite,
+/// on the strength of spike 0.4 catching a `/Size` that claimed more objects
+/// than the file held --- PDFium rendered it pixel-perfect, `qpdf --check`
+/// named it. Four readers were put to that same defect on 2026-08-26, and the
+/// result decided this function's shape:
+///
+/// | reader | stale `/Size` |
+/// |---|---|
+/// | this byte scan | silent |
+/// | `lopdf`'s loader | *OK, 8 pages* |
+/// | PDFKit (`print_macos::read`) | *OK, 8 pages*, in 0.2 ms |
+/// | `qpdf --check` | **exit 3** |
+///
+/// So there is no in-app parser that catches it, and the obvious repair --- our
+/// own rule that `/Size` must equal the cross-reference table's entry count ---
+/// was written, run, and **condemned a healthy file**: a swept rewrite of
+/// `links.pdf` has 91 entries in three subsections against `/Size 102`, because
+/// object numbers go sparse when a sweep removes objects and an unlisted number
+/// is free. `qpdf --check` passes it. Every `incr-*.pdf` fixture fails the same
+/// rule for the same reason from the other direction, since an incremental
+/// file's `/Size` counts every revision's objects and its last section lists
+/// only what changed.
+///
+/// A validator that fires on correct input is worse than none, so this checks
+/// **only what cannot be legitimate in a file we wrote a moment ago**, and says
+/// so rather than implying it covers structure. Real cross-reference validation
+/// is qpdf's, it is not here, and `docs/PLAN.md` §6 keeps the note that QPDF
+/// still has a place.
+///
+/// The two revision rules are §6's own words --- *assert exactly one logical
+/// revision and no trailing data* --- and they are meaningful precisely because
+/// this is our output: a **source** document may legitimately have many
+/// revisions, and this is never pointed at one.
+///
+/// Costs a scan of the bytes and nothing else: 65.8 ms on the 321 MB fixture,
+/// 0.34 ms on a 1.3 MB one.
+#[must_use]
+pub fn structure(bytes: &[u8]) -> Vec<String> {
+    let mut wrong = Vec::new();
+
+    if !bytes.starts_with(b"%PDF-") {
+        wrong.push("the file does not begin with a PDF header".to_string());
+    }
+
+    let eofs = count(bytes, b"%%EOF");
+    match eofs {
+        0 => wrong.push("the file has no %%EOF marker".to_string()),
+        1 => {}
+        many => wrong.push(format!(
+            "the file has {many} %%EOF markers, so it holds more than one revision --- a rewrite writes exactly one, and an earlier revision is content no parser will show and no scan can decode"
+        )),
+    }
+
+    if let Some(last) = rfind(bytes, b"%%EOF") {
+        let trailing = bytes[last + 5..]
+            .iter()
+            .filter(|byte| !byte.is_ascii_whitespace())
+            .count();
+        if trailing > 0 {
+            wrong.push(format!(
+                "{trailing} byte(s) follow the last %%EOF, which belong to no object and which nothing here put there"
+            ));
+        }
+    }
+
+    // Not "is there a `startxref`" --- `rfind` would find the one inside a
+    // string or a comment just as happily. What makes this worth checking is
+    // the *offset*: a rewrite computes it, and one pointing past the end of the
+    // file is a file no reader can open, which is the failure this is between
+    // the reader and.
+    match rfind(bytes, b"startxref") {
+        None => wrong.push("the file has no startxref".to_string()),
+        Some(at) => match start_offset(&bytes[at + 9..]) {
+            None => wrong.push("the file's startxref has no offset after it".to_string()),
+            Some(offset) if offset >= bytes.len() => wrong.push(format!(
+                "startxref points at byte {offset} of a {}-byte file",
+                bytes.len()
+            )),
+            Some(_) => {}
+        },
+    }
+
+    wrong
+}
+
+/// The decimal number after a `startxref`, skipping the whitespace before it.
+///
+/// Returns `None` for no digits at all, and for a number too large to be a file
+/// offset --- which is the same answer for the purpose here, since both mean the
+/// offset cannot be believed.
+fn start_offset(after: &[u8]) -> Option<usize> {
+    let digits: Vec<u8> = after
+        .iter()
+        .skip_while(|byte| byte.is_ascii_whitespace())
+        .take_while(|byte| byte.is_ascii_digit())
+        .copied()
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    std::str::from_utf8(&digits).ok()?.parse().ok()
+}
+
 /// Scans a file for every needle, at the byte level and through the object graph.
 ///
 /// Both are needed and neither is sufficient. The byte scan is the only thing
@@ -374,7 +480,158 @@ fn collect_strings(object: &Object, out: &mut Vec<u8>) {
 
 #[cfg(test)]
 mod tests {
+
+    use super::structure;
     use super::{classify, Carrier, Report, Verdict};
+
+    /// A minimal file with the shape `structure` expects, to perturb.
+    ///
+    /// Built by hand rather than serialised, and it has to be: `lopdf` writes a
+    /// well-formed file for every document it will accept --- an empty one comes
+    /// out as 125 valid bytes --- so a fixture from the writer cannot carry any
+    /// of the defects below. `docs/TRAPS.md` records building the malformed
+    /// fixture by hand as the answer when the model forbids the input.
+    fn well_formed() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"%PDF-1.7\n1 0 obj\n<</Type/Catalog>>\nendobj\n");
+        let start = bytes.len();
+        bytes.extend_from_slice(b"xref\n0 2\n");
+        bytes.extend_from_slice(b"0000000000 65535 f \n0000000009 00000 n \n");
+        bytes.extend_from_slice(b"trailer\n<</Size 2/Root 1 0 R>>\n");
+        bytes.extend_from_slice(format!("startxref\n{start}\n%%EOF\n").as_bytes());
+        bytes
+    }
+
+    /// The control, and without it every check below is satisfied by a function
+    /// that complains about everything.
+    #[test]
+    fn a_well_formed_file_draws_no_complaint() {
+        assert_eq!(structure(&well_formed()), Vec::<String>::new());
+    }
+
+    /// **The corpus control is in `save.rs`, deliberately, and it is the one
+    /// that matters.** A hand-built fixture agrees with whatever the writer of
+    /// the check had in mind, which is the writer-and-its-own-reader shape; what
+    /// catches a rule that is wrong *about PDF* is real documents. The first
+    /// draft of a `/Size` rule was killed exactly that way, condemning a healthy
+    /// swept rewrite of `links.pdf` that `qpdf --check` passes.
+    ///
+    /// It sweeps rewritten **output** rather than source documents, because that
+    /// is the only population this function is ever pointed at. Sweeping sources
+    /// was tried first and reported `hostile-trailing.pdf` --- correctly, since
+    /// that fixture exists to carry 84 bytes past its `%%EOF`. A control whose
+    /// population includes deliberately malformed files has to exclude them, and
+    /// an exclusion list is a thing that rots; changing the population removes
+    /// the question. See `every_rewritten_fixture_is_structurally_sound`.
+    #[test]
+    fn a_file_that_does_not_begin_with_a_pdf_header_is_refused() {
+        let mut bytes = well_formed();
+        bytes.splice(0..0, *b"junk");
+        let wrong = structure(&bytes);
+        assert!(
+            wrong.iter().any(|why| why.contains("PDF header")),
+            "{wrong:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_eof_marker_is_refused() {
+        let bytes = well_formed();
+        let at = bytes.len() - 6;
+        let wrong = structure(&bytes[..at]);
+        assert!(
+            wrong.iter().any(|why| why.contains("no %%EOF")),
+            "{wrong:?}"
+        );
+    }
+
+    /// `docs/PLAN.md` §6: a rewrite writes exactly one logical revision.
+    #[test]
+    fn a_second_revision_is_refused_and_the_count_is_reported() {
+        let mut bytes = well_formed();
+        let again = bytes.clone();
+        bytes.extend_from_slice(&again);
+        let wrong = structure(&bytes);
+        assert!(
+            wrong.iter().any(|why| why.contains("2 %%EOF markers")),
+            "{wrong:?}"
+        );
+    }
+
+    /// §6 again: no trailing data.
+    #[test]
+    fn bytes_after_the_last_eof_are_refused_and_whitespace_is_not() {
+        let mut bytes = well_formed();
+        bytes.extend_from_slice(b"\n\r\t   \n");
+        assert_eq!(
+            structure(&bytes),
+            Vec::<String>::new(),
+            "whitespace after %%EOF is how every writer ends a file"
+        );
+        bytes.extend_from_slice(b"leftover");
+        let wrong = structure(&bytes);
+        assert!(
+            wrong.iter().any(|why| why.contains("8 byte(s) follow")),
+            "{wrong:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_startxref_is_refused() {
+        let bytes = well_formed();
+        let text = String::from_utf8(bytes).expect("ascii fixture");
+        let wrong = structure(text.replace("startxref", "startxxxx").as_bytes());
+        assert!(
+            wrong.iter().any(|why| why.contains("no startxref")),
+            "{wrong:?}"
+        );
+    }
+
+    /// The offset is what makes this worth checking rather than the word.
+    #[test]
+    fn a_startxref_pointing_past_the_end_of_the_file_is_refused() {
+        let bytes = well_formed();
+        let text = String::from_utf8(bytes).expect("ascii fixture");
+        let at = text.rfind("startxref").expect("the fixture has one");
+        let broken = format!("{}startxref\n999999999\n%%EOF\n", &text[..at]);
+        let wrong = structure(broken.as_bytes());
+        assert!(
+            wrong
+                .iter()
+                .any(|why| why.contains("startxref points at byte 999999999")),
+            "{wrong:?}"
+        );
+    }
+
+    #[test]
+    fn a_startxref_with_no_number_after_it_is_refused() {
+        let bytes = well_formed();
+        let text = String::from_utf8(bytes).expect("ascii fixture");
+        let at = text.rfind("startxref").expect("the fixture has one");
+        let broken = format!("{}startxref\n%%EOF\n", &text[..at]);
+        let wrong = structure(broken.as_bytes());
+        assert!(
+            wrong.iter().any(|why| why.contains("no offset after it")),
+            "{wrong:?}"
+        );
+    }
+
+    /// An offset too large for a `usize` is unbelievable rather than large.
+    #[test]
+    fn a_startxref_offset_too_large_to_be_an_offset_is_refused() {
+        let bytes = well_formed();
+        let text = String::from_utf8(bytes).expect("ascii fixture");
+        let at = text.rfind("startxref").expect("the fixture has one");
+        let broken = format!(
+            "{}startxref\n99999999999999999999999999\n%%EOF\n",
+            &text[..at]
+        );
+        let wrong = structure(broken.as_bytes());
+        assert!(
+            wrong.iter().any(|why| why.contains("no offset after it")),
+            "{wrong:?}"
+        );
+    }
 
     /// A stream with no `/Filter` is stored as it is, so it is scannable.
     #[test]

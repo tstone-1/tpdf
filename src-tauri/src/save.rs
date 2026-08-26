@@ -547,10 +547,7 @@ pub fn write_merged(
             .map_err(|why| format!("could not merge {}: {why}", name_of(other)))?;
     }
 
-    let mut bytes = Vec::new();
-    merged
-        .save_to(&mut bytes)
-        .map_err(|e| format!("could not serialise the merged document: {e}"))?;
+    let bytes = serialise(&mut merged, "the merged document")?;
     write_atomically(out, &bytes)?;
     Ok(Merged {
         changed: base.changed,
@@ -2028,15 +2025,66 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         crate::sweep::collect(&mut doc)?;
     }
 
-    let mut bytes = Vec::new();
-    doc.save_to(&mut bytes)
-        .map_err(|e| format!("could not serialise the document: {e}"))?;
+    let bytes = serialise(&mut doc, "the document")?;
 
     Ok(Planned {
         bytes,
         verified,
         changed,
     })
+}
+
+/// Turns a document into the bytes that will be written, and checks them.
+///
+/// **The one place in tpdf where a `Document` becomes a file**, which is what
+/// makes the check here rather than at each of the three callers: a check bound
+/// to one caller covers only that caller, and `docs/TRAPS.md` records that
+/// costing a defect already.
+///
+/// `what` names the artifact in the refusal, because the three callers produce
+/// different things and a reader who merged four files should not be told about
+/// "the document".
+///
+/// What [`crate::verify::structure`] does and deliberately does not do is
+/// written there. In short: it is `docs/PLAN.md` §6 step 5's narrow half, it
+/// catches only what cannot be legitimate in a file written a moment ago, and it
+/// is not cross-reference validation --- which measurement says no parser in
+/// this process performs.
+///
+/// **The refusal below has no reachable input today, and that is stated rather
+/// than left to be discovered by whoever writes the mutation for it.** `lopdf`
+/// 0.44 writes a header, one `%%EOF` and a `startxref` for *every* document it
+/// will serialise, including an empty one --- measured: `Document::new()` comes
+/// out as 125 structurally valid bytes. So no `Document` this crate can build
+/// makes the check fire, and a mutation deleting the call would survive.
+///
+/// It is kept, and it is a guard rather than decoration, because it is the
+/// standing assertion `docs/PLAN.md` §6 step 3 asks for in so many words ---
+/// *exactly one logical revision and no trailing data* --- placed on the seam
+/// where every future writer will arrive. Four things make it reachable: a
+/// `lopdf` bump, a rewrite that starts writing update sections, a redaction path
+/// that assembles bytes rather than serialising a graph, and any caller handing
+/// [`crate::verify::structure`] bytes from somewhere else. Its *logic* is
+/// covered head-on in `verify`'s own tests, where every complaint has a case.
+///
+/// # Errors
+///
+/// `lopdf` refusing to serialise, or the bytes it produced failing the check.
+pub(crate) fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes)
+        .map_err(|e| format!("could not serialise {what}: {e}"))?;
+    let wrong = crate::verify::structure(&bytes);
+    if wrong.is_empty() {
+        return Ok(bytes);
+    }
+    // The fact, and no instruction. Nothing was written, and there is nothing
+    // for the reader to do about a defect in bytes this process built --- the
+    // same position `verify_before_commit`'s message takes for the same reason.
+    Err(format!(
+        "tpdf built {what} and then found it malformed, so nothing was written: {}",
+        wrong.join("; ")
+    ))
 }
 
 /// A PDF date string for an instant, in UTC.
@@ -4989,6 +5037,96 @@ mod tests {
                 "{orphan:?} was unreachable in the source and a plain copy dropped it"
             );
         }
+    }
+
+    /// Every fixture, rewritten through the real save path, is structurally sound.
+    ///
+    /// **The control for `verify::structure`, and the reason it is here rather
+    /// than beside the function.** That check's hand-built fixture agrees with
+    /// whatever its author had in mind. This population does not: forty-odd real
+    /// documents nobody wrote for it, put through the writer a reader actually
+    /// uses, which is the only population the check is ever pointed at.
+    ///
+    /// It is what killed the first draft of a `/Size` rule --- *the trailer's
+    /// `/Size` must equal the cross-reference table's entry count* --- which
+    /// reported MISMATCH on a healthy swept rewrite of `links.pdf` (91 entries
+    /// in three subsections against `/Size 102`, because sweeping makes object
+    /// numbers sparse and an unlisted number is free). `qpdf --check` passes that
+    /// file. A validator that fires on correct input is worse than none.
+    ///
+    /// Large fixtures are skipped by size and the number examined is asserted,
+    /// so a checkout missing its fixtures fails rather than certifying nothing.
+    #[test]
+    fn every_rewritten_fixture_is_structurally_sound() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .join("testdata");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            println!("[SKIP] no testdata directory");
+            return;
+        };
+        // The 321 MB scan rewrites in tens of seconds and adds nothing here ---
+        // this is about the shape of what the writer emits, not about size.
+        const LARGEST: u64 = 8 * 1024 * 1024;
+        let scratch = Scratch::new("structural");
+        let mut examined = 0;
+        let mut refused = 0;
+        let mut paths: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("pdf"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            if std::fs::metadata(&path)
+                .map(|m| m.len())
+                .unwrap_or(u64::MAX)
+                > LARGEST
+            {
+                continue;
+            }
+            let Ok(doc) = Document::load(&path) else {
+                continue;
+            };
+            let count = doc.get_pages().len();
+            if count == 0 {
+                continue;
+            }
+            let name = format!("{examined}.out.pdf");
+            let out = scratch.join(&name);
+            // Every page kept, and one dropped where there is a page to spare,
+            // so the sweep runs on half of them. Both are writers a reader uses.
+            let plan = if count > 1 {
+                keeping(
+                    count as u32,
+                    &(0..count as u32 - 1).map(|s| (s, 0)).collect::<Vec<_>>(),
+                )
+            } else {
+                plan_of(&vec![0u8; count])
+            };
+            if write_copy(&path, &plan, &out).is_err() {
+                // Encrypted, signed, or a shape the writer refuses. Its refusal
+                // is another test's subject; what matters here is that a file it
+                // *did* write is sound.
+                refused += 1;
+                continue;
+            }
+            let bytes = std::fs::read(&out).expect("read what was written");
+            assert_eq!(
+                crate::verify::structure(&bytes),
+                Vec::<String>::new(),
+                "the rewrite of {} is malformed",
+                path.display()
+            );
+            examined += 1;
+        }
+        println!("[INFO] {examined} rewrites checked, {refused} plans refused");
+        assert!(
+            examined >= 20,
+            "only {examined} fixtures were rewritten, which is too few to have tested \
+             anything --- run scripts/make_fixtures.py"
+        );
     }
 
     /// Deleting one of two page numbers that are one page is refused.

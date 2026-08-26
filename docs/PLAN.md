@@ -1837,9 +1837,60 @@ the instrument. Reading it as "images are fine" is the one way to turn this into
 confident lie the section opens by forbidding, so `an_image_carrier_does_not_certify` pins
 it and a mutation that lets it through goes red.
 
-Steps 1, 2, 4 and 5 are not built. Step 5's independent parser is the one worth naming
-separately: `qpdf --check` runs in the spike today and nothing in the shipped path re-parses
-with anything but `lopdf`.
+Steps 1, 2 and 4 are not built. **Step 5 is now partly built and its ceiling is measured**,
+which is worth more than the part that shipped --- see below.
+
+#### Step 5, the independent parser --- measured 2026-08-26
+
+The step asks for a parser that did not write the file to re-check it, on the strength of
+spike 0.4: our own mark-and-sweep left `/Size` claiming more objects than the file held,
+PDFium rendered it pixel-perfect, `qpdf --check` named it. Reproducing that defect and
+putting four readers to it is what decided the shape:
+
+| reader | on a stale `/Size` |
+|---|---|
+| a byte scan --- header, `%%EOF` count, trailing bytes, `startxref` offset | silent |
+| `lopdf`'s loader, the strict one that refuses a mis-chained xref | *OK, 8 pages* |
+| PDFKit, sharing no code with `lopdf` or PDFium | *OK, 8 pages*, 0.2 ms |
+| `qpdf --check` | **exit 3** |
+
+**No parser in the process catches it.** `lopdf` is the strict one by measurement --- it is
+what names a cross-reference table PDFium silently repairs, which is why the append's
+read-back uses it --- and it does not validate `/Size`. So the step cannot be delivered by
+asking a reader we already have, and **QPDF's place is now named rather than kept open**: it
+is the validator, it is a C++ dependency, and taking it is a Phase 3 decision.
+
+**The obvious repair was written and it was worse than nothing.** The rule *`/Size` must
+equal the number of entries the cross-reference table declares* is exactly what the defect
+looks like. Across the corpus it condemned a healthy swept rewrite of `links.pdf` --- 91
+entries in three subsections against `/Size 102`, because sweeping makes object numbers
+sparse and an unlisted number is free --- and every `incr-*.pdf` fixture, whose `/Size` counts
+all revisions while the last section lists only what changed. Both are correct PDF and
+`qpdf --check` passes them. A validator that fires on correct input is worse than none.
+
+**What shipped is the narrow half**, `verify::structure`, on the single seam where every
+writer turns a `Document` into bytes: a PDF header, **exactly one `%%EOF`**, **no trailing
+data**, and a `startxref` whose offset is inside the file. The middle two are this section's
+own words for step 3, now assertions rather than prose. It costs a byte scan --- 65.8 ms on
+the 321 MB fixture --- and it is not cross-reference validation, which its own doc comment
+says.
+
+**Its failing branch has no reachable input today**, and that is stated where it lives rather
+than left for whoever writes the mutation: `lopdf` 0.44 writes a header, one `%%EOF` and a
+`startxref` for every document it will serialise, an empty one included. It is kept as the
+standing assertion on the seam --- reachable by a `lopdf` bump, by a rewrite that starts
+writing update sections, or by a redaction path that assembles bytes rather than serialising
+a graph --- and its logic is covered head-on, every complaint with a case, against a corpus of
+43 real documents rewritten through the writer a reader uses.
+
+**The corpus control is the part to copy.** A hand-built fixture agrees with whatever the
+check's author had in mind, and it passed the bad `/Size` rule happily; 43 real rewrites are
+what killed it. The population had to be the **output** rather than the source, too --- a
+source sweep reported `hostile-trailing.pdf`, correctly, since that fixture exists to carry
+84 bytes past its `%%EOF`, and excluding it would have meant an exclusion list that rots.
+
+**Step 5 remains open for the thing it was written for.** Nothing in the shipped path
+validates a cross-reference table, and `docs/TRAPS.md` carries the entry.
 
 **Step 3 grew a piece on 2026-08-26, and it is smaller than it sounds.** `save::rewrite`
 now runs `sweep::collect` when the plan dropped or moved a page, so a page a reader removed
