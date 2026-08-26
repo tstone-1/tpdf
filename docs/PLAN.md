@@ -1904,22 +1904,27 @@ answers both halves for every form measured: classic tables, xref streams, objec
 incremental files, and it separates the planted defect from a healthy file. So the in-app gap
 is closable, at the price of a parse of the output.
 
-**It is not closed, and the reason is the third over-refusal in one session.** The cheap
-version --- assert `doc.max_id` equals the highest object number *before* serialising, which
-costs nothing because the writer already holds the graph --- fails on **both encrypted
-fixtures**, because `lopdf` removes the `/Encrypt` object when it authenticates while
-`max_id` stays where it was. Those files are correct and qpdf passes them. A carve-out for
-encrypted documents would sit on exactly the family this repository has already been caught by
-twice, and it would be unreachable anyway: the encryption guard refuses those saves first,
-which is the *"a caller that validates first cannot reach the guard beneath it"* shape.
+**It is not closed by a check, and it is closed by an invariant --- which is better.** The
+guard was written first and could not ship: asserting `doc.max_id` equals the highest object
+number fails on **both encrypted fixtures**, because `lopdf` removes the `/Encrypt` object
+when it authenticates while `max_id` stays put. Those files are correct and qpdf passes them.
+A carve-out would sit on exactly the family this repository has been caught by twice, and it
+would be unreachable anyway --- the encryption guard refuses those rewrites first, which is the
+*"a caller that validates first cannot reach the guard beneath it"* shape.
 
-Doing it properly means the parse in a worker --- `Request::Reread` already re-parses a written
-file there for the append, and widening its reply from a page count to a small structural
-reading is the shape. That is the next increment for this step, and it is plumbing rather than
-a question: the measurement above says what to compare.
+So `save::serialise` sets `max_id` to the highest object number it holds, before writing. Two
+lines, no verdict, no refusal, and **the defect class cannot occur** rather than being
+detected. It is also the only version of this with a reachable failing input, which is why it
+is the only one with a test that can go red: a `Document` with an inflated `max_id` is one line
+to build. Both directions are pinned, since the repair lowers a number --- one mutation leaves
+`max_id` alone, the other lowers it one too far so `/Size` stops covering the highest object,
+and the second would be exactly as invisible to every reader here as the first.
 
-**So step 5 stands as: narrow at run time, covered by qpdf before a release.** Nothing in the
-shipped path validates a cross-reference table. `docs/TRAPS.md` carries the entry.
+**So step 5 stands as: the one known defect prevented, the byte-level shape asserted, and
+cross-reference validation covered by qpdf before a release.** Nothing in the shipped path
+validates a cross-reference table, and that remains true. What changed is that the defect it
+was written for can no longer be produced. `docs/TRAPS.md` carries all three rules that were
+tried, all three over-refusals, and why the thing that shipped is not a rule at all.
 
 **Step 3 grew a piece on 2026-08-26, and it is smaller than it sounds.** `save::rewrite`
 now runs `sweep::collect` when the plan dropped or moved a page, so a page a reader removed

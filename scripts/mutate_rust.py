@@ -958,6 +958,27 @@ MUTATIONS = [
         "a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them",
     ),
     Mutation(
+        # Leave max_id where the graph left it, which is spike 0.4's defect:
+        # /Size then claims objects the file does not contain. Nothing in this
+        # process reads that -- only qpdf does -- so the assertion has to be on
+        # the number rather than on any reader's verdict.
+        "save: serialise a document whose /Size claims objects it does not hold",
+        "src/save.rs",
+        "    doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);",
+        "    doc.max_id = doc.max_id.max(doc.objects.keys().map(|id| id.0).max().unwrap_or(0));",
+        "a_serialised_document_reports_the_size_its_objects_justify",
+    ),
+    Mutation(
+        # Lower it one too far. The over-correction direction: /Size then fails
+        # to cover the highest object written, which is the same defect
+        # mirrored and equally invisible to every reader here.
+        "save: declare a /Size that does not cover the highest object written",
+        "src/save.rs",
+        "    doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);",
+        "    doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0).saturating_sub(1);",
+        "no_object_is_written_at_or_past_the_size_that_was_declared",
+    ),
+    Mutation(
         # Accept a file that does not begin with a PDF header.
         "verify: let a file with no PDF header pass the structural check",
         "src/verify.rs",

@@ -16216,7 +16216,23 @@ instance was `/Size 142` against 102 objects, and every rule above is a differen
 restating it. The property --- what makes a cross-reference table right --- is qpdf's, it took
 qpdf's own error message to state it, and stating it correctly still left it unshippable here.
 
-Ship the narrow check, exercise the rest with the real validator before a release
-(`examples/qpdf_probe.rs`), and write down which is which.
+**And then the fourth move, which is the one to reach for first next time: stop checking and
+make it true.** `lopdf` writes `/Size` as `max_id + 1`, so the seam that serialises every
+document sets `max_id` to the highest object number it actually holds --- two lines, no
+verdict, no refusal, and the defect class cannot occur rather than being detected. It is also
+the only version of this with a **reachable failing input**, which is why it is the only one
+with a test that can go red and a mutation that dies: a `Document` with an inflated `max_id` is
+one line to build, where a malformed *file* is not something `lopdf` will produce. Both
+directions are pinned, since the repair lowers a number --- one mutation leaves `max_id` alone,
+the other lowers it one too far so `/Size` no longer covers the highest object written, and the
+second failure would be exactly as invisible as the first.
+
+Three rules that could not ship, and the thing that shipped is not a rule at all. When a
+property is *yours to establish* rather than the input's to satisfy, a guard is the wrong
+instrument: it inherits every legitimate shape you did not think of, and the repair inherits
+none of them.
+
+Ship the invariant, keep the narrow check for what only the bytes can show, and exercise the
+rest with the real validator before a release (`examples/qpdf_probe.rs`).
 
 Paid for on 2026-08-26.
