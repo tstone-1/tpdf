@@ -1506,6 +1506,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A check reported `[OK]` with the reason it should have failed printed beside it (the detail line was built from more state than the verdict read; the check's own name was the tell, and a control went red about the same event)
 - A check read the palette's rendered rows, which are capped at 64 (three commands fell off the bottom of a list and were reported as withheld from the reader; a bound a growing population approaches is a defect on a timer, and nothing distinguishes 63 from 5)
 - A correction that changed the direction of a movement that was never happening (the mutation edited `/Rect` while the ink comes from the quads, so neither direction could reach the control it named; it survived twice, and the control it exists to prove had therefore only ever passed)
+- Before widening a check to another language, ask whether that language admits the defect (a review scored the `docs` gate's frontend-only scan as a gap; four experiments say Rust makes every spelling of it either not a loss or a compile error, so the arm would have had no reachable subject --- and the one shape that is only a *warning* was measured with the gate's own command rather than reasoned about, since a warning is deniable)
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing

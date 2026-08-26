@@ -46,6 +46,40 @@ apply to it. It is recognised by position, not by name.
 A doc comment on the *wrong* declaration --- one that binds, and describes
 something else. Nothing mechanical can see that, and it is the failure mode this
 one leaves open.
+
+## Why it is frontend-only, which is a decision rather than an oversight
+
+An outside review scored the narrow `SUFFIXES` below as a gap: "the
+orphaned-doc-comment defect it exists for is in at least six places in Rust".
+**The premise is wrong, and rustc settles it in four experiments rather than in
+an argument.** The defect above is *silent loss* --- two doc blocks in a row,
+only the last binds, the first becomes prose nobody will ever see rendered. Every
+Rust spelling of that shape is either not a loss or not silent:
+
+  - **Two `///` runs before one item, blank line between them: BOTH attach.**
+    They are sugar for `#[doc]` attributes and rustdoc concatenates them ---
+    checked by generating the HTML and finding both blocks in it, not by reading
+    the reference. Nothing is lost, so there is nothing to report.
+  - **A doc comment on a statement** is `unused_doc_comments`, a warning --- and
+    this repository runs `cargo clippy --all-targets -- -D warnings`, which
+    **denies** it. Measured by planting one in `textbox.rs` and running the gate's
+    own command: exit 101, `error: unused doc comment`. That is the only one of
+    the four whose fate depends on this repository's settings rather than on the
+    language, which is why it is the one that was measured here rather than in a
+    scratch file.
+  - **A doc comment before a closing brace** is `error[E0584]`, "found a
+    documentation comment that doesn't document anything".
+  - **An inner `//!` where an outer `///` was meant** is `error[E0753]`.
+
+So a `.rs` arm would be a check with no reachable subject, which is the shape
+this repository refuses everywhere else. The review's six line-ranges were read
+two days later and every one of them pointed at a doc comment correctly bound to
+its item; the ranges had simply moved.
+
+The same question is open for `scripts/*.py` and deliberately not answered here:
+a second docstring in a row is inert rather than lost, so the Python shape is not
+this defect either, but nobody has measured it. Raise it as its own proposal
+rather than as an extension of this one.
 """
 
 from __future__ import annotations
@@ -55,6 +89,9 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
+#: Frontend only, and the docstring above says why with the measurements: every
+#: Rust spelling of this defect is caught by rustc or by the clippy gate, so a
+#: `.rs` arm here would be a check with no reachable subject.
 SUFFIXES = {".ts", ".svelte"}
 
 

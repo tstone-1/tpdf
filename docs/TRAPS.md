@@ -15526,3 +15526,54 @@ among 81 LF on disk against a blob with none.
 
 Paid for on 2026-08-26, while adding the `.gitattributes` this repository had
 never had.
+
+### Before widening a check to another language, ask whether that language admits the defect
+
+An outside review scored the `docs` gate's `SUFFIXES = {".ts", ".svelte"}` as a
+gap: *"the orphaned-doc-comment defect it exists for is in at least six places in
+Rust"*, with six file-and-line ranges. It is a reasonable-looking finding, the
+fix is a one-line edit, and the finding is wrong.
+
+**The defect that gate exists for is silent LOSS**, not untidiness: two `/** */`
+blocks in a row, TypeScript binds the last, and the first becomes prose that
+never renders anywhere. Whether Rust has that is a question about rustc, and
+rustc answers it in four experiments:
+
+    two /// runs before one item     BOTH attach; rustdoc emits both blocks
+    /// on a statement               unused_doc_comments -- a WARNING
+    /// before a closing brace       error[E0584]
+    //! where /// was meant          error[E0753]
+
+Only the second depends on anything local, because a warning is deniable, so
+that is the one measured **in this repository with the gate's own command**
+rather than in a scratch file: planted before a statement in `textbox.rs`,
+`cargo clippy --all-targets -- -D warnings` exits **101** with `error: unused doc
+comment`. The other three are properties of the language and were measured in a
+scratch crate, the first by generating the HTML and finding both blocks in it ---
+because "no warning was emitted" is not the same claim as "the text survives",
+and it is the survival that decides whether anything was lost.
+
+So a `.rs` arm would be a check with **no reachable subject**: it could never go
+red on a defect, only on a false positive. That is the anti-pattern this
+repository refuses everywhere else, arriving through the front door as a review
+finding about insufficient coverage.
+
+**Two things made the finding look right, and both are worth recognising.**
+The gate's name and docstring describe a general-sounding property --- "a doc
+comment must document something" --- while the rule it implements is specific to
+one language's binding behaviour. And the six cited ranges were read two days
+after the review, by which time the files had moved; every one of them pointed at
+a doc comment correctly bound to its item, which reads as "already fixed" rather
+than as "never was".
+
+**The generalisation.** A check earns its place by being able to fail. Before
+extending one to a new file type, the question is not "does the rule make sense
+there" --- it usually does --- but "what would a violation look like, and can the
+toolchain there already not compile it?". Three minutes of compiler is cheaper
+than a gate that runs forever and can only be wrong. The same question is open
+for this gate and `scripts/*.py`, where a second docstring in a row is inert
+rather than lost, and it is deliberately left unanswered rather than assumed in
+either direction.
+
+Paid for on 2026-08-26, and the outcome is a paragraph in the gate's docstring
+instead of an arm in its scan.
