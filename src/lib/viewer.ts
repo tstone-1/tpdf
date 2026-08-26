@@ -30,7 +30,7 @@
  */
 
 import { AccessibleText } from "./a11y";
-import { inTextField, matches } from "./keys";
+import { inTextField, isMac, matches } from "./keys";
 import { CommentPopup } from "./commentpopup";
 import {
   intoCrop,
@@ -4266,7 +4266,24 @@ export class Viewer {
   private readonly onSelectStart = (event: PointerEvent): void => {
     // Only the primary button starts a selection; a right-click will open a
     // context menu once there is one, and should not clear what is selected.
-    if (event.button !== 0) return;
+    //
+    // **And on macOS a Control+click *is* a right-click**, which the button
+    // number does not say. WebKit reports `button: 0` with `ctrlKey` set,
+    // because it is physically the primary button and the window server
+    // synthesises the menu from it; only a two-finger tap and a real second
+    // button arrive as `button === 2`. Testing the number alone therefore let
+    // the commonest way a Mac reader opens a context menu through as an
+    // ordinary press, which replaced their selection with an empty one at the
+    // caret --- and `contextmenu` fires *after* `pointerdown`, so the menu then
+    // opened on nothing. Reported from use, and it read as a defect in the menu
+    // rather than in the press precisely because the two-finger tap worked
+    // throughout.
+    //
+    // Asked of the platform rather than of `ctrlKey` alone, because Ctrl+click
+    // is not a right-click on Windows: there it is an ordinary modified press
+    // and must still start a selection. `isMac` is the same answer the chord
+    // spelling reads, so there is one platform detector rather than two.
+    if (event.button !== 0 || (isMac() && event.ctrlKey)) return;
     // The scrollbar is inside the root and has its own drag.
     if (this.track.contains(event.target as Node)) return;
     this.root.focus();

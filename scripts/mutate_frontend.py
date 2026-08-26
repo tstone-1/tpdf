@@ -2939,6 +2939,49 @@ MUTATIONS = [
         "          displayedSize(shown, -this.turns),",
         "learns a page's size in the document's space, not the turned view's",
     ),
+    Mutation(
+        # Back to what shipped: the button number alone. On macOS a Control+click
+        # is a right-click reported as `button: 0` with `ctrlKey` set, so this is
+        # the defect a reader found --- the selection replaced with an empty one
+        # at the caret, and the context menu opening on nothing a moment later.
+        "viewer: guard the press on the button number alone",
+        "src/lib/viewer.ts",
+        "    if (event.button !== 0 || (isMac() && event.ctrlKey)) return;",
+        "    if (event.button !== 0) return;",
+        "keeps the selection when a Mac reader Control+clicks",
+    ),
+    Mutation(
+        # The same edit, aimed at the second thing the early return buys: with
+        # the guard gone the press also binds `pointermove`, so a reader holding
+        # a menu over their selection has it extended under them.
+        "viewer: let a Control+click start a drag on a Mac",
+        "src/lib/viewer.ts",
+        "    if (event.button !== 0 || (isMac() && event.ctrlKey)) return;",
+        "    if (event.button !== 0) return;",
+        "binds no drag to a Control+click on a Mac",
+    ),
+    Mutation(
+        # Treat Ctrl+click as a right-click everywhere. Reasonable-looking, and
+        # wrong on Windows, where it is an ordinary modified press that must
+        # still start a selection --- a Mac gesture rule applied to a machine
+        # that does not use it.
+        "viewer: refuse a Control+click on every platform",
+        "src/lib/viewer.ts",
+        "    if (event.button !== 0 || (isMac() && event.ctrlKey)) return;",
+        "    if (event.button !== 0 || event.ctrlKey) return;",
+        "starts a selection when a Windows reader Control+clicks",
+    ),
+    Mutation(
+        # Drop the older half of the guard, which was correct from the day it
+        # was written and had no test until the modifier half gained one. This
+        # is the two-finger tap, and it working throughout is why the defect
+        # read as a broken menu rather than a broken press.
+        "viewer: let the second button clear the selection",
+        "src/lib/viewer.ts",
+        "    if (event.button !== 0 || (isMac() && event.ctrlKey)) return;",
+        "    if (isMac() && event.ctrlKey) return;",
+        "keeps the selection when the second button is pressed",
+    ),
 ]
 
 #: Suites this harness runs. Named once: `run_tests` and the name check below

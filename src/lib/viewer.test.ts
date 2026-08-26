@@ -22,6 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setMacSpelling } from "./keys";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { TEXT_CACHE_CHARS, type PageText } from "./text";
@@ -74,7 +75,12 @@ function build(
  * caret flips to the following character, and a screen point converted back
  * through the zoom lands a floating-point step either side of it.
  */
-function press(dom: FakeDom, viewer: Viewer, page: number): void {
+function press(
+  dom: FakeDom,
+  viewer: Viewer,
+  page: number,
+  init: Record<string, unknown> = {},
+): void {
   const at = viewer.screenPoint(page, 12, 15);
   dom.root.dispatch("pointerdown", {
     button: 0,
@@ -82,6 +88,11 @@ function press(dom: FakeDom, viewer: Viewer, page: number): void {
     target: dom.root,
     clientX: at.x,
     clientY: at.y,
+    // Last, so a caller can say which button or modifier this press carried.
+    // Widening the existing helper rather than writing a second one beside it:
+    // a near-copy is what makes an existing mutation's anchor ambiguous, and
+    // `docs/TRAPS.md` records that from the day a third drag was added.
+    ...init,
   });
 }
 
@@ -1263,6 +1274,130 @@ describe("Viewer destinations", () => {
     const viewer = build8();
     viewer.goToDestination(6, 4);
     expect(viewer.position).toEqual({ page: 6, top: 0 });
+    viewer.destroy();
+  });
+});
+
+/**
+ * Which presses are allowed to touch the selection.
+ *
+ * The guard at the top of `onSelectStart` used to read `event.button !== 0`
+ * alone, and its comment already stated the rule it was failing to enforce: a
+ * right-click should not clear what is selected. On macOS a Control+click *is*
+ * a right-click, and WebKit reports it as `button: 0` with `ctrlKey` set --- it
+ * is physically the primary button --- so the commonest way a Mac reader opens
+ * a context menu fell straight through and was handled as an ordinary press.
+ * The selection was replaced with an empty one at the caret, and `contextmenu`
+ * fires afterwards, so the menu then opened on nothing. Reported from use.
+ *
+ * Both halves of the guard are covered here, and neither had a test before:
+ * the button number, which had been correct since it was written, and the
+ * modifier, which is why this file gained a platform seam. The platform matters
+ * rather than the modifier alone --- on Windows a Control+click is an ordinary
+ * modified press and must still start a selection --- so the two branches are
+ * asserted against each other rather than only the one that was broken.
+ */
+describe("Viewer press guard", () => {
+  let dom: FakeDom;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    failingPages = new Set();
+    asked = [];
+    core.invoke.mockReset();
+    core.invoke.mockImplementation((command: string, args: { page: number }) => {
+      if (command !== "page_text") return Promise.resolve(null);
+      asked.push(args.page);
+      return Promise.resolve(pageText());
+    });
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    // Back to what the web view says, so a forced platform cannot leak into
+    // the file's other suites --- `setMacSpelling` is module state.
+    setMacSpelling();
+    warn.mockRestore();
+    dom.restore();
+  });
+
+  /** A viewer with the whole of page 0 selected, which is `"ab"`. */
+  async function selected(): Promise<Viewer> {
+    const viewer = build(dom);
+    viewer.selectPage();
+    await settle(40);
+    expect(viewer.selectedText).toBe("ab");
+    return viewer;
+  }
+
+  it("keeps the selection when a Mac reader Control+clicks", async () => {
+    setMacSpelling(true);
+    const viewer = await selected();
+
+    press(dom, viewer, 0, { ctrlKey: true });
+
+    expect(viewer.selectedText).toBe("ab");
+    viewer.destroy();
+  });
+
+  it("binds no drag to a Control+click on a Mac", async () => {
+    // The half an equality on `selectedText` alone would miss. Returning early
+    // is what leaves `pointermove` unbound; a guard that cleared nothing but
+    // still started the gesture would pass the test above and then extend a
+    // selection the reader is holding a menu over.
+    setMacSpelling(true);
+    const viewer = await selected();
+
+    press(dom, viewer, 0, { ctrlKey: true });
+    movePointer(dom, viewer, 0);
+
+    expect(viewer.selectedText).toBe("ab");
+    viewer.destroy();
+  });
+
+  it("starts a selection when a Windows reader Control+clicks", async () => {
+    // The control that proves the guard asks the platform rather than testing
+    // `ctrlKey` on its own. Ctrl+click is not a right-click here, and a press
+    // that refused to select would be a Mac gesture rule applied to a machine
+    // that does not use it.
+    setMacSpelling(false);
+    const viewer = await selected();
+
+    press(dom, viewer, 0, { ctrlKey: true });
+
+    expect(viewer.selectedText).toBe("");
+    viewer.destroy();
+  });
+
+  it("keeps the selection when the second button is pressed", async () => {
+    // The older half of the guard, which was right and untested. This is the
+    // two-finger tap, and it is why the defect read as a broken menu rather
+    // than a broken press: this gesture worked throughout.
+    setMacSpelling(true);
+    const viewer = await selected();
+
+    press(dom, viewer, 0, { button: 2 });
+
+    expect(viewer.selectedText).toBe("ab");
+    viewer.destroy();
+  });
+
+  it("clears the selection on an unmodified press", async () => {
+    // The control for all four above. Without it, a guard that returned for
+    // *every* press would satisfy three of them, and the one thing a press on
+    // the page is actually for would be gone.
+    setMacSpelling(true);
+    const viewer = await selected();
+
+    press(dom, viewer, 0);
+
+    expect(viewer.selectedText).toBe("");
     viewer.destroy();
   });
 });

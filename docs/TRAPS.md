@@ -8872,6 +8872,68 @@ side of it.** Driving the operating system to drive the application is the wrong
 the application can be asked directly — and the failure mode of the wrong layer is silence, not
 an error.
 
+### A Control+click is the primary button, so a guard on the button number missed the commonest right-click on macOS
+
+`onSelectStart` has opened with the same line since text selection existed, and the comment
+above it stated the rule correctly:
+
+> Only the primary button starts a selection; a right-click will open a context menu once
+> there is one, and should not clear what is selected.
+
+```ts
+if (event.button !== 0) return;
+```
+
+**Reported from use on 2026-08-26**: select a paragraph, Control+click it, and the selection
+vanishes a moment before the context menu opens on nothing.
+
+On macOS a Control+click *is* a right-click, and WebKit reports it as `button: 0` with
+`ctrlKey` set — it is physically the primary button, and the window server synthesises the
+menu from it. Only a two-finger tap and a real second button arrive as `button === 2`. So the
+guard let the commonest way a Mac reader opens a menu through as an ordinary press, which ran
+the whole selection path and reached
+
+```ts
+this.selection = caret ? new Selection(caret) : null;
+```
+
+replacing the reader's selection with an empty one at the caret. `contextmenu` fires *after*
+`pointerdown`, so `App.svelte`'s handler then built `SELECTION_MENU` over nothing.
+
+**The thing that made it read as a defect in the menu rather than in the press is that the
+other gesture worked.** A two-finger tap is `button === 2`, returns at that line, and has
+preserved the selection throughout — so the bug appeared only on one of the two ways to ask
+for the same menu, which is the shape that sends you to look at what differs between the two
+menus rather than at what differs between the two presses. There is no difference between the
+menus; both reach the same listener.
+
+**The fix asks the platform, not the modifier.** Ctrl+click is not a right-click on Windows —
+there it is an ordinary modified press that must still start a selection — so a blanket
+`|| event.ctrlKey` trades one platform's bug for the other's:
+
+```ts
+if (event.button !== 0 || (isMac() && event.ctrlKey)) return;
+```
+
+`isMac()` is the answer `keys.ts` already spells chords from, exported rather than
+re-detected: a second platform detector is a second thing to drift, which this file records
+under two resolvers agreeing with themselves. The cost is that `setMacSpelling`'s name is now
+narrower than what it moves, which is stated where it is defined — there is one answer to
+what platform this is, and a test that forces it forces every rule reading it.
+
+**Neither half of the guard had a test before this.** The button number had been right since
+it was written, and being right is not the same as being covered: deleting it reddened
+nothing. Five tests now cover the four reachable combinations plus the control, and the four
+mutations that prove them are in `mutate_frontend.py`. The control is the one worth naming —
+without a test asserting that an *unmodified* press still clears the selection, a guard that
+returned for every press would satisfy three of the other four, and the one thing pressing on
+the page is for would be gone.
+
+The general shape: **a modifier can change which gesture an event is, not just which command
+it runs.** A guard that classifies an event by one field is only right while no platform
+spells that gesture some other way — and the platform that does is the one nobody tested,
+because the developer's own habit was the two-finger tap.
+
 ### `PdfiumLibraryBindingsAlreadyInitialized` — a helper that binds its own library works alone and fails in company
 
 A probe that renders two files wants a render helper, and the obvious one takes a path and does
