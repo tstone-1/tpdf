@@ -3831,6 +3831,59 @@ MUTATIONS += [
         'return "opens a web link --- not followed";',
         "holds no prose dash outside the separator sentinel",
     ),
+    # ------------------------------------------------------ split a document
+    Mutation(
+        # The boundary. `3` means "the first file ends at page 3", so the cut
+        # is exclusive of the slot it names; making it inclusive moves one page
+        # from every part to the one before it. Every part still opens, the
+        # counts still sum to the document, and only which pages landed where
+        # says so -- which is why the test reads the fixture's rotations rather
+        # than counting.
+        "split: cut inclusively, moving one page into the earlier part",
+        "src/lib/pageranges.ts",
+        "    for (let slot = from; slot < cut; slot += 1) run.push(slot);",
+        "    for (let slot = from; slot <= cut; slot += 1) run.push(slot);",
+        "covers every page exactly once, whatever the cuts",
+    ),
+    Mutation(
+        # Allow a cut after the last page, which writes a final file of no
+        # pages. `lopdf` will serialise an empty page list quite happily.
+        "split: allow a cut after the last page",
+        "src/lib/pageranges.ts",
+        "    if (page === pageCount) {",
+        "    if (false) {",
+        "refuses the last page, because cutting after it makes an empty file",
+    ),
+    Mutation(
+        # Merge a repeated cut instead of refusing it, which is what
+        # `parsePageRange` correctly does for a SET and is wrong for a cut
+        # list: the second `3` names a file with no pages in it.
+        "split: merge a repeated cut rather than refusing it",
+        "src/lib/pageranges.ts",
+        "    if (cuts.has(page)) return { problem: `Page ${page} is named twice` };",
+        "    if (false) return { problem: `Page ${page} is named twice` };",
+        "refuses a repeated cut rather than merging it, because it makes an empty file",
+    ),
+    Mutation(
+        # Read an extract range in the split box. `1-3` would reach `readPage`
+        # as one token, fail there, and tell the reader "1-3" is not a page
+        # number -- sending them to look for a typo that is not there.
+        "split: let a range reach the number parser",
+        "src/lib/pageranges.ts",
+        '    if (piece.includes("-")) {',
+        "    if (false) {",
+        "refuses a range, naming the box the reader meant",
+    ),
+    Mutation(
+        # The command's second line of defence, which is the one that decides
+        # whether files get written: a caller that skipped `problem` reaches
+        # `run` directly, and this is what stops it.
+        "split: act on an argument that did not parse",
+        "src/lib/appcommands.ts",
+        "          if (!split.groups) return;",
+        "          if (false) return;",
+        "refuse to split what does not parse, and reach no action",
+    ),
     # ------------------------------------------------------- docs/PLAN.md
     # The plan names command ids in its prose, and a rename leaves those
     # mentions behind. `PLAN.md:8800` records that happening twice already.

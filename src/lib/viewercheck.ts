@@ -3142,6 +3142,8 @@ async function appCommandChecks(
     isDirty: () => false,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    splitDocument: (groups: number[][]) =>
+      fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
     showProperties: () => fired.push("showProperties"),
   };
@@ -3888,6 +3890,31 @@ async function appCommandChecks(
       id: "file.extractPages",
       argument: "1-2",
       ...shell("extractPages:0+1"),
+      read: () => fired.join(","),
+      unless: twoPages,
+    },
+    {
+      // `1` is the only cut every multi-page corpus can make: cutting after the
+      // first page works on two pages and on 775, where `3` is out of range on
+      // anything shorter than four. The expected value is the *groups*, so a
+      // boundary off by one changes it -- `0|1+2` and `0+1|2` are both two
+      // groups covering three pages, and only the grouping tells them apart.
+      //
+      // Shares `twoPages` with extract above rather than declaring its own: a
+      // one-page document has nowhere to cut, which is the same fact the range
+      // needs and the same skip reason a reader should see.
+      id: "file.splitDocument",
+      argument: "1",
+      // The whole expected value, derived from *this document's* length rather
+      // than pinned: cutting after page 1 of an N-page corpus gives `0` and
+      // then every remaining slot, which is `1+2+3` on a four-page fixture and
+      // 774 numbers on the long one. Derived from `doc.page_count`, which is
+      // the document's own report and not the parser's --- the same source
+      // `twoPages` reads, and the reason this is an assertion rather than a
+      // restatement of what `parseSplitPoints` did.
+      ...shell(
+        `splitDocument:0|${Array.from({ length: doc.page_count - 1 }, (_, at) => at + 1).join("+")}`,
+      ),
       read: () => fired.join(","),
       unless: twoPages,
     },

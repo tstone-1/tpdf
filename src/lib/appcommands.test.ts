@@ -118,6 +118,8 @@ function harness(
     isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    splitDocument: (groups: number[][]) =>
+      fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
     showProperties: () => fired.push("showProperties"),
   };
@@ -403,6 +405,49 @@ describe("the page operations", () => {
     // refused, and this test would then be asserting the refusal.
     expect(registry.run("file.extractPages", "1,3")).toBe(true);
     expect(fired).toEqual(["extractPages:0+2"]);
+  });
+
+  it("split at the cuts a reader named, as groups of slots", () => {
+    // The harness document has three pages. Cutting after page 1 is the
+    // smallest split there is, and it is the one that discriminates: a
+    // boundary off by one gives `0|1+2` reversed into `0+1|2`, and both are
+    // two groups of the right total.
+    const { registry, fired } = harness();
+    expect(registry.run("file.splitDocument", "1")).toBe(true);
+    expect(fired).toEqual(["splitDocument:0|1+2"]);
+  });
+
+  it("refuse to split what does not parse, and reach no action", () => {
+    // `file.extractPages`' second line of defence, for its reason: the
+    // registry refuses a value its `problem` rejected, so a test going through
+    // `registry.run` never executes this guard at all.
+    const { registry, fired } = harness();
+    const command = registry.all().find((c) => c.id === "file.splitDocument");
+    command?.argument?.run("nonsense");
+    expect(fired).toEqual([]);
+  });
+
+  it("report a problem for a cut this document cannot make", () => {
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.splitDocument");
+    expect(command?.argument?.problem("3")).toBe(
+      "Page 3 is the last page, so cutting after it makes nothing",
+    );
+  });
+
+  it("report no problem for a cut this document has", () => {
+    // The other direction, and the one that goes missing silently: a `problem`
+    // answering for everything makes the command unrunnable while every
+    // refusal test above still passes.
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.splitDocument");
+    expect(command?.argument?.problem("2")).toBeNull();
+  });
+
+  it("preview a split as the files it would write", () => {
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.splitDocument");
+    expect(command?.argument?.preview("1")).toBe("2 files: 1 + 2 pages");
   });
 
   it("merge documents through the command, with no value to carry", () => {
@@ -746,6 +791,8 @@ describe("the window shortcuts for editing", () => {
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
+    splitDocument: (groups: number[][]) =>
+      fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
     showProperties: () => fired.push("showProperties"),
     };

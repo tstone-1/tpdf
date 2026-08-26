@@ -65,6 +65,22 @@ export interface Merged {
   files: number;
 }
 
+/**
+ * What `split_document` reports about the files it wrote.
+ *
+ * `changed` is {@link Copied}'s field and means the same thing. `paths` is what
+ * a split has that the other two do not: the reader chose **one** name and got
+ * several, under a numbering rule that lives in `save::split_paths` and that
+ * they never saw. Naming the files is the only way they learn where the
+ * document went, which is why this is a list rather than a count.
+ */
+export interface Split {
+  /** The source changed on disk since it was opened, and these were written anyway. */
+  changed: boolean;
+  /** Every file written, in order. */
+  paths: string[];
+}
+
 /** Mirrors `edits::EditState`. */
 export interface EditState {
   pages: PageView[];
@@ -470,6 +486,36 @@ export class Edits {
       source,
       path,
       slots,
+    });
+  }
+
+  /**
+   * Writes this document's pages to several files, one per group.
+   *
+   * {@link extractPages} repeated, and it changes nothing about this document
+   * for that method's reason: nothing is journalled and {@link dirty} is
+   * untouched, so there is no state to adopt.
+   *
+   * `path` is the name the reader chose, and it is a **stem** rather than a
+   * destination --- `save::split_paths` derives `name-1.pdf`, `name-2.pdf` from
+   * it and the chosen name itself is never written. The refusal that follows
+   * from that is the one only a split has: no derived name may already exist,
+   * because the reader was never asked about those.
+   *
+   * The groups are positions in the current order, each ascending and
+   * deduplicated, and the backend refuses anything else per group rather than
+   * normalising it --- `parseSplitPoints` is the one place that orders them.
+   */
+  async splitDocument(
+    source: string,
+    path: string,
+    groups: number[][],
+  ): Promise<Split> {
+    return await invoke<Split>("split_document", {
+      doc: this.doc,
+      source,
+      path,
+      groups,
     });
   }
 

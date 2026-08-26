@@ -30,6 +30,7 @@
   } from "./lib/markcolors";
   import {
     afterCopy,
+    afterSplit,
     afterMerge,
     afterFailedSave,
     beforeReload,
@@ -356,6 +357,7 @@
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
     extractPages: (slots) => void extractPages(slots),
+    splitDocument: (groups) => void splitDocument(groups),
     mergeDocuments: () => void mergeDocuments(),
     showProperties: () => void showProperties(),
   };
@@ -954,6 +956,37 @@
         await edits.extractPages(openPathName, chosen, slots),
       );
       if (said) say(said);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+
+  /**
+   * Writes the document to several files, one per group of pages.
+   *
+   * `extractPages`' shape, with one difference that decides the dialog: the
+   * reader picks a **stem** and gets numbered siblings, because `split_paths`
+   * derives `name-1.pdf`, `name-2.pdf` and never writes the chosen name itself.
+   * So the default offered here has no page numbers in it, where an extract's
+   * carries `namePages` --- naming a range in a stem would put it in every part.
+   *
+   * **The report is not optional**, unlike an extract's. `afterSplit` always
+   * says something, because the file the reader named is not one of the files
+   * that appeared, and silence would send them looking for it.
+   *
+   * Nothing happens to the open document: no `applyEdit`, no state to adopt.
+   */
+  async function splitDocument(groups: number[][]): Promise<void> {
+    if (!edits || !openPathName || groups.length < 2) return;
+    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+    try {
+      const chosen = await saveDialog({
+        title: "Split document",
+        defaultPath: `${suggested}.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!chosen) return;
+      say(afterSplit(await edits.splitDocument(openPathName, chosen, groups)));
     } catch (e) {
       say(String(e));
     }

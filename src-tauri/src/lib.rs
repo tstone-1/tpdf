@@ -1289,6 +1289,47 @@ async fn extract_pages(
     .map_err(|why| why.message)
 }
 
+/// Writes the working document's pages to several new files, one per group.
+///
+/// [`extract_pages`] repeated, which is what the plan said it would be: each
+/// group becomes its own plan and its own `write_copy`-shaped write, so the
+/// three refusals `save.rs` states apply to every file and are not restated.
+/// `save::write_split` adds one more that only a split needs --- no destination
+/// may already exist --- and its doc comment carries the reason.
+///
+/// **Changes nothing about the open document.** No command is journalled and
+/// there is nothing to undo, which is [`extract_pages`]' and [`merge_documents`]'
+/// property: all three read the document and write elsewhere.
+///
+/// Every plan is built **before** the move onto the pool, for [`save_copy`]'s
+/// reason and one more: a group that names an unknown slot must refuse before
+/// any file is written, not after the first two are on disk.
+///
+/// `groups` are positions in the current order, each deduplicated and ascending,
+/// which `edits::Edits::plan_subset` enforces per group. Nothing here checks
+/// that the groups *partition* the document: `parseSplitPoints` builds them and
+/// a caller sending overlapping groups gets overlapping files, which is a
+/// stranger request than it is a dangerous one.
+#[tauri::command]
+async fn split_document(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    source: String,
+    path: String,
+    groups: Vec<Vec<u32>>,
+) -> Result<save::Split, String> {
+    let plans = groups
+        .iter()
+        .map(|slots| edits.plan_subset(doc, slots))
+        .collect::<Result<Vec<_>, String>>()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        save::write_split(Path::new(&source), &plans, Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("the split did not run: {e}"))?
+    .map_err(|why| why.message)
+}
+
 /// Writes the working document followed by other files' pages, to a new file.
 ///
 /// The open document goes in as the reader has it and the others go in as they
@@ -2502,6 +2543,7 @@ pub fn run() {
             save_document,
             save_copy,
             extract_pages,
+            split_document,
             merge_documents,
             keyboard_positions,
             set_menu,

@@ -5902,9 +5902,11 @@ reads exactly like the strong one, and the whole point of the sweep asserting
 identical name sets is that a skip is visible where a quietly diminished check
 is not.
 
-**Not done:** splitting a document into several files at once. Split
+~~**Not done:** splitting a document into several files at once. Split
 is this operation repeated and needs a second question answered --- how the files
-are named --- rather than new machinery. ~~Merge is its inverse and is the larger
+are named --- rather than new machinery.~~ (Done 2026-08-26 --- `file.splitDocument`.
+The prediction held exactly: no new machinery, and the naming *was* the second
+question. See *Splitting a document* below.) ~~Merge is its inverse and is the larger
 one: nothing in the model creates a page, and `docmodel`'s note has the
 id-allocator property that would need proving first.~~ (Merge done 2026-08-24 ---
 `fb1c15d`, *Merge documents into a new file*, registered as `file.mergeDocuments`.
@@ -5919,6 +5921,57 @@ absences only catches the name the claim guessed"* describes, committed in the s
 session that wrote a trap about it. **Check a capability against the registry, not
 against a name you invented for it:** `node -e` over `appcommands.ts` prints all
 sixty-eight ids in one command, and reading that list is what found this.
+
+#### Splitting a document --- done 2026-08-26
+
+`extract_pages` repeated, which is what the note above predicted, and the prediction
+held: no new machinery, and **the naming was the whole of the second question.**
+
+**The grammar is the cuts, not the files.** `3,7` on ten pages writes 1-3, 4-7, 8-10.
+The numbers are the *last page of a file* rather than the first page of the next,
+because that is how a reader describes a document --- "the report ends on page 7" ---
+and because it makes the first file's boundary sayable at all, which "first page of the
+next" cannot do without naming page 1 and meaning nothing.
+
+**"Every N pages" was the other candidate and is not built.** It collides: a bare `3`
+would have to mean either "cut after page 3" or "files of three pages", and only the
+first composes with a list. A reader wanting fives on twenty pages writes `5,10,15`.
+`parseSplitPoints` records that rather than leaving the next reader to rediscover the
+collision.
+
+**The refusal that only a split needs.** A save goes to the path the reader picked in a
+dialog, so the platform has already asked them about replacing it. A split derives
+`count - 1` further paths that no dialog ever showed, and `write_atomically` finishes
+with a rename, which replaces. So `write_split` checks **every** destination before
+writing **any** --- and the test plants its file at part *two*, because a guard checking
+as it goes would have written part one before noticing, and the property is that nothing
+is written. It is a check and not a guarantee: a file appearing between the check and the
+rename is still replaced, and closing that means committing with `create_new` throughout
+this module. The value is turning "destroys files without saying so" into "refuses".
+
+**The chosen name is never one of the parts.** `report.pdf` gives `report-1.pdf`,
+`report-2.pdf`, `report-3.pdf`. Writing the first part to the chosen name would make the
+set inconsistent --- one unnumbered file and two numbered --- and the unnumbered one is
+the one that reads as the whole document. The cost, stated because it is real: the save
+dialog may have asked about replacing a file this never writes. `afterSplit` therefore
+always reports, where `afterCopy` is silent on success: the file the reader named is not
+among the files that appeared, and silence would send them looking for it.
+
+**The partition test reads rotations, not counts.** `rotated.pdf`'s four pages carry
+0/90/180/270 and are otherwise identical, so the rotations *identify* the pages. A count
+per file is satisfied by a split that wrote the same two pages twice; only reading which
+pages landed where makes an off-by-one in the grouping visible. The mutation that cuts
+inclusively reddens six checks and would redden none written as counts.
+
+**What the two directions of the README check cost, measured on this increment.** The
+`not-built` marker in `README.md` guessed `edit.splitDocument`; this shipped as
+`file.splitDocument`, grouped with extract and merge because all three change nothing
+about the open document. So the absence direction stayed **green** through a capability
+shipping, exactly as it did for stamps, and the classification direction --- every
+registered command named in prose or excluded with a reason --- is what went red. Third
+instance of that pattern, and the first observed prospectively rather than in a sweep.
+
+Nine mutations, four Rust and five frontend, each caught by the test named for it.
 
 #### Highlighting a selection --- done 2026-08-18
 
