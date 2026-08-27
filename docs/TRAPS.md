@@ -16482,3 +16482,43 @@ them in one character, which is the same collapse the four-state row exists to a
 function away.
 
 Paid for on 2026-08-26.
+
+### A tripwire that promised to go red could not, because three carriers answer one needle
+
+`redact-probe` has a check on `text-marked.pdf` whose whole job is to expire. It removes the
+show operator that draws a line, then asserts `verify::scan` still finds the words --- because
+the fixture keeps a second copy of them where a page edit cannot reach. Its doc comment said
+so outright: *the day this module learns to clear `/ActualText`, this check goes red and says
+so, which is the moment to move it into `CASES`*.
+
+That day came on 2026-08-27 and the check stayed green.
+
+The fixture carries the line **three** times, not twice: `/ActualText` on a marked-content
+span, a text annotation's `/Contents`, and `/Info /Title`. The observable is one boolean over
+the whole file --- did the scan find the needle --- and any one of the three satisfies it. So
+the check was never measuring the property list at all; it was measuring the disjunction, and
+the two document-level copies carried it on their own. Clearing the carrier it was written
+to watch changed nothing it could see.
+
+What makes this worth writing down is **how it was found**, which was not by running it. It
+was found by reading `testdata/make_text_pdf.py` to learn where in the file the words are
+before writing the code that removes them. A green tripwire and a tripwire that is not armed
+print the same line, and the moment a tripwire is supposed to fire is precisely the moment
+nobody is looking at it --- the reader is looking at the feature, and a green run beside a
+finished feature reads as confirmation.
+
+The repair is to read the carriers apart rather than to strengthen the sentence. The property
+list must be gone from the **page's content stream**, asserted on the stored stream bytes,
+with a control asserting it was there beforehand; the whole-file scan stays, now standing for
+the annotation and `/Info`, and its failure message names those two so the next expiry says
+which mechanism moved. Both halves go red for their own reason.
+
+Two things generalise. **A tripwire is a check like any other**: ask which mechanisms could
+satisfy its observable, and if more than one can, it is testing their disjunction --- the same
+shape as *"An outcome two mechanisms can produce cannot test either one"*, arriving in the
+one check whose purpose is to notice a change. And **a fixture built to carry several
+instances of one thing needs its checks to name which instance**, because the count that
+makes it a good fixture is exactly what makes a single whole-file question unable to
+discriminate.
+
+Paid for on 2026-08-27.

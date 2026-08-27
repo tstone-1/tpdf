@@ -1043,6 +1043,94 @@ MUTATIONS = [
         "the_two_quote_operators_are_show_operators",
     ),
     Mutation(
+        # Leave the shadow text where it is. The glyphs go and `/ActualText`
+        # keeps a verbatim copy of the words beside the hole they left --- which
+        # is the redaction that reports success and removes nothing a reader
+        # cares about.
+        "redact: leave the shadow text on a span the removal emptied",
+        "src/redact.rs",
+        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;",
+        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &[])?;",
+        "a_span_the_removal_touched_loses_its_copy_of_the_words",
+    ),
+    Mutation(
+        # Clear the carriers after the deletion has renumbered the operations.
+        # One span cannot tell the two orders apart; with two, the second span's
+        # `EMC` has moved by the time the walk reaches it and its copy survives.
+        "redact: clear the carriers after the removal has renumbered the operations",
+        "src/redact.rs",
+        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;\n"
+        "\n"
+        "    for at in positions.into_iter().rev() {\n"
+        "        content.operations.remove(at);\n"
+        "    }",
+        "    for at in positions.clone().into_iter().rev() {\n"
+        "        content.operations.remove(at);\n"
+        "    }\n"
+        "\n"
+        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;",
+        "two_spans_each_holding_a_removed_line_both_lose_their_shadow_text",
+    ),
+    Mutation(
+        # Mark only the innermost open span. An outer `/ActualText` restates
+        # everything inside it, so the removed line stays in the file one level
+        # up.
+        "redact: mark only the innermost span rather than every open one",
+        "src/redact.rs",
+        "            for frame in &mut open {\n                frame.1 = true;\n            }",
+        "            if let Some(frame) = open.last_mut() {\n                frame.1 = true;\n            }",
+        "an_enclosing_span_loses_its_shadow_text_as_well",
+    ),
+    Mutation(
+        # Drop a span the stream never closed. Malformed input, and the carrier
+        # then survives in exactly the file least likely to be looked at twice.
+        "redact: drop a marked-content span the stream never closed",
+        "src/redact.rs",
+        "    for (start, inside) in open {",
+        "    for (start, inside) in open.into_iter().take(0) {",
+        "a_span_that_was_never_closed_still_loses_its_shadow_text",
+    ),
+    Mutation(
+        # Count the key and leave it where it is. `Removed::carriers` then reports
+        # the work as done while every word is still in the stream -- which is the
+        # difference between an accounting observable and the thing it accounts
+        # for, and the probe's own two assertions separate the same pair.
+        "redact: count a shadow-text key without removing it",
+        "src/redact.rs",
+        "                    if properties.remove(key).is_some() {\n                        cleared += 1;\n                    }",
+        "                    if properties.has(key) {\n                        cleared += 1;\n                    }",
+        "a_span_the_removal_touched_loses_its_copy_of_the_words",
+    ),
+    Mutation(
+        # Clear the famous key and leave its two siblings, which hold the same
+        # words in the same dictionary for the same reason.
+        "redact: clear only /ActualText and leave /Alt and /E",
+        "src/redact.rs",
+        "const SHADOW_TEXT: [&[u8]; 3] = [b\"ActualText\", b\"Alt\", b\"E\"];",
+        "const SHADOW_TEXT: [&[u8]; 1] = [b\"ActualText\"];",
+        "every_shadow_text_key_goes_not_just_the_famous_one",
+    ),
+    Mutation(
+        # Never refuse a shared property list, so a file is written with the
+        # words still in it -- or, worse, a later edit strips a dictionary other
+        # pages share.
+        "redact: pass over a shared property list that carries the words",
+        "src/redact.rs",
+        "                    if let Some(key) = SHADOW_TEXT.into_iter().find(|key| shared.has(key)) {",
+        "                    if let Some(key) = SHADOW_TEXT.into_iter().find(|_key| false) {",
+        "a_shared_property_list_carrying_the_words_refuses_and_removes_nothing",
+    ),
+    Mutation(
+        # Refuse every named property list rather than only the ones carrying a
+        # key. `/OC /MC0 BDC` is optional content on nearly every layered
+        # drawing and carries no text, so this makes those pages unredactable.
+        "redact: refuse every named property list, carrier or not",
+        "src/redact.rs",
+        "                    if let Some(key) = SHADOW_TEXT.into_iter().find(|key| shared.has(key)) {",
+        "                    if let Some(key) = SHADOW_TEXT.into_iter().find(|_key| true) {",
+        "a_shared_property_list_with_no_shadow_text_does_not_refuse",
+    ),
+    Mutation(
         # Trust the corners' order. A region arriving with either pair the other
         # way round then overlaps nothing at all, and the redaction quietly
         # removes nothing.

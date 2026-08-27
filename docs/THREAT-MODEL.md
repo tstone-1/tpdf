@@ -1291,10 +1291,14 @@ could not take becomes a reason. So the failure mode this section would otherwis
 reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
 omission at a call site.
 
-**Residual, and it is large enough to state plainly.** This removes **page text and nothing
-else**. Every carrier in `docs/PLAN.md` §6's table survives: annotations, form values, XMP and
-DocInfo metadata, the outline, page labels, embedded files, and any prior incremental
-revision, since a copy is a serialisation rather than a sanitation (§T6.1). An image or a
+**Residual, and it is large enough to state plainly.** This removes **the page's own content
+and nothing else** --- the show operators, and since 2026-08-27 the shadow text in the
+marked-content spans they sit inside (`/ActualText`, `/Alt`, `/E`), which is one row of
+`docs/PLAN.md` §6's carrier table and one of that row's two homes. Every other carrier in
+that table survives: the same keys hanging off a structure element in `/StructTreeRoot`,
+annotations, form values, XMP and DocInfo metadata, the outline, page labels, embedded files,
+and any prior incremental revision, since a copy is a serialisation rather than a sanitation
+(§T6.1). An image or a
 vector drawing inside the region is reported and left. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
 a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is
@@ -1914,9 +1918,11 @@ which is what makes it evidence rather than a milestone.
     **What is not closed**, and it is the larger half: this collects what *this rewrite*
     orphaned. A document that arrived with orphans in it still comes back with them (that is
     §T6.1's position, and risk 15 above), and nothing here touches the carriers `docs/PLAN.md`
-    §6 lists --- `/ActualText`, an annotation's appearance stream, a form field's value, a
-    thumbnail. "Removed" means removed *from the page tree and everything only it held*, not
-    yet from the document.
+    §6 lists --- an annotation's appearance stream, a form field's value, a thumbnail, and the
+    structure tree's own copy of a page's alternate text. "Removed" means removed *from the
+    page tree and everything only it held*, not yet from the document. (`/ActualText` inside a
+    content stream is cleared by *Redact and save as* since 2026-08-27. That is a different
+    command on a different path, and it does not make a save a sanitation.)
 
 17. **A cropped page hides content and does not remove it** (§T6.6), added 2026-08-18.
     Everything outside the crop box is still in the saved file, still extractable, and still

@@ -78,6 +78,28 @@ means removing the instruction that drew it, so a word beside the one you
 marked goes with it. That is deliberate. The alternative is re-encoding the
 surviving text, which can silently draw the wrong glyphs.
 
+### Changed: redaction also removes the words a tagged document keeps beside them
+
+A PDF that has been tagged for accessibility writes each line twice --- once as the
+glyphs you see, and once as text a screen reader speaks. Removing the drawing left
+that second copy sitting in the file, in the same place, word for word.
+
+**Redact and save as** now takes it too, along with the two related fields that can
+hold the same words. If a marked line is inside a tagged block, the whole block's
+alternate text goes --- the same rule that already makes tpdf remove the whole line
+rather than part of it.
+
+There is one case it will not do, and it says so instead of doing it badly. Some
+documents share one block of that text between many pages, and stripping it would
+change every page that uses it. When that happens nothing is written and you are told
+which block it was.
+
+**Where the words can still be.** This is the copy inside the page. A comment's text,
+a form field's value, the document's title, the outline, and a further copy the
+accessibility structure can keep elsewhere are all untouched --- so redacting a tagged
+document will usually still report that it could not be proved clean, and name what it
+found. That is the honest answer rather than a missing one.
+
 ### Fixed: a highlight could stop showing the words it covers after a deletion
 
 The comments panel fills in the words under a highlight that was left blank, a

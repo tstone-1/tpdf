@@ -2005,10 +2005,13 @@ asserted through **two independent readers** --- `verify::scan` over the bytes a
 re-extracting the written file. The survivor is the control: a scan that finds nothing
 because it cannot look is the failure this repository has recorded from several directions.
 
-What is **not** built: in-place apply and the journal truncation; the carriers beyond page
-text --- annotations, form values, metadata, the outline, embedded files --- every one of
-which §6's table names and none of which this removes; and a region over an image, which is
-reported and left.
+What is **not** built: in-place apply and the journal truncation; the carriers beyond the
+page's own content stream --- annotations, form values, metadata, the outline, embedded
+files, and the structure tree's own copy of the shadow text --- every one of which §6's
+table names and none of which this removes; and a region over an image, which is reported
+and left. The marked-content half of the shadow-text row **is** cleared since 2026-08-27;
+that is one row of the table and one of that row's two homes, and the subsection below says
+what it does and does not reach.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
@@ -2044,9 +2047,69 @@ The over-redaction control is the half that keeps the rest honest: a word on **a
 must survive, because a removal that emptied the page would pass every other check perfectly.
 
 What is not built here: images and paths (reported, not removed), annotations, form values,
-metadata, the outline, and everything else in the carrier table above. **A command reaches
-this now** --- see the section above, which is what turned this from a primitive into a
-feature.
+metadata, the outline, and everything else in the carrier table above that lives outside the
+page's content stream. The shadow text *inside* it is cleared --- see below. **A command
+reaches this now** --- see the section above, which is what turned this from a primitive into
+a feature.
+
+#### The carriers inside the content stream --- done 2026-08-27
+
+The show operator is the drawing; `/ActualText` is the words. A tagged document writes the
+line a second time into the marked-content span around it --- it is what a screen reader
+speaks and what a well-behaved extractor prefers over the glyphs --- and spike 0.3 measured
+it surviving a surgical removal on `text-marked.pdf` while every pixel-based check passed.
+`redact::clear_shadow_text` takes it, along with `/Alt` and `/E`, which are the same carrier
+under two other names in the same dictionary.
+
+**Touched, not emptied**, which is route B's own rule one level up. Route B removes the
+*whole* text-showing operation containing any redacted glyph, on the grounds that a partial
+re-emission is the thing that goes silently wrong; a span whose `/ActualText` restates a line
+of which one word went is that case again. Keeping it would leave a verbatim copy of the
+removed words in the file. Losing the alternate text of the words that survive is the
+visible, honest cost, exactly as eating the rest of the line is.
+
+**An enclosing span counts.** Spans nest, and an outer `/ActualText` restates everything
+inside it, so every span open at the moment of a removal is cleared rather than only the
+innermost.
+
+**The clearing runs before the deletion, and that is load-bearing rather than tidy.** A span
+is addressed by where its `BDC` sits among the operations, and removing an operation
+renumbers every one after it. With one span the two orders agree and no test can tell them
+apart; with two, the second span's `EMC` has moved down by the time the walk reaches it, the
+frame is popped before the removal inside it is seen, and its copy of the words survives. The
+mutation is a straight swap of the two blocks, and it reddens exactly the test written for
+it --- a two-span fixture, because a one-span fixture is where the claim holds by
+construction.
+
+**A shared property list is refused rather than edited.** The other spelling of a span's
+property list is a *name* into `/Resources /Properties`, and that dictionary may be used by
+any number of other pages --- which is §6's clone-on-write rule, and cloning it is a
+page-resource edit this does not do. So where the named dictionary carries one of the three
+keys, the answer is the correspondence guard's: the redaction did not happen, and nothing was
+written. **The refusal is keyed on the key and not on the name**, which is not fastidiousness:
+`/OC /MC0 BDC` is optional content, it is on nearly every layered drawing, it carries no text
+at all, and a refusal keyed on the name would make those pages unredactable. Both directions
+have a test, and the over-refusal control is the one that would have shipped the damage.
+
+**What this is not.** One row of the carrier table, and one of that row's two homes. The same
+keys hang off a **structure element** in `/StructTreeRoot`, reached by `/MCID` rather than by
+nesting, and those are untouched --- as are an annotation's `/Contents`, a form field's value,
+`/Info`, the outline, and everything else outside the page's content stream.
+`text-marked.pdf` holds two of them on purpose, and `redact-probe` goes on measuring that
+they are still there, which is what keeps *not verified* the honest answer for a real tagged
+document.
+
+**The tripwire this was meant to trip could not fire, and that is the finding rather than the
+feature.** `redact-probe`'s carrier check asserted one thing --- that `verify::scan` still
+finds the word after the removal --- and its own doc comment promised that the day
+`/ActualText` was cleared it would go red and say so. It stayed green. The fixture carries
+the line three times, the check's observable is a single boolean over the whole file, and the
+two document-level copies satisfy it on their own; nothing about the property list was ever
+being measured. It reads the carriers apart now: the key must be **gone from the content
+stream**, with a control proving it was there, while the whole-file scan keeps watching for
+the annotation and `/Info` and names them when they go. `docs/TRAPS.md` has the entry, and
+the generalisation is about tripwires rather than about this one --- the day a tripwire should
+fire is the day nobody is looking at it.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 
