@@ -100,6 +100,26 @@ accessibility structure can keep elsewhere are all untouched --- so redacting a 
 document will usually still report that it could not be proved clean, and name what it
 found. That is the honest answer rather than a missing one.
 
+### Changed: redaction also removes a comment sitting on the words
+
+A comment about a passage quotes the passage --- that is what a comment is. Until
+now the words came off the page and the note about them stayed, displayed by every
+reader that opens the file, whether or not it was hidden.
+
+**Redact and save as** now takes any comment whose box overlaps a region you
+marked, along with its popup and every reply to it. A comment elsewhere on the
+page stays: your other notes are not part of what you asked to remove.
+
+A comment tpdf cannot place --- one whose box is missing or malformed --- is taken
+rather than kept. It is not being shown by anything, and keeping what cannot be
+located would decide the safety question by giving up on it.
+
+Two things worth knowing. A mark you added yourself in this session is a comment on
+the page by the time this runs, so one over the region goes with the rest --- the
+file being written is a copy, and the document you have open keeps it. And what goes
+is the comment itself, not just its place in the page's list: it is removed from
+everywhere in the file that named it, including a form's field list.
+
 ### Fixed: a highlight could stop showing the words it covers after a deletion
 
 The comments panel fills in the words under a highlight that was left blank, a

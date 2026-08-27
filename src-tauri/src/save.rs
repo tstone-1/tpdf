@@ -2008,7 +2008,7 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
     // a turn and a crop write entries in the page dictionary. Not one of them
     // touches a content stream, which is the property that makes the ordinals
     // still true here.
-    apply_redactions(&mut doc, &pages, &plan.redactions)?;
+    let redacted = apply_redactions(&mut doc, &pages, &plan.redactions)?;
 
     // **Only what this rewrite orphaned, and only when it orphaned something.**
     // `drop_pages` unlinks a page object and every reference to it, and
@@ -2032,7 +2032,12 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
     // Costs what the print path's identical call costs: spike 0.4 measured the
     // sweep at 3.6 ms over 2,445 objects and 70.3 ms over 25,583, against 4.6 ms
     // and 66.6 ms for the plain save it is added to.
-    if !dropped.is_empty() || moved {
+    //
+    // A redaction that took an annotation joins them, and for the same reason
+    // measured for pages: `forget` unlinks the annotation and every reference to
+    // it, which leaves its appearance stream --- a drawing of the very words that
+    // went --- reachable from nothing and written out regardless.
+    if !dropped.is_empty() || moved || redacted.annots > 0 {
         crate::sweep::collect(&mut doc)?;
     }
 
@@ -2104,7 +2109,7 @@ fn apply_redactions(
     doc: &mut Document,
     pages: &[lopdf::ObjectId],
     redactions: &[crate::edits::PlannedRedaction],
-) -> Result<usize, Refusal> {
+) -> Result<Redacted, Refusal> {
     // **Every entry checked before any of them is acted on**, which is the half
     // that is about damage rather than about correctness. A refusal discovered
     // half way through leaves a document with some pages redacted and some not,
@@ -2132,13 +2137,42 @@ fn apply_redactions(
         targets.push((*page, redaction));
     }
 
-    let mut removed = 0usize;
+    let mut done = Redacted::default();
     for (page, redaction) in targets {
         let took = crate::redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
             .map_err(Refusal::from)?;
-        removed += took.removed;
+        done.shows += took.removed;
+
+        // **The annotations, and every reference to them.** An annotation over
+        // the region is `docs/PLAN.md` §6's *Annotations* row: its `/Contents`
+        // is a comment about the words, routinely quoting them, and every reader
+        // goes on showing it after the drawing is gone. `redact::covered_annots`
+        // decides which, including the popups and replies that hang off them.
+        //
+        // `pagetree::forget` rather than pruning `/Annots`, because pruning the
+        // one list a caller has in mind is what leaves the object alive: a
+        // structure element's `/OBJR` or an AcroForm's `/Fields` names it too,
+        // and an annotation still reachable is an annotation still written.
+        let taken = crate::redact::covered_annots(doc, page, &redaction.areas);
+        if !taken.is_empty() {
+            done.annots += taken.len();
+            crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;
+        }
     }
-    Ok(removed)
+    Ok(done)
+}
+
+/// What a redaction took out of the document.
+///
+/// Two counts rather than one, because they are two carriers and the caller acts
+/// on the second: an annotation that went may have left an appearance stream
+/// reachable from nothing, which is what the sweep is for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Redacted {
+    /// Text-showing operations deleted from content streams.
+    shows: usize,
+    /// Annotations removed, dependents included.
+    annots: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
@@ -8205,6 +8239,7 @@ mod tests {
             source: 0,
             shows: vec![0],
             text_objects: 4,
+            areas: Vec::new(),
         }];
         assert!(
             !plan.is_identity(),
@@ -8235,6 +8270,7 @@ mod tests {
             source: 0,
             shows: vec![0],
             text_objects: 4,
+            areas: Vec::new(),
         }];
         assert!(
             !both.only_adds_marks(),
@@ -8257,17 +8293,169 @@ mod tests {
                 source: 0,
                 shows: vec![0],
                 text_objects: 1,
+                areas: Vec::new(),
             },
             crate::edits::PlannedRedaction {
                 source: 0,
                 shows: vec![0],
                 text_objects: 1,
+                areas: Vec::new(),
             },
         ];
         let mut doc = Document::with_version("1.7");
         let why = apply_redactions(&mut doc, &[(1, 0)], &twice)
             .expect_err("one page named twice must be refused");
         assert!(why.message.contains("named twice"), "{why}");
+    }
+
+    /// The annotation carrier, through the writer rather than through the walk.
+    ///
+    /// `redact::covered_annots` decides *which* annotations go and is tested
+    /// there against rectangles a test wrote down. This is the other half, and
+    /// it is the half a walk cannot answer: that the writer actually removes
+    /// them, and removes the object rather than the one reference it had in
+    /// mind. The control is the annotation away from the region --- a writer
+    /// that emptied `/Annots` would satisfy the first assertion perfectly.
+    #[test]
+    fn an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not() {
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let content = doc.add_object(Stream::new(dictionary! {}, b"BT (secret) Tj ET".to_vec()));
+        let over = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![100.into(), 100.into(), 200.into(), 120.into()],
+            "Contents" => Object::string_literal("about the secret"),
+        });
+        let away = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![400.into(), 400.into(), 500.into(), 420.into()],
+            "Contents" => Object::string_literal("about something else"),
+        });
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Annots" => vec![Object::Reference(over), Object::Reference(away)],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+
+        let done = apply_redactions(
+            &mut doc,
+            &[page],
+            &[crate::edits::PlannedRedaction {
+                source: 0,
+                shows: vec![0],
+                text_objects: 1,
+                areas: vec![[90.0, 90.0, 210.0, 130.0]],
+            }],
+        )
+        .expect("the plan is applicable");
+
+        assert_eq!(done.shows, 1);
+        assert_eq!(done.annots, 1, "one annotation, not both and not none");
+        assert!(
+            doc.get_object(over).is_err(),
+            "the annotation over the region is gone from the document"
+        );
+        assert!(
+            doc.get_object(away).is_ok(),
+            "and the reader's other comment is not"
+        );
+        // The reference as well as the object: an entry left on `/Annots`
+        // pointing at nothing is a different defect wearing the same result.
+        let Ok(Object::Array(entries)) = doc.get_dictionary(page).and_then(|d| d.get(b"Annots"))
+        else {
+            panic!("the page still has an /Annots array")
+        };
+        assert_eq!(entries.len(), 1, "{entries:?}");
+    }
+
+    /// The reference the caller was not thinking of, which is the whole reason
+    /// this goes through `pagetree::forget`.
+    ///
+    /// A page's `/Annots` is one of several places an annotation is named. A
+    /// structure element's `/OBJR`, an AcroForm's `/Fields` and another
+    /// annotation's `/IRT` all name it too, and an object still reachable is an
+    /// object still written --- so pruning the one array a caller has in mind
+    /// removes the annotation from the *page* and leaves the comment in the
+    /// *file*. This plants a second reference in the catalog and asserts both
+    /// ends: the object is gone, and nothing still points at it.
+    #[test]
+    fn a_redacted_annotation_loses_the_references_that_are_not_on_the_page() {
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let content = doc.add_object(Stream::new(dictionary! {}, b"BT (secret) Tj ET".to_vec()));
+        let over = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Widget",
+            "Rect" => vec![100.into(), 100.into(), 200.into(), 120.into()],
+            "Contents" => Object::string_literal("about the secret"),
+        });
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Annots" => vec![Object::Reference(over)],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        // The second name for it: an AcroForm field list, which is exactly where
+        // a widget annotation is named twice in every form in existence.
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "AcroForm" => dictionary! { "Fields" => vec![Object::Reference(over)] },
+        });
+        doc.trailer.set("Root", catalog);
+
+        apply_redactions(
+            &mut doc,
+            &[page],
+            &[crate::edits::PlannedRedaction {
+                source: 0,
+                shows: vec![0],
+                text_objects: 1,
+                areas: vec![[90.0, 90.0, 210.0, 130.0]],
+            }],
+        )
+        .expect("the plan is applicable");
+
+        assert!(doc.get_object(over).is_err(), "the object is gone");
+        let Ok(form) = doc
+            .get_dictionary(catalog)
+            .and_then(|root| root.get(b"AcroForm"))
+            .and_then(Object::as_dict)
+        else {
+            panic!("the catalog still has an /AcroForm")
+        };
+        let Ok(Object::Array(fields)) = form.get(b"Fields") else {
+            panic!("/Fields is still an array")
+        };
+        assert!(
+            fields.is_empty(),
+            "the other reference to it went too: {fields:?}"
+        );
     }
 
     /// A redaction naming a page the plan does not keep is refused.
@@ -8284,6 +8472,7 @@ mod tests {
             source: 4,
             shows: vec![0],
             text_objects: 1,
+            areas: Vec::new(),
         }];
         let mut doc = Document::with_version("1.7");
         let why = apply_redactions(&mut doc, &[(1, 0)], &past)
@@ -8302,7 +8491,7 @@ mod tests {
         let mut doc = Document::with_version("1.7");
         assert_eq!(
             apply_redactions(&mut doc, &[(1, 0)], &[]).expect("no redactions is not a refusal"),
-            0
+            Redacted::default()
         );
     }
 

@@ -35,6 +35,22 @@ const REMOVE: &str = "4711-0815";
 /// On another line, so route B's collateral does not take it.
 const KEEP: &str = "Sphinx of black quartz";
 
+/// The carrier fixture, and the two markers that tell its annotations apart.
+///
+/// `text-marked.pdf` carries the same line four times --- see
+/// `testdata/make_text_pdf.py`. Two of those copies are annotations, and the
+/// whole point of the pair is that a check can say **which** one went: one sits
+/// squarely over the target line, the other nowhere near it. Asking whether the
+/// secret is still somewhere in the file cannot distinguish them, which is the
+/// mistake `redact-probe`'s own carrier check made until 2026-08-27.
+const CARRIER_FILE: &str = "text-marked.pdf";
+/// In the annotation over the target line. Must go.
+const ANNOT_OVER: &str = "ANNOT-OVER";
+/// In the annotation away from every line. Must stay --- a reader's other
+/// comments are not theirs to lose, and a rule that took every annotation on the
+/// page would pass the first check perfectly.
+const ANNOT_AWAY: &str = "ANNOT-AWAY";
+
 fn main() -> ExitCode {
     let library = std::env::args()
         .skip_while(|a| a != "--library")
@@ -152,6 +168,8 @@ fn run(library: &Path) -> Result<bool, String> {
         read_back.contains(KEEP),
     );
 
+    ok &= annotations(bindings, &root)?;
+
     println!(
         "{}",
         if ok {
@@ -159,6 +177,83 @@ fn run(library: &Path) -> Result<bool, String> {
         } else {
             "[FAIL] see above"
         }
+    );
+    Ok(ok)
+}
+
+/// The annotation carrier: a comment over the words goes, the other one stays.
+///
+/// `docs/PLAN.md` §6's *Annotations* row, on the path a reader takes. A sticky
+/// note anchored on the text being redacted quotes it --- that is what a comment
+/// about a passage is --- and every reader goes on displaying it after the
+/// drawing is gone. Both annotations here are hidden (`/F 2`), which is the case
+/// no visual check can reach.
+///
+/// **Three assertions and the middle one is the control.** The marker over the
+/// line must go; the marker away from it must stay; and the secret itself must
+/// still be found, because `/Info /Title` and the surviving annotation both hold
+/// it and this command does not touch either. If that last one ever flips, the
+/// document-level carriers are being cleared too and this probe needs rewriting
+/// rather than celebrating.
+fn annotations(
+    bindings: &'static dyn pdfium_render::prelude::PdfiumLibraryBindings,
+    root: &Path,
+) -> Result<bool, String> {
+    let source = root.join("testdata").join(CARRIER_FILE);
+    if !source.exists() {
+        println!("[SKIP] {CARRIER_FILE} is not built");
+        return Ok(true);
+    }
+    let document = OpenDocument::open(bindings, &source, None).map_err(|why| why.reason)?;
+    let region = {
+        let page = document.page(0).map_err(|e| e.to_string())?;
+        let extracted = text::extract(&page).map_err(|e| e.to_string())?;
+        box_of(&extracted, REMOVE)
+            .ok_or_else(|| format!("{REMOVE} is not on page 1 of {CARRIER_FILE}"))?
+    };
+    let plans = render::redaction_plans_of(&document, 0, &[region])?;
+    let plan = plans.first().ok_or("no plan came back for one region")?;
+
+    let before = std::fs::read(&source).map_err(|why| why.to_string())?;
+    let seen = verify::scan(
+        &before,
+        &[ANNOT_OVER.to_string(), ANNOT_AWAY.to_string()],
+        None,
+    );
+    // The control for the controls: both markers have to be in the file to begin
+    // with, or neither assertion below can fail.
+    let mut ok = check(
+        "the fixture carries both annotation markers to begin with",
+        seen.found.contains(ANNOT_OVER) && seen.found.contains(ANNOT_AWAY),
+    );
+
+    let out = std::env::temp_dir().join("tpdf-redact-annots-probe.pdf");
+    let _ = std::fs::remove_file(&out);
+    let count = document.page_count();
+    save::write_copy(&source, &plan_for(count, plan), &out).map_err(|why| why.message)?;
+    let bytes = std::fs::read(&out).map_err(|why| why.to_string())?;
+    println!("[..] wrote {} bytes to {}", bytes.len(), out.display());
+
+    let report = verify::scan(
+        &bytes,
+        &[
+            ANNOT_OVER.to_string(),
+            ANNOT_AWAY.to_string(),
+            REMOVE.to_string(),
+        ],
+        None,
+    );
+    ok &= check(
+        &format!("the annotation over the words is gone ({ANNOT_OVER})"),
+        !report.found.contains(ANNOT_OVER),
+    );
+    ok &= check(
+        &format!("the annotation away from them is not ({ANNOT_AWAY})"),
+        report.found.contains(ANNOT_AWAY),
+    );
+    ok &= check(
+        &format!("and {REMOVE:?} is still in the file, which /Info and that annotation keep"),
+        report.found.contains(REMOVE),
     );
     Ok(ok)
 }
@@ -293,6 +388,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             source: 0,
             shows: region.shows.clone(),
             text_objects: region.text_objects,
+            areas: vec![region.area],
         }],
     }
 }

@@ -158,7 +158,10 @@ impl Unhandled {
 /// is at least what the reader selected and commonly the rest of the line. The
 /// frontend computes the covered words itself, from geometry it already holds;
 /// what it cannot compute is this.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+// `PartialEq` without `Eq`, because `area` is floats. Nothing compares two of
+// these for equality outside a test, and an `Eq` on a type holding an `f32` is
+// the wrong promise rather than a missing convenience.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RegionPlan {
     /// Which of the page's text-showing operations the removal would delete.
     ///
@@ -174,6 +177,21 @@ pub struct RegionPlan {
     /// when this disagrees with the operators `lopdf` finds, and the caller that
     /// applies a plan has no other way to learn it.
     pub text_objects: usize,
+    /// The region itself, in the page's own absolute space.
+    ///
+    /// **Carried because the writer cannot work it out**, and a second attempt
+    /// at it would be a second geometry to disagree with this one. The reader
+    /// drew a rectangle on a displayed page; turning that into page coordinates
+    /// needs the page's `/Rotate` and its crop box, which is `render`'s
+    /// `crop_from_display` and is where the one mapping lives.
+    ///
+    /// Measured on `links-cropped.pdf` rather than assumed, because the two
+    /// spellings look alike: `FPDFPageObj_GetBounds` answers in the page's
+    /// **absolute** space, media-box origin --- the same space an annotation's
+    /// `/Rect` is in --- while `FPDF_GetPageWidthF` answers the **crop** box's
+    /// size. A page object drawn at y 722 under `/CropBox [50 50 545 742]` comes
+    /// back at 716.98..739.47, not at 672. See `docs/TRAPS.md`.
+    pub area: Rect,
     /// What those operations draw, in the page's own object order.
     ///
     /// One string rather than one per operation: a row shows a line and a
@@ -307,6 +325,152 @@ fn overlaps(a: Rect, b: Rect) -> bool {
     let a = normalised(a);
     let b = normalised(b);
     a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+/// Which of a page's annotations a set of regions covers.
+///
+/// **A second carrier, and a different kind of one.** [`covered`] answers about
+/// the page's own drawing instructions; this answers about the objects hanging
+/// off `/Annots`, which is `docs/PLAN.md` §6's *Annotations* row --- a comment's
+/// `/Contents`, its rich text, its author and subject, its appearance stream,
+/// its popup and its replies. A sticky note anchored on the words a reader is
+/// redacting routinely quotes them, and it goes on being displayed by every
+/// reader afterwards.
+///
+/// `areas` are the regions in the page's own absolute space, as
+/// [`RegionPlan::area`] carries them. An annotation is taken when its `/Rect`
+/// overlaps any of them under the same strict rule [`covered`] uses, so an
+/// annotation flush against a region is not eaten.
+///
+/// **An annotation whose `/Rect` cannot be read is taken as well**, and that is
+/// the destructive direction on purpose. It is the one that cannot leave the
+/// words behind, it matches route B's posture everywhere else in this module,
+/// and an annotation with no readable rectangle is not being displayed by
+/// anything anyway. The alternative --- keep what you cannot place --- decides a
+/// safety question by giving up on it.
+///
+/// **Dependents go with it**, transitively: an annotation's `/Popup`, and any
+/// annotation whose `/IRT` points at one being taken. A reply carries its own
+/// `/Contents` and is a copy of the conversation about the words; leaving the
+/// reply and taking the note it answers is the worst of both.
+///
+/// This does not decide anything about tpdf's own marks. A mark the reader added
+/// in this session is an annotation on the page by the time this runs, and if it
+/// is over the region it goes with the rest --- the file being written is a copy,
+/// so the open document keeps it.
+#[must_use]
+pub fn covered_annots(doc: &Document, page: ObjectId, areas: &[Rect]) -> Vec<ObjectId> {
+    let entries = annots_of(doc, page);
+    let mut taken: Vec<ObjectId> = Vec::new();
+    for id in &entries {
+        let Ok(annot) = doc.get_dictionary(*id) else {
+            // An entry naming no dictionary is not an annotation this can place
+            // or read, so it is taken for the reason above.
+            taken.push(*id);
+            continue;
+        };
+        match rect_of(doc, annot) {
+            Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)) => {}
+            _ => taken.push(*id),
+        }
+    }
+
+    // The dependents, to a fixed point. A chain of replies is a chain of copies
+    // of the same conversation, and cutting it half way leaves the half that
+    // quotes what went.
+    loop {
+        let mut grew = false;
+        for id in &entries {
+            if taken.contains(id) {
+                // Its own popup, which is a separate object with its own
+                // `/Contents` in most producers' output.
+                let Ok(annot) = doc.get_dictionary(*id) else {
+                    continue;
+                };
+                if let Ok(popup) = annot.get(b"Popup").and_then(Object::as_reference) {
+                    if !taken.contains(&popup) {
+                        taken.push(popup);
+                        grew = true;
+                    }
+                }
+                continue;
+            }
+            let Ok(annot) = doc.get_dictionary(*id) else {
+                continue;
+            };
+            let replies_to_taken = annot
+                .get(b"IRT")
+                .and_then(Object::as_reference)
+                .is_ok_and(|parent| taken.contains(&parent));
+            if replies_to_taken {
+                taken.push(*id);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    taken
+}
+
+/// The object ids on a page's `/Annots`, in whichever spelling it uses.
+///
+/// `/Annots 12 0 R` and `/Annots [5 0 R]` are both common and `save.rs` already
+/// keeps them apart for the incremental writer's sake. Here the two are the same
+/// question --- which annotations does this page have --- and an entry that is
+/// not a reference is skipped, because an inline annotation dictionary has no id
+/// to name and nothing to remove.
+fn annots_of(doc: &Document, page: ObjectId) -> Vec<ObjectId> {
+    let Ok(dictionary) = doc.get_dictionary(page) else {
+        return Vec::new();
+    };
+    let Ok(entries) = dictionary
+        .get(b"Annots")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_array)
+    else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| entry.as_reference().ok())
+        .collect()
+}
+
+/// An annotation's `/Rect`, or `None` when it is not four finite numbers.
+///
+/// **Deliberately not normalised here**, and that was measured rather than
+/// decided. PDF 32000-1 §12.5.2 permits the corners either way round and says
+/// the consumer normalises them, so the first version of this did --- and the
+/// mutation written to prove that call mattered SURVIVED, because [`overlaps`]
+/// normalises *both* of its arguments. The call changed nothing, which makes it
+/// the shape `docs/TRAPS.md` records as a mutation that is a no-op: the edit
+/// lands, the build passes, and the verdict is correct.
+///
+/// So the normalisation happens in exactly one place, which is where the
+/// comparison is. `an_annotation_whose_corners_are_the_other_way_round_is_still_found`
+/// still pins the property --- it is a statement about `covered_annots`, and what
+/// answers it is `overlaps`.
+fn rect_of(doc: &Document, annot: &Dictionary) -> Option<Rect> {
+    let values = annot
+        .get(b"Rect")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_array)
+        .ok()?;
+    if values.len() != 4 {
+        return None;
+    }
+    let mut out = [0f32; 4];
+    for (at, value) in values.iter().enumerate() {
+        let (_, value) = doc.dereference(value).ok()?;
+        let number = value.as_float().ok()?;
+        if !number.is_finite() {
+            return None;
+        }
+        out[at] = number;
+    }
+    Some(out)
 }
 
 /// What a removal did, so a caller can report it rather than assume it.
@@ -597,7 +761,9 @@ fn is_show(operator: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{covered, is_show, overlaps, remove_shows, PageObject, Plan, Unhandled};
+    use super::{
+        covered, covered_annots, is_show, overlaps, remove_shows, PageObject, Plan, Unhandled,
+    };
     use lopdf::content::Content;
     use lopdf::{dictionary, Document, Object, Stream};
 
@@ -695,6 +861,39 @@ mod tests {
         };
         dictionary.set("Resources", resources);
         (doc, page)
+    }
+
+    /// A one-page document whose `/Annots` is an inline array of these.
+    ///
+    /// Returns the ids in the order given, so a check can name the one it means.
+    fn one_page_annots(
+        stream: &str,
+        annots: Vec<lopdf::Dictionary>,
+    ) -> (Document, lopdf::ObjectId, Vec<lopdf::ObjectId>) {
+        let (mut doc, page) = one_page(stream);
+        let ids: Vec<lopdf::ObjectId> = annots
+            .into_iter()
+            .map(|annot| doc.add_object(annot))
+            .collect();
+        let entries: Vec<Object> = ids.iter().map(|id| Object::Reference(*id)).collect();
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(page) else {
+            panic!("the page is a dictionary")
+        };
+        dictionary.set("Annots", entries);
+        (doc, page, ids)
+    }
+
+    /// A `/Text` annotation at these corners, with a body nobody reads here.
+    fn note(rect: [f32; 4]) -> lopdf::Dictionary {
+        dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![
+                Object::Real(rect[0]), Object::Real(rect[1]),
+                Object::Real(rect[2]), Object::Real(rect[3]),
+            ],
+            "Contents" => Object::string_literal("a note"),
+        }
     }
 
     /// The string each surviving show operator draws, in order.
@@ -1099,5 +1298,179 @@ mod tests {
         let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
         assert_eq!(removed.carriers, 0);
         assert!(shown(&doc, page).is_empty());
+    }
+    /// The carrier: an annotation over the region goes with the words.
+    #[test]
+    fn an_annotation_over_the_region_is_taken() {
+        let (doc, page, ids) =
+            one_page_annots("BT (x) Tj ET", vec![note([100.0, 100.0, 200.0, 120.0])]);
+        assert_eq!(
+            covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]),
+            vec![ids[0]]
+        );
+    }
+
+    /// The over-removal control, and it is the half that keeps the rest honest.
+    ///
+    /// A page's other comments are not the reader's to lose. A rule that took
+    /// every annotation on a page would pass the check above perfectly.
+    #[test]
+    fn an_annotation_away_from_the_region_is_left() {
+        let (doc, page, _) =
+            one_page_annots("BT (x) Tj ET", vec![note([400.0, 400.0, 500.0, 420.0])]);
+        assert!(covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]).is_empty());
+    }
+
+    /// Touching is not overlapping, the same rule `covered` uses for objects.
+    #[test]
+    fn an_annotation_flush_against_the_region_is_left() {
+        let (doc, page, _) =
+            one_page_annots("BT (x) Tj ET", vec![note([200.0, 100.0, 300.0, 120.0])]);
+        assert!(covered_annots(&doc, page, &[[100.0, 100.0, 200.0, 120.0]]).is_empty());
+    }
+
+    /// `/Rect` corners either way round, which §12.5.2 permits.
+    ///
+    /// Without the normalisation an upside-down rectangle overlaps nothing, so
+    /// an annotation sitting squarely on the region reads as one nowhere near
+    /// it --- the quiet direction, which leaves the words.
+    #[test]
+    fn an_annotation_whose_corners_are_the_other_way_round_is_still_found() {
+        let (doc, page, ids) =
+            one_page_annots("BT (x) Tj ET", vec![note([200.0, 120.0, 100.0, 100.0])]);
+        assert_eq!(
+            covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]),
+            vec![ids[0]]
+        );
+    }
+
+    /// An annotation this cannot place is taken, not kept.
+    ///
+    /// Deny by default in the only direction that cannot leave the words. The
+    /// three shapes are one rule, and each is a real malformation.
+    #[test]
+    fn an_annotation_with_no_readable_rectangle_is_taken() {
+        for broken in [
+            dictionary! { "Type" => "Annot", "Subtype" => "Text" },
+            dictionary! { "Type" => "Annot", "Rect" => vec![Object::Real(1.0), Object::Real(2.0)] },
+            dictionary! { "Type" => "Annot", "Rect" => vec![
+                Object::string_literal("no"), Object::Real(2.0),
+                Object::Real(3.0), Object::Real(4.0),
+            ] },
+        ] {
+            let (doc, page, ids) = one_page_annots("BT (x) Tj ET", vec![broken]);
+            assert_eq!(
+                covered_annots(&doc, page, &[[0.0, 0.0, 1.0, 1.0]]),
+                vec![ids[0]],
+                "an annotation with no readable rectangle is taken"
+            );
+        }
+    }
+
+    /// A popup carries its own `/Contents`, so it goes with its note.
+    #[test]
+    fn a_popup_goes_with_the_annotation_that_owns_it() {
+        let (mut doc, page, ids) = one_page_annots(
+            "BT (x) Tj ET",
+            vec![
+                note([100.0, 100.0, 200.0, 120.0]),
+                note([400.0, 400.0, 500.0, 420.0]),
+            ],
+        );
+        let popup = ids[1];
+        let Ok(Object::Dictionary(parent)) = doc.get_object_mut(ids[0]) else {
+            panic!("annotation")
+        };
+        parent.set("Popup", Object::Reference(popup));
+        let taken = covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]);
+        assert!(
+            taken.contains(&ids[0]) && taken.contains(&popup),
+            "{taken:?}"
+        );
+    }
+
+    /// A reply is a copy of the conversation, and a chain of them goes whole.
+    ///
+    /// **The replies come first on `/Annots`, and that ordering is the test.**
+    /// Two links written the other way round --- note, reply, reply --- are
+    /// picked up by a single pass, because each reply's parent was added to the
+    /// set earlier in the same walk. So the fixture that reads most naturally is
+    /// exactly the one a single pass handles, and the mutation collapsing the
+    /// fixed point to one pass SURVIVED against it. Written parent-last, one
+    /// pass sees a reply whose parent is not in the set yet and leaves it.
+    ///
+    /// `/Annots` has no required order and a producer that appends replies as
+    /// they are written gives this one, so it is the ordinary case rather than a
+    /// contrived one.
+    #[test]
+    fn a_chain_of_replies_goes_with_the_note_it_answers() {
+        let (mut doc, page, ids) = one_page_annots(
+            "BT (x) Tj ET",
+            vec![
+                note([420.0, 420.0, 520.0, 440.0]),
+                note([400.0, 400.0, 500.0, 420.0]),
+                note([100.0, 100.0, 200.0, 120.0]),
+            ],
+        );
+        let (note_id, reply, further) = (ids[2], ids[1], ids[0]);
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(reply) else {
+            panic!("annotation")
+        };
+        dictionary.set("IRT", Object::Reference(note_id));
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(further) else {
+            panic!("annotation")
+        };
+        dictionary.set("IRT", Object::Reference(reply));
+        let taken = covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]);
+        assert_eq!(taken.len(), 3, "the note and both replies: {taken:?}");
+    }
+
+    /// A reply to an annotation that stays, stays. The control for the loop.
+    #[test]
+    fn a_reply_to_an_annotation_nobody_touched_is_left() {
+        let (mut doc, page, ids) = one_page_annots(
+            "BT (x) Tj ET",
+            vec![
+                note([400.0, 400.0, 500.0, 420.0]),
+                note([420.0, 420.0, 520.0, 440.0]),
+            ],
+        );
+        let first = ids[0];
+        let Ok(Object::Dictionary(reply)) = doc.get_object_mut(ids[1]) else {
+            panic!("annotation")
+        };
+        reply.set("IRT", Object::Reference(first));
+        assert!(covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]).is_empty());
+    }
+
+    /// `/Annots 12 0 R` is as common as the inline array and is not the same shape.
+    #[test]
+    fn an_annots_array_that_is_its_own_object_is_read() {
+        let (mut doc, page, ids) =
+            one_page_annots("BT (x) Tj ET", vec![note([100.0, 100.0, 200.0, 120.0])]);
+        let array = doc.add_object(Object::Array(vec![Object::Reference(ids[0])]));
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(page) else {
+            panic!("page")
+        };
+        dictionary.set("Annots", Object::Reference(array));
+        assert_eq!(
+            covered_annots(&doc, page, &[[90.0, 90.0, 210.0, 130.0]]),
+            vec![ids[0]]
+        );
+    }
+
+    /// A page with no annotations at all, which is most pages.
+    #[test]
+    fn a_page_with_no_annots_gives_up_nothing() {
+        let (doc, page) = one_page("BT (x) Tj ET");
+        assert!(covered_annots(&doc, page, &[[0.0, 0.0, 1000.0, 1000.0]]).is_empty());
+    }
+
+    /// No regions is no removal, the emptiness control for the whole walk.
+    #[test]
+    fn an_annotation_is_left_when_there_are_no_regions() {
+        let (doc, page, _) =
+            one_page_annots("BT (x) Tj ET", vec![note([100.0, 100.0, 200.0, 120.0])]);
+        assert!(covered_annots(&doc, page, &[]).is_empty());
     }
 }

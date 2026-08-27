@@ -380,12 +380,21 @@ def build_cid(path: str, font_path: str) -> None:
 def build_marked(path: str, font_path: str) -> None:
     """Writes the carrier fixture: the same page, plus copies of the secret.
 
-    Every carrier here is legitimate PDF that real producers emit, and every one
-    of them survives an edit that only touches page objects:
+    Every carrier here is legitimate PDF that real producers emit, and none of
+    them is reached by an edit that only touches page objects:
 
     * `/ActualText` on a marked-content span -- what a screen reader reads, and
-      what a well-behaved extractor prefers over the glyphs.
-    * A text annotation's `/Contents` -- a comment, not page content at all.
+      what a well-behaved extractor prefers over the glyphs. Cleared since
+      2026-08-27 by the removal itself, since it lives in the content stream.
+    * A text annotation's `/Contents` **over the target line** -- the comment a
+      reader writes about the words they are redacting, which quotes them.
+      Hidden (`/F 2`), because a hidden comment quoting the secret is the case
+      that survives every visual check. Carries `ANNOT-OVER` so a check can name
+      this carrier rather than asking whether the secret is anywhere in the file.
+    * A text annotation's `/Contents` **away from every line** -- the control. A
+      rule that took every annotation on the page would look exactly like a rule
+      that took the right one, and this is the reader's other comment, which is
+      not theirs to lose. Carries `ANNOT-AWAY`.
     * `/Info` document metadata.
     """
     text = "".join(LINES)
@@ -431,9 +440,17 @@ def build_marked(path: str, font_path: str) -> None:
 
     stream = pdf.stream(b"<< >>", content.encode("latin-1"))
 
+    # The control: away from every line of text, so no region a check draws over
+    # the target line reaches it.
     annotation = pdf.add(
         b"<< /Type /Annot /Subtype /Text /Rect [500 700 520 720] "
-        b"/Contents (%s) /F 2 >>" % escape("Note: " + secret)
+        b"/Contents (%s) /F 2 >>" % escape("Note: " + secret + " ANNOT-AWAY")
+    )
+    # The carrier: squarely over the target line, which is drawn at y = 680 in a
+    # 14-point face, so its glyphs occupy roughly 680..690.
+    over = pdf.add(
+        b"<< /Type /Annot /Subtype /Text /Rect [100 674 400 696] "
+        b"/Contents (%s) /F 2 >>" % escape("Note on " + secret + " ANNOT-OVER")
     )
 
     page = pdf.reserve()
@@ -442,8 +459,8 @@ def build_marked(path: str, font_path: str) -> None:
         page,
         b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
         b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R "
-        b"/Annots [%d 0 R] >>"
-        % (pages, WIDTH, HEIGHT, font_obj, stream, annotation),
+        b"/Annots [%d 0 R %d 0 R] >>"
+        % (pages, WIDTH, HEIGHT, font_obj, stream, annotation, over),
     )
     pdf.put(pages, b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page)
     root = pdf.add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages)
