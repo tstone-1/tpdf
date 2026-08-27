@@ -17040,3 +17040,43 @@ Two checks wearing one name, and the one that matters is the second: a control c
 the object graph is only evidence when the object graph describes the page. Do not scope this
 to OCR --- it is the general form of *a writer and its own reader agree about a document that
 is wrong*, arriving in a subsystem whose whole job is to not believe itself.
+
+### A framework you link is mapped whether you call it or not, so an absent image cannot be the evidence
+
+`backend-probe` proves the app process never maps the PDF parser by reading **dyld's own
+image table**, and this file records why that is the right instrument: a milestone says what
+our code believes it did, and the loader's table says what the process actually is. When the
+OCR worker landed, the obvious first check was the same one --- the process that asks must
+never map the engine.
+
+It fails, and it always would. The two libraries are loaded by different mechanisms:
+
+| library | how it is loaded | can the app avoid mapping it? |
+|---|---|---|
+| `libpdfium` | `dlopen` at runtime, by `pdfium-render`'s `bind_to_library` | **yes** --- a process that never binds it never maps it |
+| `Vision.framework` | linked, by `objc2-vision` | **no** --- every binary that links `ocr_vision` maps it at launch |
+
+Measured: 2 Vision images in the probe process before a single call, out of 619. The worker
+is the same executable re-exec'd, so the app links the binding whether or not it ever runs
+the engine, and there is no arrangement short of a second signed executable that changes
+that.
+
+**Linking is not calling, and the containment claim was always about calling.** What the
+worker buys is that Vision *code* runs in another process --- which is the point of the
+measurement that under the parser worker's profile Vision is killed by SIGTRAP. An engine
+that can take its host down must not share one with unsaved annotations, and that is true
+whether or not its framework is mapped into the host's address space.
+
+Three things to carry:
+
+- **Ask how a library gets loaded before writing a check about its absence.** `dlopen`ed and
+  linked look identical in the image table and are completely different questions.
+- **The check that replaced it states the measured fact** --- the engine is mapped from
+  launch, because it is linked --- with the image count and an emptiness control beside it. A
+  tripwire: if anyone ever makes the binding lazy, it goes red and this paragraph is what
+  needs rewriting.
+- **The first draft's detail line said "none of them Vision" while the check reported
+  `[FAIL]`**, because the string was written from the expectation rather than built from what
+  was found. This file already has an entry about a check that printed the reason it should
+  have failed beside an `[OK]`; this is the same mistake in the other direction, and it is
+  what made the failure take a second to read instead of a minute.

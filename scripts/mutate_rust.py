@@ -5616,5 +5616,72 @@ MUTATIONS += [
     ),
 ]
 
+
+#: The OCR worker's own guards. Its input is a pipe and a shared mapping, so
+#: every one of these is about numbers that arrived from somewhere else.
+MUTATIONS += [
+    Mutation(
+        # Do the size arithmetic in u32, where 65536 x 65536 x 4 is ZERO. Every
+        # length comparison below it then passes and the engine is handed an
+        # empty slice described as four gigapixels.
+        "ocrworker: size a frame with u32 arithmetic",
+        "src/ocr_worker.rs",
+        "    let pixels = usize::try_from(width)\n        .ok()?\n        .checked_mul(usize::try_from(height).ok()?)?;\n    pixels.checked_mul(4)",
+        "    Some(width.wrapping_mul(height).wrapping_mul(4) as usize)",
+        "a_four_gigapixel_frame_is_a_number_too_big_rather_than_zero",
+    ),
+    Mutation(
+        # Resolve any engine name to the first one this build knows. A child from
+        # a different build then reports an identity that is not its own, and
+        # nothing downstream can invalidate a recognition against an engine that
+        # never ran.
+        "ocrworker: resolve any engine name to a known one",
+        "src/ocr_worker.rs",
+        "            .find(|known| **known == self.name)",
+        "            .find(|known| !known.is_empty())",
+        "an_unknown_engine_name_is_refused_and_named_in_the_refusal",
+    ),
+    Mutation(
+        # Make the reply untagged. `docs/TRAPS.md` records untagged silently
+        # swapping two variants of the same shape; here a bare payload becomes a
+        # legal reply, which is the encoding this one is chosen against.
+        "ocrworker: make the reply untagged",
+        "src/ocr_worker.rs",
+        "pub enum Said {",
+        "#[serde(untagged)]\npub enum Said {",
+        "a_bare_payload_is_not_a_reply",
+    ),
+    Mutation(
+        # Refuse an image exactly as large as the buffer. Nothing is unsafe and
+        # the largest region a reader can redact stops being verifiable, silently
+        # -- the reader is told the file could not be proved clean.
+        "ocrworker: refuse an image exactly the size of the buffer",
+        "src/ocr_worker.rs",
+        "    if pixels.rgba.len() > capacity {",
+        "    if pixels.rgba.len() >= capacity {",
+        "an_image_larger_than_the_buffer_is_refused_before_it_is_copied",
+    ),
+    Mutation(
+        # Copy an image in without checking it is its own dimensions. The child
+        # then reads a frame whose length its own numbers imply and whose content
+        # is somebody else's previous request.
+        "ocrworker: copy in an image that is not its own dimensions",
+        "src/ocr_worker.rs",
+        "    if !pixels.is_consistent() {",
+        "    if false {",
+        "an_image_that_is_not_its_own_dimensions_is_refused_before_it_is_copied",
+    ),
+    Mutation(
+        # Refuse a frame exactly as large as the mapping, in the child this time.
+        # The two guards are separate on purpose and so are the mutations: one is
+        # about what the parent copies in and one about what the child reads out.
+        "ocrworker: refuse a frame exactly the size of the mapping",
+        "src/ocr_worker.rs",
+        "    if len > mapping.len() {",
+        "    if len >= mapping.len() {",
+        "a_frame_exactly_as_large_as_the_mapping_fits",
+    ),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

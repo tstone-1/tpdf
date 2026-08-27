@@ -2176,6 +2176,68 @@ text rather than a drawn token, so a fixture whose lines are too close together 
 usable strip and the gate checks `[SKIP]` rather than failing --- `columns` is that case. And
 `[SKIP]` here means the harness could not construct the input, never that the gate passed.
 
+### `ocr-sandbox-probe`: what is left of a process under each profile
+
+macOS only. Three rungs, each a re-exec'd child that renders a page **before** the profile
+comes down --- the parser worker maps PDFium first too, and sandboxing earlier would measure a
+different program.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-sandbox-probe -- \
+    testdata/text-base14.pdf --lib vendor/pdfium/lib
+```
+
+| rung | writes a file | reaches the listener | runs Vision |
+|---|---|---|---|
+| `bare` --- the control | ok | ok | 4 spans |
+| `ocr` --- `OCR_SANDBOX_PROFILE` | PermissionDenied | PermissionDenied | 4 spans |
+| `parser` --- `worker::SANDBOX_PROFILE` | --- | --- | killed by signal 5 |
+
+7/7 on OS build 25G83, 2026-08-27. This makes executable the table `ocr.rs` has carried by
+hand since 2026-07-31, and it measures something that one did not: the rung that worked there
+allowed reads and said nothing about **writes**, while the constant that shipped denies
+`file-write*` and `network*`.
+
+**The parent holds a real listener open and passes its port**, and that is not a nicety:
+`ConnectionRefused` and a sandbox denial are the same shape from a client's side, so without
+something to connect to every rung reports a refusal and the row measures nothing. The `bare`
+rung is the control for all three columns --- a machine where nothing works reports a
+perfectly contained ladder.
+
+### `ocr-worker-probe`: does the engine work from a process of its own
+
+macOS only, and the binary is **its own worker**: `OcrWorker::spawn` re-execs `current_exe`,
+so what is under test is the shipped child rather than a copy of it. Same arrangement
+`pool-bench` uses.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-worker-probe -- \
+    testdata/text-base14.pdf --lib vendor/pdfium/lib
+```
+
+| fixture | result |
+|---|---|
+| `text-base14`, `text-marked`, `rotated`, `links`, `columns`, `encodings` | 12/12 |
+| `vector-heavy` | 0/0, 1 skipped --- A0 at scale 2 is 128 MB against a 16 MB buffer |
+
+**The baseline is the same program reading the same bytes in-process**, because a worker that
+reads nothing and an engine that reads nothing produce identical output. Everything else is a
+difference from that row, and the differential is the one that matters on every page: same
+engine, same pixels, one process apart, so the text has to be *identical* and a mismatch is
+the handover rather than the engine.
+
+Two rows are there because a caller cannot recover from them. An image larger than the shared
+mapping must be refused **and leave the worker usable**, or one oversized region costs a whole
+document its verification. And a worker killed from outside must report inside its own
+deadline rather than block on a pipe nobody will write to --- the engine ignores the
+`deadline_ms` it is handed, so the parent is the only place that bound can live.
+
+**What this probe does *not* prove, and the first draft claimed it did:** that the process
+which asks never maps the engine. `objc2-vision` links Vision, so every binary linking
+`ocr_vision` maps it at launch --- 2 images of 619, before a single call. `backend-probe` can
+make that claim about `libpdfium` because `pdfium-render` `dlopen`s it. The check states the
+measured fact instead, with an emptiness control beside it. See `docs/TRAPS.md`.
+
 ### `latency-bench`: what one tile costs, decomposed
 
 The last thing `worker-bench` measured that nothing else did. It is a **spike, not a port**:
