@@ -247,8 +247,9 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 #                     its page. The first run of this probe marked a word that
 #                     lives on every page, removed it from one, and correctly
 #                     reported it still in the file.
-#   text-marked.pdf   the same line, held FOUR times: as /ActualText on a
-#                     marked-content span, in two annotations, and in /Info.
+#   text-marked.pdf   the same line, held FIVE times: as /ActualText on a
+#                     marked-content span, on the structure element that span
+#                     belongs to, in two annotations, and in /Info.
 #                     Since 2026-08-27 the span's copy is cleared by the removal
 #                     itself, so the check reads the carriers apart rather than
 #                     asking whether the secret is anywhere in the file: the key
@@ -308,13 +309,19 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # itself must STILL be found, because /Info /Title and the surviving annotation
 # both hold it and this command touches neither. If that last one flips, the
 # document-level carriers are being cleared and this probe needs rewriting.
-# A fourth check ahead of them asserts both markers are in the fixture to begin
-# with, without which neither direction could fail.
+# THE STRUCTURE CARRIER is the same row of the carrier table in its other home,
+# asserted the same way: STRUCT-CARRIER (the element owning the redacted line's
+# /MCID) and STRUCT-ANCESTOR (the element above it, which restates what was
+# removed) must go, while STRUCT-OTHER -- the element for a line nobody marked --
+# must stay. A rule that stripped the whole tree would pass the first two.
+#
+# A check ahead of all of them asserts every marker is in the fixture to begin
+# with, without which no direction could fail.
 #
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
 #
-#   macOS arm64, 2026-08-27   11 checks, 0 failures
+#   macOS arm64, 2026-08-27   14 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

@@ -492,6 +492,14 @@ pub struct Removed {
     /// in the table; the probe asserts the stream afterwards for the same
     /// reason. See [`clear_shadow_text`].
     pub carriers: usize,
+    /// How many went from the structure elements those spans belong to.
+    ///
+    /// Counted apart from [`Removed::carriers`] because they are two homes of
+    /// one row of `docs/PLAN.md` §6's carrier table, reached by two different
+    /// routes --- nesting in the content stream, and `/MCID` through the parent
+    /// tree. A run that cleared one and not the other is the interesting case,
+    /// and a single total could not say which. See [`clear_struct_shadow_text`].
+    pub struct_carriers: usize,
 }
 
 /// The keys a marked-content property list can hold a copy of the text in.
@@ -553,7 +561,7 @@ fn clear_shadow_text(
     page: ObjectId,
     operations: &mut [Operation],
     removed: &[usize],
-) -> Result<usize, String> {
+) -> Result<Cleared, String> {
     // (index of the BDC/BMC, whether a removal fell inside it).
     let mut open: Vec<(usize, bool)> = Vec::new();
     let mut touched: Vec<usize> = Vec::new();
@@ -587,15 +595,23 @@ fn clear_shadow_text(
         }
     }
 
-    let mut cleared = 0usize;
+    let mut cleared = Cleared::default();
     for at in touched {
+        // The span's `/MCID` before anything is removed from its dictionary ---
+        // it is not shadow text and stays, and it is the only thing tying this
+        // span to the structure element that holds the *other* copy.
+        if let Some(Object::Dictionary(properties)) = operations[at].operands.get(1) {
+            if let Ok(mcid) = properties.get(b"MCID").and_then(Object::as_i64) {
+                cleared.mcids.push(mcid);
+            }
+        }
         match operations[at].operands.get_mut(1) {
             // `BMC` takes a tag and nothing else, so there is no property list.
             None => {}
             Some(Object::Dictionary(properties)) => {
                 for key in SHADOW_TEXT {
                     if properties.remove(key).is_some() {
-                        cleared += 1;
+                        cleared.keys += 1;
                     }
                 }
             }
@@ -620,6 +636,222 @@ fn clear_shadow_text(
         }
     }
     Ok(cleared)
+}
+
+/// What one page's content-stream pass found and took.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Cleared {
+    /// Shadow-text keys removed from marked-content property lists.
+    keys: usize,
+    /// The `/MCID` of every span a removal fell inside, in the order met.
+    ///
+    /// Not a carrier and not removed --- an `/MCID` is a *name*, and the words
+    /// it leads to live in the structure tree. [`clear_struct_shadow_text`] is
+    /// what follows it.
+    mcids: Vec<i64>,
+}
+
+/// Strips shadow text from the structure elements a removal's spans belong to.
+///
+/// **The other home of the same carrier.** `docs/PLAN.md` §6's shadow-text row
+/// names `/ActualText`, `/Alt` and `/E`, and PDF 32000-1 §14.9.3 to §14.9.5 put
+/// them in two places: on a marked-content property list in the content stream,
+/// which [`clear_shadow_text`] takes, and on a **structure element**, which this
+/// does. Nothing in the content stream leads to the second one --- the link runs
+/// the other way, through the page's `/StructParents` into the structure tree's
+/// `/ParentTree`, a number tree whose entry for that key is an array indexed by
+/// `/MCID`.
+///
+/// So a document tagged by Word or InDesign keeps a verbatim copy of a redacted
+/// line in an object the page does not mention, and the only route to it is the
+/// number the span carried.
+///
+/// **Ancestors go too**, for the reason an enclosing span does: an element above
+/// the one that owns the content restates everything beneath it, so its
+/// `/ActualText` is a copy of what was removed. The cost is real and is not
+/// hidden --- a `/Sect` covering ten paragraphs loses its alternate text because
+/// one word inside it went. That is route B's posture one level up again, and
+/// the fixture shows it rather than arguing it: `text-marked.pdf`'s ancestor
+/// also covers a line nobody redacted.
+///
+/// Every walk here is bounded. The parent tree and the `/P` chain are both
+/// attacker-shaped and both can be made to loop.
+///
+/// # Errors
+///
+/// Nothing: a document with no structure tree, no `/StructParents`, a parent
+/// tree this cannot follow, or an `/MCID` naming no element all mean there is no
+/// second copy to take, which is the ordinary case for an untagged file. A
+/// failure to *find* one is not a failure to remove it, and anything the walk
+/// could not reach is still a copy of the words that [`crate::verify::scan`]
+/// will find and report.
+fn clear_struct_shadow_text(doc: &mut Document, page: ObjectId, mcids: &[i64]) -> usize {
+    if mcids.is_empty() {
+        return 0;
+    }
+    let Some(entries) = parent_tree_entry(doc, page) else {
+        return 0;
+    };
+    // The elements first, then the edits: resolving needs `doc` immutably and
+    // stripping needs it mutably, and an element reached twice --- two spans
+    // under one element, or two elements under one ancestor --- must not be
+    // counted twice.
+    let mut doomed: Vec<ObjectId> = Vec::new();
+    for mcid in mcids {
+        let Ok(index) = usize::try_from(*mcid) else {
+            continue;
+        };
+        let Some(element) = entries
+            .get(index)
+            .and_then(|entry| entry.as_reference().ok())
+        else {
+            continue;
+        };
+        let mut at = Some(element);
+        // The `/P` chain, bounded for `pagetree::MAX_PARENTS`' reason: this runs
+        // on a tree we did not write and a cycle in it is one dictionary away.
+        //
+        // **The count is the only thing stopping it, and that is deliberate.** A
+        // visited-set filter on the step was written first and its mutation
+        // SURVIVED --- correctly: an element already in `doomed` is not pushed
+        // again, so a cycle changes nothing but how many idle turns the loop
+        // takes before the bound ends it. Two mechanisms with the same limit
+        // make one of them untestable, which `docs/TRAPS.md` records, and the
+        // one to keep is the one that holds for *every* shape: a simple `A -> B
+        // -> A` is caught by either, a chain a thousand deep only by the count.
+        for _ in 0..MAX_ANCESTORS {
+            let Some(id) = at else { break };
+            if !doomed.contains(&id) {
+                doomed.push(id);
+            }
+            at = doc
+                .get_dictionary(id)
+                .ok()
+                .and_then(|element| element.get(b"P").ok())
+                .and_then(|parent| parent.as_reference().ok());
+        }
+    }
+
+    let mut cleared = 0usize;
+    for id in doomed {
+        let Ok(Object::Dictionary(element)) = doc.get_object_mut(id) else {
+            continue;
+        };
+        for key in SHADOW_TEXT {
+            if element.remove(key).is_some() {
+                cleared += 1;
+            }
+        }
+    }
+    cleared
+}
+
+/// How far up a `/P` chain to walk before giving up.
+///
+/// A structure tree is a handful of levels deep in any real document. The bound
+/// is here because the chain is the document's to shape and a cycle in it would
+/// otherwise be an infinite loop inside a save --- the same reason `pagetree`
+/// bounds its `/Parent` walk. The visited set below makes a *simple* cycle
+/// terminate on its own; this catches the rest.
+const MAX_ANCESTORS: usize = 64;
+
+/// How deep a number tree may nest before this stops following it.
+const MAX_TREE_DEPTH: usize = 32;
+
+/// The parent tree's entry for a page: its structure elements, indexed by `/MCID`.
+///
+/// `/StructParents` on the page is the key; `/StructTreeRoot /ParentTree` is a
+/// number tree; the value for that key is an array whose *n*th entry is the
+/// element owning marked content `n`. PDF 32000-1 §14.7.4.4.
+///
+/// `None` for anything missing or the wrong shape, which is every untagged
+/// document.
+fn parent_tree_entry(doc: &Document, page: ObjectId) -> Option<Vec<Object>> {
+    let key = doc
+        .get_dictionary(page)
+        .ok()?
+        .get(b"StructParents")
+        .and_then(Object::as_i64)
+        .ok()?;
+    let tree = doc
+        .catalog()
+        .ok()?
+        .get(b"StructTreeRoot")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_dict)
+        .ok()?
+        .get(b"ParentTree")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_dict)
+        .ok()?
+        .clone();
+    let found = number_tree_lookup(doc, &tree, key, 0)?;
+    doc.dereference(&found)
+        .ok()
+        .and_then(|(_, object)| object.as_array().ok())
+        .cloned()
+}
+
+/// One key's value in a number tree, following `/Kids` when the node has them.
+///
+/// Walked rather than assumed flat: a producer with many pages writes a tree of
+/// `/Kids` with `/Limits`, and reading only `/Nums` would find nothing on every
+/// document large enough to matter --- silently, since a miss and an untagged
+/// page are the same answer.
+///
+/// `/Limits` is used to *skip* a subtree and never to conclude one holds the
+/// key: a tree whose limits are wrong is malformed, and a search that trusts
+/// them would answer nothing where a search that ignores them answers correctly.
+fn number_tree_lookup(doc: &Document, node: &Dictionary, key: i64, depth: usize) -> Option<Object> {
+    if depth > MAX_TREE_DEPTH {
+        return None;
+    }
+    if let Ok(nums) = node
+        .get(b"Nums")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_array)
+    {
+        for pair in nums.chunks_exact(2) {
+            if doc
+                .dereference(&pair[0])
+                .ok()
+                .and_then(|(_, object)| object.as_i64().ok())
+                == Some(key)
+            {
+                return Some(pair[1].clone());
+            }
+        }
+    }
+    let kids = node
+        .get(b"Kids")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_array)
+        .ok()?
+        .clone();
+    for kid in kids {
+        let Ok((_, Object::Dictionary(child))) = doc.dereference(&kid) else {
+            continue;
+        };
+        if let Ok(limits) = child
+            .get(b"Limits")
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_array)
+        {
+            if let (Some(Ok(low)), Some(Ok(high))) = (
+                limits.first().map(Object::as_i64),
+                limits.get(1).map(Object::as_i64),
+            ) {
+                if key < low || key > high {
+                    continue;
+                }
+            }
+        }
+        let child = child.clone();
+        if let Some(found) = number_tree_lookup(doc, &child, key, depth + 1) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// The dictionary a marked-content operand's name refers to.
@@ -735,6 +967,13 @@ pub fn remove_shows(
         content.operations.remove(at);
     }
 
+    // **After the content stream, and it could not be before it.** The link from
+    // a span to its structure element is the `/MCID` the span carries, so the
+    // numbers have to be read out of the operations first. Nothing about the
+    // order matters to the tree itself --- it is addressed by number rather than
+    // by position, which is exactly what the content-stream pass is not.
+    let struct_carriers = clear_struct_shadow_text(doc, page, &carriers.mcids);
+
     let encoded = content
         .encode()
         .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
@@ -744,7 +983,8 @@ pub fn remove_shows(
     Ok(Removed {
         shows_before: shows.len(),
         removed,
-        carriers,
+        carriers: carriers.keys,
+        struct_carriers,
     })
 }
 
@@ -894,6 +1134,86 @@ mod tests {
             ],
             "Contents" => Object::string_literal("a note"),
         }
+    }
+
+    /// A one-page tagged document: `leaves` structure elements, one per `/MCID`.
+    ///
+    /// The parent tree's entry for the page lists them in order, which is the
+    /// shape §14.7.4.4 describes and the one every producer emits. Each element
+    /// carries an `/ActualText` naming itself, so a check can say **which** one
+    /// went. With `ancestor`, all of them hang under one `/Part` carrying its
+    /// own.
+    ///
+    /// Returns the page, the leaves in `/MCID` order, and the ancestor.
+    fn one_page_tagged(
+        stream: &str,
+        leaves: usize,
+        ancestor: bool,
+    ) -> (
+        Document,
+        lopdf::ObjectId,
+        Vec<lopdf::ObjectId>,
+        Option<lopdf::ObjectId>,
+    ) {
+        let (mut doc, page) = one_page(stream);
+        let root = doc.new_object_id();
+        let parent = ancestor.then(|| doc.new_object_id());
+        let ids: Vec<lopdf::ObjectId> = (0..leaves)
+            .map(|at| {
+                doc.add_object(dictionary! {
+                    "Type" => "StructElem",
+                    "S" => "P",
+                    "P" => parent.unwrap_or(root),
+                    "Pg" => page,
+                    "K" => at as i64,
+                    "ActualText" => Object::string_literal(format!("leaf {at}")),
+                })
+            })
+            .collect();
+        if let Some(parent) = parent {
+            let kids: Vec<Object> = ids.iter().map(|id| Object::Reference(*id)).collect();
+            doc.objects.insert(
+                parent,
+                Object::Dictionary(dictionary! {
+                    "Type" => "StructElem",
+                    "S" => "Part",
+                    "P" => root,
+                    "K" => kids,
+                    "ActualText" => Object::string_literal("ancestor"),
+                }),
+            );
+        }
+        let entry: Vec<Object> = ids.iter().map(|id| Object::Reference(*id)).collect();
+        let tree = doc.add_object(dictionary! {
+            "Nums" => vec![Object::Integer(0), Object::Array(entry)],
+        });
+        doc.objects.insert(
+            root,
+            Object::Dictionary(dictionary! {
+                "Type" => "StructTreeRoot",
+                "ParentTree" => tree,
+            }),
+        );
+        let catalog = doc
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .expect("catalog");
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(catalog) else {
+            panic!("the catalog is a dictionary")
+        };
+        dictionary.set("StructTreeRoot", root);
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(page) else {
+            panic!("the page is a dictionary")
+        };
+        dictionary.set("StructParents", 0);
+        (doc, page, ids, parent)
+    }
+
+    /// Whether an object still carries `/ActualText`.
+    fn has_shadow_text(doc: &Document, id: lopdf::ObjectId) -> bool {
+        doc.get_dictionary(id)
+            .is_ok_and(|dictionary| dictionary.has(b"ActualText"))
     }
 
     /// The string each surviving show operator draws, in order.
@@ -1472,5 +1792,153 @@ mod tests {
         let (doc, page, _) =
             one_page_annots("BT (x) Tj ET", vec![note([100.0, 100.0, 200.0, 120.0])]);
         assert!(covered_annots(&doc, page, &[]).is_empty());
+    }
+    /// The second home of the shadow-text row, and the reason it needs its own
+    /// pass: nothing in the content stream leads to it.
+    #[test]
+    fn the_structure_element_a_removed_span_belongs_to_loses_its_shadow_text() {
+        let (mut doc, page, ids, _) =
+            one_page_tagged("/Span << /MCID 0 >> BDC\nBT (secret) Tj ET\nEMC", 1, false);
+        assert!(
+            has_shadow_text(&doc, ids[0]),
+            "the control: it starts there"
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.struct_carriers, 1);
+        assert!(!has_shadow_text(&doc, ids[0]));
+    }
+
+    /// An ancestor restates everything beneath it, so it goes too.
+    #[test]
+    fn an_ancestor_of_that_element_loses_its_shadow_text_as_well() {
+        let (mut doc, page, ids, ancestor) =
+            one_page_tagged("/Span << /MCID 0 >> BDC\nBT (secret) Tj ET\nEMC", 1, true);
+        let ancestor = ancestor.expect("built with one");
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.struct_carriers, 2, "the leaf and the one above it");
+        assert!(!has_shadow_text(&doc, ids[0]));
+        assert!(!has_shadow_text(&doc, ancestor));
+    }
+
+    /// The over-removal control, and it is the half that keeps the rest honest.
+    ///
+    /// Two tagged lines, one redacted. A rule that stripped the whole tree would
+    /// pass both checks above perfectly and take the alternate text of every
+    /// line the reader did not mark.
+    #[test]
+    fn the_element_for_a_line_nobody_redacted_keeps_its_shadow_text() {
+        let (mut doc, page, ids, _) = one_page_tagged(
+            "/Span << /MCID 0 >> BDC\nBT (secret) Tj ET\nEMC\n\
+             /Span << /MCID 1 >> BDC\nBT (public) Tj ET\nEMC",
+            2,
+            false,
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 2).expect("remove");
+        assert_eq!(removed.struct_carriers, 1, "one element, not both");
+        assert!(!has_shadow_text(&doc, ids[0]));
+        assert!(
+            has_shadow_text(&doc, ids[1]),
+            "the untouched line keeps its own"
+        );
+    }
+
+    /// A span with no `/MCID` names no element, so nothing in the tree moves.
+    ///
+    /// The ordinary shape of `/ActualText` used for a ligature or an
+    /// abbreviation, which a producer writes without tagging anything.
+    #[test]
+    fn a_span_with_no_mcid_reaches_no_structure_element() {
+        let (mut doc, page, ids, _) = one_page_tagged(
+            "/Span << /ActualText (secret) >> BDC\nBT (secret) Tj ET\nEMC",
+            1,
+            false,
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 1, "the span's own copy still goes");
+        assert_eq!(removed.struct_carriers, 0);
+        assert!(has_shadow_text(&doc, ids[0]));
+    }
+
+    /// An untagged page, which is most pages, and no error either.
+    #[test]
+    fn a_page_with_no_struct_parents_is_left_alone() {
+        let (mut doc, page) = one_page("/Span << /MCID 0 >> BDC\nBT (secret) Tj ET\nEMC");
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.struct_carriers, 0);
+    }
+
+    /// A parent tree written as `/Kids` rather than one flat `/Nums`.
+    ///
+    /// **The shape every large document uses**, and the one no fixture here has:
+    /// a producer with many pages writes a balanced tree with `/Limits`. Reading
+    /// only `/Nums` would find nothing on all of them, silently, because a miss
+    /// and an untagged page are the same answer.
+    #[test]
+    fn a_parent_tree_written_as_kids_is_followed() {
+        let (mut doc, page, ids, _) =
+            one_page_tagged("/Span << /MCID 0 >> BDC\nBT (secret) Tj ET\nEMC", 1, false);
+        // Re-shape the flat tree into a root with two kids, the key in the
+        // second -- so a walk that stops at the first kid fails too.
+        let entry: Vec<Object> = ids.iter().map(|id| Object::Reference(*id)).collect();
+        let far = doc.add_object(dictionary! {
+            "Limits" => vec![Object::Integer(9), Object::Integer(9)],
+            "Nums" => vec![Object::Integer(9), Object::Array(Vec::new())],
+        });
+        let near = doc.add_object(dictionary! {
+            "Limits" => vec![Object::Integer(0), Object::Integer(0)],
+            "Nums" => vec![Object::Integer(0), Object::Array(entry)],
+        });
+        let root = doc.add_object(dictionary! {
+            "Kids" => vec![Object::Reference(far), Object::Reference(near)],
+        });
+        let tree_root = doc
+            .catalog()
+            .expect("catalog")
+            .get(b"StructTreeRoot")
+            .and_then(Object::as_reference)
+            .expect("tree");
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(tree_root) else {
+            panic!("the structure root is a dictionary")
+        };
+        dictionary.set("ParentTree", root);
+
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.struct_carriers, 1);
+        assert!(!has_shadow_text(&doc, ids[0]));
+    }
+
+    /// An `/MCID` past the end of the page's entry names no element.
+    #[test]
+    fn an_mcid_past_the_end_of_the_entry_names_no_element() {
+        let (mut doc, page, ids, _) =
+            one_page_tagged("/Span << /MCID 7 >> BDC\nBT (secret) Tj ET\nEMC", 1, false);
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.struct_carriers, 0);
+        assert!(has_shadow_text(&doc, ids[0]));
+    }
+
+    /// A `/P` chain that loops terminates, and takes what it reached.
+    ///
+    /// The tree is the document's to shape and a cycle in it is one dictionary
+    /// away. What stops the walk is `MAX_ANCESTORS`, and this is the test that
+    /// says so on the input that needs it.
+    ///
+    /// **Its failure mode is a hang rather than a red line**, which
+    /// `docs/TRAPS.md` records as the weakest shape a check can have: remove the
+    /// bound and this does not fail, it stops answering, and a run that never
+    /// finishes reads as a broken harness. It is kept because the property is
+    /// worth stating and because the bound's *other* consequence --- clearing
+    /// nothing past it --- is what the `0..1` mutation reddens outright.
+    #[test]
+    fn a_parent_chain_that_loops_terminates() {
+        let (mut doc, page, ids, ancestor) =
+            one_page_tagged("/Span << /MCID 0 >> BDC\nBT (secret) Tj ET\nEMC", 1, true);
+        let ancestor = ancestor.expect("built with one");
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(ancestor) else {
+            panic!("the ancestor is a dictionary")
+        };
+        dictionary.set("P", Object::Reference(ids[0]));
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.struct_carriers, 2);
     }
 }

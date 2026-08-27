@@ -395,6 +395,11 @@ def build_marked(path: str, font_path: str) -> None:
       rule that took every annotation on the page would look exactly like a rule
       that took the right one, and this is the reader's other comment, which is
       not theirs to lose. Carries `ANNOT-AWAY`.
+    * A **structure element's** `/ActualText` -- the same key as the first one,
+      in the row's other home, reached by `/MCID` through the parent tree rather
+      than by nesting in the content stream. Carries `STRUCT-CARRIER`, with
+      `STRUCT-ANCESTOR` on the element above it and `STRUCT-OTHER` on the
+      element for a line nobody redacted.
     * `/Info` document metadata.
     """
     text = "".join(LINES)
@@ -423,6 +428,9 @@ def build_marked(path: str, font_path: str) -> None:
     )
 
     secret = LINES[TARGET_LINE]
+    # The line that is tagged but NOT redacted, so the structure tree has an
+    # element a correct removal must leave alone.
+    other_line = (TARGET_LINE + 1) % len(LINES)
     content = surrounding_content()
     for index, line in enumerate(LINES):
         y = 720 - index * 40
@@ -432,10 +440,15 @@ def build_marked(path: str, font_path: str) -> None:
         )
         if index == TARGET_LINE:
             # The span's /ActualText is a second, independent copy of the line.
+            # The /MCID ties it to a structure element holding a THIRD copy --
+            # the other home of this same carrier, and the one a content stream
+            # edit cannot reach.
             drawn = (
-                "/Span << /ActualText (%s) >> BDC\n%s EMC\n"
+                "/Span << /ActualText (%s) /MCID 0 >> BDC\n%s EMC\n"
                 % (escape(line).decode("latin-1"), drawn)
             )
+        elif index == other_line:
+            drawn = "/Span << /MCID 1 >> BDC\n%s EMC\n" % drawn
         content += drawn
 
     stream = pdf.stream(b"<< >>", content.encode("latin-1"))
@@ -455,15 +468,63 @@ def build_marked(path: str, font_path: str) -> None:
 
     page = pdf.reserve()
     pages = pdf.reserve()
+    # The structure tree, and its three elements are the whole point of it.
+    #
+    #   STRUCT-CARRIER   on the element owning the redacted line's MCID. Must
+    #                    go: the same key and the same words, in the row's other
+    #                    home.
+    #   STRUCT-ANCESTOR  on the element above it, which restates everything
+    #                    beneath -- including what was removed. Must go too, and
+    #                    the cost is visible here rather than argued about: it
+    #                    also covers the line that was NOT redacted.
+    #   STRUCT-OTHER     on the element owning the untouched line. Must stay. A
+    #                    rule that stripped the whole tree would satisfy the
+    #                    first two perfectly.
+    carrier = pdf.reserve()
+    other = pdf.reserve()
+    ancestor = pdf.reserve()
+    struct_root = pdf.reserve()
+    pdf.put(
+        carrier,
+        b"<< /Type /StructElem /S /P /P %d 0 R /Pg %d 0 R /K 0 "
+        b"/ActualText (%s) >>" % (ancestor, page, escape(secret + " STRUCT-CARRIER")),
+    )
+    pdf.put(
+        other,
+        b"<< /Type /StructElem /S /P /P %d 0 R /Pg %d 0 R /K 1 "
+        b"/ActualText (%s) >>"
+        % (ancestor, page, escape(LINES[other_line] + " STRUCT-OTHER")),
+    )
+    pdf.put(
+        ancestor,
+        b"<< /Type /StructElem /S /Part /P %d 0 R /K [%d 0 R %d 0 R] "
+        b"/ActualText (%s) >>"
+        % (
+            struct_root,
+            carrier,
+            other,
+            escape("Section holding " + secret + " STRUCT-ANCESTOR"),
+        ),
+    )
+    # The number tree a consumer walks to get from an MCID back to its element.
+    parent_tree = pdf.add(b"<< /Nums [0 [%d 0 R %d 0 R]] >>" % (carrier, other))
+    pdf.put(
+        struct_root,
+        b"<< /Type /StructTreeRoot /K [%d 0 R] /ParentTree %d 0 R "
+        b"/ParentTreeNextKey 1 >>" % (ancestor, parent_tree),
+    )
     pdf.put(
         page,
         b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
         b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R "
-        b"/Annots [%d 0 R %d 0 R] >>"
+        b"/Annots [%d 0 R %d 0 R] /StructParents 0 >>"
         % (pages, WIDTH, HEIGHT, font_obj, stream, annotation, over),
     )
     pdf.put(pages, b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page)
-    root = pdf.add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages)
+    root = pdf.add(
+        b"<< /Type /Catalog /Pages %d 0 R /StructTreeRoot %d 0 R "
+        b"/MarkInfo << /Marked true >> >>" % (pages, struct_root)
+    )
     info = pdf.add(
         b"<< /Title (%s) /Producer (tpdf spike 0.3 fixture) >>" % escape(secret)
     )

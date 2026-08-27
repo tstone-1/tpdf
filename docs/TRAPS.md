@@ -16580,4 +16580,21 @@ the code was redundant, and the two look identical in the run's output. The way 
 apart is to ask what would have to be true for the mutation to matter, not to strengthen the
 test until something goes red.
 
+**A third, later the same day, and it is the redundant kind again** --- worth adding because
+the redundancy was not visible by reading. The structure tree's `/P` walk had two guards: a
+`for _ in 0..MAX_ANCESTORS` bound and a visited-set filter on the step. Deleting the filter
+reddened nothing, and that is right: an element already collected is not collected twice, so
+a cycle costs idle turns and nothing else, and the bound ends them. *"Two mechanisms with the
+same limit make one of them untestable"* is already an entry here; what this adds is which
+one to keep. **Keep the one that holds for every shape of the input.** The visited set catches
+a simple `A -> B -> A`; the count catches that *and* a chain a thousand deep, which is the
+input no visited set terminates early on. Keeping the weaker guard and deleting the stronger
+would have passed the same tests.
+
+The test left behind is worth a second look too: what proves the walk terminates is a test
+whose failure mode is a **hang**, not a red line. That is the weakest shape a check can have
+and it is recorded here under its own title. It is kept because the bound's other consequence
+--- clearing nothing past it --- is reddened outright by lowering the bound, so the property
+does have a check that fails properly; the cycle test only says the loop returns at all.
+
 Paid for on 2026-08-27.

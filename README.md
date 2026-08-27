@@ -141,8 +141,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   the words still in it is worse than no redaction at all. It also takes whole lines ---
   removing part of one means removing the instruction that drew it, so a word beside the one
   you marked goes with it. On a document tagged for accessibility it takes the second copy
-  of those words that the tag keeps beside them; where that copy is shared between pages it
-  refuses rather than change the others. It also takes any comment sitting on the words ---
+  of those words that the tag keeps beside them --- both where it sits beside the words and
+  where the document files it separately under the accessibility structure --- and where that
+  copy is shared between pages it refuses rather than change the others. It also takes any comment sitting on the words ---
   with its replies --- and leaves the ones elsewhere on the page alone.
   <!-- built: file.redactCopy -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
