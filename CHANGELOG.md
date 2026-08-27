@@ -154,6 +154,17 @@ file being written is a copy, and the document you have open keeps it. And what 
 is the comment itself, not just its place in the page's list: it is removed from
 everywhere in the file that named it, including a form's field list.
 
+### Changed: redaction also removes the bookmarks that name what went
+
+A bookmark's title is the heading it points at, so redacting a heading and
+keeping the bookmark leaves the words on screen --- in tpdf's own sidebar, in the
+file that was supposed to have lost them. Of 41 real PDFs, 163 of 165 bookmark
+titles are word-for-word text from the page.
+
+Entry by entry, with whatever hangs under it, and the rest of your table of
+contents stays where it was. One redacted heading does not cost you a hundred
+bookmarks, and a bookmark naming something else is not yours to lose.
+
 ### Added: redact the file you opened, not only a copy of it
 
 **Redact and save**, beside *Redact and save as*. The same removal and the same

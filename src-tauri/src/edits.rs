@@ -1234,6 +1234,21 @@ pub struct PlannedRedaction {
     /// these come from, and the reason they are carried rather than recomputed
     /// is written there.
     pub areas: Vec<[f32; 4]>,
+    /// The words the plan reported it would remove, one string per region.
+    ///
+    /// **From PDFium, through the font's own encoding**, which is why it is
+    /// carried rather than derived where it is used. The operands
+    /// `redact::remove_shows` deletes are font-encoded bytes: on a base-14
+    /// document they happen to read as text and on a Type0 one they are CIDs,
+    /// so a writer that read them would be right on the easy fixture and wrong
+    /// on the document that matters. `redact::RegionPlan::taking` is where these
+    /// come from.
+    ///
+    /// What needs them is the outline: a bookmark's title is the heading it
+    /// points at, so the only way to ask whether an entry names something that
+    /// went is to compare its title against what went. See
+    /// `redact::covered_outline`.
+    pub taking: Vec<String>,
 }
 
 /// One mark as the writer needs it.

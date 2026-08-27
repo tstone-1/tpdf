@@ -49,6 +49,17 @@ LINES = [
 # The line the harness edits. Index into LINES.
 TARGET_LINE = 1
 
+# The outline carrier's title: a SUBSTRING of the redacted line, which is what a
+# bookmark for that heading actually looks like. Sliced out of `LINES` rather
+# than written out, so the fixture cannot drift from the line it is about --
+# a title that stopped being a substring would make the carrier untouchable and
+# the check would report the removal working perfectly on nothing.
+#
+# The removal matches a title against the text it took, so the direction is
+# `taken.contains(title)`: route B removes the whole line, and the bookmark
+# names part of it.
+OUTLINE_CARRIER_TITLE = LINES[TARGET_LINE][len("REDACT ME: ") : -len(" belongs to A. Beispiel.")]
+
 
 class Pdf:
     """Accumulates numbered objects and serializes them with a valid xref."""
@@ -401,6 +412,20 @@ def build_marked(path: str, font_path: str) -> None:
       `STRUCT-ANCESTOR` on the element above it and `STRUCT-OTHER` on the
       element for a line nobody redacted.
     * `/Info` document metadata.
+    * The **outline**, as four entries in a sibling chain with a child --
+      `docs/PLAN.md` section 6's *Document level* row. A bookmark's title is the
+      heading it points at, so redacting the heading leaves a verbatim copy in
+      the outline, and tpdf's own sidebar goes on showing it. Measured on 41 real
+      PDFs: 163 of 165 titles are verbatim page text, against 4% when each
+      document's titles are matched against the next document's pages.
+
+      The chain is what makes the fixture worth its length. `OUTLINE-CARRIER` is
+      in the MIDDLE of it, so a removal that unlinks it badly -- dropping the
+      object and letting its neighbour lose the `/Next` key that named it --
+      leaves `OUTLINE-AFTER` unreachable while the file stays valid and every
+      parser agrees. `OUTLINE-BEFORE` and `OUTLINE-AFTER` are that control.
+      `OUTLINE-CHILD` hangs under the carrier and its own title matches nothing,
+      so it can only go by being part of the subtree.
     """
     text = "".join(LINES)
     font, font_bytes = subset_font(font_path, text, retain_gids=False)
@@ -521,9 +546,67 @@ def build_marked(path: str, font_path: str) -> None:
         % (pages, WIDTH, HEIGHT, font_obj, stream, annotation, over),
     )
     pdf.put(pages, b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page)
+
+    # The outline. Four entries and a deliberate shape:
+    #
+    #   OUTLINE-BEFORE   first sibling, title matches nothing. Must stay.
+    #   OUTLINE-CARRIER  second sibling, and its title is a SUBSTRING OF THE
+    #                    REDACTED LINE -- which is what a real bookmark for that
+    #                    heading would be. Must go.
+    #     OUTLINE-CHILD  under the carrier, title matches nothing. Must go
+    #                    anyway, because a section's subsections belong to it.
+    #   OUTLINE-AFTER    third sibling. Must stay, and it is the check that
+    #                    catches the linked-list defect: dropping the carrier
+    #                    object without splicing the chain removes /Next from
+    #                    OUTLINE-BEFORE, and a reader then walks /First, /Next
+    #                    and stops one entry early with no error anywhere.
+    #
+    # The carrier's title is built from the secret rather than written out, so
+    # the fixture cannot drift from the line it is about.
+    outline_root = pdf.reserve()
+    before = pdf.reserve()
+    carrier_item = pdf.reserve()
+    child_item = pdf.reserve()
+    after = pdf.reserve()
+    dest = b"/Dest [%d 0 R /Fit]" % page
+    pdf.put(
+        before,
+        b"<< /Title (OUTLINE-BEFORE) /Parent %d 0 R /Next %d 0 R %s >>"
+        % (outline_root, carrier_item, dest),
+    )
+    pdf.put(
+        carrier_item,
+        b"<< /Title (%s) /Parent %d 0 R /Prev %d 0 R /Next %d 0 R "
+        b"/First %d 0 R /Last %d 0 R /Count 1 %s >>"
+        % (
+            escape(OUTLINE_CARRIER_TITLE),
+            outline_root,
+            before,
+            after,
+            child_item,
+            child_item,
+            dest,
+        ),
+    )
+    pdf.put(
+        child_item,
+        b"<< /Title (OUTLINE-CHILD) /Parent %d 0 R %s >>" % (carrier_item, dest),
+    )
+    pdf.put(
+        after,
+        b"<< /Title (OUTLINE-AFTER) /Parent %d 0 R /Prev %d 0 R %s >>"
+        % (outline_root, carrier_item, dest),
+    )
+    pdf.put(
+        outline_root,
+        b"<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count 4 >>"
+        % (before, after),
+    )
+
     root = pdf.add(
         b"<< /Type /Catalog /Pages %d 0 R /StructTreeRoot %d 0 R "
-        b"/MarkInfo << /Marked true >> >>" % (pages, struct_root)
+        b"/Outlines %d 0 R /MarkInfo << /Marked true >> >>"
+        % (pages, struct_root, outline_root)
     )
     info = pdf.add(
         b"<< /Title (%s) /Producer (tpdf spike 0.3 fixture) >>" % escape(secret)

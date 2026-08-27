@@ -1263,6 +1263,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Where the parse runs is not observable from a unit test (the same bytes from the same input, every test green before and after; the probe's first run failed on a `/CropBox`-shaped quad in a display-space type)
 - A Rust process absorbs the first SIGSEGV you send it
 - A released id must leave a hole, because removing it renumbers the rest
+- Forgetting a node in a linked list is not removing it from the list (an array element is a member and a `/Next` is a road; three of four checks stayed green and the file was valid, `qpdf --check` clean and one bookmark short --- the check has to WALK, and `/Count` is recomputed rather than decremented)
 - A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets (one correct caller of `close_document` and no other owner, so a webview reload strands every document with its pool; the fix's argument depends on there being one window, two mutations survive by guarding each other, and the test that HUNG is the evidence the sweep reuses the drain)
 - Two copies of a distinction drift, and a mutation of one survives
 - Dropping the owner does not close a pipe something else has cloned
@@ -1524,6 +1525,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A `pgrep -f` wait loop is defeated by the command that checks on it (observing the job is what kept it blocked)
 - A wait built on `pgrep -f` outlives the job, and every later check agrees with it (the instrument agreed with the truth, and would have agreed with anything)
 - A mutation harness that dies leaves the mutation in the tree (a `finally` does not survive `pkill`, and on a feature branch the leftover is invisible in `git status`)
+- A filtered test run is only as good as the names, and mine excluded the check I wrote (`cargo test outline` silently omitted the control written for the defect, so a hand-run mutation reported it incapable of failing; recurred within the hour in the mutation table's own `--only`)
+- An over-removal control cannot be proved by a mutation that under-removes (an empty needle matches nothing, so it reddened the three removal checks and left the scope control green; the harness naming which tests went red instead is what identified the direction error)
 - Running a repo's formatter over files it does not format (the format-first rule is right for Rust, where `cargo fmt --check` is a gate, and does not transfer to a frontend with no formatting gate; dozens of orphaned anchors, and a scripted edit is what made throwing the reformat away cheap)
 - A mutation aimed at deleted code is refused far too late to matter
 - A refactor orphans mutations nobody can see, and the gate is what finds them (three at once, with three different repairs --- and the third is DELETED rather than re-aimed, because a seam that removes a class of defect removes the mutation watching for it)

@@ -148,7 +148,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   copy is shared between pages it refuses rather than change the others. It also takes any
   comment sitting on the words --- with its replies --- and leaves the ones elsewhere on the
   page alone, and it takes the document's own title, author and other properties, because a
-  title that paraphrases what you removed matches no search for it.
+  title that paraphrases what you removed matches no search for it. And it takes the bookmarks
+  that name what went, with whatever hangs under them, leaving the rest of your table of
+  contents where it is --- a bookmark's title is the heading it points at, so redacting the
+  heading and keeping the bookmark puts the words back on screen in tpdf's own sidebar.
   <!-- built: file.redactCopy -->
 - **Redact and save** does all of that to the file you opened, rather than to a new one.
   It warns first and offers to save you a copy, because there is no undo across it and no

@@ -2006,15 +2006,16 @@ asserted through **two independent readers** --- `verify::scan` over the bytes a
 re-extracting the written file. The survivor is the control: a scan that finds nothing
 because it cannot look is the failure this repository has recorded from several directions.
 
-What is **not** built: the carriers this still does not reach --- form values, the outline,
-page labels and embedded files, every one of which §6's table names; and a region over an
+What is **not** built: the carriers this still does not reach --- form values, page labels
+and embedded files, every one of which §6's table names; and a region over an
 image, which is reported and left. Three rows of that table **are** reached since
 2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
 the structure element the span belongs to; an annotation whose rectangle is over a region,
 replies and popup included; and the document's own description of itself, `/Info` and the XMP
-packet, taken whole. **In-place apply and the journal truncation landed the same day** and
-have a subsection of their own below. The five subsections say what each does and does not
-cover.
+packet, taken whole. A fourth followed on 2026-08-27: the **outline**, entry by entry, which
+is the commonest of the four in the wild and the only one a reader can see in tpdf itself.
+**In-place apply and the journal truncation landed the same day** and have a subsection of
+their own below. The six subsections say what each does and does not cover.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
@@ -2268,6 +2269,72 @@ names `/Info` and the catalog names `/Metadata`, and removing an object without 
 leaves a dangling name where there was a description. Each half has its own mutation, because
 `/Info` and XMP hold the same title in two forms and taking one is the plausible way to get
 this wrong.
+
+#### The outline that still names what went --- done 2026-08-27
+
+`docs/PLAN.md` §6's *Document level* row again, and the one carrier a reader can see in tpdf
+itself: `outline.rs` feeds the sidebar, so a heading redacted off the page comes back on
+screen in the file that was supposed to have lost it.
+
+**Ranked by measurement rather than by argument.** Of 41 real PDFs on this machine, counted
+by key through `qpdf --json=2`:
+
+| carrier | documents carrying it |
+|---|---|
+| outline | 8--10 |
+| form fields (`/AcroForm`) | 4 |
+| page labels | 2 |
+| embedded files | 0 |
+| XFA | 0 |
+
+(8 have outline *entries* against 10 with an `/Outlines` key --- an empty root and a
+hex-encoded title are both skipped, so 8 is a lower bound.)
+
+**A string rule here, where the same rule was refused for metadata one increment earlier, and
+the difference is measured.** The claim behind ranking this at all is that a bookmark title
+*is* the heading it points at. **163 of 165 titles are verbatim page text --- 99% --- against
+4% when each document's titles are matched against the *next* document's pages.** Without
+that control the 99% would mean nothing, because a short string turns up in a long document
+by accident. `/Info /Title` is a *description* of the document, and a description that
+paraphrases a redacted line has nothing to match against; a bookmark title is the page's own
+words.
+
+**The direction is `taken.contains(title)`.** Route B removes the whole text-showing
+operation, so what came out is a line and the bookmark names part of it. Titles shorter than
+four characters are left alone: a bookmark called `1` is a substring of almost any line.
+
+**The entry and its subtree go; its ancestors do not**, which is the opposite of the
+structure-tree walk and deliberate. A structure element's `/Alt` on an ancestor *restates*
+what is beneath it, including what was removed. An outline ancestor is a different heading
+nobody redacted, and taking it would cost the reader their table of contents --- one redacted
+heading must not cost 131 bookmarks, which is a real figure from one of the 41.
+
+**`pagetree::forget` is the wrong instrument, and it looks like the right one.** It drops an
+array element correctly and a dictionary key correctly, which is why the annotations
+(`/Annots` is an array) and `/Info` (a leaf) were both safe. An outline is a doubly-linked
+sibling chain: forget an entry in the middle and its predecessor loses the `/Next` key, so a
+reader walks `/First`, `/Next` and stops one entry early with the file valid and no parser
+complaining. `drop_outline_items` splices first. `docs/TRAPS.md` has the full account,
+including the measurement that three of the probe's four outline checks stay green under
+exactly that defect.
+
+`/Count` is **recomputed** rather than decremented, preserving each node's sign --- a negative
+count means the reader had that section collapsed, which a removal has no business changing.
+
+**What is not this.** `pagetree::drop_outline` removes the whole outline and is still right
+for a page deletion, where every destination names a page that is gone. The two are different
+operations and the difference is which entries are still meaningful afterwards.
+
+**The taken text is carried on the plan**, `PlannedRedaction::taking`, from PDFium through the
+font's own encoding. Not read off the operands `remove_shows` deletes: those are font-encoded
+bytes, and on a Type0 document they are CIDs rather than characters --- so a writer that read
+them would be right on the easy fixture and wrong on the document that matters.
+
+**Evidence.** Seven mutations, each caught by the test named for it, and four probe checks
+reading the outline back **through `outline::read`** --- the reader that feeds the sidebar,
+so a title it still returns is a title a reader still sees. Deleting the splice turns exactly
+one of those four red and leaves the other three green, which is the whole reason the fixture
+puts the carrier in the middle of the chain.
 
 #### Applying it to the reader's own file --- done 2026-08-27
 

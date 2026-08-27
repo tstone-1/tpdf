@@ -798,6 +798,12 @@ async fn ask_redactions(
         // of them do not combine into one. The writer asks each annotation
         // whether it is over *any* of them.
         let mut areas: Vec<[f32; 4]> = Vec::new();
+        // The same strings as `needles`, kept per page as well as flat. The
+        // flat list verifies the written file and the per-page one reaches the
+        // writer, which needs to know what a removal took in order to ask
+        // whether an outline entry names it. One source, two readers --- built
+        // in the same loop so they cannot come to disagree.
+        let mut taken: Vec<String> = Vec::new();
         for plan in plans {
             text_objects = plan.text_objects;
             for object in &plan.unhandled {
@@ -808,6 +814,7 @@ async fn ask_redactions(
             let taking = plan.taking.trim();
             if !taking.is_empty() {
                 needles.push(taking.to_string());
+                taken.push(taking.to_string());
             }
         }
         // Merged: two regions over one line name the same operator, and removing
@@ -821,6 +828,7 @@ async fn ask_redactions(
             shows,
             text_objects,
             areas,
+            taking: taken,
         });
     }
 

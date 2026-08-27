@@ -1291,7 +1291,7 @@ could not take becomes a reason. So the failure mode this section would otherwis
 reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
 omission at a call site.
 
-**Residual, and it is large enough to state plainly.** This reaches three rows of
+**Residual, and it is large enough to state plainly.** This reaches four rows of
 `docs/PLAN.md` §6's carrier table and no more, all of it added 2026-08-27. The page's own
 content: the show operators, and the shadow text (`/ActualText`, `/Alt`, `/E`) in **both** of
 that row's homes --- the marked-content property list the glyphs sit inside, and the structure
@@ -1300,16 +1300,23 @@ ancestors. An **annotation whose `/Rect` overlaps a region**, with its popup and
 removed together with every reference to it rather than unlinked from the page. And the
 document's own description of itself --- `/Info` and the catalog's `/Metadata` --- taken whole,
 because a title that paraphrases a redacted line is reachable by no rule that matches text.
+And the **outline entries whose title names what went**, with the subtree under each: a
+bookmark title *is* the heading it points at, measured at 163 of 165 verbatim page text
+against a 4% cross-document control, which is what licenses a string rule here where one was
+refused for metadata. Entry by entry rather than the whole outline, so one redacted heading
+does not cost a reader their table of contents.
 
-Everything else in that table survives: an annotation *away* from every region (deliberate ---
-a reader's other comments are not theirs to lose), form values, the outline, page labels,
-embedded files, and any prior incremental revision, since a copy is a serialisation rather
-than a sanitation (§T6.1). So does any structure element the parent-tree walk could not reach,
+Everything else in that table survives: an annotation *away* from every region and an outline
+entry naming something else (both deliberate --- a reader's other comments and their other
+bookmarks are not theirs to lose), form values, page labels, embedded files, and any prior
+incremental revision, since a copy is a serialisation rather than a sanitation (§T6.1). So does any structure element the parent-tree walk could not reach,
 which is reported as unverified rather than passed over.
 
-**The metadata strip is a property of the redaction and of nothing else.** A copy, an extract,
-a split, a merge and a print job all still carry `/Info` and XMP across untouched, which is
-§T6.1's position and is held by one condition with a control of its own. An image or a
+**The metadata strip and the outline removal are properties of the redaction and of nothing
+else.** A copy, an extract, a split, a merge and a print job all still carry `/Info`, XMP and
+every bookmark across untouched, which is §T6.1's position and is held by **one** condition
+guarding both --- so one mutation of it reddens both controls, which is why only one of them
+names it. An image or a
 vector drawing inside the region is reported and left. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
 a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is

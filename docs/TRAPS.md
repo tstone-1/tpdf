@@ -16684,3 +16684,129 @@ anchor: it is to drop the indentation from the search string entirely and let on
 cover both sites, which is what the edit meant.
 
 Paid for on 2026-08-27.
+
+### Forgetting a node in a linked list is not removing it from the list
+
+`pagetree::forget` removes an object and every reference to it: an element of an
+**array** by dropping the element, a **dictionary** key by dropping the key. Both are right
+for what it was written for. `/Annots` is an array, so a removed annotation leaves a shorter
+array; `/Info` is a leaf named once by the trailer, so removing the key is exactly the
+repair. Two carriers, two correct answers, and the function looks general.
+
+A PDF outline is neither. It is a doubly-linked sibling chain — every entry carries `/Prev`
+and `/Next`, its parent carries `/First` and `/Last`, and a reader walks it by following
+those. Forget an entry in the middle of one and the key that goes is its predecessor's
+`/Next`. So:
+
+```
+before -> carrier -> after          becomes          before      after
+```
+
+`after` is still an object in the file. It has a `/Prev` naming an object that no longer
+exists, and nothing names it. A reader walking `/First` then `/Next` reaches `before` and
+stops. **The file is valid, `qpdf --check` is clean, PDFium opens it without complaint, and
+every entry after the removed one is gone from the panel.**
+
+Two things make this hard to see rather than merely easy to get wrong.
+
+**The removal it accompanies looks perfect.** Measured on the fixture: with the splice
+deleted, three of the probe's four outline checks stayed green — the carrier gone, its
+subtree gone, the entry *before* it surviving — and only the fourth moved. The three green
+ones are the ones a person writes first, because they are about the thing being removed.
+
+**No count catches it either.** `doc.objects` still holds `after`, so a test asserting the
+object survives passes. The check has to *walk*: `assert_eq!(walked, vec![before, after])`
+from `/First`, or read the outline back through a real reader. The probe does the second,
+through `outline::read` — which is what feeds the sidebar, so a title it still returns is a
+title a reader still sees.
+
+**The repair is to splice before forgetting**: join the neighbours to each other, move the
+parent's `/First` and `/Last` off the removed entry, and only then drop the objects. Only
+the *roots* of removed subtrees need it — an entry inside a doomed subtree has a parent that
+is going too, and splicing a chain about to be deleted whole is work with no reader.
+
+**And `/Count` is recomputed rather than decremented.** A delta needs the number of visible
+items in each removed subtree, which depends on the sign of every `/Count` beneath it;
+recomputing needs only the tree that is left and cannot drift. The sign is preserved, because
+it is not part of the count: a negative `/Count` means the reader had that section collapsed,
+which a redaction has no business changing. A stale `/Count` is the `/Size` shape from spike
+0.4 one subsystem along — renders identically, structurally wrong.
+
+**Where else this is waiting.** Any structure in a PDF where a reference is a *link* rather
+than a membership: the outline, `/AcroForm` field trees that use `/Kids` with back-pointers,
+article threads (`/B` beads are a ring), and `/Next` chains in `/OpenAction` sequences.
+Before reaching for `forget`, ask what the reference means — an array element is a member and
+a `/Next` is a road.
+
+Paid for on 2026-08-27.
+
+### A filtered test run is only as good as the names, and mine excluded the check I wrote
+
+Having written a control specifically to catch the linked-list defect above, I proved it by
+deleting the splice and running `cargo test outline`. **One test went red, and it was the
+wrong one** — the `/Count` check. The reachability check, the one written for exactly this,
+reported nothing.
+
+It had not passed. It had not run. Its name was
+`the_entries_around_a_removed_one_are_still_reachable_by_walking`, which does not contain the
+string `outline`, so `cargo test outline` filtered it out silently — the run says
+`878 filtered out` and nothing about which. Invoked by its own name it fails correctly, with
+`[before]` where `[before, after]` was expected.
+
+Two lessons, and the second is the one that costs more.
+
+**A filter is a substring match over names, so a group of tests is only a group if they are
+named like one.** The three siblings were `a_redaction_takes_the_outline_entry...`,
+`a_removal_leaves_the_outline_counting...` and `an_outline_entry_naming_something_else...`;
+the fourth was named for what it asserts rather than for what it is about, which is usually
+the better instinct and here made it invisible. Renamed to
+`an_outline_removal_leaves_the_entries_around_it_reachable`.
+
+**A hand-run mutation on a filtered suite can report a check as incapable of failing when it
+is merely absent, and the two look identical.** This is why the mutation harness runs the
+*whole* suite and asserts the named test is among the red — a discipline that exists in this
+repository precisely because the shortcut is so tempting when a full run takes a minute.
+
+**And it recurred within the hour, in the mutation table itself.** Eight mutations were
+registered for this increment and `--only "outline"` ran seven: the eighth was called
+`redact: leave a spliced entry's successor pointing back at it`. Same filter, same word
+missing, same silence. `--only` is a substring match over mutation names for the same reason
+`cargo test` is one over test names, and `docs/TRAPS.md` already records `--only "text: "`
+running every `context:` mutation too. Name a check for the group it belongs to, then for
+what it asserts.
+
+Paid for on 2026-08-27.
+
+### An over-removal control cannot be proved by a mutation that under-removes
+
+The outline removal has a scope control: `a_copy_that_is_not_a_redaction_keeps_its_outline`,
+which asserts an ordinary Save a copy keeps every bookmark. The mutation written for it fed
+`covered_outline` an empty needle:
+
+```rust
+let entries = crate::redact::covered_outline(doc, &[String::new()]);
+```
+
+The harness reported it uncaught, and named three tests that went red instead — all three of
+the *removal* checks. The reason is one word: an empty needle matches **nothing**, so that
+mutation makes the removal do less, and the control is about it doing more. A save that
+removes nothing at all is exactly what the control asserts, so the mutation left it as green
+as a clean tree does.
+
+**The general form: a mutation must move the behaviour in the direction the check is
+watching.** A control against over-removal needs a mutation that over-removes; one against
+under-removal needs the reverse. Writing "break this call somehow" produces a mutation that
+breaks it in whichever direction is easiest to type, which is a coin toss.
+
+**What the control's real mutation is, and why there is not a second one.** The scope here is
+a single `if` guarding both the metadata strip and the outline removal, so
+`save: strip metadata on every save rather than on a redaction` reddens both copy controls.
+It names one, because a mutation names one test; the other says so in its own doc comment. A
+second entry with the same anchor and an equivalent replacement would be padding — there is
+one condition there, not two.
+
+The harness earned its keep twice over here: it did not merely say *uncaught*, it printed
+which three tests went red instead, and that list is what identified the direction error in
+one reading.
+
+Paid for on 2026-08-27.

@@ -1142,6 +1142,13 @@ MUTATIONS = [
         # extract, split and merge silently loses its title and author, and the
         # two checks above stay green -- this is the SCOPE, and without a
         # control for it the condition is decoration.
+        #
+        # Since 2026-08-27 this guard covers the OUTLINE too, so the mutation
+        # reddens `a_copy_that_is_not_a_redaction_keeps_its_outline` as well.
+        # It names one of the two because a mutation names one test, and the
+        # other says so in its own doc comment. A second entry with the same
+        # anchor and an equivalent replacement would be padding: there is one
+        # condition here, not two.
         "save: strip metadata on every save rather than on a redaction",
         "src/save.rs",
         "    if done.shows > 0 || done.annots > 0 || !redactions.is_empty() {",
@@ -1279,6 +1286,77 @@ MUTATIONS = [
         "                    if let Some(key) = SHADOW_TEXT.into_iter().find(|key| shared.has(key)) {",
         "                    if let Some(key) = SHADOW_TEXT.into_iter().find(|_key| false) {",
         "a_shared_property_list_carrying_the_words_refuses_and_removes_nothing",
+    ),
+    Mutation(
+        # THE mutation this increment exists for: drop the outline entry
+        # without splicing the chain it was in. `pagetree::forget` then takes
+        # /Next off the entry before it, so a reader walks /First, /Next and
+        # stops one entry early -- every later sibling unreachable, the file
+        # valid, no parser complaining.
+        "redact: remove an outline entry without joining its neighbours",
+        "src/redact.rs",
+        "        if let Some(at) = prev {\n            set_or_clear(doc, at, b\"Next\", next);\n        }",
+        "        if let Some(at) = prev {\n            let _ = at;\n        }",
+        "an_outline_removal_leaves_the_entries_around_it_reachable",
+    ),
+    Mutation(
+        # The other half of the splice. A /Prev naming a deleted object is what
+        # a reader walking BACKWARDS from /Last meets, and PDFium's own
+        # FPDFBookmark_GetFirstChild/GetNextSibling never look at it -- so this
+        # is the half no forward walk can see.
+        "redact: leave an outline entry's successor pointing back at what went",
+        "src/redact.rs",
+        "        if let Some(at) = next {\n            set_or_clear(doc, at, b\"Prev\", prev);\n        }",
+        "        if let Some(at) = next {\n            let _ = at;\n        }",
+        "an_outline_removal_leaves_the_entries_around_it_reachable",
+    ),
+    Mutation(
+        # Leave /Count saying what the outline used to hold. The /Size shape
+        # from spike 0.4 one subsystem along: renders identically, structurally
+        # wrong.
+        "redact: leave the outline counting entries that are gone",
+        "src/redact.rs",
+        "            recount(doc, root, 0);",
+        "            let _ = root;",
+        "a_removal_leaves_the_outline_counting_what_is_left",
+    ),
+    Mutation(
+        # Take every entry rather than the ones naming what went -- which is
+        # what a page deletion correctly does and what this must not.
+        "redact: take the whole outline rather than the entries that name it",
+        "src/redact.rs",
+        "        if folded.iter().any(|line| line.contains(&title)) {",
+        "        if folded.iter().any(|line| !line.is_empty() || line.contains(&title)) {",
+        "an_outline_entry_naming_something_else_survives_a_redaction",
+    ),
+    Mutation(
+        # Match a title against nothing, so the carrier survives. The direction
+        # that leaves the words on screen in tpdf's own sidebar.
+        "redact: leave every outline entry whatever it names",
+        "src/redact.rs",
+        "        if folded.iter().any(|line| line.contains(&title)) {",
+        "        if folded.iter().any(|line| line.contains(&title) && line.is_empty()) {",
+        "a_redaction_takes_the_outline_entry_naming_what_it_removed",
+    ),
+    Mutation(
+        # Take the matched entry and leave what hangs under it. A section's
+        # subsections belong to the section, and a child's own title matches
+        # nothing -- so only the subtree walk can reach it.
+        "redact: take a matched outline entry without its subtree",
+        "src/redact.rs",
+        "        collect_subtree(doc, id, &mut all);",
+        "        if !all.contains(&id) {\n            all.push(id);\n        }",
+        "a_redaction_takes_the_outline_entry_naming_what_it_removed",
+    ),
+    Mutation(
+        # Act on a one-character title. A bookmark called `1` is a substring of
+        # almost any line, so this takes the outline off a document for the sake
+        # of a chapter number.
+        "redact: match an outline title too short to be distinctive",
+        "src/redact.rs",
+        "        if title.len() < MIN_OUTLINE_TITLE {",
+        "        if title.is_empty() {",
+        "a_very_short_outline_title_is_not_matched",
     ),
     Mutation(
         # Refuse every named property list rather than only the ones carrying a
@@ -1427,7 +1505,7 @@ MUTATIONS = [
         # named the deletion and missed the extract.
         "save: leave a dropped page's content in the file",
         "src/save.rs",
-        "    if !dropped.is_empty() || moved || redacted.annots > 0 {",
+        "    if !dropped.is_empty() || moved || redacted.annots > 0 || redacted.outline > 0 {",
         "    if false {",
         "extracting_a_page_leaves_the_other_pages_out_of_the_file",
     ),
@@ -1437,7 +1515,7 @@ MUTATIONS = [
         # fail, and without a control for it the condition above is decoration.
         "save: sanitize a plain copy as well as a save that removed something",
         "src/save.rs",
-        "    if !dropped.is_empty() || moved || redacted.annots > 0 {",
+        "    if !dropped.is_empty() || moved || redacted.annots > 0 || redacted.outline > 0 {",
         "    if dropped.is_empty() || !moved || true {",
         "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
     ),

@@ -999,6 +999,360 @@ fn is_show(operator: &str) -> bool {
     matches!(operator, "Tj" | "TJ" | "'" | "\"")
 }
 
+/// How many outline entries to walk before giving up.
+///
+/// An outline is the document's to shape and a `/Next` or `/First` pointing
+/// backwards is one dictionary away, so the walk needs a bound for the reason
+/// [`MAX_ANCESTORS`] does. This one is a *visit* count rather than a depth,
+/// because an outline's cycles are along the sibling chain as often as down it,
+/// and a depth bound does not see a `/Next` that loops.
+///
+/// Generous on purpose: 131 entries is a real figure from one document measured
+/// on 2026-08-27, and a table of contents for a standard runs to thousands. What
+/// this bounds is a malformed file, not a large one --- so a document that hits
+/// it has its outline walk cut short, which is reported as a carrier that could
+/// not be cleared rather than passed over.
+const MAX_OUTLINE_ITEMS: usize = 20_000;
+
+/// The shortest title a removal will act on.
+///
+/// A title of one or two characters --- a chapter number, an initial --- is a
+/// substring of almost any line, so matching on it would take the whole outline
+/// off a document for the sake of a bookmark called `1`. The same floor the
+/// verification scan uses, and for the same reason.
+const MIN_OUTLINE_TITLE: usize = 4;
+
+/// Outline entries whose title is text a removal took, and everything under
+/// them.
+///
+/// **`docs/PLAN.md` §6's *Document level* row, and the one carrier a reader can
+/// see in tpdf itself.** A bookmark's title is the heading it points at, so
+/// redacting the heading leaves a verbatim copy in the outline --- and the
+/// sidebar goes on showing it, so the words come back on screen in the file that
+/// was supposed to have lost them.
+///
+/// **A string rule, where the same rule was refused for metadata**, and the
+/// difference is measured rather than argued. Of 41 real PDFs, 8 carry outline
+/// entries and **163 of their 165 titles are verbatim page text** --- against 4%
+/// when each document's titles are matched against the *next* document's pages,
+/// which is the control that makes the 99% mean anything. A title is the page's
+/// own words; `/Info /Title` is a description of the document, and a description
+/// that paraphrases a redacted line has nothing to match against at all.
+///
+/// **The direction is `taken.contains(title)`.** Route B removes the whole
+/// text-showing operation, so what came out is a line and the bookmark names
+/// part of it. The other direction would only fire on a bookmark that quotes
+/// more than the line it points at.
+///
+/// **The entry and its subtree go; its ancestors do not**, which is the opposite
+/// of [`clear_struct_shadow_text`] and is deliberate. A structure element's
+/// `/Alt` on an ancestor *restates* what is beneath it, including what was
+/// removed. An outline ancestor is a different heading, which nobody redacted,
+/// and taking it would take every other section with it.
+///
+/// `taken` is the text the plan reported it would remove, which came from
+/// PDFium through the font's own encoding. Not the operands
+/// [`remove_shows`] deleted: those are font-encoded bytes, and on a Type0
+/// document they are CIDs rather than characters.
+#[must_use]
+pub fn covered_outline(doc: &Document, taken: &[String]) -> Vec<ObjectId> {
+    let Some(root) = outline_root(doc) else {
+        return Vec::new();
+    };
+    let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
+    if folded.iter().all(|line| line.is_empty()) {
+        return Vec::new();
+    }
+
+    let mut doomed: Vec<ObjectId> = Vec::new();
+    // Depth-first, and the stack is what bounds it rather than recursion: this
+    // walks a tree the document shaped, in a save, and a `/First` that points at
+    // an ancestor is an infinite loop with no stack frame to run out of.
+    let mut stack: Vec<ObjectId> = first_child(doc, root).into_iter().collect();
+    let mut seen: Vec<ObjectId> = Vec::new();
+    let mut visits = 0usize;
+    while let Some(id) = stack.pop() {
+        visits += 1;
+        if visits > MAX_OUTLINE_ITEMS {
+            break;
+        }
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let Ok(item) = doc.get_dictionary(id) else {
+            continue;
+        };
+        // Siblings and children both, so a match anywhere in the tree is found.
+        // A doomed item's children are collected below rather than here: they go
+        // because their parent does, whatever their own titles say.
+        if let Ok(next) = item.get(b"Next").and_then(Object::as_reference) {
+            stack.push(next);
+        }
+        if let Ok(child) = item.get(b"First").and_then(Object::as_reference) {
+            stack.push(child);
+        }
+        let title = item
+            .get(b"Title")
+            .and_then(Object::as_str)
+            .map(crate::annots::decode_text_string)
+            .unwrap_or_default();
+        let title = fold(&title);
+        if title.len() < MIN_OUTLINE_TITLE {
+            continue;
+        }
+        if folded.iter().any(|line| line.contains(&title)) {
+            doomed.push(id);
+        }
+    }
+
+    // The subtrees, after the search rather than during it, so an entry that
+    // matches is taken whole exactly once however it was reached.
+    let mut all: Vec<ObjectId> = Vec::new();
+    for id in doomed {
+        collect_subtree(doc, id, &mut all);
+    }
+    all
+}
+
+/// Folds a title or a line for comparison.
+///
+/// Whitespace collapses because a title is typed by a producer and the line is
+/// laid out by a typesetter: the same words routinely differ by a line break, a
+/// double space or a non-breaking space, and none of those is a difference in
+/// what the bookmark says. Case folds for the reason `search.rs` folds --- see
+/// its note on why `char::to_lowercase` is the wrong operation for matching.
+fn fold(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut space = false;
+    for ch in caseless::default_case_fold_str(value).chars() {
+        if ch.is_whitespace() {
+            space = !out.is_empty();
+            continue;
+        }
+        if space {
+            out.push(' ');
+            space = false;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// The catalog's `/Outlines`, if the document has one.
+fn outline_root(doc: &Document) -> Option<ObjectId> {
+    doc.catalog()
+        .ok()?
+        .get(b"Outlines")
+        .and_then(Object::as_reference)
+        .ok()
+}
+
+/// The `/First` of a node, if it names one.
+fn first_child(doc: &Document, node: ObjectId) -> Option<ObjectId> {
+    doc.get_dictionary(node)
+        .ok()?
+        .get(b"First")
+        .and_then(Object::as_reference)
+        .ok()
+}
+
+/// Adds `id` and everything under it to `into`, once each.
+fn collect_subtree(doc: &Document, id: ObjectId, into: &mut Vec<ObjectId>) {
+    let mut stack = vec![id];
+    let mut visits = 0usize;
+    while let Some(at) = stack.pop() {
+        visits += 1;
+        if visits > MAX_OUTLINE_ITEMS {
+            return;
+        }
+        if into.contains(&at) {
+            continue;
+        }
+        into.push(at);
+        let Ok(item) = doc.get_dictionary(at) else {
+            continue;
+        };
+        if let Ok(child) = item.get(b"First").and_then(Object::as_reference) {
+            stack.push(child);
+        }
+        // The children's siblings, and **not** `at`'s own `/Next`: a subtree is
+        // one entry and what hangs under it. Following the sibling chain from
+        // the root of the subtree would take everything after it in the
+        // document, which is the outline equivalent of dropping the whole tree.
+        if at != id {
+            if let Ok(next) = item.get(b"Next").and_then(Object::as_reference) {
+                stack.push(next);
+            }
+        }
+    }
+}
+
+/// Removes outline entries, repairing the chains they were in first.
+///
+/// **`pagetree::forget` alone is wrong here, and it looks right.** It removes a
+/// reference from an *array* by dropping the element, which is correct for
+/// `/Annots`, and from a *dictionary* by dropping the key, which is correct for
+/// `/Info`. An outline is neither: it is a doubly-linked sibling chain. Forget
+/// an item in the middle of one and its predecessor loses the `/Next` key that
+/// named it --- so a reader walks `/First`, `/Next`, and stops one entry early.
+/// Every entry after the removed one is unreachable, the file is valid, no
+/// parser complains, and nothing says so.
+///
+/// So the chain is spliced before the objects go: each removed subtree's root
+/// has its neighbours joined to each other and its parent's `/First` and `/Last`
+/// moved off it. Only the *roots* need it --- an item inside a doomed subtree
+/// has a parent that is going too, and splicing a chain that is about to be
+/// deleted whole is work with no reader.
+///
+/// `/Count` is **recomputed** for the whole tree afterwards rather than
+/// decremented. A delta needs the number of visible items in each removed
+/// subtree, which is the sign of every `/Count` beneath it; recomputing needs
+/// only the tree that is left, and cannot drift. The sign is preserved, because
+/// it is not a count at all: a negative `/Count` means the reader had that
+/// section collapsed, which the removal has no business changing.
+///
+/// # Errors
+///
+/// Only what [`crate::pagetree::forget`] refuses: an object nested deeper than
+/// the sweep's bound.
+pub fn drop_outline_items(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, String> {
+    if doomed.is_empty() {
+        return Ok(0);
+    }
+    let doomed_set: std::collections::HashSet<ObjectId> = doomed.iter().copied().collect();
+
+    for &id in doomed {
+        let Ok(item) = doc.get_dictionary(id) else {
+            continue;
+        };
+        let parent = item.get(b"Parent").and_then(Object::as_reference).ok();
+        // A root of a removed subtree is one whose parent is staying. Anything
+        // else is being deleted along with the dictionary that names it.
+        if parent.is_some_and(|at| doomed_set.contains(&at)) {
+            continue;
+        }
+        let prev = item.get(b"Prev").and_then(Object::as_reference).ok();
+        let next = item.get(b"Next").and_then(Object::as_reference).ok();
+
+        if let Some(at) = prev {
+            set_or_clear(doc, at, b"Next", next);
+        }
+        if let Some(at) = next {
+            set_or_clear(doc, at, b"Prev", prev);
+        }
+        if let Some(at) = parent {
+            if names(doc, at, b"First", id) {
+                set_or_clear(doc, at, b"First", next);
+            }
+            if names(doc, at, b"Last", id) {
+                set_or_clear(doc, at, b"Last", prev);
+            }
+        }
+    }
+
+    crate::pagetree::forget(doc, &doomed_set)?;
+    if let Some(root) = outline_root(doc) {
+        // An outline whose every entry went is a `/Outlines` naming nothing.
+        // Dropped rather than left: a root with no `/First` is legal and a
+        // reader draws an empty panel for it, which reads as a document that
+        // never had an outline. This one did, and saying so is not this
+        // function's job --- the count it returns is.
+        if first_child(doc, root).is_none() {
+            crate::pagetree::drop_outline(doc)?;
+        } else {
+            recount(doc, root, 0);
+        }
+    }
+    Ok(doomed.len())
+}
+
+/// Sets `key` on `at` to `value`, or removes it when there is no value.
+///
+/// The removal is the half that matters: a spliced-out first sibling leaves its
+/// successor with no `/Prev`, and writing a null there rather than dropping the
+/// key gives readers a reference to nothing.
+fn set_or_clear(doc: &mut Document, at: ObjectId, key: &[u8], value: Option<ObjectId>) {
+    let Ok(Object::Dictionary(dict)) = doc.get_object_mut(at) else {
+        return;
+    };
+    match value {
+        Some(id) => dict.set(key.to_vec(), Object::Reference(id)),
+        None => {
+            dict.remove(key);
+        }
+    }
+}
+
+/// Whether `at`'s `key` names `id`.
+fn names(doc: &Document, at: ObjectId, key: &[u8], id: ObjectId) -> bool {
+    doc.get_dictionary(at)
+        .ok()
+        .and_then(|dict| dict.get(key).ok())
+        .and_then(|value| value.as_reference().ok())
+        == Some(id)
+}
+
+/// Rewrites `/Count` on `node` and everything under it, returning how many
+/// entries `node` shows.
+///
+/// A node's `/Count` is its visible descendants: its children, plus the
+/// descendants of any child that is *open*. Sign carries whether it is open, and
+/// is read off the value that is there --- the removal must not expand a section
+/// the reader had collapsed.
+fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
+    if depth > MAX_TREE_DEPTH {
+        return 0;
+    }
+    let mut children: Vec<ObjectId> = Vec::new();
+    let mut at = first_child(doc, node);
+    while let Some(id) = at {
+        if children.len() > MAX_OUTLINE_ITEMS || children.contains(&id) {
+            break;
+        }
+        children.push(id);
+        at = doc
+            .get_dictionary(id)
+            .ok()
+            .and_then(|item| item.get(b"Next").ok())
+            .and_then(|value| value.as_reference().ok());
+    }
+
+    let mut visible = i64::try_from(children.len()).unwrap_or(i64::MAX);
+    for child in children {
+        let open = doc
+            .get_dictionary(child)
+            .ok()
+            .and_then(|item| item.get(b"Count").ok())
+            .and_then(|value| value.as_i64().ok())
+            .is_none_or(|count| count > 0);
+        let under = recount(doc, child, depth + 1);
+        if under == 0 {
+            // No children left. `/Count` is only defined for a node that has
+            // some, so the key goes rather than being written as zero.
+            if let Ok(Object::Dictionary(item)) = doc.get_object_mut(child) {
+                item.remove(b"Count");
+            }
+            continue;
+        }
+        if open {
+            visible += under;
+        }
+        if let Ok(Object::Dictionary(item)) = doc.get_object_mut(child) {
+            item.set(
+                b"Count".to_vec(),
+                Object::Integer(if open { under } else { -under }),
+            );
+        }
+    }
+    if depth == 0 {
+        if let Ok(Object::Dictionary(item)) = doc.get_object_mut(node) {
+            item.set(b"Count".to_vec(), Object::Integer(visible));
+        }
+    }
+    visible
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
