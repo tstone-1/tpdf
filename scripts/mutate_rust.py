@@ -1091,6 +1091,44 @@ MUTATIONS = [
         "a_span_that_was_never_closed_still_loses_its_shadow_text",
     ),
     Mutation(
+        # Never follow an /MCID into the structure tree. The words go from the
+        # page and from its property list, and the element that owns that same
+        # marked content keeps a verbatim copy nothing on the page mentions.
+        "redact: leave the structure tree alone after a removal",
+        "src/redact.rs",
+        "    let struct_carriers = clear_struct_shadow_text(doc, page, &carriers.mcids);",
+        "    let struct_carriers = clear_struct_shadow_text(doc, page, &[]);",
+        "the_structure_element_a_removed_span_belongs_to_loses_its_shadow_text",
+    ),
+    Mutation(
+        # Clear the element and stop. An ancestor restates everything beneath it,
+        # so the removed line survives one level up.
+        "redact: clear the element a span owns but not the ones above it",
+        "src/redact.rs",
+        "        for _ in 0..MAX_ANCESTORS {",
+        "        for _ in 0..1 {",
+        "an_ancestor_of_that_element_loses_its_shadow_text_as_well",
+    ),
+    Mutation(
+        # Take every element the page's entry lists rather than the ones the
+        # removal reached, which is the alternate text of every line on the page.
+        "redact: strip the whole parent-tree entry rather than the spans reached",
+        "src/redact.rs",
+        "    for mcid in mcids {",
+        "    for mcid in &(0..entries.len() as i64).collect::<Vec<i64>>() {",
+        "the_element_for_a_line_nobody_redacted_keeps_its_shadow_text",
+    ),
+    Mutation(
+        # Read the parent tree as one flat /Nums. Every document large enough for
+        # a producer to balance the tree then reports no structure carrier at
+        # all -- silently, because a miss and an untagged page look the same.
+        "redact: read a parent tree's /Nums and never its /Kids",
+        "src/redact.rs",
+        "    let kids = node\n        .get(b\"Kids\")",
+        "    let kids = node\n        .get(b\"NoKids\")",
+        "a_parent_tree_written_as_kids_is_followed",
+    ),
+    Mutation(
         # Take no annotation at all. The words go off the page and the comment
         # about them, which quotes them, stays -- displayed by every reader.
         "redact: leave every annotation where it is",
@@ -1181,8 +1219,8 @@ MUTATIONS = [
         # for, and the probe's own two assertions separate the same pair.
         "redact: count a shadow-text key without removing it",
         "src/redact.rs",
-        "                    if properties.remove(key).is_some() {\n                        cleared += 1;\n                    }",
-        "                    if properties.has(key) {\n                        cleared += 1;\n                    }",
+        "                    if properties.remove(key).is_some() {\n                        cleared.keys += 1;\n                    }",
+        "                    if properties.has(key) {\n                        cleared.keys += 1;\n                    }",
         "a_span_the_removal_touched_loses_its_copy_of_the_words",
     ),
     Mutation(

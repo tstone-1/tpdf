@@ -2,10 +2,10 @@
 """Generates the comment (annotation) corpus for the comment layer.
 
 Nothing else in `testdata/` carries an annotation a reader would call a comment.
-`text-marked.pdf` has one `/Contents` entry, put there as a *carrier* for the
-redaction spike rather than as something to read, and every other fixture has
-none at all --- so an extractor written against the existing corpus would be
-exercised by one string.
+`text-marked.pdf` has two `/Contents` entries, put there as *carriers* for the
+redaction work rather than as something to read --- and both are hidden --- and
+every other fixture has none at all, so an extractor written against the existing
+corpus would be exercised by two strings nobody is meant to look at.
 
 One document, five pages, each with a property of its own:
 

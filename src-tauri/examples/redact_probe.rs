@@ -243,6 +243,13 @@ fn carried(pdfium: &Pdfium, root: &Path, scratch: &Path) -> Result<String, Strin
 
     let removed = redact::remove_shows(&mut doc, page_id, &plan.shows, text_objects)?;
     let after_stream = page_stream(&doc, page_id)?;
+    if removed.struct_carriers == 0 {
+        return Err(
+            "the removal cleared no structure element, and this fixture has one on the \
+             redacted line's /MCID"
+                .to_string(),
+        );
+    }
     if removed.carriers == 0 {
         return Err("the removal reported clearing no carrier at all".to_string());
     }

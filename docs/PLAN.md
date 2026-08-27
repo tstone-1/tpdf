@@ -2006,12 +2006,12 @@ re-extracting the written file. The survivor is the control: a scan that finds n
 because it cannot look is the failure this repository has recorded from several directions.
 
 What is **not** built: in-place apply and the journal truncation; the carriers this still
-does not reach --- form values, XMP and DocInfo metadata, the outline, page labels, embedded
-files, and the structure tree's own copy of the shadow text --- every one of which §6's table
-names; and a region over an image, which is reported and left. Two rows of that table **are**
-reached since 2026-08-27: the marked-content half of the shadow-text row, and an annotation
-whose rectangle is over a region, replies and popup included. The two subsections below say
-what each does and does not cover.
+does not reach --- form values, XMP and DocInfo metadata, the outline, page labels and
+embedded files, every one of which §6's table names; and a region over an image, which is
+reported and left. Two rows of that table **are** reached since 2026-08-27, and the
+shadow-text row in both of its homes: the marked-content property list *and* the structure
+element the span belongs to, and an annotation whose rectangle is over a region, replies and
+popup included. The three subsections below say what each does and does not cover.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
@@ -2180,6 +2180,56 @@ runs the whole path on it and asserts the first is gone, the second is not, and 
 still in the file --- because `/Info /Title` and the surviving annotation both hold it, and
 this command touches neither. Each of those was proved red by a mutation of its own: one that
 takes nothing, one that takes everything.
+
+#### The shadow text the page does not mention --- done 2026-08-27
+
+The row closed on the same day had two homes and this is the second. `/ActualText`, `/Alt`
+and `/E` sit on a marked-content property list in the content stream, which the removal
+reaches because it is already rewriting that stream --- and on a **structure element**, which
+it cannot, because nothing in the content stream leads there. The link runs the other way:
+the page's `/StructParents` is a key into `/StructTreeRoot /ParentTree`, a number tree whose
+entry for that key is an array indexed by `/MCID`, and the span carries the `/MCID`.
+
+So a document tagged by Word or InDesign keeps a verbatim copy of a redacted line in an
+object the page never names, and the only route to it is a number the content stream happens
+to carry. `redact::clear_struct_shadow_text` follows it.
+
+**Ancestors go too**, for the reason an enclosing span does, and the cost is larger here: a
+`/Sect` covering ten paragraphs loses its alternate text because one word inside it went. The
+fixture shows that rather than arguing it --- `text-marked.pdf`'s ancestor also covers a line
+nobody redacted, and its marker is asserted gone.
+
+**The parent tree is walked, not assumed flat.** A producer with more than a handful of pages
+writes a balanced tree of `/Kids` with `/Limits`, and a lookup reading only `/Nums` finds
+nothing on every one of those documents --- silently, because a miss and an untagged page give
+the same answer. `/Limits` is used only to *skip* a subtree and never to conclude one holds
+the key, since a tree whose limits are wrong is malformed and a search trusting them would
+answer nothing where an exhaustive one answers correctly. Both walks are bounded: the tree by
+depth, the `/P` chain by a count and a visited set, because a cycle in either is one
+dictionary away and this runs on somebody else's file.
+
+**Nothing here is an error.** No structure tree, no `/StructParents`, a tree this cannot
+follow, an `/MCID` naming no element --- all mean there is no second copy to take, which is the
+ordinary case for every untagged document. A failure to *find* one is not a failure to remove
+it, and anything the walk could not reach is still a copy of the words that `verify::scan`
+finds and reports.
+
+**Two mutations survived here as well, and again they meant different things.** One was
+aimed wrong: replacing `entries.get(index)` with `entries.first()` is the same element on
+every fixture whose removal is at `/MCID 0`, so it reddened the out-of-range test instead of
+the over-removal one it named. The other was right to survive --- a visited-set filter on the
+`/P` walk, deleted with no test noticing, because an element already collected is not
+collected twice and the loop's count is what ends a cycle either way. Two guards, one limit;
+the one kept is the one that holds for every shape, since a visited set terminates a simple
+loop and a count terminates a chain a thousand deep as well. `docs/TRAPS.md` carries both.
+
+**The fixture now carries the row twice and a control for each.** `text-marked.pdf` holds
+`STRUCT-CARRIER` on the element owning the redacted line's `/MCID`, `STRUCT-ANCESTOR` on the
+element above it, and `STRUCT-OTHER` on the element for a line nobody marked.
+`redact-apply-probe` asserts the first two are gone and the third is not, with a control that
+all five carrier markers were in the file to begin with --- without which no direction could
+fail. `Removed` counts the two homes apart, because a run that cleared one and not the other
+is the interesting case and a single total could not say which.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

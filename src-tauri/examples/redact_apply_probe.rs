@@ -50,6 +50,13 @@ const ANNOT_OVER: &str = "ANNOT-OVER";
 /// comments are not theirs to lose, and a rule that took every annotation on the
 /// page would pass the first check perfectly.
 const ANNOT_AWAY: &str = "ANNOT-AWAY";
+/// In the structure element owning the redacted line's `/MCID`. Must go.
+const STRUCT_OVER: &str = "STRUCT-CARRIER";
+/// In the element above it, which restates what was removed. Must go.
+const STRUCT_ANCESTOR: &str = "STRUCT-ANCESTOR";
+/// In the element owning a line nobody redacted. Must stay --- a rule that
+/// stripped the whole tree would pass both checks above.
+const STRUCT_OTHER: &str = "STRUCT-OTHER";
 
 fn main() -> ExitCode {
     let library = std::env::args()
@@ -214,17 +221,20 @@ fn annotations(
     let plans = render::redaction_plans_of(&document, 0, &[region])?;
     let plan = plans.first().ok_or("no plan came back for one region")?;
 
+    let markers = [
+        ANNOT_OVER.to_string(),
+        ANNOT_AWAY.to_string(),
+        STRUCT_OVER.to_string(),
+        STRUCT_ANCESTOR.to_string(),
+        STRUCT_OTHER.to_string(),
+    ];
     let before = std::fs::read(&source).map_err(|why| why.to_string())?;
-    let seen = verify::scan(
-        &before,
-        &[ANNOT_OVER.to_string(), ANNOT_AWAY.to_string()],
-        None,
-    );
-    // The control for the controls: both markers have to be in the file to begin
-    // with, or neither assertion below can fail.
+    let seen = verify::scan(&before, &markers, None);
+    // The control for the controls: every marker has to be in the file to begin
+    // with, or no assertion below can fail.
     let mut ok = check(
-        "the fixture carries both annotation markers to begin with",
-        seen.found.contains(ANNOT_OVER) && seen.found.contains(ANNOT_AWAY),
+        "the fixture carries all five carrier markers to begin with",
+        markers.iter().all(|marker| seen.found.contains(marker)),
     );
 
     let out = std::env::temp_dir().join("tpdf-redact-annots-probe.pdf");
@@ -234,15 +244,9 @@ fn annotations(
     let bytes = std::fs::read(&out).map_err(|why| why.to_string())?;
     println!("[..] wrote {} bytes to {}", bytes.len(), out.display());
 
-    let report = verify::scan(
-        &bytes,
-        &[
-            ANNOT_OVER.to_string(),
-            ANNOT_AWAY.to_string(),
-            REMOVE.to_string(),
-        ],
-        None,
-    );
+    let mut wanted: Vec<String> = markers.to_vec();
+    wanted.push(REMOVE.to_string());
+    let report = verify::scan(&bytes, &wanted, None);
     ok &= check(
         &format!("the annotation over the words is gone ({ANNOT_OVER})"),
         !report.found.contains(ANNOT_OVER),
@@ -250,6 +254,18 @@ fn annotations(
     ok &= check(
         &format!("the annotation away from them is not ({ANNOT_AWAY})"),
         report.found.contains(ANNOT_AWAY),
+    );
+    ok &= check(
+        &format!("the structure element holding the line is gone ({STRUCT_OVER})"),
+        !report.found.contains(STRUCT_OVER),
+    );
+    ok &= check(
+        &format!("so is the element above it ({STRUCT_ANCESTOR})"),
+        !report.found.contains(STRUCT_ANCESTOR),
+    );
+    ok &= check(
+        &format!("and the element for the untouched line is not ({STRUCT_OTHER})"),
+        report.found.contains(STRUCT_OTHER),
     );
     ok &= check(
         &format!("and {REMOVE:?} is still in the file, which /Info and that annotation keep"),

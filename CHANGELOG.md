@@ -100,6 +100,24 @@ accessibility structure can keep elsewhere are all untouched --- so redacting a 
 document will usually still report that it could not be proved clean, and name what it
 found. That is the honest answer rather than a missing one.
 
+### Changed: redaction reaches the accessibility text a tagged document files separately
+
+A PDF tagged for accessibility keeps its alternate text in two places, not one:
+beside the words in the page, and in a separate tree of elements that describes
+the document's structure. The first went already. The second is filed under a
+number the page carries and is named nowhere else, so removing the words left a
+word-for-word copy in an object nothing on the page points at.
+
+**Redact and save as** now follows that number and takes it, along with the entry
+above it in the tree --- an entry describing a section restates what is inside it,
+including what you removed. The entry for a line you did not mark keeps its own.
+
+The cost of taking the entry above is real and worth knowing: a section entry
+covering ten paragraphs loses its description because one word inside it went.
+Leaving it would leave a copy of that word.
+
+An untagged document has none of this and is unaffected.
+
 ### Changed: redaction also removes a comment sitting on the words
 
 A comment about a passage quotes the passage --- that is what a comment is. Until
