@@ -1971,6 +1971,17 @@ time; the same page with no crop box landed **100%**.
 flip against a smaller height is still the right flip. Only an origin away from (0, 0) breaks
 it. A fixture that merely shrinks the page tests nothing.
 
+**`FPDFPageObj_GetBounds` is in the same family and answers the other way**, measured on that
+same fixture on 2026-08-27 before the redaction started comparing object bounds against
+annotation rectangles. The page's heading is drawn at y 722; its object bounds come back
+`716.98..739.47`, so **absolute, media-box origin** --- the same space that page's `/Rect
+[100 710 300 734]` is in --- while `FPDF_GetPageWidthF` answers 495, the **crop** box's width.
+One page object, two questions, two spaces, and nothing in either API's name says which.
+The useful form of the rule: PDFium's *sizes* are the crop box's and its *coordinates* are
+the page's own, so any arithmetic that mixes a size with a coordinate needs the crop origin
+put back --- which is what `render::crop_from_display` does and why the region a redaction
+compares against is computed there rather than a second time in the writer.
+
 **It is live, and the real instance is too small to catch.** One of the 43 PDFs on this machine
 carries `/CropBox [0 7.83 595.5 850.08]` on all ten pages. That 7.8-point offset misplaces every
 selection by about two thirds of a line --- and the "boxes land on ink" check still passes on it
@@ -8957,6 +8968,19 @@ removes a class of defect removes the mutation that watched for it in the same m
 deleting that mutation is the correct bookkeeping rather than a loss of coverage --- but it
 reads identically to an anchor that has merely drifted, so the distinction has to be made by
 hand.
+
+**A fourth cause, and it is entirely self-inflicted: `cargo fmt`.** On 2026-08-27 two
+mutations written that morning were dead by lunchtime, because the two-line call they
+anchored on --- as it had been typed --- was joined into one line by the next `cargo fmt`.
+Nothing about the code changed and nothing about the intent did; the anchor is a string, and
+formatting rewrites strings. Same session, the same edit orphaned two *pre-existing*
+mutations by changing a condition they pointed at, which is the ordinary cause above.
+
+So the ordering is a rule rather than a habit: **format first, then write the mutation from
+the formatted source.** A mutation written against source you have just typed is aimed at a
+spelling the formatter has not yet had its say about. The gate reports it in a tenth of a
+second either way, which is the reason this costs nothing to get wrong --- and the reason a
+repository without such a gate would not find out until a twenty-minute harness refused.
 
 ### A stale Windows resource artifact disables the cross-check and reads as a broken checkout
 
@@ -16520,5 +16544,40 @@ one check whose purpose is to notice a change. And **a fixture built to carry se
 instances of one thing needs its checks to name which instance**, because the count that
 makes it a good fixture is exactly what makes a single whole-file question unable to
 discriminate.
+
+Paid for on 2026-08-27.
+
+### A fixed point is invisible when the fixture is written in dependency order
+
+`redact::covered_annots` takes an annotation over a redacted region, and then takes anything
+that replies to it, and anything that replies to *that* --- a closure, computed by looping
+until a pass adds nothing. The mutation that collapses the loop to a single pass SURVIVED
+against a fixture with two links in the chain, which had been written specifically to have
+two rather than one.
+
+The chain was long enough. The **order** was wrong. `/Annots` held the note first, then its
+reply, then the reply to the reply --- which is how anybody describes a conversation, and how
+a producer that appends as it writes emits one. Walking that list once, each reply's parent
+had already been added to the set earlier in the *same* pass, so one pass computed the whole
+closure. The loop was doing nothing that could be observed.
+
+Written the other way round --- replies first, the note they answer last --- a single pass
+reaches a reply whose parent is not in the set yet, leaves it, and never comes back. Same
+three objects, same two links, opposite verdict.
+
+The general form, and it applies to every worklist algorithm rather than to this one:
+**when the property under test is "iterate to a fixed point", the discriminating property of
+the fixture is its ordering, and the natural ordering is the one that hides the defect.**
+Depth is what you reach for and depth is not what decides. Build the input in the order that
+forces a second pass, and say in the test why that order is the test --- otherwise the next
+person tidies it into reading order and the check silently stops checking.
+
+Same session, the mirror finding, which is why they are worth reading together: a
+`normalised()` call in `rect_of` also SURVIVED its mutation, and there the verdict was
+**correct**. Its only consumer is `overlaps`, which normalises both of its arguments, so the
+call could not change an answer. One survivor meant the fixture was wrong; the other meant
+the code was redundant, and the two look identical in the run's output. The way to tell them
+apart is to ask what would have to be true for the mutation to matter, not to strengthen the
+test until something goes red.
 
 Paid for on 2026-08-27.

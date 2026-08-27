@@ -2005,13 +2005,13 @@ asserted through **two independent readers** --- `verify::scan` over the bytes a
 re-extracting the written file. The survivor is the control: a scan that finds nothing
 because it cannot look is the failure this repository has recorded from several directions.
 
-What is **not** built: in-place apply and the journal truncation; the carriers beyond the
-page's own content stream --- annotations, form values, metadata, the outline, embedded
-files, and the structure tree's own copy of the shadow text --- every one of which §6's
-table names and none of which this removes; and a region over an image, which is reported
-and left. The marked-content half of the shadow-text row **is** cleared since 2026-08-27;
-that is one row of the table and one of that row's two homes, and the subsection below says
-what it does and does not reach.
+What is **not** built: in-place apply and the journal truncation; the carriers this still
+does not reach --- form values, XMP and DocInfo metadata, the outline, page labels, embedded
+files, and the structure tree's own copy of the shadow text --- every one of which §6's table
+names; and a region over an image, which is reported and left. Two rows of that table **are**
+reached since 2026-08-27: the marked-content half of the shadow-text row, and an annotation
+whose rectangle is over a region, replies and popup included. The two subsections below say
+what each does and does not cover.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
@@ -2110,6 +2110,76 @@ stream**, with a control proving it was there, while the whole-file scan keeps w
 the annotation and `/Info` and names them when they go. `docs/TRAPS.md` has the entry, and
 the generalisation is about tripwires rather than about this one --- the day a tripwire should
 fire is the day nobody is looking at it.
+
+#### The annotation over the words --- done 2026-08-27
+
+The second carrier, and a different kind of one. The first lived in the content stream and
+came off with the drawing; this one is an object hanging off `/Annots`, and it is the copy a
+person sees. A comment about a passage quotes the passage --- that is what a comment is ---
+and every reader goes on displaying it after the glyphs are gone.
+
+`redact::covered_annots` decides which. An annotation whose `/Rect` overlaps any region on
+the page is taken, under the same strict rule `covered` uses for page objects, so one flush
+against a region is not eaten. Its `/Popup` goes with it, and so does any annotation whose
+`/IRT` points at one being taken --- to a fixed point, because a chain of replies is a chain
+of copies of the same conversation and cutting it half way leaves the half that quotes what
+went.
+
+**An annotation whose `/Rect` cannot be read is taken as well.** That is the destructive
+direction on purpose: it is the one that cannot leave the words behind, it is route B's
+posture everywhere else in the subsystem, and an annotation with no readable rectangle is
+not being displayed by anything. Keeping what you cannot place decides a safety question by
+giving up on it.
+
+**The region has to be carried, because the writer cannot work it out.** An annotation is
+not a page object and has no ordinal among them, so the only question that can be asked of
+it is geometric --- and turning a reader's drag into page coordinates needs the page's
+`/Rotate` and its crop box, which is `render::crop_from_display` and is where the one
+mapping lives. `RegionPlan::area` and `PlannedRedaction::areas` carry it. A second attempt
+at that arithmetic in the writer would be a second geometry to disagree with the first,
+which is a shape this repository has already been caught by from three directions.
+
+**That the two spaces agree was measured rather than assumed**, on `links-cropped.pdf`
+(`/CropBox [50 50 545 742]` over `/MediaBox [0 0 595 842]`). `FPDFPageObj_GetBounds`
+reported the heading at `716.98..739.47` --- bracketing the 722 it was drawn at, so absolute
+media-origin space, the same space that page's `/Rect [100 710 300 734]` is in --- while
+`FPDF_GetPageWidthF` answered 495, the crop box's width. One PDFium page object, two
+questions, two spaces. The existing crop-box trap says this of `FPDFText_GetCharBox`; it is
+the same family and it now says so of object bounds too.
+
+**Removing means `pagetree::forget`, not pruning `/Annots`.** The array on the page is one
+of several places an annotation is named: a structure element's `/OBJR`, an AcroForm's
+`/Fields`, another annotation's `/IRT`. Pruning the one list a caller has in mind leaves the
+object reachable, written out, and still carrying the comment. `forget` is the half of
+`drop_pages` that was already doing this for pages, extracted rather than written twice ---
+one pass over the graph dropping every reference, then the objects. A redaction that took an
+annotation joins the two conditions that already run the sweep, because the appearance
+stream that *drew* the comment is then reachable from nothing.
+
+**Its own marks are not distinguished, and that is stated rather than hidden.** A mark the
+reader added in this session is an annotation on the page by the time this runs, so one over
+the region goes with the rest. The file being written is a copy and the open document keeps
+it.
+
+**Two mutations survived, and they meant opposite things.** The loop that takes replies to a
+fixed point was collapsed to a single pass and nothing went red --- against a fixture built
+with two links in the chain precisely so that it would. The chain was long enough and the
+*order* was wrong: `/Annots` held the note, then its reply, then the reply to that, which is
+how anyone describes a conversation and is exactly the order one pass handles, since each
+parent had been added earlier in the same walk. Written parent-last it fails as it should.
+The other survivor was a `normalised()` call in `rect_of`, and there the verdict was right:
+`overlaps` normalises both its arguments, so the call could not change an answer. It is gone,
+and the normalisation now happens in one place. One survivor indicted the fixture, the other
+indicted the code, and the run printed the same word for both. `docs/TRAPS.md` has the entry.
+
+**The fixture grew the pair it needed.** `text-marked.pdf` carried one annotation, away from
+every line, which is a control and nothing else --- there was no case for the rule to fire
+on. It now carries two: `ANNOT-OVER` squarely over the target line, `ANNOT-AWAY` where it
+was. Both hidden (`/F 2`), which is the case no visual check can reach. `redact-apply-probe`
+runs the whole path on it and asserts the first is gone, the second is not, and the secret is
+still in the file --- because `/Info /Title` and the surviving annotation both hold it, and
+this command touches neither. Each of those was proved red by a mutation of its own: one that
+takes nothing, one that takes everything.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

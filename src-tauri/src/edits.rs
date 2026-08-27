@@ -1206,7 +1206,10 @@ pub struct RedactionTarget {
 /// [`PlannedMark`]'s counterpart for the other direction, and it names its page
 /// the same way and for the same reason: a writer walking the page tree has
 /// baseline positions, and a `PageId` means nothing to `lopdf`.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+// `PartialEq` without `Eq`: `areas` is floats, and `RegionPlan` gave up the same
+// derive for the same reason. `Eq` on a type holding an `f32` is a promise about
+// reflexivity that a `NaN` breaks.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PlannedRedaction {
     /// Which baseline page this removes from, zero-based.
     pub source: u32,
@@ -1222,6 +1225,15 @@ pub struct PlannedRedaction {
     /// but order, and a mis-addressed removal deletes the wrong words while
     /// reporting success --- see `redact.rs`, which is where that refusal lives.
     pub text_objects: usize,
+    /// The regions themselves, in the page's own absolute space.
+    ///
+    /// `shows` says which drawing instructions go; this says *where*, which is
+    /// what the annotation carrier needs --- an annotation is not a page object
+    /// and has no ordinal among them, so the only way to ask whether one is over
+    /// a region is to compare rectangles. `redact::RegionPlan::area` is where
+    /// these come from, and the reason they are carried rather than recomputed
+    /// is written there.
+    pub areas: Vec<[f32; 4]>,
 }
 
 /// One mark as the writer needs it.

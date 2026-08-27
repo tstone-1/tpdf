@@ -806,12 +806,17 @@ async fn redact_copy(
         // page in one reply, so a disagreement would be a defect in the worker
         // and not something a caller can do anything about.
         let mut text_objects = 0usize;
+        // One per region, kept rather than merged: they are rectangles and two
+        // of them do not combine into one. The writer asks each annotation
+        // whether it is over *any* of them.
+        let mut areas: Vec<[f32; 4]> = Vec::new();
         for plan in plans {
             text_objects = plan.text_objects;
             for object in &plan.unhandled {
                 concerns.push(format!("page {}: {}", page + 1, object.sentence()));
             }
             shows.extend(plan.shows.iter().copied());
+            areas.push(plan.area);
             let taking = plan.taking.trim();
             if !taking.is_empty() {
                 needles.push(taking.to_string());
@@ -827,6 +832,7 @@ async fn redact_copy(
             source: page,
             shows,
             text_objects,
+            areas,
         });
     }
 

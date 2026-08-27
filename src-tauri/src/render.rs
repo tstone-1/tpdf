@@ -1733,6 +1733,7 @@ pub fn redaction_plans_of(
                     .join(" "),
                 unhandled: plan.unhandled,
                 shows: plan.shows,
+                area: want,
             }
         })
         .collect())

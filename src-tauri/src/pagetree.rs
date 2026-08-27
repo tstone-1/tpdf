@@ -519,11 +519,33 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     // that name a doomed page --- the `/Kids` entry that removes it from the
     // tree, and anything else pointing at it. The trailer is not in `objects`
     // and has to be walked in its own right.
-    forget_in_dictionary(&mut doc.trailer, &doomed, 0)?;
+    forget(doc, &doomed)
+}
+
+/// Removes objects and every reference to them, in a single pass.
+///
+/// The half of [`drop_pages`] that is not about the page tree, extracted when
+/// the redaction path needed the same guarantee for annotations. **Every
+/// reference, not only the obvious one**, is the property that matters and the
+/// reason this is not `objects.remove` at the call site: an annotation is named
+/// by its page's `/Annots` and can be named again by a structure element's
+/// `/OBJR`, by an AcroForm's `/Fields`, or by another annotation's `/IRT`.
+/// Pruning the one list a caller has in mind leaves the object alive in the
+/// file --- reachable, written out, and still carrying whatever it carries.
+///
+/// The trailer is walked in its own right because it is not in `objects`.
+///
+/// # Errors
+///
+/// An object nesting deeper than [`sweep::MAX_NESTING`], for [`drop_pages`]'s
+/// reason: a pass that stopped early leaves a reference to an object that is
+/// gone.
+pub fn forget(doc: &mut Document, doomed: &HashSet<ObjectId>) -> Result<(), String> {
+    forget_in_dictionary(&mut doc.trailer, doomed, 0)?;
     for object in doc.objects.values_mut() {
-        forget_in_object(object, &doomed, 0)?;
+        forget_in_object(object, doomed, 0)?;
     }
-    for id in &doomed {
+    for id in doomed {
         doc.objects.remove(id);
     }
     Ok(())

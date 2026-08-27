@@ -1091,6 +1091,90 @@ MUTATIONS = [
         "a_span_that_was_never_closed_still_loses_its_shadow_text",
     ),
     Mutation(
+        # Take no annotation at all. The words go off the page and the comment
+        # about them, which quotes them, stays -- displayed by every reader.
+        "redact: leave every annotation where it is",
+        "src/redact.rs",
+        "            Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)) => {}",
+        "            Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)) || true => {}",
+        "an_annotation_over_the_region_is_taken",
+    ),
+    Mutation(
+        # Take every annotation on the page. Passes the check above perfectly and
+        # destroys every other comment the reader has.
+        "redact: take every annotation on a page that has a region",
+        "src/redact.rs",
+        "            Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)) => {}",
+        "            Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)) && false => {}",
+        "an_annotation_away_from_the_region_is_left",
+    ),
+    Mutation(
+        # Treat a shared edge as an overlap here rather than through `overlaps`,
+        # which is the rule a second inline comparison would get wrong.
+        "redact: test an annotation against the region without the strict rule",
+        "src/redact.rs",
+        "            Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)) => {}",
+        "            Some(rect)\n                if !areas.iter().any(|area| {\n                    !(rect[2] < area[0] || area[2] < rect[0] || rect[3] < area[1] || area[3] < rect[1])\n                }) => {}",
+        "an_annotation_flush_against_the_region_is_left",
+    ),
+    Mutation(
+        # Default an unreadable rectangle to somewhere far away instead of taking
+        # the annotation. The plausible mistake, and it keeps what it cannot see.
+        "redact: keep an annotation whose rectangle cannot be read",
+        "src/redact.rs",
+        "        match rect_of(doc, annot) {",
+        "        match rect_of(doc, annot).or(Some([f32::MAX, f32::MAX, f32::MAX, f32::MAX])) {",
+        "an_annotation_with_no_readable_rectangle_is_taken",
+    ),
+    Mutation(
+        # Leave the popup. It is a separate object with its own `/Contents` in
+        # most producers' output, so the note goes and the words stay.
+        "redact: leave the popup of an annotation that is taken",
+        "src/redact.rs",
+        "                if let Ok(popup) = annot.get(b\"Popup\").and_then(Object::as_reference) {",
+        "                if let Ok(popup) = annot.get(b\"Popup_\").and_then(Object::as_reference) {",
+        "a_popup_goes_with_the_annotation_that_owns_it",
+    ),
+    Mutation(
+        # One pass instead of a fixed point. A reply to a reply survives, and a
+        # reply is a copy of the conversation about the words that went.
+        "redact: collect replies in one pass rather than to a fixed point",
+        "src/redact.rs",
+        "        if !grew {\n            break;\n        }",
+        "        let _ = grew;\n        break;",
+        "a_chain_of_replies_goes_with_the_note_it_answers",
+    ),
+    Mutation(
+        # Read `/Annots` only when it is written inline. `/Annots 12 0 R` is as
+        # common, and a page written that way keeps every annotation on it.
+        "redact: read /Annots only in its inline spelling",
+        "src/redact.rs",
+        "        .get(b\"Annots\")\n        .and_then(|object| doc.dereference(object).map(|(_, object)| object))\n        .and_then(Object::as_array)",
+        "        .get(b\"Annots\")\n        .and_then(Object::as_array)",
+        "an_annots_array_that_is_its_own_object_is_read",
+    ),
+    Mutation(
+        # Remove the objects and leave every reference to them. The annotation is
+        # gone and the AcroForm still names it, which is a dangling reference
+        # where there was a comment -- and on a document where the second name is
+        # a structure element, a reader that walks the tree still finds it.
+        "save: remove a redacted annotation without dropping the references to it",
+        "src/save.rs",
+        "            crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;",
+        "            for id in &taken {\n                doc.objects.remove(id);\n            }",
+        "a_redacted_annotation_loses_the_references_that_are_not_on_the_page",
+    ),
+    Mutation(
+        # Prune the page's `/Annots` and leave the object. It is then reachable
+        # from a structure element's `/OBJR` or an AcroForm's `/Fields`, written
+        # out, and still carrying the comment about the words.
+        "save: unlink a redacted annotation without removing the object",
+        "src/save.rs",
+        "            crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;",
+        "            let _ = &taken;",
+        "an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not",
+    ),
+    Mutation(
         # Count the key and leave it where it is. `Removed::carriers` then reports
         # the work as done while every word is still in the stream -- which is the
         # difference between an accounting observable and the thing it accounts
@@ -1267,7 +1351,7 @@ MUTATIONS = [
         # named the deletion and missed the extract.
         "save: leave a dropped page's content in the file",
         "src/save.rs",
-        "    if !dropped.is_empty() || moved {",
+        "    if !dropped.is_empty() || moved || redacted.annots > 0 {",
         "    if false {",
         "extracting_a_page_leaves_the_other_pages_out_of_the_file",
     ),
@@ -1277,7 +1361,7 @@ MUTATIONS = [
         # fail, and without a control for it the condition above is decoration.
         "save: sanitize a plain copy as well as a save that removed something",
         "src/save.rs",
-        "    if !dropped.is_empty() || moved {",
+        "    if !dropped.is_empty() || moved || redacted.annots > 0 {",
         "    if dropped.is_empty() || !moved || true {",
         "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
     ),

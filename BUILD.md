@@ -247,13 +247,17 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 #                     its page. The first run of this probe marked a word that
 #                     lives on every page, removed it from one, and correctly
 #                     reported it still in the file.
-#   text-marked.pdf   the same line, in a document that ALSO holds it as
-#                     /ActualText. The removal is asserted to be INSUFFICIENT:
-#                     the drawing goes and the words stay. That is PLAN.md
-#                     section 6's thesis -- redaction is whole-graph sanitation,
-#                     not a page edit -- as a measurement. The day this clears
-#                     the carriers too, that check goes red and says to move the
-#                     fixture into CASES.
+#   text-marked.pdf   the same line, held FOUR times: as /ActualText on a
+#                     marked-content span, in two annotations, and in /Info.
+#                     Since 2026-08-27 the span's copy is cleared by the removal
+#                     itself, so the check reads the carriers apart rather than
+#                     asking whether the secret is anywhere in the file: the key
+#                     must be gone from the page's content stream, with a control
+#                     proving it was there, while the scan must still find the
+#                     word -- which by then can only be the annotations and
+#                     /Info. Asking one whole-file question could not say WHICH
+#                     copy went, and that is why the check that promised to go
+#                     red on this very day did not; see TRAPS.md.
 #   hostile-scan.pdf  a region over a /DCTDecode image reports an INCOMPLETE
 #                     plan naming each object it cannot remove. Deny by default:
 #                     taking the words and leaving a picture of the words is the
@@ -296,10 +300,21 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # which is why the command writes the file and reports it as unproven rather
 # than refusing; see PLAN.md section 6.
 #
-# It needs text-base14.pdf, which a hosted runner does not have. Without it the
-# run prints [SKIP] and says so rather than passing.
+# THE ANNOTATION CARRIER is the second phase, on text-marked.pdf, added
+# 2026-08-27. A comment about a passage quotes the passage, so an annotation over
+# a redacted region goes with the words -- popup and replies included. Three
+# assertions and the middle one is the control: ANNOT-OVER must go, ANNOT-AWAY
+# must stay (a reader's other comments are not theirs to lose), and the secret
+# itself must STILL be found, because /Info /Title and the surviving annotation
+# both hold it and this command touches neither. If that last one flips, the
+# document-level carriers are being cleared and this probe needs rewriting.
+# A fourth check ahead of them asserts both markers are in the fixture to begin
+# with, without which neither direction could fail.
 #
-#   macOS arm64, 2026-08-26   9 checks, 0 failures
+# It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
+# have. Without them the run prints [SKIP] and says so rather than passing.
+#
+#   macOS arm64, 2026-08-27   11 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

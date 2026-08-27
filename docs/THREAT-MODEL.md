@@ -1291,14 +1291,18 @@ could not take becomes a reason. So the failure mode this section would otherwis
 reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
 omission at a call site.
 
-**Residual, and it is large enough to state plainly.** This removes **the page's own content
-and nothing else** --- the show operators, and since 2026-08-27 the shadow text in the
-marked-content spans they sit inside (`/ActualText`, `/Alt`, `/E`), which is one row of
-`docs/PLAN.md` §6's carrier table and one of that row's two homes. Every other carrier in
-that table survives: the same keys hanging off a structure element in `/StructTreeRoot`,
-annotations, form values, XMP and DocInfo metadata, the outline, page labels, embedded files,
-and any prior incremental revision, since a copy is a serialisation rather than a sanitation
-(§T6.1). An image or a
+**Residual, and it is large enough to state plainly.** This reaches two rows of
+`docs/PLAN.md` §6's carrier table and no more. The page's own content: the show operators,
+and since 2026-08-27 the shadow text in the marked-content spans they sit inside
+(`/ActualText`, `/Alt`, `/E`) --- one of that row's two homes. And, since the same day, an
+**annotation whose `/Rect` overlaps a region**, with its popup and its replies, removed
+together with every reference to it rather than unlinked from the page.
+
+Everything else in that table survives: the same shadow-text keys hanging off a structure
+element in `/StructTreeRoot`, an annotation *away* from every region (which is deliberate ---
+a reader's other comments are not theirs to lose), form values, XMP and DocInfo metadata, the
+outline, page labels, embedded files, and any prior incremental revision, since a copy is a
+serialisation rather than a sanitation (§T6.1). An image or a
 vector drawing inside the region is reported and left. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
 a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is
