@@ -1888,6 +1888,11 @@ Neither has a keyboard binding, for the reason `edit.deletePage` has none.
 command. A region is a rectangle a reader dragged; marking by selection or by pattern is
 step 1's other two shapes and is not here.
 
+> Both halves of that closed later the same week and the note is kept as it was written,
+> because the sections below are the record of closing them: the commands arrived on
+> 2026-08-27 and *Redact selection* on the same day. Marking **by pattern** is the one
+> still open.
+
 Twelve mutations stand behind it, nine in Rust and three in the frontend, and the one worth
 naming is *snapshot a document without its pending redactions*: `SNAPSHOT_EVERY` is 32, so a
 rebuild that dropped them would be correct on every short journal and would silently empty
@@ -2481,6 +2486,93 @@ itself. `redact_document` needs a running app, a render service and a real file,
 in `cargo test` calls it, and the probe exercises the write path underneath it rather than
 the command. The frontend half --- the warning, the offers, the registration, the action it
 reaches --- is covered by five mutations.
+
+#### Saying what to remove by selecting it --- done 2026-08-27
+
+Step 1's second shape. A dragged rectangle is a *guess* about where the words are; a
+selection **names the glyphs**, and a reader who has already highlighted the line should not
+have to aim at it again.
+
+**Ranked by measurement, and the measurement went against my first two instincts.** §6's
+remaining carrier rows were swept the way the outline was --- 41 real PDFs, counts and shapes
+only:
+
+| carrier | documents |
+|---|---|
+| annotation actions | 13 |
+| open action | 5 |
+| names tree | 4 |
+| page labels | 2 |
+| page thumbnails | 1 |
+| page `/PieceInfo` | 1 |
+| `/AF` associated files | 1 |
+| catalog `/AA`, page `/AA`, `/PieceInfo`, AcroForm `/CO` | 0 |
+| `/Names /EmbeddedFiles`, portfolios, RichMedia/3D/movie/sound | 0 |
+
+Annotation actions lead on frequency, so on the outline's own argument they should have been
+next. **They fail the outline's own test.** What licensed a string rule there was that a
+bookmark title *is* the page's words --- 163 of 165 verbatim, against a 4% cross-document
+control. The same question asked of link targets: **69 of 2,659 URIs have a last path or
+query segment that is verbatim page text, 2.6%**; named destinations, 1,202 of 12,778 at
+9.4%, and only two documents in the corpus use named destinations at all. A link over a
+region is already removed, because a link is an annotation. A link elsewhere is a carrier
+2.6% of the time.
+
+The second instinct was images: a region over a picture is reported rather than removed, and
+a scanned page *is* a picture, so redacting a scan does nothing today. **Zero image-only
+pages in 1,189**, across all 41 documents. That is a fact about this corpus rather than about
+the world --- these are born-digital documents --- but it is not a ranking I can support with
+what is in front of me, and the honest answer is to say so rather than to build on the
+guess.
+
+So the remaining carrier rows are at diminishing returns on this evidence, and the ranked gap
+is a *way of saying what to remove* rather than another thing to remove.
+
+**It is small because everything under it already exists.** `Viewer.selectionQuadsByPage`
+already hands `markSelection` one run-quad array per page, out of the crop and in the file's
+own space. `Edits.redact` documents itself as taking a region *in exactly the space
+`Edits.mark` takes its quads in* --- so the two consumers agree by what is written down
+rather than by anyone re-deriving the geometry, which is the rotation trap this repository
+has eleven call sites' worth of.
+
+**One region per run, not one box per page**, and that is the decision the increment
+contains. Route B removes a whole text-showing operation, so the *lines* that go are the same
+either way; what differs is everything else a bounding box swallowed --- the other column on
+a two-column page, a figure, a marginal note. A region a reader did not draw is a region they
+cannot check.
+
+**The decision lives in `areasFrom`, in `selection.ts`, and not in the loop that calls it.**
+That loop is in `App.svelte`, which no unit test imports and no harness constructs --- the
+layer where a feature can be inert while three layers of tests pass. Putting the decision one
+call earlier is the seam this repository has already recorded as the fix, rather than a
+cleverer harness. `selection.ts` had no test file at all before this; it has eight tests now.
+
+**A run with no side is dropped.** A selection that ends exactly where a line does contributes
+an empty run, and a region with no area holds no glyph's centre --- so it can only ever remove
+nothing, while adding a row the reader has to read and certify. A list that overstates what
+is about to happen is the one thing the review panel must not do. The bound is on each
+**side** rather than on the area, because a run a hundredth of a point wide and two hundred
+long has a larger area than many real words and is still nothing.
+
+**Evidence.** Eight mutations, one of which survived and was right to. It loosened the loop
+bound so a partial trailing run was read --- and `noUncheckedIndexedAccess` had already forced
+a check on those values that the bound made unreachable, so the two were one limit with two
+mechanisms and neither could be observed. The fix is to keep one, not to sharpen the test:
+the loop iterates unbounded and one length check decides, with `NaN` rather than `0` as the
+default the compiler still asks for, so a mutation that lets a partial run through produces a
+region equal to nothing instead of a plausible one at the page's corner. `docs/TRAPS.md` has
+it.
+
+Two of the eight are tests that exist because the registry sweep cannot see
+what they check: `edit.redactSelection` reaching *its own* action rather than the drag's ---
+`redactRegion` is an action, so a copy-and-paste that left it there passes "reaches an action
+rather than doing nothing" --- and the `hasSelection` guard, with the control that it is
+offered when there *is* a selection.
+
+**The README gate written on 2026-08-24 fired on the first new command since, in both
+directions**: `edit.redactSelection` was still listed under *Not built yet* and was not
+claimed anywhere in the prose, and the suite named both. That is the invariant working
+exactly as its own entry says it should, one command after it was built.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

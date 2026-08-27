@@ -159,6 +159,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   copy of every answer in a separate packet, so removing the fields would leave everything
   recoverable while telling you it had gone.
   <!-- built: file.redactCopy -->
+- **Redact selection** marks the words you selected rather than a rectangle you aimed,
+  one region per line, and the review list and the removal are the same ones the drag
+  feeds. Nothing is destroyed by marking it either way.
+  <!-- built: edit.redactSelection -->
 - **Redact and save** does all of that to the file you opened, rather than to a new one.
   It warns first and offers to save you a copy, because there is no undo across it and no
   original left afterwards: the document is closed by the write, reopened from disk, and
@@ -234,11 +238,12 @@ unbuilt while they shipped.
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->
-- **Marking for redaction by selecting text, or by searching for a pattern** --- an email
-  address, an order number, a word list --- rather than only by dragging a rectangle. The
-  removal and its verification are built; what is missing is the other two ways to say
-  what to remove. And a region over a picture is still reported rather than removed.
-  <!-- not-built: edit.redactSelection edit.redactMatches -->
+- **Marking for redaction by searching for a pattern** --- an email address, an order
+  number, a word list --- so that every occurrence across a long document goes in one
+  step. Dragging a region and selecting the words are both built; this is the third way
+  to say what to remove. And a region over a picture is still reported rather than
+  removed.
+  <!-- not-built: edit.redactMatches -->
 - Forms and visual signatures. Signatures are read, never made.
   <!-- not-built: edit.fillForm edit.signDocument -->
 - In-place text editing

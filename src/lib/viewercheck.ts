@@ -3149,6 +3149,7 @@ async function appCommandChecks(
     deletePage: () => fired.push("deletePage"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
+    redactSelection: () => fired.push("redactSelection"),
     movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
@@ -3791,6 +3792,16 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // Aimed separately from the drag above for that entry's own reason, and
+      // one more that is this command's: it is the only redaction command with
+      // a `hasSelection` guard, so a copy-and-paste that left it calling
+      // `redactRegion` would arm a drag on a reader who had already said which
+      // words they meant --- and the palette entry would look correct.
+      id: "edit.redactSelection",
+      ...shell("redactSelection"),
+      read: () => fired.join(","),
+    },
+    {
       // The ellipse, aimed separately for the reason the note below it gives
       // about the freehand tool: it arms the same primitive as the box with a
       // different argument, which is exactly the shape where a copy-and-paste
@@ -4202,6 +4213,12 @@ async function appCommandChecks(
     "edit.underlineSelection",
     "edit.strikeoutSelection",
     "edit.squigglySelection",
+    // Joined on 2026-08-27 with the command itself, rather than after the
+    // harness went red for it. Nothing runs this harness automatically -- it
+    // needs a real window, so it is not a gate -- and the note above records
+    // what that costs: a red that goes unread until somebody happens to look.
+    // The declaration is part of adding a guarded command, not a repair.
+    "edit.redactSelection",
     // Guarded on a note being open, which is how a reader names the mark they
     // mean. A document with no marks in it offers nothing to remove.
     "edit.removeMark",

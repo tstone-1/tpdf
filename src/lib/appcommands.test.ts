@@ -82,6 +82,7 @@ function harness(
     deletePage: () => fired.push("deletePage"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
+    redactSelection: () => fired.push("redactSelection"),
     movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
@@ -487,6 +488,36 @@ describe("the page operations", () => {
     expect(ids).toContain("file.redactDocument");
   });
 
+  it("reaches the selection's own action rather than the drag's", () => {
+    // The two are one keystroke apart in the palette and one word apart in the
+    // source, so a copy-and-paste that left this one calling `redactRegion`
+    // would arm a drag on a reader who had already said which words they meant
+    // --- and the entry would look correct throughout. The registry sweep above
+    // cannot see it: `redactRegion` is an action, so the command reaches one.
+    const { registry, fired } = harness(true, {}, {}, true);
+    expect(registry.run("edit.redactSelection")).toBe(true);
+    expect(fired).toEqual(["redactSelection"]);
+  });
+
+  it("withholds redacting a selection when there is none", () => {
+    // With nothing selected it would mark nothing, and a command that runs and
+    // does nothing reads as a broken command. The control is the same registry
+    // built with a selection, where it is offered --- without which a registry
+    // that withheld it always would pass.
+    expect(
+      harness(true, {}, {}, false)
+        .registry.all()
+        .find((c) => c.id === "edit.redactSelection")
+        ?.enabled?.(),
+    ).toBe(false);
+    expect(
+      harness(true, {}, {}, true)
+        .registry.all()
+        .find((c) => c.id === "edit.redactSelection")
+        ?.enabled?.(),
+    ).toBe(true);
+  });
+
   it("gives the destructive redaction no keyboard shortcut", () => {
     // Every chord that reads as this command is a save. A slip between Save and
     // a command that destroys content with no undo is the one slip this
@@ -807,6 +838,7 @@ describe("the window shortcuts for editing", () => {
       deletePage: () => fired.push("deletePage"),
       cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
+    redactSelection: () => fired.push("redactSelection"),
       movePage: (delta) => fired.push(`movePage:${delta}`),
       undoEdit: () => fired.push("undoEdit"),
       redoEdit: () => fired.push("redoEdit"),
