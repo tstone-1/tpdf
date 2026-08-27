@@ -329,6 +329,18 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # A check ahead of all of them asserts every marker is in the fixture to begin
 # with, without which no direction could fail.
 #
+# THE FORM is three checks on the same written file, and its fixture is built so
+# that the VALUE rule is the only thing that can decide either field.
+# FIELD-CARRIER holds the redacted line's own account number and its widget sits
+# at the far corner of the page, so the annotation pass leaves the widget and the
+# field can only be taken by what it says; WIDGET-UNDER-CARRIER then has to come
+# with it, or the page keeps an annotation whose /Parent is gone. FIELD-KEEP
+# holds somebody else's answer and is the over-removal control. Both widgets are
+# HIDDEN (/F 2) -- not decoration: a visible widget would be drawn by PDFium's
+# form-fill environment and move every pixel comparison this corpus makes, and a
+# hidden field holding the answer is the more honest shape anyway, since it is
+# exactly the leak this carrier is about.
+#
 # THE OUTLINE is read back through outline::read rather than out of the bytes,
 # because a byte scan cannot answer this carrier's question: an entry spliced out
 # of the chain but still an object is neither present nor absent by a grep. It is
@@ -352,7 +364,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
 #
-#   macOS arm64, 2026-08-27   23 checks, 0 failures
+#   macOS arm64, 2026-08-27   26 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

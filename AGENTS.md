@@ -1706,6 +1706,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A fixture no script writes gated ten guards, and the tests that skipped passed (the guards were correct; six SURVIVED mutations were one missing file, and the fix is not to obtain it)
 - A test helper that reads through a parser that could not read (the same defect the increment was fixing, arriving in the harness first: a wrong baseline, then an index panic, and every message named the number rather than the blindness)
 - A control that turns the page in the plan turns nothing the writer reads (`PageView::turns` is the view the reader has now and the test next door asserts it must not move a mark, so the control was reading a true fact and concluding a false thing --- forty streams and every rotation path untouched; the turn has to be in the source's `/Rotate`, and the tell was one line asking whether the four quarters differed at all)
+- Two correct rules deciding every subject make each other unfalsifiable (four mutations survived one increment, all for one reason: every field in the fixture satisfied both rules, so deleting either changed nothing observable --- not one weak assertion among them, and the repair is one subject per rule, asked before the fixture is written rather than after the run)
 
 ### Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -1733,6 +1734,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - 486 lines of the viewer never run under vitest, and the fix is a seam rather than a harness (the fake DOM's `getContext` answers `null`, so no `paint*` method executes under the unit suite at all and the only pixel coverage is a manual window check; move the decision into a pure function one call earlier rather than building a cleverer harness, and note the extraction still does not prove the painter uses the answer)
 - A tripwire that promised to go red could not, because three carriers answer one needle (the check's doc comment named the day it would fire, and its observable is one boolean over the whole file that any of three copies satisfies; found by reading the fixture generator rather than by running it, because a green tripwire and an unarmed one print the same line)
 - A fixed point is invisible when the fixture is written in dependency order (two links in the chain and the loop still could not fail; the ordering is the discriminating property and reading order is the one that hides it --- plus the mirror survivor from the same run, where SURVIVED was correct because the call was redundant)
+- A refusal promised in the plan and never built emits nothing to grep for (a promised feature leaves a dead call site; a promised refusal leaves a correct-looking file and a confident report --- and this one made the subsystem claim MORE than it could prove; the check is a grep over the plan's "is refused" sentences, not over the code)
+
 ## Repository facts
 
 - GitHub: `tstone-1/tpdf`, **public**, MIT (`LICENSE`).
