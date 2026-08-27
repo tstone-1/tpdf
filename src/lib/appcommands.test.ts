@@ -119,6 +119,7 @@ function harness(
     isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
     redactCopy: () => fired.push("redactCopy"),
+    redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
@@ -462,6 +463,40 @@ describe("the page operations", () => {
     expect(fired).toEqual(["mergeDocuments"]);
   });
 
+  it("redact the open file through the command, with no value to carry", () => {
+    // Registered, guarded on a document, and reaching its action --- the last of
+    // those being the half that shipped inert once before.
+    //
+    // The pair is what makes this worth its own test rather than leaving it to
+    // the sweep: `file.redactCopy` and `file.redactDocument` differ only in
+    // where the result goes, and the sweep asks whether each has *an* action
+    // rather than whether it has its own. A destructive command wired to its
+    // safe twin would pass everything except this.
+    const { registry, fired } = harness();
+    expect(registry.run("file.redactDocument")).toBe(true);
+    expect(fired).toEqual(["redactDocument"]);
+  });
+
+  it("offers both ways to redact, and never one instead of the other", () => {
+    // The palette is where a reader chooses between destroying their file and
+    // writing a new one, so both have to be there to choose from. A registry
+    // holding one of them reads as a complete feature.
+    const { registry } = harness();
+    const ids = registry.all().map((command) => command.id);
+    expect(ids).toContain("file.redactCopy");
+    expect(ids).toContain("file.redactDocument");
+  });
+
+  it("gives the destructive redaction no keyboard shortcut", () => {
+    // Every chord that reads as this command is a save. A slip between Save and
+    // a command that destroys content with no undo is the one slip this
+    // application must not make cheap --- `edit.deletePage` has the same rule
+    // for a smaller loss.
+    const { registry } = harness();
+    const command = registry.all().find((c) => c.id === "file.redactDocument");
+    expect(command?.keys).toBeUndefined();
+  });
+
   it("take no argument for a merge, because a dialog supplies the files", () => {
     // The distinction from `file.extractPages`, which is otherwise its twin.
     // An `argument` here would put a palette text field in front of a command
@@ -794,6 +829,7 @@ describe("the window shortcuts for editing", () => {
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
       redactCopy: () => fired.push("redactCopy"),
+    redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),

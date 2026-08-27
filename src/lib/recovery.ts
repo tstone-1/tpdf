@@ -25,8 +25,18 @@
  * within the week of it being written.
  */
 
-/** One thing the window can offer to do about a refusal. */
-export type Offer = "reload" | "saveCopy";
+/**
+ * One thing the window can offer to do about a refusal or a warning.
+ *
+ * **Every variant needs its own arm where these are rendered.** `App.svelte`
+ * matched `saveCopy` and let an `{:else}` draw everything else as *Reload from
+ * disk*, which was correct while there were two and would have drawn a button
+ * that discards the reader's work under a prompt about destroying their file.
+ * That is this repository's own note about a catch-all arm being what makes
+ * forgetting the quiet outcome, arriving in the one place where the wrong
+ * button is worse than no button.
+ */
+export type Offer = "reload" | "saveCopy" | "redact";
 
 /** The half of `SaveFailure` these rules read. */
 export interface SaveFailureShape {
@@ -96,6 +106,37 @@ export function beforeReload(dirty: boolean): Prompt | null {
       "Reloading opens the file again and discards the edits you have not saved. " +
       "Save a copy first to keep them.",
     offers: ["saveCopy", "reload"],
+  };
+}
+
+/**
+ * What to say before removing marked regions from the reader's own file.
+ *
+ * **Unconditional, where {@link beforeReload} asks whether there is anything to
+ * lose.** There always is: the file the reader opened is about to stop
+ * containing the words they marked, and no copy of it exists. Reload spends a
+ * journal, which is work; this spends the document, which is the thing the work
+ * was about.
+ *
+ * The measure of whether this is over-cautious is the sibling command: *Redact
+ * and save as* writes somewhere else and asks nothing, because a reader who
+ * dislikes the result still has the original open. Take the original away and
+ * the last chance to stop moves here.
+ *
+ * Save a copy leads, for the reason it leads in both rules above, and here it is
+ * more than an ordering: it is the only way to keep an unredacted copy, and the
+ * working document is still unredacted at the moment this is on screen.
+ *
+ * `name` is the file's own name rather than its path. A reader with two windows
+ * open needs to know which one this is; the directory it sits in does not help
+ * them decide and would push the sentence off the line.
+ */
+export function beforeRedactingInPlace(name: string): Prompt {
+  return {
+    message:
+      `Redacting removes the marked text from ${name} itself. There is no undo ` +
+      "and no original left afterwards. Save a copy first to keep one.",
+    offers: ["saveCopy", "redact"],
   };
 }
 

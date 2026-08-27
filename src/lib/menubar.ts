@@ -116,6 +116,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // ordinary one and a destructive item above it is a slip waiting to be
       // made.
       "file.redactCopy",
+      // After the copy, and by the same argument one line up: of the two ways to
+      // redact, the one that leaves the reader an original belongs above the one
+      // that does not.
+      "file.redactDocument",
       "file.extractPages",
       // Between extract and merge rather than after them: the three read as
       // one-out-of-one, several-out-of-one, one-out-of-several, and that is the

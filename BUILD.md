@@ -325,10 +325,21 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # A check ahead of all of them asserts every marker is in the fixture to begin
 # with, without which no direction could fail.
 #
+# IN PLACE is the last phase and it is the same removal pointed at the reader's
+# own file: stage a sibling, check the source has not moved, rename over it, and
+# read back the path rather than the buffer. It works on a COPY of
+# text-base14.pdf made into a file of its own -- pointing it at the fixture
+# would leave every later run of every other probe reading a redacted one. Four
+# checks and two are controls: the needle gone from the reader's own path, KEEP
+# still there so a scan that cannot look would fail the first, the file still
+# opening in PDFium with every page it had, and the staged sibling gone -- which
+# is not tidiness, since a temporary left beside a redacted document holds the
+# unredacted bytes.
+#
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
 #
-#   macOS arm64, 2026-08-27   15 checks, 0 failures
+#   macOS arm64, 2026-08-27   19 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

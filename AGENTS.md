@@ -1420,6 +1420,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A text comparison cannot see a property that is not about text
 - A selector naming one element stops reading the page when the layer gains another
 - A test whose precondition is already satisfied never runs
+- A catch-all arm that was right for two variants is wrong for the third (a Reload button under a prompt about destroying the file; a quiet catch-all loses a notification, a loud one presses a button, and the check that exists is one layer from the defect)
 - A crash test that compiles away proves containment of a crash that never happened
 - A test for an atomic write must plant the intermediate it is meant to prove
 - A control can be contaminated by the phase that ran before it
@@ -1523,6 +1524,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A `pgrep -f` wait loop is defeated by the command that checks on it (observing the job is what kept it blocked)
 - A wait built on `pgrep -f` outlives the job, and every later check agrees with it (the instrument agreed with the truth, and would have agreed with anything)
 - A mutation harness that dies leaves the mutation in the tree (a `finally` does not survive `pkill`, and on a feature branch the leftover is invisible in `git status`)
+- Running a repo's formatter over files it does not format (the format-first rule is right for Rust, where `cargo fmt --check` is a gate, and does not transfer to a frontend with no formatting gate; dozens of orphaned anchors, and a scripted edit is what made throwing the reformat away cheap)
 - A mutation aimed at deleted code is refused far too late to matter
 - A refactor orphans mutations nobody can see, and the gate is what finds them (three at once, with three different repairs --- and the third is DELETED rather than re-aimed, because a seam that removes a class of defect removes the mutation watching for it)
 - A cross-check that counts names against a count of tests is wrong wherever two tests share a name (three mutations condemned by an off-by-one the SUITE put there; the same run's other end had learned about the duplicates two days earlier)

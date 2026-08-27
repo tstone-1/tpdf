@@ -1315,6 +1315,48 @@ scanned at the byte level at all, which `verify::scan` reports as a blind spot r
 a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is
 what the reader is told.
 
+#### T6.12 — Redacting the reader's own file, added 2026-08-27
+
+**No new capability and no new parse.** `redact_document` is §T6.11's command with
+`save::stage_in_place` where `save::write_copy` was, so it is §T6.7's write with §T6.11's
+claim; both sections apply unchanged and neither is repeated. It takes **no destination**,
+which makes its authority narrower than its sibling's rather than wider: the only file it can
+write is the one named as the source, and `save_document` has been able to write that since
+2026-08-19.
+
+**One authority is genuinely new, and it is the reader's rather than an attacker's.** Until
+today a redaction could only produce a file; now it can destroy one. A caller able to reach
+this command can overwrite any PDF the reader can write with a redacted version of itself ---
+which is what `save_document` can already do with an edited version of itself, so what this
+adds over the existing surface is the removal rather than the write. The CSP is what bounds
+it, as it bounds every command on this surface (residual risk 7).
+
+**The order is what keeps a failure from being a loss.** Stage a sibling, fingerprint the
+source, close the document, check the source has not moved, rename. Every refusal `save.rs`
+states arrives while the reader still has their document and their marks, so the only window
+in which content can be lost is between the rename and the read-back --- and a rename is
+atomic, so what is in that window is a file that is either the old one or the new one.
+
+**A file that could not be proved clean is still written**, which is §T6.11's decision
+arriving where it costs more. §6's rule is *never claim clean*, not *never write*: rolling
+back would hand the reader the words they asked to destroy while reporting a failure. What
+they get instead is the redacted file and the reasons it could not be shown clean, which is
+the same answer the copy gives.
+
+**The journal is spent, not truncated, and that is the stronger property.** §6 asks for the
+journal to be truncated at the apply. Truncating leaves every earlier command undoable, so a
+reader could step back to a state whose regions were still pending while the file no longer
+holds the words. The close drops the model entirely and the reader reopens from the path, so
+no undo reaches across the removal. Nothing was built for this --- it is what an in-place
+write already does.
+
+**Residual.** Everything §T6.11 lists survives here identically, and one thing more is worth
+saying because the in-place form is the one that suggests otherwise: **this does not sanitize
+what is outside the file.** A backup, a versioned snapshot, a sync client's copy in the cloud
+and the sectors the old file occupied are all untouched, and the reader's original is now the
+only copy they had. §T6's own residual says this; it is repeated here because a command that
+overwrites the original is the one where a reader will assume it has been dealt with.
+
 #### T6.10 — Moving a mark, added 2026-08-23
 
 **No new authority, and it is the T6.2 shape.** `annot_move` takes a document handle, a mark

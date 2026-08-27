@@ -154,6 +154,22 @@ file being written is a copy, and the document you have open keeps it. And what 
 is the comment itself, not just its place in the page's list: it is removed from
 everywhere in the file that named it, including a form's field list.
 
+### Added: redact the file you opened, not only a copy of it
+
+**Redact and save**, beside *Redact and save as*. The same removal and the same
+report, pointed at the file you opened rather than at a new one.
+
+**It warns first, and offers to save you a copy.** There is no undo across this
+and no original afterwards: the document is closed by the write and opened again
+from disk, so the marks go with it along with everything else you had not saved.
+The sibling command asks nothing because it leaves you the original; take the
+original away and the last chance to stop has to move to before the command runs.
+
+The report is the one you already get --- *verified*, or *not verified* and why,
+never a bare success --- and it arrives when the file is already the redacted one.
+That is the reason for the warning rather than an argument against it. Reach for
+*Redact and save as* while you are still deciding.
+
 ### Fixed: a highlight could stop showing the words it covers after a deletion
 
 The comments panel fills in the words under a highlight that was left blank, a

@@ -221,8 +221,8 @@ MUTATIONS = [
         # button is what can.
         "recovery: lead with the offer that spends the journal",
         "src/lib/recovery.ts",
-        '    offers: ["saveCopy", "reload"],\n  };\n}\n\n/**\n * What to say after a copy',
-        '    offers: ["reload", "saveCopy"],\n  };\n}\n\n/**\n * What to say after a copy',
+        '    offers: ["saveCopy", "reload"],\n  };\n}\n\n/**\n * What to say before removing',
+        '    offers: ["reload", "saveCopy"],\n  };\n}\n\n/**\n * What to say before removing',
         "warns before discarding unsaved edits, and offers the copy first",
     ),
     Mutation(
@@ -3938,8 +3938,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- **True redaction** with an automatic post-save verification pass",
-        "- **True redaction** <!-- built: file.print --> with an automatic post-save verification pass",
+        "- **Marking for redaction by selecting text, or by searching for a pattern** --- an email",
+        "- **Marking** <!-- built: file.print --> **for redaction by selecting text, or by searching for a pattern** --- an email",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -4403,6 +4403,55 @@ MUTATIONS += [
         "    `${verdict} The original also changed on disk while you had it open, so this was ` +",
         "    `The original also changed on disk while you had it open, so this was ` +",
         "adds the changed-source note without dropping the verdict",
+    ),
+    Mutation(
+        # Warn only when there is unsaved work, the way a reload does. The
+        # commonest in-place redaction is of a document whose only edit is the
+        # marks, and this is the shape that would go quiet on it -- and it is
+        # the shape somebody copying `beforeReload` would write.
+        "recovery: warn before an in-place redaction only when the document is dirty",
+        "src/lib/recovery.ts",
+        "export function beforeRedactingInPlace(name: string): Prompt {\n  return {",
+        "export function beforeRedactingInPlace(name: string): Prompt {\n  if (name) return { message: \"\", offers: [] };\n  return {",
+        "always warns, where a reload only warns when there is work to lose",
+    ),
+    Mutation(
+        # Offer the redaction first. The reader's eye goes to the leading button
+        # and Save a copy is the only way left to keep an unredacted file.
+        "recovery: put the redaction ahead of the copy it is the escape from",
+        "src/lib/recovery.ts",
+        '    offers: ["saveCopy", "redact"],',
+        '    offers: ["redact", "saveCopy"],',
+        "offers the copy first, which is the only way left to keep one",
+    ),
+    Mutation(
+        # Drop the half a reader is most likely to assume is untrue. "No undo"
+        # is survivable if a copy exists; the sentence's work is saying none
+        # does.
+        "recovery: warn about the undo without saying the original goes too",
+        "src/lib/recovery.ts",
+        '      "and no original left afterwards. Save a copy first to keep one.",',
+        '      "afterwards. Save a copy first to keep one.",',
+        "says what it costs rather than asking whether to continue",
+    ),
+    Mutation(
+        # Name no file. A reader with two windows open cannot tell which one
+        # they are about to destroy, and the message reads perfectly.
+        "recovery: warn about an in-place redaction without saying which file",
+        "src/lib/recovery.ts",
+        "      `Redacting removes the marked text from ${name} itself. There is no undo ` +",
+        "      `Redacting removes the marked text from this file itself. There is no undo ` +",
+        "names the file, so a reader with two windows open knows which",
+    ),
+    Mutation(
+        # A registered command that reaches no action -- the shape that shipped
+        # inert once before, and which no type error and no registry sweep can
+        # see. Aimed at the destructive one of the pair on purpose.
+        "appcommands: register Redact and save without reaching its action",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.redactDocument(),",
+        "      run: () => {},",
+        "redact the open file through the command, with no value to carry",
     ),
 ]
 

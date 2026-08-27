@@ -11,8 +11,10 @@ Windows, including documents behind a password. **It edits**: pages can be turne
 deleted, cropped and extracted; text can be highlighted, underlined, struck out or
 squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
 comment on it, move what you put there, erase any of it, and save --- over the open file or
-to a copy. What is *not* built is the list further down, and redaction and in-place text
-editing are the two that matter.
+to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
+the page's own instructions --- over the open file or to a copy --- with the result read
+back and reported either way. What is *not* built is the list further down, and in-place
+text editing is the one that matters.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
 SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
@@ -148,6 +150,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   page alone, and it takes the document's own title, author and other properties, because a
   title that paraphrases what you removed matches no search for it.
   <!-- built: file.redactCopy -->
+- **Redact and save** does all of that to the file you opened, rather than to a new one.
+  It warns first and offers to save you a copy, because there is no undo across it and no
+  original left afterwards: the document is closed by the write, reopened from disk, and
+  the marks go with it. The report is the same one, and it arrives after the file is
+  already the redacted one --- which is the reason for the warning rather than an argument
+  against it. Reach for *Redact and save as* while you are still deciding.
+  <!-- built: file.redactDocument -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it.
@@ -216,8 +225,11 @@ unbuilt while they shipped.
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->
-- **True redaction** with an automatic post-save verification pass
-  <!-- not-built: edit.redactSelection -->
+- **Marking for redaction by selecting text, or by searching for a pattern** --- an email
+  address, an order number, a word list --- rather than only by dragging a rectangle. The
+  removal and its verification are built; what is missing is the other two ways to say
+  what to remove. And a region over a picture is still reported rather than removed.
+  <!-- not-built: edit.redactSelection edit.redactMatches -->
 - Forms and visual signatures. Signatures are read, never made.
   <!-- not-built: edit.fillForm edit.signDocument -->
 - In-place text editing
