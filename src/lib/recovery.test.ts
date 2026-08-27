@@ -5,7 +5,9 @@ import {
   afterFailedSave,
   afterMerge,
   afterRedaction,
+  beforeRedactingInPlace,
   beforeReload,
+  type Offer,
 } from "./recovery";
 
 describe("afterFailedSave", () => {
@@ -79,6 +81,70 @@ describe("beforeReload", () => {
     const prompt = beforeReload(true);
     expect(prompt?.message).toContain("discards");
     expect(prompt?.message).toContain("not saved");
+  });
+});
+
+describe("beforeRedactingInPlace", () => {
+  it("always warns, where a reload only warns when there is work to lose", () => {
+    // There is no unedited case. The file the reader opened is about to stop
+    // holding the words they marked whatever else is true of it, so a rule with
+    // a quiet branch would have one that is wrong.
+    expect(beforeRedactingInPlace("report.pdf").offers).toEqual(["saveCopy", "redact"]);
+  });
+
+  it("names the file, so a reader with two windows open knows which", () => {
+    expect(beforeRedactingInPlace("report.pdf").message).toContain("report.pdf");
+  });
+
+  it("says what it costs rather than asking whether to continue", () => {
+    // `beforeReload`'s rule, and it matters more here: the cost is the document
+    // rather than the unsaved work, and "no original left" is the half a reader
+    // is most likely to assume is untrue.
+    const prompt = beforeRedactingInPlace("report.pdf");
+    expect(prompt.message).toContain("no undo");
+    expect(prompt.message).toContain("no original left");
+  });
+
+  it("offers the copy first, which is the only way left to keep one", () => {
+    // Order, not membership: the working document is still unredacted while
+    // this is on screen, so Save a copy is a real escape and not a courtesy.
+    // The check above asserts the pair; this one is about which leads, and it
+    // would pass on the reversed list if it read `toContain`.
+    expect(beforeRedactingInPlace("report.pdf").offers[0]).toBe("saveCopy");
+  });
+});
+
+describe("the offers these rules can return", () => {
+  it("is the set App.svelte draws a button for", () => {
+    // **The one check standing between a new `Offer` and a prompt with a dead
+    // button.** Nothing renders `App.svelte`, so the `{#each offers}` block is
+    // reachable from no unit test; what is reachable is every rule that decides
+    // what goes in it. A variant added to `Offer` and returned by a rule turns
+    // this red, and the message says where the arm goes.
+    //
+    // Written out rather than derived from the type: a check that reads `Offer`
+    // to decide what `Offer` may contain agrees with itself whatever the type
+    // says, which is this repository's own note about a writer and its own
+    // reader. The cost is that adding a variant edits this line, and that is
+    // the point.
+    const drawn = new Set<Offer>(["saveCopy", "reload", "redact"]);
+    const everything: Offer[] = [
+      ...afterFailedSave({ message: "x", changed: true }).offers,
+      ...afterFailedSave({ message: "x", changed: true, reopen: true }).offers,
+      ...afterFailedSave({ message: "x" }).offers,
+      ...(beforeReload(true)?.offers ?? []),
+      ...beforeRedactingInPlace("report.pdf").offers,
+    ];
+    // A rule that stopped offering anything would satisfy the loop below by
+    // having nothing to check, which is the emptiness control every sweep here
+    // is required to carry.
+    expect(everything.length).toBeGreaterThan(0);
+    for (const offer of everything) {
+      expect(
+        drawn.has(offer),
+        `${offer} is offered by a rule and App.svelte has no arm for it`,
+      ).toBe(true);
+    }
   });
 });
 

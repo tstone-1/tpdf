@@ -732,54 +732,44 @@ async fn redaction_plans(
     await_reply("redaction_plans", rx).await
 }
 
-/// Writes a copy of the document with every marked region removed, and verifies it.
+/// A redaction worked out against the open document, ready for either writer.
 ///
-/// **The destructive step, pointed at a new file.** `docs/PLAN.md` §6 describes
-/// apply as an in-place rewrite with the journal truncated; this is the same
-/// removal written somewhere else, which is the form that can ship first because
-/// nothing the reader has can be lost by it. The open document is untouched and
-/// the regions stay pending, so a reader who does not like the result closes the
-/// file and still has their marks.
+/// **The Ask step of `docs/PLAN.md` §6, held apart from the write.** Two
+/// commands apply a redaction --- [`redact_copy`] to a new file and
+/// [`redact_document`] over the open one --- and they differ in the writer and
+/// in nothing else. A second copy of this loop is the drift this repository
+/// keeps recording: the two would go on agreeing about the ordinals and
+/// eventually disagree about which objects the reader was warned about.
+struct Asked {
+    /// The reader's plan with the redaction ordinals in it.
+    plan: edits::Plan,
+    /// The words the regions cover, to look for in what gets written.
+    needles: Vec<String>,
+    /// What the removal could not take. Not a refusal --- see [`redact_copy`]
+    /// --- but a reason the file cannot be called clean, carried to the verdict.
+    concerns: Vec<String>,
+    /// How many regions were asked about.
+    regions: usize,
+    /// How many text-showing operations the removal names, after merging.
+    shows: usize,
+}
+
+/// Works out what removing every marked region would take.
 ///
-/// Four steps, and the order is the safety of it:
+/// One call per page carrying regions, which is where the cost is: the page load
+/// and the object walk are per page and the comparison is per region.
 ///
-/// 1. **Ask.** For each page holding regions, a worker computes what a removal
-///    would take --- against PDFium's own object list, behind the sandbox, which
-///    is where every parse of the reader's bytes belongs.
-/// 2. **Write.** The ordinals go into the plan and `save::write_copy` takes the
-///    ordinary rewrite path, which is what applies them --- see
-///    `save::apply_redactions` for why it is safe for that to happen last.
-/// 3. **Verify.** The written file is scanned for the words that were supposed
-///    to go, and every object the removal could not take is a reason of its own.
-///    The answer is *verified*, or *not verified* with every reason --- never a
-///    bare success, which is §6 step 4 and is why [`redact::Applied`] cannot
-///    carry the first without the second.
-///
-/// **An object the removal cannot take does not stop the write, and that is a
-/// decision rather than an oversight.** §6's deny-by-default rule says such an
-/// object is a verification failure and not a shrug, and it is honoured here as
-/// a failure to *verify*: the file is written with the text gone and the reader
-/// is told, in the sentence that lands afterwards, that it could not be proved
-/// clean and why. Refusing instead was tried first and measured: `text-base14`'s
-/// own region overlaps a path, and a rule under a line of text is what almost
-/// every real document has --- so refusing means tpdf can never redact anything
-/// and the reader is told the same thing with nothing to show for it. One rule,
-/// *never claim clean*, beats two.
+/// **Nothing is written and nothing is journalled.** The document is asked, and
+/// a caller that goes no further has changed nothing.
 ///
 /// # Errors
 ///
-/// Nothing marked; the worker refusing to read a page; anything
-/// `save::write_copy` refuses (an encrypted source, a page count that disagrees
-/// with the baseline, writing over the source); or the written file not being
-/// readable back.
-#[tauri::command]
-async fn redact_copy(
-    edits: tauri::State<'_, edits::Edits>,
-    service: tauri::State<'_, RenderService>,
+/// Nothing marked, or a worker that could not read a page.
+async fn ask_redactions(
+    edits: &edits::Edits,
+    service: &RenderService,
     doc: u32,
-    source: String,
-    path: String,
-) -> Result<redact::Applied, String> {
+) -> Result<Asked, String> {
     let targets = edits.redaction_targets(doc)?;
     if targets.is_empty() {
         return Err("nothing in this document is marked for removal".into());
@@ -787,8 +777,6 @@ async fn redact_copy(
 
     let mut planned: Vec<edits::PlannedRedaction> = Vec::new();
     let mut needles: Vec<String> = Vec::new();
-    // What the removal could not take. Not a refusal --- see the note above ---
-    // but a reason the file cannot be called clean, carried to the verdict.
     let mut concerns: Vec<String> = Vec::new();
     let mut regions = 0usize;
     let mut shows_total = 0usize;
@@ -838,6 +826,69 @@ async fn redact_copy(
 
     let mut plan = edits.plan(doc)?;
     plan.redactions = planned;
+    Ok(Asked {
+        plan,
+        needles,
+        concerns,
+        regions,
+        shows: shows_total,
+    })
+}
+
+/// Writes a copy of the document with every marked region removed, and verifies it.
+///
+/// **The destructive step, pointed at a new file.** `docs/PLAN.md` §6 describes
+/// apply as an in-place rewrite with the journal truncated; this is the same
+/// removal written somewhere else, which is the form that can ship first because
+/// nothing the reader has can be lost by it. The open document is untouched and
+/// the regions stay pending, so a reader who does not like the result closes the
+/// file and still has their marks.
+///
+/// Four steps, and the order is the safety of it:
+///
+/// 1. **Ask.** For each page holding regions, a worker computes what a removal
+///    would take --- against PDFium's own object list, behind the sandbox, which
+///    is where every parse of the reader's bytes belongs.
+/// 2. **Write.** The ordinals go into the plan and `save::write_copy` takes the
+///    ordinary rewrite path, which is what applies them --- see
+///    `save::apply_redactions` for why it is safe for that to happen last.
+/// 3. **Verify.** The written file is scanned for the words that were supposed
+///    to go, and every object the removal could not take is a reason of its own.
+///    The answer is *verified*, or *not verified* with every reason --- never a
+///    bare success, which is §6 step 4 and is why [`redact::Applied`] cannot
+///    carry the first without the second.
+///
+/// **An object the removal cannot take does not stop the write, and that is a
+/// decision rather than an oversight.** §6's deny-by-default rule says such an
+/// object is a verification failure and not a shrug, and it is honoured here as
+/// a failure to *verify*: the file is written with the text gone and the reader
+/// is told, in the sentence that lands afterwards, that it could not be proved
+/// clean and why. Refusing instead was tried first and measured: `text-base14`'s
+/// own region overlaps a path, and a rule under a line of text is what almost
+/// every real document has --- so refusing means tpdf can never redact anything
+/// and the reader is told the same thing with nothing to show for it. One rule,
+/// *never claim clean*, beats two.
+///
+/// # Errors
+///
+/// Nothing marked; the worker refusing to read a page; anything
+/// `save::write_copy` refuses (an encrypted source, a page count that disagrees
+/// with the baseline, writing over the source); or the written file not being
+/// readable back.
+#[tauri::command]
+async fn redact_copy(
+    edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    source: String,
+    path: String,
+) -> Result<redact::Applied, String> {
+    let asked = ask_redactions(&edits, &service, doc).await?;
+    let plan = asked.plan;
+    let needles = asked.needles;
+    let concerns = asked.concerns;
+    let regions = asked.regions;
+    let shows_total = asked.shows;
 
     let out = std::path::PathBuf::from(path);
     let from = std::path::PathBuf::from(source);
@@ -870,6 +921,126 @@ async fn redact_copy(
         regions,
         shows: shows_total,
         changed: copied.changed,
+        verified: why.is_empty(),
+        why,
+    })
+}
+
+/// Removes every marked region from the file the reader opened, and verifies it.
+///
+/// **The destructive step pointed at the reader's own file**, which is
+/// `docs/PLAN.md` §6 step 3 as that section states it. [`redact_copy`] is the
+/// same removal written somewhere else, and it shipped first because nothing a
+/// reader has can be lost by it; this one is the operation a reader actually
+/// wants, and there is no original left afterwards.
+///
+/// **The journal truncation §6 asks for is the close, and it is stronger than a
+/// truncation.** Truncating the journal at the apply would leave every earlier
+/// command undoable, which for a redaction means a reader could step back to a
+/// state whose regions were still pending and wonder which file they were
+/// looking at. [`save_document`]'s close spends the journal whole: the model is
+/// dropped, the reader reopens from the path, and there is no undo that reaches
+/// across it. Nothing here had to be built for that --- it is what an in-place
+/// write already does --- and saying so is worth more than a mechanism would be.
+///
+/// **Always a rewrite, and that is what a redaction is rather than a choice.**
+/// [`save_document`] asks `save::mode_for_source` whether a plan can be appended;
+/// this does not ask, because an append adds objects and never touches a content
+/// stream, so appending a redaction would write a file with every word still in
+/// it. `Plan::only_adds_marks` refuses a plan carrying a redaction for exactly
+/// that reason and has a test named for it --- so the property holds at the
+/// predicate as well as here, and neither place is relying on the other.
+///
+/// The order is [`save_document`]'s, for [`save_document`]'s reasons: stage
+/// beside the source while the document is still open and every refusal can
+/// arrive harmlessly, close, then rename. What is added is the verification, and
+/// it happens **after** the rename, against the file the reader now has --- the
+/// same rule the copy follows, and sharper here, because the bytes on that path
+/// are the only bytes left.
+///
+/// **A file that could not be proved clean is still the file.** §6's rule is
+/// *never claim clean*, not *never write*; the removal happened, the reader is
+/// told what could not be shown gone, and the alternative --- rolling back to the
+/// unredacted document --- would hand them the words they asked to destroy while
+/// reporting a failure. [`redact_copy`] carries the same decision and the same
+/// worked reason.
+///
+/// # Errors
+///
+/// Nothing marked, a worker that could not read a page, or anything
+/// `save::stage_in_place` refuses --- all of them with the document untouched.
+/// Past the close, a rename that did not happen or a file that could not be read
+/// back, both of which say `reopen`.
+#[tauri::command]
+async fn redact_document(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    source: String,
+) -> Result<redact::Applied, SaveFailure> {
+    let asked = ask_redactions(&edits, &service, doc)
+        .await
+        .map_err(SaveFailure::refused)?;
+
+    let staging = source.clone();
+    let plan = asked.plan;
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        save::stage_in_place(Path::new(&staging), &plan)
+    })
+    .await
+    .map_err(|e| SaveFailure::refused(format!("the redaction did not run: {e}")))?
+    .map_err(SaveFailure::refused_by)?;
+
+    // Past this line every failure is an `after_close`, for `save_document`'s
+    // reason: the reader's document is being taken apart, and the honest thing
+    // to report is that they have to open the file again.
+    //
+    // The model first --- document numbers are reused, and a journal left under a
+    // handle the service is free to hand to another file is one document's edits
+    // applied to another's pages. Here that close is also the truncation.
+    edits.close(doc);
+    let (reply, rx) = reply_channel();
+    service.close(doc, reply);
+    let closed = await_reply("redact_document", rx).await;
+
+    let committing = source.clone();
+    let needles = asked.needles;
+    let landed = tauri::async_runtime::spawn_blocking(move || {
+        let at = Path::new(&committing);
+        // One more look before the rename, closing the window staging opens.
+        save::verify_before_commit(&staged, at).map_err(SaveFailure::after_close_by)?;
+        save::commit_in_place(&staged.path, at).map_err(SaveFailure::after_close)?;
+        // Read back rather than verified from what was written, which is the
+        // rule the copy and the append both follow: what matters is the file on
+        // disk, and the buffer that produced it agrees with itself.
+        std::fs::read(at)
+            .map_err(|why| {
+                SaveFailure::after_close(format!(
+                    "the file was written but could not be read back to check it: {why}"
+                ))
+            })
+            .map(|bytes| verify::scan(&bytes, &needles, None))
+    })
+    .await
+    .map_err(|e| SaveFailure::after_close(format!("the redaction did not finish: {e}")))?;
+
+    let report = landed.map_err(|why| with_close_note(why, closed))?;
+
+    // The objects the removal could not take come first, because they are the
+    // finding a reader can act on --- see `redact_copy`, which orders them the
+    // same way and for the same reason.
+    let mut why = asked.concerns;
+    if let verify::Verdict::NotVerified(reasons) = report.verdict() {
+        why.extend(reasons);
+    }
+    Ok(redact::Applied {
+        regions: asked.regions,
+        shows: asked.shows,
+        // The source *is* the file being written, so the copy's question --- has
+        // the document changed under the one on screen --- is asked and answered
+        // by `stage_in_place`, which refuses rather than reporting. Reaching here
+        // means it had not.
+        changed: false,
         verified: why.is_empty(),
         why,
     })
@@ -2766,6 +2937,7 @@ pub fn run() {
             redact_remove,
             redaction_plans,
             redact_copy,
+            redact_document,
             annot_erase,
             annot_note,
             annot_recolor,

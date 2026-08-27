@@ -1640,10 +1640,11 @@ confident lie. The audit was hardest on this section and largely right.
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
    to catch an over- or under-selection. *Built: the panel, in page order, with the words
    the region covers and the only route off a region other than undo. The thumbnail is not.*
-3. **Apply.** Destructive, full-rewrite, journal truncated at that point. *Built as
-   **Redact and save as**, which is the same removal pointed at a new file: the open
-   document is untouched and nothing is journalled, so a reader who does not like the
-   result still has their marks. In-place apply and the truncation are not built.*
+3. **Apply.** Destructive, full-rewrite, journal truncated at that point. *Built both ways.
+   **Redact and save as** points the removal at a new file, leaving the open document and
+   its marks alone; **Redact and save** points it at the file the reader opened, warns
+   first, and spends the journal whole rather than truncating it --- the document is closed
+   by the write and reopened from disk, so there is no undo that reaches across.*
 4. **Verify.** Mandatory. Reports *verified*, or *not verified* with specifics — never a
    bare success. *Built: the written file is read back and scanned for the words that
    were supposed to go, and every object the removal could not take is a reason of its
@@ -2005,14 +2006,15 @@ asserted through **two independent readers** --- `verify::scan` over the bytes a
 re-extracting the written file. The survivor is the control: a scan that finds nothing
 because it cannot look is the failure this repository has recorded from several directions.
 
-What is **not** built: in-place apply and the journal truncation; the carriers this still
-does not reach --- form values, the outline, page labels and embedded files, every one of
-which §6's table names; and a region over an image, which is reported and left. Three rows of
-that table **are** reached since 2026-08-27: the shadow-text row in both of its homes, the
-marked-content property list *and* the structure element the span belongs to; an annotation
-whose rectangle is over a region, replies and popup included; and the document's own
-description of itself, `/Info` and the XMP packet, taken whole. The four subsections below say
-what each does and does not cover.
+What is **not** built: the carriers this still does not reach --- form values, the outline,
+page labels and embedded files, every one of which §6's table names; and a region over an
+image, which is reported and left. Three rows of that table **are** reached since
+2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
+the structure element the span belongs to; an annotation whose rectangle is over a region,
+replies and popup included; and the document's own description of itself, `/Info` and the XMP
+packet, taken whole. **In-place apply and the journal truncation landed the same day** and
+have a subsection of their own below. The five subsections say what each does and does not
+cover.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
@@ -2266,6 +2268,70 @@ names `/Info` and the catalog names `/Metadata`, and removing an object without 
 leaves a dangling name where there was a description. Each half has its own mutation, because
 `/Info` and XMP hold the same title in two forms and taking one is the plausible way to get
 this wrong.
+
+#### Applying it to the reader's own file --- done 2026-08-27
+
+**Redact and save**, beside *Redact and save as*. Same removal, same verification, same
+report; the difference is the writer, and it is the whole difference, because there is no
+original left afterwards.
+
+**The Ask step is one function serving both**, which is why this increment is small.
+`lib.rs`'s `ask_redactions` is the loop that turns each page's regions into ordinals against
+PDFium's own object list; a second copy would go on agreeing about the ordinals and
+eventually disagree about which objects the reader was warned about, which is the drift this
+repository records under two copies of a distinction.
+
+**The order is the save's**, for the save's reasons: stage a sibling while the document is
+still open and every refusal can arrive harmlessly, close, rename. The verification then
+reads back the path the reader now has rather than the buffer that produced it --- the same
+rule the copy and the append both follow, and sharper here, because those are the only bytes
+left.
+
+**The journal truncation §6 asks for is the close, and it is stronger than a truncation.**
+Truncating at the apply would leave every earlier command undoable, so a reader could step
+back to a state whose regions were still pending while the file in front of them no longer
+had the words in it. The close spends the journal whole --- §5's *the journal is spent* ---
+and the reader reopens from the path. Nothing was built for this; it is what an in-place
+write already does, and saying so is worth more than a mechanism would be.
+
+**Always a rewrite, and that is what a redaction is rather than a choice.** `save_document`
+asks `save::mode_for_source` whether a plan can be appended; this does not ask. An append
+adds objects and never touches a content stream, so appending a redaction would write a file
+with every word still in it. `Plan::only_adds_marks` refuses a plan carrying a redaction for
+that reason and has a test named for it, so the property holds at the predicate as well as
+here and neither place relies on the other.
+
+**A warning, where the copy has none, and the sibling is the measure of it.** *Redact and
+save as* asks nothing because a reader who dislikes the result still has the original open.
+Take the original away and the last chance to stop moves to the moment before the command
+runs. `recovery::beforeRedactingInPlace` is that sentence and it is unconditional, where
+`beforeReload` asks whether there is anything to lose: there always is. Save a copy leads,
+which here is more than an ordering --- the working document is still unredacted while the
+prompt is on screen, so it is the only way left to keep an unredacted copy.
+
+**What this made visible, and it is the finding rather than the feature.** `App.svelte`
+rendered the offer buttons by matching `saveCopy` and letting an `{:else}` draw everything
+else as *Reload from disk*. Correct with two variants, and one variant away from putting a
+button that discards the reader's work under a prompt about destroying their file --- a wrong
+button being strictly worse than no button. Every variant has its own arm now and there is no
+catch-all, so an unwired one draws nothing. Nothing renders `App.svelte`, so no unit test can
+reach that block; what a test can reach is every rule that decides what goes in it, and
+`recovery.test.ts` pins the set. A variant returned by a rule and absent from the drawn set
+turns it red and names the template.
+
+**`examples/redact_apply_probe.rs` gained the phase**, on a copy of `text-base14.pdf` made
+into a file of its own --- pointing it at the fixture would leave every later run of every
+other probe reading a redacted one. Four checks, two of them controls: the needle gone from
+the reader's own path, `KEEP` still there so a scan that cannot look would fail the first,
+the file still opening in PDFium with every page it had, and the staged sibling gone. That
+last one is not tidiness: a temporary file left beside a redacted document holds the
+unredacted bytes.
+
+**What no check here reaches**, and it is the same gap the copy has: the Tauri command
+itself. `redact_document` needs a running app, a render service and a real file, so nothing
+in `cargo test` calls it, and the probe exercises the write path underneath it rather than
+the command. The frontend half --- the warning, the offers, the registration, the action it
+reaches --- is covered by five mutations.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

@@ -182,6 +182,7 @@ fn run(library: &Path) -> Result<bool, String> {
     );
 
     ok &= annotations(bindings, &root)?;
+    ok &= in_place(bindings, &source)?;
 
     println!(
         "{}",
@@ -191,6 +192,91 @@ fn run(library: &Path) -> Result<bool, String> {
             "[FAIL] see above"
         }
     );
+    Ok(ok)
+}
+
+/// The same removal pointed at the reader's own file, staged and committed.
+///
+/// `docs/PLAN.md` §6 step 3 as that section states it, where everything above is
+/// the copy that shipped first. What is new is not the removal --- it is the
+/// same `apply_redactions` --- but the **write**: stage a sibling, check the
+/// source has not moved under it, rename over it, and read back the path the
+/// reader now has rather than the one that was written.
+///
+/// **Its own file, copied out of `testdata/` first.** This is the one phase that
+/// destroys what it is pointed at, and pointing it at a fixture would leave
+/// every later run of every other probe reading a redacted `text-base14.pdf`.
+/// The copy is also what makes the fingerprint honest: `stage_in_place` refuses
+/// a plan with no `opened_as`, so this takes one of the copy the way `edits.rs`
+/// takes one of the file a reader opened.
+///
+/// **Four checks and two of them are controls.** The needle must be gone from
+/// the reader's own path; `KEEP` must still be there, or a scan that cannot look
+/// would pass the first; the file must still open in PDFium, because a rename
+/// that landed a half-written sibling would satisfy both of those and leave the
+/// reader nothing; and the staged sibling must be gone, since a temporary file
+/// left beside a redacted document holds the unredacted bytes.
+fn in_place(
+    bindings: &'static dyn pdfium_render::prelude::PdfiumLibraryBindings,
+    fixture: &Path,
+) -> Result<bool, String> {
+    let mine = std::env::temp_dir().join("tpdf-redact-in-place-probe.pdf");
+    let _ = std::fs::remove_file(&mine);
+    std::fs::copy(fixture, &mine)
+        .map_err(|why| format!("could not make a file of my own: {why}"))?;
+
+    let document = OpenDocument::open(bindings, &mine, None).map_err(|why| why.reason)?;
+    let count = document.page_count();
+    let region = {
+        let page = document.page(0).map_err(|e| e.to_string())?;
+        let extracted = text::extract(&page).map_err(|e| e.to_string())?;
+        box_of(&extracted, REMOVE)
+            .ok_or_else(|| format!("{REMOVE} is not on page 1 of the copy"))?
+    };
+    let plans = render::redaction_plans_of(&document, 0, &[region])?;
+    let plan = plans.first().ok_or("no plan came back for one region")?;
+    let mut planned = plan_for(count, plan);
+    planned.opened_as = Some(tpdf_lib::fingerprint::Fingerprint::of(&mine)?);
+
+    // The document has to be closed before the rename, which is the ordering
+    // `save_document` exists to get right: a rename over a mapped file succeeds
+    // on macOS and leaves the mapping serving the inode that is no longer at
+    // that path, and Windows refuses it outright while a section is open.
+    let staged = save::stage_in_place(&mine, &planned).map_err(|why| why.message)?;
+    let sibling = staged.path.clone();
+    drop(document);
+    save::verify_before_commit(&staged, &mine).map_err(|why| why.message)?;
+    save::commit_in_place(&staged.path, &mine)?;
+
+    let bytes = std::fs::read(&mine).map_err(|why| why.to_string())?;
+    println!(
+        "[..] redacted {} in place, {} bytes",
+        mine.display(),
+        bytes.len()
+    );
+    let report = verify::scan(&bytes, &[REMOVE.to_string(), KEEP.to_string()], None);
+    let mut ok = check(
+        &format!("in place: the reader's own file no longer holds {REMOVE:?}"),
+        !report.found.contains(REMOVE),
+    );
+    ok &= check(
+        &format!("in place: and still holds {KEEP:?}, so the scan can see it"),
+        report.found.contains(KEEP),
+    );
+    // A rename that landed something unreadable would pass both of those, since
+    // neither of them parses. This is the check that says the reader has a
+    // document rather than a file with the right bytes missing from it.
+    let after = OpenDocument::open(bindings, &mine, None).map_err(|why| why.reason)?;
+    ok &= check(
+        "in place: it still opens, with every page it had",
+        after.page_count() == count,
+    );
+    ok &= check(
+        "in place: the staged sibling is gone, and it held the unredacted bytes",
+        !sibling.exists(),
+    );
+    drop(after);
+    let _ = std::fs::remove_file(&mine);
     Ok(ok)
 }
 

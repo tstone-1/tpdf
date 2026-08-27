@@ -555,6 +555,27 @@ export class Edits {
   }
 
   /**
+   * Removes every marked region from `source` itself, and reports what could be
+   * proved about the result.
+   *
+   * {@link redactCopy} pointed at the file the reader opened, with everything
+   * {@link save} does to the document: it is closed as part of the write and the
+   * caller has to open the path again. The journal goes with it, which is
+   * `docs/PLAN.md` §6's truncation and is stronger than one --- there is no undo
+   * that reaches back across an applied redaction, because there is no journal
+   * left to step through.
+   *
+   * **A failure that says `reopen` is one the document did not survive**, the
+   * same field and the same meaning {@link save} carries. Anything else left the
+   * reader exactly as they were.
+   *
+   * The answer is never a bare success, for {@link redactCopy}'s reason.
+   */
+  async redactDocument(source: string): Promise<Applied> {
+    return await invoke<Applied>("redact_document", { doc: this.doc, source });
+  }
+
+  /**
    * Writes the pages at `slots` to `path`, as a second file.
    *
    * Changes nothing about this document --- not the order, not the journal, not

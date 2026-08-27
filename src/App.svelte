@@ -35,6 +35,7 @@
     afterMerge,
     afterFailedSave,
     beforeReload,
+    beforeRedactingInPlace,
     type Offer,
   } from "./lib/recovery";
   import { releaseOrphans } from "./lib/orphans";
@@ -418,6 +419,7 @@
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
     redactCopy: () => void redactCopy(),
+    redactDocument: () => redactDocument(),
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
     mergeDocuments: () => void mergeDocuments(),
@@ -1118,6 +1120,78 @@
       // writing anything and names what and where.
       say(String(e));
     }
+  }
+
+  /**
+   * Removes every marked region from the file the reader opened, and reopens it.
+   *
+   * {@link redactCopy} and {@link saveDocument} joined, and it inherits a
+   * precondition from each. From the save: the note a reader is typing commits
+   * when its box closes, so the box is closed and the edit it journals is waited
+   * for --- otherwise a highlight lands in the file with an empty note. From the
+   * redaction: nothing is silent, ever, because §6 step 4 says the claim is
+   * reported either way.
+   *
+   * **The warning comes first and the second press is what confirms.** There is
+   * no undo across this and no original afterwards, which is more than Reload
+   * spends and Reload already asks. `beforeRedactingInPlace` is the sentence and
+   * carries Save a copy beside it, which is the only way left to keep an
+   * unredacted one.
+   */
+  function redactDocument(): void {
+    if (!edits || !openPathName || !viewer) return;
+    const prompt = beforeRedactingInPlace(basename(openPathName));
+    say(prompt.message, prompt.offers);
+  }
+
+  /**
+   * Redacts the open file, warning already given.
+   *
+   * {@link reloadAnyway}'s shape and its reason: a confirmation that re-enters
+   * the guard that produced it is a loop.
+   *
+   * **The reopen is the rebase**, exactly as {@link saveDocument} describes it,
+   * and here it is also `docs/PLAN.md` §6's truncation --- the journal is spent,
+   * so the regions that were pending are gone along with every command before
+   * them, and there is no undo that reaches back across the removal.
+   *
+   * The report is said **after** the reopen, for the reason `saveDocument`
+   * states about its own message: `openPath` clears the message area on the way
+   * in, so a verdict said before it would show for zero frames --- and this
+   * verdict is the one thing a reader must not miss, because content is gone on
+   * the strength of it.
+   */
+  async function redactAnyway(): Promise<void> {
+    if (!edits || !openPathName || !viewer) return;
+    viewer.closeMark();
+    await pendingEdit;
+    const path = openPathName;
+    const place = currentPlace(false);
+    say(null);
+    let said: string;
+    try {
+      said = afterRedaction(await edits.redactDocument(path));
+    } catch (e) {
+      const failure = e as { message?: string; reopen?: boolean; changed?: boolean };
+      const prompt = afterFailedSave({
+        message: failure.message ?? String(e),
+        reopen: failure.reopen,
+        changed: failure.changed,
+      });
+      // Nothing happened: the file is the file and the reader still has their
+      // document and their marks. A message is all there is to do.
+      if (!failure.reopen) {
+        say(prompt.message, prompt.offers);
+        return;
+      }
+      openDoc = -1;
+      await openPath(path, false, place);
+      if (!error) say(prompt.message, prompt.offers);
+      return;
+    }
+    openDoc = -1;
+    await openPath(path, false, place);
+    if (!error) say(said);
   }
 
   /**
@@ -2896,6 +2970,17 @@
         Rendered from the list rather than written twice, so the order the rules
         return is the order they appear in -- Save a copy leads, and that is not
         cosmetic, since the one beside it is the one that spends the journal.
+
+        **Every variant has its own arm and there is no `{:else}`**, which is a
+        decision rather than a style. Until 2026-08-27 `saveCopy` was matched and
+        an `{:else}` drew Reload for everything else -- correct while there were
+        two, and one new variant away from putting a button that discards the
+        reader's work under a prompt about destroying their file. With no
+        catch-all a variant nobody wired here draws nothing, which is a prompt
+        with no button: visible, harmless, and the direction to fail in.
+        `recovery.ts`'s `Offer` says the same thing from the other end, and
+        `recovery.test.ts` pins the set these rules can return -- nothing here is
+        reachable from a unit test, so that is where a new variant goes red.
       -->
       {#if offers.length > 0}
         <div class="offers">
@@ -2904,9 +2989,13 @@
               <button data-testid="offer-saveCopy" onclick={() => void saveCopy()}
                 >Save a copy…</button
               >
-            {:else}
+            {:else if offer === "reload"}
               <button data-testid="offer-reload" onclick={() => reloadAnyway()}
                 >Reload from disk</button
+              >
+            {:else if offer === "redact"}
+              <button data-testid="offer-redact" onclick={() => void redactAnyway()}
+                >Redact this file</button
               >
             {/if}
           {/each}

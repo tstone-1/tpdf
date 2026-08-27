@@ -3176,6 +3176,7 @@ async function appCommandChecks(
     isDirty: () => false,
     saveCopy: () => fired.push("saveCopy"),
     redactCopy: () => fired.push("redactCopy"),
+    redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),

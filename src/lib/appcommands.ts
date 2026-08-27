@@ -295,6 +295,19 @@ export interface AppActions {
    * find it by that word. Two commands is what makes both true.
    */
   redactCopy(): void;
+  /**
+   * Removes every marked region from the file the reader opened.
+   *
+   * {@link redactCopy}'s destructive twin, and the pair exists for the reason
+   * {@link saveDocument} and {@link saveCopy} are a pair: a reader who wants
+   * their own file redacted should not have to write a second one and delete
+   * the first, and a reader who wants a redacted copy should not have to risk
+   * the original. Two commands is what makes both true.
+   *
+   * The document is closed by the write and reopened from the path, so the
+   * journal --- the marks included --- is spent. There is no undo across it.
+   */
+  redactDocument(): void;
   /** Ask for a name and write the pages at `slots` to it, as a second file. */
   extractPages(slots: number[]): void;
   /** Ask for a stem and write the document to one numbered file per group. */
@@ -954,6 +967,28 @@ export function registerAppCommands(
       title: "Redact and save as\u2026",
       enabled: withDocument,
       run: () => actions.redactCopy(),
+    },
+    {
+      // **"Redact and save", beside "Redact and save as..."**, which is the same
+      // distinction Save and Save a copy draw and the reason neither of these is
+      // called plain "Redact": the name has to say where the result goes,
+      // because that is the whole of what separates them. The ellipsis carries
+      // the rest --- one asks for a name, this one does not, because it already
+      // has the only name it can write to.
+      //
+      // Guarded on the document rather than on there being a region marked, for
+      // its sibling's reason: the palette is how a command is found, and a
+      // reader who wants to know whether tpdf can redact in place should meet it
+      // and be told what to do. `lib.rs` refuses with "nothing in this document
+      // is marked for removal".
+      //
+      // No shortcut. Every chord that reads as this one is a save, and a slip
+      // between Save and a command that destroys content is the one slip this
+      // application must not make cheap.
+      id: "file.redactDocument",
+      title: "Redact and save",
+      enabled: withDocument,
+      run: () => actions.redactDocument(),
     },
     {
       // Takes a selection where `file.saveCopy` takes none, and is otherwise

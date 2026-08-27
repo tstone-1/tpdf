@@ -16598,3 +16598,89 @@ and it is recorded here under its own title. It is kept because the bound's othe
 does have a check that fails properly; the cycle test only says the loop returns at all.
 
 Paid for on 2026-08-27.
+
+### A catch-all arm that was right for two variants is wrong for the third
+
+`App.svelte` drew the buttons a refusal carries by walking `recovery.ts`'s `Offer` list:
+
+```svelte
+{#if offer === "saveCopy"}
+  <button ...>Save a copy…</button>
+{:else}
+  <button ...>Reload from disk</button>
+{/if}
+```
+
+Correct, and it stayed correct for as long as `Offer` was `"reload" | "saveCopy"`. It was one
+variant away from being dangerous, and the variant arrived on 2026-08-27: a warning before an
+in-place redaction, carrying `"redact"`. Under that `{:else}` the prompt *"Redacting removes
+the marked text from report.pdf itself. There is no undo and no original left afterwards"*
+would have drawn a **Reload from disk** button --- a button that discards the reader's unsaved
+work, under a sentence about destroying their file, in the one place where pressing the wrong
+thing cannot be taken back.
+
+`docs/TRAPS.md` already says **a catch-all arm makes forgetting the quiet outcome**, about a
+`_ => {}` in a Rust `match`. This is the same mechanism with the outcome inverted: the
+catch-all does not stay quiet, it *acts*, and it acts as whichever arm the author happened to
+put last. A quiet catch-all loses a notification; a loud one presses a button.
+
+**The repair is explicit arms and no `{:else}` at all**, which makes an unwired variant draw
+nothing. That is a prompt with a message and no buttons: visible, harmless, and the direction
+to fail in. **A wrong button is worse than no button**, and that sentence is what decides
+between the two shapes --- not tidiness, and not exhaustiveness for its own sake.
+
+**What made this findable at all is that the second variant was written by the same person on
+the same day.** Nothing goes red when a catch-all starts covering a case it was not written
+for; there is no type error, because a Svelte template is not a `match`, and no test, because
+nothing renders `App.svelte`. Adding an arm is what makes an author read the block. Had the
+third variant come from somewhere else --- a rule in `recovery.ts` returning a new offer, six
+months later --- it would have shipped.
+
+**The check that exists now is one layer away from the defect, and that is the honest limit.**
+No unit test can reach the template. What a test *can* reach is every rule that decides what
+goes in it, so `recovery.test.ts` collects the offers all five rules produce and asserts each
+is in a set written out by hand --- the set `App.svelte` draws. A rule returning a new variant
+turns it red and the failure message names the template. It does **not** catch a variant added
+to `Offer` and never returned, nor an arm deleted from the template; the first is inert and
+the second is the residual, and both are said in the comment rather than left to be
+discovered. The set is written out rather than derived from `Offer`, because a check that
+reads the type to decide what the type may contain agrees with itself whatever the type says.
+
+Paid for on 2026-08-27.
+
+### Running a repo's formatter over files it does not format
+
+Reformatting the frontend before writing mutations, on the rule this file already states ---
+*format first, then write anchors from the formatted source* --- I ran
+`npx prettier --write` over eight TypeScript files. It reflowed all eight, and
+`check_mutation_anchors.py` then reported **dozens** of orphaned anchors: every multi-line
+mutation whose search string prettier had rewrapped now matched nothing.
+
+**This repository does not use prettier.** There is no config file, it is not in
+`devDependencies`, and `package.json`'s scripts are `dev`, `build`, `preview`, `check`,
+`tauri`, `test` --- none of which formats anything. `npx` fetched it and applied *its*
+defaults, which are not this project's style, to files nothing here would ever reformat.
+
+The rule that led there is right for Rust and does not transfer. `cargo fmt --check` **is** a
+gate, so Rust source has a canonical form and a mutation anchor written from unformatted
+source is wrong the moment the gate runs. The frontend has no formatting gate at all, so its
+canonical form is *what is in the file*, and running any formatter over it is a change rather
+than a normalisation. **Before applying the format-first rule, check that the language has a
+formatter this repository actually runs** --- `npm run` with no arguments answers it, as does
+looking for the config.
+
+Two things kept the cost to ten minutes. `check_mutation_anchors.py` reported it immediately
+and by name, which is what that gate is for. And every edit had been made by a script with an
+`assert count == 1` in front of it, so reverting the eight files with `git checkout` and
+re-running the scripts was mechanical rather than a reconstruction from memory. **An edit you
+can re-apply is an edit you can afford to throw away**, which is a reason to script a
+multi-file change even when doing it by hand would be quicker.
+
+**Re-applying then found the anchor trap this file already names, in my own script.** One of
+the two `redactCopy` stubs is indented four spaces and the other six, and
+`'    redactCopy: ...'` is a substring of `'      redactCopy: ...'` --- so the four-space
+anchor matched **twice** and the assertion refused. Correct, and the fix is not a longer
+anchor: it is to drop the indentation from the search string entirely and let one replacement
+cover both sites, which is what the edit meant.
+
+Paid for on 2026-08-27.
