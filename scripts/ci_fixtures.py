@@ -83,6 +83,12 @@ FIXTURES: list[tuple[str, list[str]]] = [
     # its presence is a check for the file rather than for its sibling.
     ("testdata/comments-rotated.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
     ("testdata/links.pdf", ["testdata/make_links_pdf.py", "testdata"]),
+    # Pure Python, no dependency and no system font: a runner can build it, and
+    # `redact-apply-probe`'s form section skips without it.
+    (
+        "testdata/form-xobject.pdf",
+        ["testdata/make_form_xobject_pdf.py", "testdata/form-xobject.pdf"],
+    ),
     # A page tree that states the four inheritable attributes on the node above
     # its pages rather than on them. Nothing else in the corpus does, so every
     # other fixture is blind to a copy that lifts a page out of the tree that

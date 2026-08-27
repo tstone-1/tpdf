@@ -2180,6 +2180,30 @@ fn apply_redactions(
             .map_err(Refusal::from)?;
         done.shows += took.removed;
 
+        // **Then the text inside Form XObjects**, which PDFium enumerates as one
+        // object apiece so `remove_shows` cannot address it --- `docs/PLAN.md` §6
+        // measured that carrier at 9,310 of 154,095 realistic regions, three
+        // times the image count. One call per form rather than one for the page:
+        // each form has its own content stream, its own operator count and its
+        // own refusal, and a form that is shared must fail without taking the
+        // rest of the page's removal with it.
+        let mut by_form: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (at, ordinal) in &redaction.form_shows {
+            by_form.entry(*at).or_default().push(*ordinal);
+        }
+        for (at, ordinals) in by_form {
+            let took = crate::redact::remove_form_shows(
+                doc,
+                page,
+                &redaction.form_text_objects,
+                at,
+                &ordinals,
+            )
+            .map_err(Refusal::from)?;
+            done.shows += took.removed;
+        }
+
         // **The annotations, and every reference to them.** An annotation over
         // the region is `docs/PLAN.md` §6's *Annotations* row: its `/Contents`
         // is a comment about the words, routinely quoting them, and every reader
@@ -8384,6 +8408,8 @@ mod tests {
             text_objects: 4,
             areas: Vec::new(),
             taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }];
         assert!(
             !plan.is_identity(),
@@ -8416,6 +8442,8 @@ mod tests {
             text_objects: 4,
             areas: Vec::new(),
             taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }];
         assert!(
             !both.only_adds_marks(),
@@ -8440,6 +8468,8 @@ mod tests {
                 text_objects: 1,
                 areas: Vec::new(),
                 taking: Vec::new(),
+                form_shows: Vec::new(),
+                form_text_objects: Vec::new(),
             },
             crate::edits::PlannedRedaction {
                 source: 0,
@@ -8447,6 +8477,8 @@ mod tests {
                 text_objects: 1,
                 areas: Vec::new(),
                 taking: Vec::new(),
+                form_shows: Vec::new(),
+                form_text_objects: Vec::new(),
             },
         ];
         let mut doc = Document::with_version("1.7");
@@ -8507,6 +8539,8 @@ mod tests {
                 text_objects: 1,
                 areas: vec![[90.0, 90.0, 210.0, 130.0]],
                 taking: Vec::new(),
+                form_shows: Vec::new(),
+                form_text_objects: Vec::new(),
             }],
         )
         .expect("the plan is applicable");
@@ -8586,6 +8620,8 @@ mod tests {
                 text_objects: 1,
                 areas: vec![[90.0, 90.0, 210.0, 130.0]],
                 taking: Vec::new(),
+                form_shows: Vec::new(),
+                form_text_objects: Vec::new(),
             }],
         )
         .expect("the plan is applicable");
@@ -8946,6 +8982,8 @@ mod tests {
             text_objects: 1,
             areas: Vec::new(),
             taking: vec!["Holding the secret account here".to_string()],
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }]
     }
 
@@ -9420,6 +9458,8 @@ mod tests {
             taking: vec![
                 "MERGED-SECRET PARENT-SECRET AWAY-SECRET DEFAULT-SECRET HELD-SECRET".to_string(),
             ],
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }]
     }
 
@@ -9472,6 +9512,8 @@ mod tests {
             text_objects: 1,
             areas: Vec::new(),
             taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }]
     }
 
@@ -9491,6 +9533,8 @@ mod tests {
             text_objects: 1,
             areas: Vec::new(),
             taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }];
         let mut doc = Document::with_version("1.7");
         let why = apply_redactions(&mut doc, &[(1, 0)], &past)

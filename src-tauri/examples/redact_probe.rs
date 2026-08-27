@@ -220,7 +220,7 @@ fn carried(pdfium: &Pdfium, root: &Path, scratch: &Path) -> Result<String, Strin
     let region = region_of(pdfium, &source, &case)?;
     let objects = page_objects(pdfium, &source, page)?;
     let text_objects = objects.iter().filter(|o| o.kind == "text").count();
-    let plan = redact::covered(&objects, region);
+    let plan = redact::covered(&objects, &[], region);
     if plan.shows.is_empty() {
         return Err("the region covers no text object".to_string());
     }
@@ -311,7 +311,7 @@ fn incomplete(pdfium: &Pdfium, root: &Path) -> Result<String, String> {
         f32::MAX / 4.0,
         f32::MAX / 4.0,
     ];
-    let plan = redact::covered(&objects, whole);
+    let plan = redact::covered(&objects, &[], whole);
     if plan.is_complete() {
         return Err(
             "a region covering a /DCTDecode image reports a complete plan, so a caller acting \
@@ -393,7 +393,7 @@ fn run(pdfium: &Pdfium, case: &Case, source: &Path, scratch: &Path) -> Result<St
     let region = region_of(pdfium, source, case)?;
     let objects = page_objects(pdfium, source, case.page)?;
     let text_objects = objects.iter().filter(|o| o.kind == "text").count();
-    let plan = redact::covered(&objects, region);
+    let plan = redact::covered(&objects, &[], region);
     if plan.shows.is_empty() {
         return Err(format!(
             "the region for {:?} covers no text object, so nothing would be removed",

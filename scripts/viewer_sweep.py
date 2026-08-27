@@ -165,6 +165,12 @@ NOT_WINDOW: list[tuple[str, str]] = [
     ("text-marked", "a text-probe fixture: marked content and text objects"),
     ("rotated", "the uniform rotation fixture the probes read; rotated-90 is its window twin"),
     ("form", "an AcroForm fixture for the document model, with no viewer path yet"),
+    (
+        "form-xobject",
+        "text inside Form XObjects, for redact-apply-probe: a translating "
+        "matrix, two lines in one form, a form nested in a form and a form "
+        "drawn twice. No viewer path -- every check on it is about a removal",
+    ),
 ]
 
 # The names come from the run's own JSON roll, never from the printed column.

@@ -1249,6 +1249,21 @@ pub struct PlannedRedaction {
     /// went is to compare its title against what went. See
     /// `redact::covered_outline`.
     pub taking: Vec<String>,
+    /// Text inside a Form XObject the removal takes, as `(form, ordinal)`.
+    ///
+    /// `redact::RegionPlan::form_shows`, merged across the page's regions the way
+    /// [`shows`](Self::shows) is. Separate from it because the two name operators
+    /// in **different content streams** --- see `redact::remove_form_shows`.
+    #[serde(default)]
+    pub form_shows: Vec<(usize, usize)>,
+    /// How many text objects each Form XObject on this page holds.
+    ///
+    /// `(position in PDFium's object list, count)`, in that order, for every form
+    /// on the page. [`text_objects`](Self::text_objects) one level down, carried
+    /// for the same reason: `redact::remove_form_shows` refuses when it disagrees
+    /// with what `lopdf` finds, and the writer has no other way to learn it.
+    #[serde(default)]
+    pub form_text_objects: Vec<(usize, usize)>,
 }
 
 /// One mark as the writer needs it.

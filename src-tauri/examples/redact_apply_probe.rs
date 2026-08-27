@@ -204,6 +204,7 @@ fn run(library: &Path) -> Result<bool, String> {
 
     ok &= annotations(bindings, &root)?;
     ok &= in_place(bindings, &source)?;
+    ok &= forms(bindings, &root)?;
 
     println!(
         "{}",
@@ -545,6 +546,175 @@ fn survey(library: &Path) -> Result<bool, String> {
 /// same decode rather than through a second rule: what is being measured is
 /// whether the two *populations* agree, so a private notion of what counts as a
 /// show operator would be measuring this file's opinion instead.
+/// Text inside a Form XObject: removed where it is marked, refused where it is shared.
+///
+/// PDFium enumerates a form as **one** page object, so `remove_shows` cannot
+/// address the text inside it --- `docs/PLAN.md` §6 measured that carrier at
+/// 9,310 of 154,095 realistic regions across 41 real documents, three times the
+/// image count. `remove_form_shows` reaches it by descending one level and
+/// rewriting the form's own stream.
+///
+/// **Its own fixture, and the fixture is most of the design.** Every other file
+/// in `testdata/` carrying `/Subtype /Form` carries it as an annotation
+/// appearance stream, which is a different thing in a different place.
+/// `form-xobject.pdf` places its forms with a translating matrix, so a bounds
+/// convention error cannot pass; gives one form two lines, so "removed the right
+/// one" can be told from "removed everything"; nests a form inside a form, so
+/// the one-level limit has a subject; and draws one form twice, so the refusal
+/// does.
+fn forms(
+    bindings: &'static dyn pdfium_render::prelude::PdfiumLibraryBindings,
+    root: &Path,
+) -> Result<bool, String> {
+    const FORM_FILE: &str = "form-xobject.pdf";
+    /// Inside a form, and marked. Must go.
+    const IN_FORM: &str = "REDACT ME: account 4711-0815 inside a form";
+    /// Inside the **same** form and not marked. Must stay --- without it, a
+    /// removal that emptied the whole stream would pass every other check here.
+    const BESIDE_IT: &str = "Keep this line, it is in the same form";
+    /// Drawn by the page itself. Must stay: a removal inside a form must not
+    /// reach the page's own content.
+    const ON_THE_PAGE: &str = "Sphinx of black quartz";
+    /// Inside a form that is drawn twice. Must stay, because the removal refuses.
+    const SHARED: &str = "This form is drawn twice";
+
+    let source = root.join("testdata").join(FORM_FILE);
+    if !source.exists() {
+        println!("[SKIP] {} is not built", source.display());
+        return Ok(true);
+    }
+    let document = OpenDocument::open(bindings, &source, None).map_err(|why| why.reason)?;
+    let mut ok = true;
+
+    // --- page 1: the ordinary case -----------------------------------------
+    let page = document.page(0).map_err(|e| e.to_string())?;
+    let objects = tpdf_lib::objects::read(&page).map_err(|e| e.to_string())?;
+    let Some(form) = objects.forms.first() else {
+        println!("[FAIL] page 1 of {FORM_FILE} has no form XObject on it");
+        return Ok(false);
+    };
+    ok &= check(
+        "the descent reads what a form draws",
+        form.text.iter().any(|t| t.draws.trim() == IN_FORM),
+    );
+    // The nested form: one level down is reachable, two is not, and the second
+    // has to be *reported* or a region over it would be certified.
+    let nested = objects
+        .forms
+        .iter()
+        .any(|f| f.unreachable.iter().any(|u| u.kind == "form"));
+    ok &= check(
+        "a form inside a form is reported rather than followed",
+        nested,
+    );
+
+    let Some(target) = form.text.iter().find(|t| t.draws.trim() == IN_FORM) else {
+        println!("[FAIL] {IN_FORM:?} is not inside a form on page 1");
+        return Ok(false);
+    };
+    let r = target.bounds;
+    let region = [r[0] - 1.0, r[1] - 1.0, r[2] + 1.0, r[3] + 1.0];
+    let plan = redact::covered(&objects.all, &objects.forms, region);
+    ok &= check(
+        "the region names the form's line and nothing on the page",
+        plan.form_shows.len() == 1 && plan.shows.is_empty(),
+    );
+
+    let out = std::env::temp_dir().join("tpdf-redact-form-probe.pdf");
+    let _ = std::fs::remove_file(&out);
+    let planned = form_plan(0, &objects, &plan, region);
+    save::write_copy(&source, &planned, &out).map_err(|why| why.message)?;
+    let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
+    let holds = |needle: &str| {
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    };
+    ok &= check(
+        "the marked line is gone from inside the form",
+        !holds(IN_FORM),
+    );
+    ok &= check(
+        "the line beside it in the same form is still there",
+        holds(BESIDE_IT),
+    );
+    ok &= check("the page's own text is untouched", holds(ON_THE_PAGE));
+    let _ = std::fs::remove_file(&out);
+
+    // --- page 2: the shared form -------------------------------------------
+    let page = document.page(1).map_err(|e| e.to_string())?;
+    let shared = tpdf_lib::objects::read(&page).map_err(|e| e.to_string())?;
+    let Some(first) = shared.forms.first().and_then(|f| f.text.first()) else {
+        println!("[FAIL] page 2 of {FORM_FILE} has no text inside a form");
+        return Ok(false);
+    };
+    // What the refusal below is refusing. Without it a fixture that stopped
+    // holding this line would still produce a refusal --- of an empty plan ---
+    // and the check would read as a pass.
+    ok &= check(
+        "the shared form holds the line the refusal is about",
+        first.draws.trim() == SHARED,
+    );
+    let r = first.bounds;
+    let region = [r[0] - 1.0, r[1] - 1.0, r[2] + 1.0, r[3] + 1.0];
+    let plan = redact::covered(&shared.all, &shared.forms, region);
+    let planned = form_plan(1, &shared, &plan, region);
+    let out = std::env::temp_dir().join("tpdf-redact-form-shared-probe.pdf");
+    let _ = std::fs::remove_file(&out);
+    let refused = save::write_copy(&source, &planned, &out);
+    ok &= check(
+        "a form the document draws twice is refused",
+        refused
+            .as_ref()
+            .err()
+            .is_some_and(|why| why.message.contains("draws 2 time(s)")),
+    );
+    // A refusal that still wrote the file would be the worst outcome of the
+    // three: the reader is told nothing happened and has a copy that says
+    // otherwise. **Nothing weaker than "there is no file"**, and the version
+    // that shipped for ten minutes was `!out.exists() || <the file still holds
+    // the text>` --- which is satisfied by every outcome there is, including the
+    // one it was written to catch.
+    ok &= check("the refusal wrote no file", !out.exists());
+    let _ = std::fs::remove_file(&out);
+    Ok(ok)
+}
+
+/// A plan removing exactly what `plan` names from one page.
+fn form_plan(
+    page: u32,
+    objects: &tpdf_lib::objects::PageObjects,
+    plan: &redact::Plan,
+    region: [f32; 4],
+) -> Plan {
+    Plan {
+        opened_as: None,
+        baseline: 2,
+        pages: (0..2)
+            .map(|at| PageView {
+                id: u64::from(at) + 1,
+                source: at,
+                turns: 0,
+                crop: None,
+            })
+            .collect(),
+        marks: Vec::new(),
+        redactions: vec![PlannedRedaction {
+            source: page,
+            shows: plan.shows.clone(),
+            text_objects: objects.text.len(),
+            areas: vec![region],
+            taking: Vec::new(),
+            form_shows: plan.form_shows.clone(),
+            form_text_objects: objects
+                .forms
+                .iter()
+                .map(|form| (form.at, form.text.len()))
+                .collect(),
+        }],
+    }
+}
+
 fn show_operators(doc: &mut lopdf::Document, page: lopdf::ObjectId) -> usize {
     let Ok(data) = doc.get_page_content_with_limit(page, redact::MAX_CONTENT_BYTES) else {
         return usize::MAX;
@@ -586,6 +756,8 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             // What `lib.rs` carries from the same field, so the probe drives
             // the outline carrier through the same input the command does.
             taking: vec![region.taking.trim().to_string()],
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }],
     }
 }

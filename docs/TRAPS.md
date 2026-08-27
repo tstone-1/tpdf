@@ -17154,3 +17154,65 @@ redundant. The probe's control run --- the same gate against the *unredacted* fi
 a no-op write on its own, since a write that changed nothing would make the two runs identical
 and both legible. A check that duplicates a stronger one, and fails on a correct file, is a
 check to delete rather than to fix.
+
+### A form's text is on the page's text layer, and the page's object list cannot reach it
+
+PDFium enumerates a Form XObject as **one** page object of kind `form`. The text
+drawn inside it is not in the page's text-object list, so `redact::remove_shows`
+— which addresses show operators by their position among the page's text objects
+— has no ordinal that names it. That was recorded as a refusal from the start and
+it was the right refusal, because the alternative is a removal that reports success
+and takes nothing.
+
+What is worth knowing is the asymmetry, and it is the reason this carrier is the
+largest one a redaction could not take: **the page's *text page* does reach
+inside.** `form-xobject.pdf`'s page 1 extracts 157 characters, and they include
+both lines of a form and one from a form nested inside a form. So the reader could
+search for those words, select them, and see them in the sidebar — and marking
+them for removal produced a file with the words still in it and a sentence saying
+the region could not be proved clean.
+
+Three measurements decided the shape of the fix, and none of them is guessable:
+
+- **`FPDFText_GetTextObject` hands back the inner text object**, not the form. So
+  one map keyed by object pointer serves the page's text and every form's, and one
+  walk of the characters fills both — which is what `objects::draws` already did,
+  dropping the ones it could not attribute.
+- **`FPDFPageObj_GetBounds` on a form's child answers in the *form's* space.** A
+  form placed at (60, 600) reports its first line at (0.9, 19.9). Compare a region
+  against that box and it covers nothing at all: the removal takes nothing and
+  reports success. `FPDFPageObj_GetMatrix` on the form is the transform, and all
+  four corners have to go through it — a matrix may turn, and two corners then
+  describe a rectangle whose left is greater than its right, which overlaps
+  nothing.
+- **`FPDFFormObj_CountObjects` and `FPDFFormObj_GetObject` are exported by the
+  vendored build.** Checked with `nm`, not read from a header.
+
+The removal is `remove_shows` one level down, against the form's own stream, with
+the same correspondence guard: nothing connects PDFium's form objects to the
+page's `Do` operations but **order**, so the k-th form-`Do` is the k-th form
+object, and a disagreement in the counts is a refusal.
+
+### A form drawn twice on one page is one reference in the object graph
+
+A form's content stream belongs to the form, so removing a line from it changes
+every place the form is drawn. The guard is therefore a sharing check — and the
+obvious implementation is wrong in a way that passes every test built from the
+obvious fixture.
+
+Counting references to the form's object id catches a form drawn on **two pages**:
+two `/Resources /XObject` dictionaries name it, so the graph holds two references.
+It does not catch a form drawn **twice on one page**: there is one entry in one
+resource dictionary and two `Do` operations in the content stream, so the count is
+one and the form reads as unshared. Removing from it then edits both places, one
+of which the reader never marked.
+
+So the check is two counts with different sources: references in the object graph,
+and `Do` operations naming that form in this page's own content. `form-xobject.pdf`
+carries the second shape on its page 2 precisely because it is the one a reference
+count cannot see, and both mutations — deleting either half — are caught by a test
+named for that half.
+
+The general form is worth carrying: **when a thing can be shared two ways, a count
+of one kind of sharing is not a sharing check.** The same question arises for an
+image XObject, for a shared appearance stream, and for a page tree node.

@@ -169,6 +169,8 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             text_objects: plan_for_region.text_objects,
             areas: vec![plan_for_region.area],
             taking: vec![plan_for_region.taking.clone()],
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
         }],
     };
     save::write_copy(file, &plan, &out).map_err(|e| e.message)?;

@@ -95,6 +95,51 @@ pub struct PageObject {
     pub kind: String,
 }
 
+/// A text object drawn inside a Form XObject.
+///
+/// PDFium enumerates a form as **one** page object, so the text inside it is not
+/// in the page's text-object list and [`remove_shows`] cannot address it. It is
+/// the largest carrier a redaction cannot take that is made of ordinary text ---
+/// `docs/PLAN.md` §6 measured 9,310 of 154,095 realistic regions across 41 real
+/// documents, three times the image count.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormText {
+    /// Its box **in page space**, so it can be compared with a region directly.
+    ///
+    /// PDFium reports a form child's bounds in the *form's* own space --- measured
+    /// on `form-xobject.pdf`, where a form placed at (60, 600) reports a child at
+    /// (0.9, 19.9) --- so whoever builds one of these has already applied the
+    /// form's matrix. Doing it here rather than in the comparison keeps
+    /// [`covered`] free of a second coordinate system.
+    pub bounds: Rect,
+    /// What it draws, for the same reason [`crate::objects::PageObjects::text`]
+    /// carries it: a caller has to be able to say what a removal would take.
+    pub draws: String,
+}
+
+/// One Form XObject on a page, and the text inside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormObject {
+    /// Where the form itself sits in PDFium's enumeration of the page's objects.
+    ///
+    /// The same index [`Unhandled::at`] carries, and the index that identifies
+    /// *which* form a removal is aimed at --- `remove_form_shows` finds the
+    /// form's stream by counting `Do` operations in the page's content, and this
+    /// is the position it counts to.
+    pub at: usize,
+    /// Its text objects, in PDFium's order --- which is the order the show
+    /// operators appear in the form's own content stream, and the order a
+    /// removal addresses them by.
+    pub text: Vec<FormText>,
+    /// What else is inside that this does not reach, by kind.
+    ///
+    /// **A nested form is the case that matters**: descending one level is a
+    /// decision, and text a level further down has to be reported rather than
+    /// silently missed. An image or a path inside a form is the same refusal the
+    /// page level already makes, one level down.
+    pub unreachable: Vec<Unhandled>,
+}
+
 /// What removing a region from one page would take, and what it would miss.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Plan {
@@ -110,6 +155,15 @@ pub struct Plan {
     /// caller that acts anyway ships a page whose words are gone and whose
     /// picture of those words is not.
     pub unhandled: Vec<Unhandled>,
+    /// Text inside a Form XObject that the region covers.
+    ///
+    /// `(form position in the page's object list, ordinal inside that form)`,
+    /// ascending by form and then by ordinal. Separate from [`shows`](Self::shows)
+    /// because they address different content streams: a page ordinal names a
+    /// show operator in the page's own content, and one of these names a show
+    /// operator in the form's. Merging them into one list would give
+    /// `remove_shows` a number it could not tell apart from its own.
+    pub form_shows: Vec<(usize, usize)>,
 }
 
 /// One object a region covers that this cannot remove.
@@ -179,6 +233,25 @@ pub struct RegionPlan {
     /// when this disagrees with the operators `lopdf` finds, and the caller that
     /// applies a plan has no other way to learn it.
     pub text_objects: usize,
+    /// Text inside a Form XObject the region covers, as `(form, ordinal)`.
+    ///
+    /// [`Plan::form_shows`], carried through, and separate from
+    /// [`shows`](Self::shows) for that field's reason: the two name operators in
+    /// different content streams.
+    #[serde(default)]
+    pub form_shows: Vec<(usize, usize)>,
+    /// How many text objects each Form XObject on this page holds, by its
+    /// position in PDFium's object list.
+    ///
+    /// [`text_objects`](Self::text_objects) one level down, and carried for the
+    /// same reason: `remove_form_shows` refuses when it disagrees with the show
+    /// operators `lopdf` finds in that form's stream, and the coordinator has no
+    /// other way to learn it. Every form on the page is listed, not only the ones
+    /// this region touches --- a plan merges the regions on a page, and a count
+    /// that appeared only when some region happened to cover a form would be
+    /// missing exactly when another region needed it.
+    #[serde(default)]
+    pub form_text_objects: Vec<(usize, usize)>,
     /// The region itself, in the page's own absolute space.
     ///
     /// **Carried because the writer cannot work it out**, and a second attempt
@@ -273,7 +346,7 @@ pub struct Applied {
 /// eat it. That is the boundary this is most likely to be wrong at, and it has
 /// its own check.
 #[must_use]
-pub fn covered(objects: &[PageObject], region: Rect) -> Plan {
+pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Plan {
     let mut plan = Plan::default();
     let mut text_ordinal = 0usize;
     for (at, object) in objects.iter().enumerate() {
@@ -282,11 +355,30 @@ pub fn covered(objects: &[PageObject], region: Rect) -> Plan {
         if is_text {
             text_ordinal += 1;
         }
+        // A form whose text this *can* reach is not unhandled, so the decision
+        // about it is made below rather than here. Asking `forms` rather than
+        // trusting the kind string: a form nothing could be read out of is still
+        // a refusal, and the two are told apart by whether it is in that list.
+        let inside = (object.kind == "form")
+            .then(|| forms.iter().find(|form| form.at == at))
+            .flatten();
         if !overlaps(object.bounds, region) {
             continue;
         }
         if is_text {
             plan.shows.push(ordinal);
+        } else if let Some(form) = inside {
+            for (ordinal, text) in form.text.iter().enumerate() {
+                if overlaps(text.bounds, region) {
+                    plan.form_shows.push((at, ordinal));
+                }
+            }
+            // Whatever the descent could not read is reported whether or not any
+            // of the form's text was covered. A region over a form holding a
+            // nested form and nothing else takes nothing and must say so ---
+            // reporting only when text was also found would make the quiet case
+            // the silent one.
+            plan.unhandled.extend(form.unreachable.iter().cloned());
         } else {
             plan.unhandled.push(Unhandled {
                 at,
@@ -996,6 +1088,259 @@ pub fn remove_shows(
     })
 }
 
+/// Deletes the numbered show operators from one Form XObject's content stream.
+///
+/// [`remove_shows`] one level down, and the reason it is a second function
+/// rather than a parameter is that it addresses a **different stream**: a page
+/// ordinal names a show operator in the page's own content, and one of these
+/// names a show operator in the form's. Sharing the entry point would give the
+/// page's correspondence guard a count it could not tell apart from the form's.
+///
+/// `forms` is `(position in PDFium's object list, text objects inside)` for every
+/// Form XObject on the page, in that order --- [`RegionPlan::form_text_objects`],
+/// carried through --- and `at` names which of them to remove from.
+///
+/// ## How a PDFium object becomes an `lopdf` stream
+///
+/// Nothing connects them but **order**, which is the same bargain
+/// [`remove_shows`] already makes for text objects and it fails the same way if
+/// it is wrong. The page's content is walked for `Do` operations naming an
+/// XObject whose `/Subtype` is `/Form`; the k-th of those is the k-th form
+/// PDFium enumerated. A disagreement in the counts is a refusal, because
+/// proceeding removes text from the wrong form and reports success.
+///
+/// ## A shared form is refused, not rewritten
+///
+/// A form's stream belongs to the form, so removing from it changes **every**
+/// place it is drawn --- another page, or the same page twice. That is the same
+/// posture `clear_struct_shadow_text` takes for a structure element shared
+/// between pages, and for the same reason: a redaction may not quietly edit a
+/// part of the document the reader did not mark.
+///
+/// # Errors
+///
+/// `at` naming no form on this page; the page's content not decoding within
+/// [`MAX_CONTENT_BYTES`]; the form-`Do` count disagreeing with `forms`; the named
+/// XObject being absent or not a stream; the form being drawn more than once
+/// anywhere; the form's own stream not decoding; its show-operator count
+/// disagreeing with what PDFium reported; an ordinal naming no operator; or the
+/// rewritten stream not encoding.
+pub fn remove_form_shows(
+    doc: &mut Document,
+    page: ObjectId,
+    forms: &[(usize, usize)],
+    at: usize,
+    ordinals: &[usize],
+) -> Result<Removed, String> {
+    let which = forms
+        .iter()
+        .position(|(where_, _)| *where_ == at)
+        .ok_or_else(|| {
+            format!(
+                "object {at} is not one of the {} form(s) on this page",
+                forms.len()
+            )
+        })?;
+    let text_objects = forms[which].1;
+
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    let content = Content::decode(&data)
+        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+
+    let names = form_draws(doc, page, &content)?;
+    if names.len() != forms.len() {
+        return Err(format!(
+            "the page draws {} form XObject(s) and PDFium reported {}. Removing from one by \
+             position needs those to agree, so nothing was removed.",
+            names.len(),
+            forms.len()
+        ));
+    }
+    let name = &names[which];
+    let drawn_here = names.iter().filter(|other| *other == name).count();
+    let id = form_id(doc, page, name)?;
+
+    // Both shapes of sharing, and they are counted differently on purpose. A
+    // form drawn twice on this page is **one** reference in the object graph, so
+    // the graph count alone would call it unshared; a form drawn on two pages is
+    // two references and no more than one `Do` here.
+    let elsewhere = references_to(doc, id);
+    if drawn_here > 1 || elsewhere > 1 {
+        return Err(format!(
+            "the text you marked is inside a form that this document draws {} time(s). Removing \
+             it would change every one of them, including places you did not mark, so nothing \
+             was removed.",
+            drawn_here.max(elsewhere)
+        ));
+    }
+
+    let stream = doc
+        .get_object(id)
+        .and_then(|object| object.as_stream())
+        .map_err(|why| format!("the form's content stream could not be read: {why}"))?;
+    let body = stream
+        .decompressed_content_with_limit(MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
+    let mut inside = Content::decode(&body)
+        .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
+
+    let shows: Vec<usize> = inside
+        .operations
+        .iter()
+        .enumerate()
+        .filter(|(_, operation)| is_show(&operation.operator))
+        .map(|(at, _)| at)
+        .collect();
+    if shows.len() != text_objects {
+        return Err(format!(
+            "this form has {} text-showing operator(s) and PDFium reported {text_objects} text \
+             object(s). Removing by position needs those to agree, so nothing was removed.",
+            shows.len()
+        ));
+    }
+
+    let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());
+    for &ordinal in ordinals {
+        let where_ = *shows.get(ordinal).ok_or_else(|| {
+            format!(
+                "there is no show operator {ordinal} in this form, which has {}",
+                shows.len()
+            )
+        })?;
+        positions.push(where_);
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    let removed = positions.len();
+
+    // Descending, for `remove_shows`' reason: an earlier removal moves every
+    // later index.
+    for where_ in positions.into_iter().rev() {
+        inside.operations.remove(where_);
+    }
+
+    let encoded = inside
+        .encode()
+        .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+    let stream = doc
+        .get_object_mut(id)
+        .and_then(|object| object.as_stream_mut())
+        .map_err(|why| format!("the form's content stream could not be replaced: {why}"))?;
+    stream.set_plain_content(encoded);
+    stream
+        .compress()
+        .map_err(|why| format!("the rewritten form stream will not compress: {why}"))?;
+
+    Ok(Removed {
+        shows_before: shows.len(),
+        removed,
+        // Neither carrier lives inside a form. The marked-content property list
+        // and the structure tree are addressed from the *page*, and a span inside
+        // a form carries an `/MCID` in the page's own numbering that
+        // `clear_shadow_text` already walks -- so reporting a count here would be
+        // reporting somebody else's work twice.
+        carriers: 0,
+        struct_carriers: 0,
+    })
+}
+
+/// The XObject names a page's content draws that resolve to Form XObjects.
+///
+/// In the order the `Do` operations appear, which is the order PDFium enumerates
+/// the corresponding page objects in. An `XObject` name the page's resources do
+/// not list, or one whose `/Subtype` is not `/Form`, is skipped rather than
+/// refused: an image drawn by `Do` is an ordinary thing to find here and is not
+/// one of the objects being counted.
+fn form_draws(doc: &Document, page: ObjectId, content: &Content) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for operation in &content.operations {
+        if operation.operator != "Do" {
+            continue;
+        }
+        let Some(Object::Name(raw)) = operation.operands.first() else {
+            continue;
+        };
+        let name = String::from_utf8_lossy(raw).into_owned();
+        if let Ok(id) = form_id(doc, page, &name) {
+            let is_form = doc
+                .get_object(id)
+                .and_then(|object| object.as_stream())
+                .ok()
+                .and_then(|stream| stream.dict.get(b"Subtype").ok())
+                .and_then(|value| value.as_name().ok())
+                .is_some_and(|subtype| subtype == b"Form");
+            if is_form {
+                out.push(name);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The object a page's `/Resources /XObject` gives that name.
+fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, String> {
+    let resources = doc
+        .get_page_resources(page)
+        .map_err(|why| format!("the page's resources could not be read: {why}"))?
+        .0
+        .ok_or_else(|| "the page has no resource dictionary".to_string())?;
+    let xobjects = resources
+        .get(b"XObject")
+        .and_then(|object| doc.dereference(object).map(|(_, value)| value))
+        .and_then(Object::as_dict)
+        .map_err(|_| "the page's resources list no XObjects".to_string())?;
+    match xobjects.get(name.as_bytes()) {
+        Ok(Object::Reference(id)) => Ok(*id),
+        // A direct stream cannot be addressed by object id, so it cannot be
+        // rewritten in place and it cannot be shared either. Refused rather than
+        // copied out and re-linked, which would be a structural change made by a
+        // removal that was asked only to delete text.
+        Ok(_) => Err(format!(
+            "the form named {name} is written into the page rather than being its own object, \
+             which this cannot rewrite"
+        )),
+        Err(_) => Err(format!(
+            "the page's resources do not name an XObject {name}"
+        )),
+    }
+}
+
+/// How many times the document's object graph refers to `id`.
+///
+/// Every object, not only the pages': a form reached from a second page, from an
+/// annotation's appearance or from another form's resources is shared just the
+/// same, and a walk that only looked at pages would call it unshared. Bounded by
+/// the object count rather than by recursion --- `lopdf` holds the objects flat,
+/// so this is one pass and cannot be made to loop.
+fn references_to(doc: &Document, id: ObjectId) -> usize {
+    fn count(object: &Object, id: ObjectId, depth: usize) -> usize {
+        if depth == 0 {
+            return 0;
+        }
+        match object {
+            Object::Reference(other) => usize::from(*other == id),
+            Object::Array(items) => items.iter().map(|item| count(item, id, depth - 1)).sum(),
+            Object::Dictionary(dict) => dict
+                .iter()
+                .map(|(_, value)| count(value, id, depth - 1))
+                .sum(),
+            Object::Stream(stream) => stream
+                .dict
+                .iter()
+                .map(|(_, value)| count(value, id, depth - 1))
+                .sum(),
+            _ => 0,
+        }
+    }
+    doc.objects
+        .iter()
+        .filter(|(other, _)| **other != id)
+        .map(|(_, object)| count(object, id, crate::sweep::MAX_NESTING))
+        .sum()
+}
+
 /// The four text-showing operators.
 ///
 /// `Tj` and `TJ` show a string and an array; `'` and `"` show a string after
@@ -1605,10 +1950,11 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
 #[cfg(test)]
 mod tests {
     use super::{
-        covered, covered_annots, is_show, overlaps, remove_shows, PageObject, Plan, Unhandled,
+        covered, covered_annots, is_show, overlaps, remove_form_shows, remove_shows, FormObject,
+        FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,
     };
     use lopdf::content::Content;
-    use lopdf::{dictionary, Document, Object, Stream};
+    use lopdf::{dictionary, Dictionary, Document, Object, Stream};
 
     fn text(bounds: [f32; 4]) -> PageObject {
         PageObject {
@@ -1655,6 +2001,277 @@ mod tests {
         });
         doc.trailer.set("Root", catalog);
         (doc, page)
+    }
+
+    fn form_object(bounds: [f32; 4]) -> PageObject {
+        PageObject {
+            bounds,
+            kind: "form".to_string(),
+        }
+    }
+
+    fn form(at: usize, text: &[[f32; 4]]) -> FormObject {
+        FormObject {
+            at,
+            text: text
+                .iter()
+                .map(|bounds| FormText {
+                    bounds: *bounds,
+                    draws: String::new(),
+                })
+                .collect(),
+            unreachable: Vec::new(),
+        }
+    }
+
+    /// A page drawing `forms` XObjects, each holding `lines` show operators.
+    ///
+    /// The forms are separate objects, so a check can say which stream a removal
+    /// touched --- and the page's own content is a `Do` per form and nothing
+    /// else, which is what makes the order the correspondence depends on
+    /// visible in the fixture rather than an accident of it.
+    fn page_with_forms(
+        forms: usize,
+        lines: usize,
+    ) -> (Document, lopdf::ObjectId, Vec<lopdf::ObjectId>) {
+        let mut doc = Document::with_version("1.7");
+        let mut ids = Vec::new();
+        let mut xobjects = Dictionary::new();
+        let mut drawn = String::new();
+        for at in 0..forms {
+            let body: String = (0..lines)
+                .map(|line| format!("BT (f{at}L{line}) Tj ET\n"))
+                .collect();
+            let id = doc.add_object(Stream::new(
+                dictionary! { "Type" => "XObject", "Subtype" => "Form" },
+                body.into_bytes(),
+            ));
+            xobjects.set(format!("Fm{at}"), Object::Reference(id));
+            drawn.push_str(&format!("/Fm{at} Do\n"));
+            ids.push(id);
+        }
+        let content = doc.add_object(Stream::new(dictionary! {}, drawn.into_bytes()));
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => Object::Dictionary(xobjects) },
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        (doc, page, ids)
+    }
+
+    /// What one form's stream still draws, in order.
+    fn form_says(doc: &Document, id: lopdf::ObjectId) -> Vec<String> {
+        let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+        let body = stream
+            .decompressed_content()
+            .unwrap_or(stream.content.clone());
+        Content::decode(&body)
+            .expect("decode")
+            .operations
+            .into_iter()
+            .filter(|operation| is_show(&operation.operator))
+            .filter_map(|operation| match operation.operands.first() {
+                Some(Object::String(bytes, _)) => Some(String::from_utf8_lossy(bytes).into_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_region_over_a_forms_text_names_it_by_form_and_ordinal() {
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [form(
+            0,
+            &[[0.0, 0.0, 100.0, 20.0], [0.0, 40.0, 100.0, 60.0]],
+        )];
+        let plan = covered(&objects, &forms, [10.0, 45.0, 20.0, 55.0]);
+        assert_eq!(plan.form_shows, vec![(0, 1)]);
+        assert!(plan.shows.is_empty(), "nothing is on the page itself");
+        assert!(plan.is_complete(), "a form this can read is not unhandled");
+    }
+
+    /// The control: a form the region reaches is not a licence to take its
+    /// contents. Without it, a rule that named every child of every covered form
+    /// would pass the check above.
+    #[test]
+    fn a_region_over_a_form_takes_only_the_lines_it_covers() {
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [form(
+            0,
+            &[[0.0, 0.0, 100.0, 20.0], [0.0, 40.0, 100.0, 60.0]],
+        )];
+        let plan = covered(&objects, &forms, [10.0, 5.0, 20.0, 15.0]);
+        assert_eq!(plan.form_shows, vec![(0, 0)]);
+    }
+
+    #[test]
+    fn a_form_this_could_not_look_inside_is_unhandled() {
+        // No entry in `forms`, which is what a descent that found nothing looks
+        // like. The region must be refused, not certified.
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let plan = covered(&objects, &[], [10.0, 45.0, 20.0, 55.0]);
+        assert!(plan.form_shows.is_empty());
+        assert_eq!(plan.unhandled.len(), 1);
+        assert_eq!(plan.unhandled[0].kind, "form");
+    }
+
+    #[test]
+    fn what_the_descent_could_not_reach_is_reported_even_when_nothing_was_covered() {
+        // A form holding a nested form and nothing else: the region takes
+        // nothing and must still say so. Reporting only alongside a hit would
+        // make the quiet case the silent one.
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [FormObject {
+            at: 0,
+            text: Vec::new(),
+            unreachable: vec![Unhandled {
+                at: 0,
+                kind: "form".to_string(),
+            }],
+        }];
+        let plan = covered(&objects, &forms, [10.0, 45.0, 20.0, 55.0]);
+        assert!(plan.form_shows.is_empty());
+        assert_eq!(plan.unhandled.len(), 1);
+        assert!(!plan.is_complete());
+    }
+
+    #[test]
+    fn a_form_the_region_misses_is_neither_taken_nor_reported() {
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [FormObject {
+            at: 0,
+            text: vec![FormText {
+                bounds: [0.0, 0.0, 100.0, 20.0],
+                draws: String::new(),
+            }],
+            unreachable: vec![Unhandled {
+                at: 0,
+                kind: "image".to_string(),
+            }],
+        }];
+        assert_eq!(
+            covered(&objects, &forms, [500.0, 500.0, 600.0, 600.0]),
+            Plan::default()
+        );
+    }
+
+    #[test]
+    fn removing_from_a_form_touches_that_form_and_no_other() {
+        let (mut doc, page, ids) = page_with_forms(2, 2);
+        let took = remove_form_shows(&mut doc, page, &[(0, 2), (1, 2)], 1, &[0]).expect("removed");
+        assert_eq!(took.removed, 1);
+        assert_eq!(form_says(&doc, ids[0]), vec!["f0L0", "f0L1"]);
+        assert_eq!(form_says(&doc, ids[1]), vec!["f1L1"]);
+    }
+
+    #[test]
+    fn removing_two_lines_from_one_form_takes_both_and_keeps_the_rest() {
+        // Descending order inside the form, which is the same trap one level up:
+        // an earlier removal moves every later index.
+        let (mut doc, page, ids) = page_with_forms(1, 3);
+        remove_form_shows(&mut doc, page, &[(0, 3)], 0, &[0, 2]).expect("removed");
+        assert_eq!(form_says(&doc, ids[0]), vec!["f0L1"]);
+    }
+
+    #[test]
+    fn a_form_drawn_twice_on_one_page_is_refused() {
+        // **One** reference in the object graph and two `Do` operations, so a
+        // reference count alone calls this unshared. It is not: the stream is
+        // the same stream, and removing from it changes both places.
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        let content = doc
+            .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+            .unwrap();
+        let mut twice = content.clone();
+        twice.extend_from_slice(&content);
+        doc.change_page_content(page, twice).unwrap();
+        let why = remove_form_shows(&mut doc, page, &[(0, 2), (1, 2)], 0, &[0]).unwrap_err();
+        assert!(why.contains("draws 2 time(s)"), "{why}");
+        assert_eq!(
+            form_says(&doc, ids[0]),
+            vec!["f0L0", "f0L1"],
+            "nothing went"
+        );
+    }
+
+    #[test]
+    fn a_form_another_page_also_draws_is_refused() {
+        // The other shape, and it is the one a graph reference count *does* see:
+        // two references, one `Do` here.
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        let elsewhere = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Resources" => dictionary! {
+                "XObject" => dictionary! { "Fm0" => Object::Reference(ids[0]) }
+            },
+        });
+        let _ = elsewhere;
+        let why = remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[0]).unwrap_err();
+        assert!(why.contains("draws 2 time(s)"), "{why}");
+        assert_eq!(
+            form_says(&doc, ids[0]),
+            vec!["f0L0", "f0L1"],
+            "nothing went"
+        );
+    }
+
+    #[test]
+    fn a_form_count_that_disagrees_with_pdfium_removes_nothing() {
+        // The correspondence guard: nothing connects PDFium's form objects to
+        // the page's `Do` operations but order, so a disagreement is a refusal
+        // rather than a removal aimed at whichever form happens to be there.
+        let (mut doc, page, ids) = page_with_forms(2, 2);
+        let why = remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[0]).unwrap_err();
+        assert!(why.contains("draws 2 form XObject(s)"), "{why}");
+        assert_eq!(
+            form_says(&doc, ids[0]),
+            vec!["f0L0", "f0L1"],
+            "nothing went"
+        );
+    }
+
+    #[test]
+    fn a_show_count_that_disagrees_with_pdfium_removes_nothing() {
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        let why = remove_form_shows(&mut doc, page, &[(0, 5)], 0, &[0]).unwrap_err();
+        assert!(why.contains("PDFium reported 5"), "{why}");
+        assert_eq!(
+            form_says(&doc, ids[0]),
+            vec!["f0L0", "f0L1"],
+            "nothing went"
+        );
+    }
+
+    #[test]
+    fn an_ordinal_past_the_end_removes_nothing() {
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        let why = remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[7]).unwrap_err();
+        assert!(why.contains("no show operator 7"), "{why}");
+        assert_eq!(
+            form_says(&doc, ids[0]),
+            vec!["f0L0", "f0L1"],
+            "nothing went"
+        );
+    }
+
+    #[test]
+    fn a_form_position_this_page_does_not_have_removes_nothing() {
+        let (mut doc, page, _) = page_with_forms(1, 2);
+        let why = remove_form_shows(&mut doc, page, &[(0, 2)], 9, &[0]).unwrap_err();
+        assert!(why.contains("is not one of the 1 form(s)"), "{why}");
     }
 
     /// The operators a page's content stream holds, in order.
@@ -1842,7 +2459,7 @@ mod tests {
             text([0.0, 0.0, 100.0, 20.0]),
             text([0.0, 40.0, 100.0, 60.0]),
         ];
-        let plan = covered(&objects, [10.0, 45.0, 20.0, 55.0]);
+        let plan = covered(&objects, &[], [10.0, 45.0, 20.0, 55.0]);
         assert_eq!(plan.shows, vec![1]);
         assert!(plan.is_complete());
     }
@@ -1855,7 +2472,7 @@ mod tests {
     fn a_region_over_nothing_names_nothing() {
         let objects = [text([0.0, 0.0, 100.0, 20.0])];
         assert_eq!(
-            covered(&objects, [500.0, 500.0, 600.0, 600.0]),
+            covered(&objects, &[], [500.0, 500.0, 600.0, 600.0]),
             Plan::default()
         );
     }
@@ -1874,7 +2491,7 @@ mod tests {
             image([0.0, 25.0, 100.0, 35.0]),
             text([0.0, 40.0, 100.0, 60.0]),
         ];
-        let plan = covered(&objects, [10.0, 45.0, 20.0, 55.0]);
+        let plan = covered(&objects, &[], [10.0, 45.0, 20.0, 55.0]);
         assert_eq!(
             plan.shows,
             vec![1],
@@ -1889,7 +2506,7 @@ mod tests {
             text([0.0, 0.0, 100.0, 20.0]),
             image([0.0, 0.0, 100.0, 20.0]),
         ];
-        let plan = covered(&objects, [10.0, 5.0, 20.0, 15.0]);
+        let plan = covered(&objects, &[], [10.0, 5.0, 20.0, 15.0]);
         assert_eq!(plan.shows, vec![0], "the text is still removable");
         assert!(
             !plan.is_complete(),
@@ -1941,15 +2558,26 @@ mod tests {
     fn a_region_with_its_corners_the_other_way_round_still_overlaps() {
         // x reversed: region spans 20..80, written 80 then 20.
         let narrow_x = [text([50.0, 0.0, 60.0, 100.0])];
-        assert_eq!(covered(&narrow_x, [80.0, 0.0, 20.0, 100.0]).shows, vec![0]);
+        assert_eq!(
+            covered(&narrow_x, &[], [80.0, 0.0, 20.0, 100.0]).shows,
+            vec![0]
+        );
 
         // y reversed: region spans 20..80, written 80 then 20.
         let narrow_y = [text([0.0, 50.0, 100.0, 60.0])];
-        assert_eq!(covered(&narrow_y, [0.0, 80.0, 100.0, 20.0]).shows, vec![0]);
+        assert_eq!(
+            covered(&narrow_y, &[], [0.0, 80.0, 100.0, 20.0]).shows,
+            vec![0]
+        );
 
         // Both, which is the shape a reader's upward-left drag produces.
         assert_eq!(
-            covered(&[text([50.0, 50.0, 60.0, 60.0])], [80.0, 80.0, 20.0, 20.0]).shows,
+            covered(
+                &[text([50.0, 50.0, 60.0, 60.0])],
+                &[],
+                [80.0, 80.0, 20.0, 20.0]
+            )
+            .shows,
             vec![0]
         );
     }
@@ -1964,7 +2592,10 @@ mod tests {
             bounds: [60.0, 100.0, 50.0, 0.0],
             kind: "text".to_string(),
         }];
-        assert_eq!(covered(&reversed, [20.0, 0.0, 80.0, 100.0]).shows, vec![0]);
+        assert_eq!(
+            covered(&reversed, &[], [20.0, 0.0, 80.0, 100.0]).shows,
+            vec![0]
+        );
     }
 
     #[test]
