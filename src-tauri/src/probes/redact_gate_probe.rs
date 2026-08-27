@@ -114,15 +114,22 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
 
     // The longest word on the page, which leaves the most for a control to be
     // chosen from and gives the engine something substantial to fail to read.
+    //
+    // **Five rather than six since 2026-08-27**, and only one corpus moves:
+    // `columns.pdf`'s longest word is `alpha`, and it is the only fixture here
+    // whose two columns put a *second* text object on the region's own rows.
+    // That is the discrimination the neighbour check below needs, and it exists
+    // nowhere else. Lowering the floor cannot change which word any other page
+    // yields, because the choice is the longest one.
     let Some(target) = words
         .iter()
-        .filter(|w| w.text.chars().count() >= 6)
+        .filter(|w| w.text.chars().count() >= 5)
         .max_by_key(|w| w.text.chars().count())
         .cloned()
     else {
         r.skip(
             "this page has a word long enough to redact",
-            "no word of six characters or more",
+            "no word of five characters or more",
         );
         r.finish();
     };
@@ -278,6 +285,67 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         ),
     );
 
+    // ----------------------------------------------- the neighbour on the row
+    // `ocr_gate::strip` renders the rows a rectangle covers as a **full-width**
+    // tile, because two crops of different widths do not stack. So without
+    // `ocr_gate::mask_columns` everything beside the region on those rows is
+    // shown to the engine, and a word the removal was right to keep is reported
+    // as *the removed area still reads as text*. On 40 real documents that was
+    // 54 of 104 regions the removal had taken whole.
+    //
+    // Self-selecting rather than assumed: the check needs a surviving word on
+    // the region's own rows and outside its columns, and only `columns.pdf` has
+    // one --- every other fixture here draws a line as a single text object, so
+    // redacting a word in it takes the whole line and there is no neighbour to
+    // misread. A corpus without one says so rather than passing.
+    let rows_meet = |a: [f32; 4], b: [f32; 4]| a[1] < b[3] && b[1] < a[3];
+    let columns_meet = |a: [f32; 4], b: [f32; 4]| a[0] < b[2] && b[0] < a[2];
+    match words
+        .iter()
+        .find(|w| rows_meet(w.rect, region) && !columns_meet(w.rect, region))
+    {
+        None => r.skip(
+            "a word beside the region on its own rows is not reported",
+            "no word on this page shares the region's rows from outside its columns",
+        ),
+        Some(neighbour) => {
+            let beside = neighbour.text.trim();
+            r.check(
+                !clean.iter().any(|w| w.contains(beside)),
+                "a word beside the region on its own rows is not reported",
+                format!("{beside:?} is on the region's rows and outside its columns"),
+            );
+        }
+    }
+
+    // ------------------------------------------------------- the verdict shape
+    // `run` flattens to sentences; `judge_all` is what keeps the engine's own
+    // rectangles, and a caller counting sentences cannot tell one page-wide
+    // refusal from one region judged. Asserted here because the two shapes are
+    // what that type exists to separate.
+    let judged = ocr_gate::judge_all(
+        &service,
+        &out.to_string_lossy(),
+        None,
+        std::slice::from_ref(&page),
+    );
+    r.check(
+        match &judged {
+            ocr_gate::Judged::Pages(pages) => match pages.as_slice() {
+                [only] => match &only.outcome {
+                    ocr_gate::PageOutcome::Regions(verdicts) => {
+                        verdicts.len() == page.regions.len()
+                    }
+                    ocr_gate::PageOutcome::Whole(_) => false,
+                },
+                _ => false,
+            },
+            ocr_gate::Judged::Refused(_) => false,
+        },
+        "the gate reports one verdict per region",
+        format!("{} region(s) asked about", page.regions.len()),
+    );
+
     // -------------------------------------------------------- the control rule
     // A page the gate knows no words for cannot yield a control, and a region it
     // could not read a control back from must be *not verified* --- never clean,
@@ -286,11 +354,30 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         words: Vec::new(),
         ..page.clone()
     };
-    let refused = ocr_gate::run(&service, &out.to_string_lossy(), None, &[blind]);
+    let refused = ocr_gate::run(
+        &service,
+        &out.to_string_lossy(),
+        None,
+        std::slice::from_ref(&blind),
+    );
     r.check(
         refused.len() == 1 && refused[0].contains("could not be shown unreadable"),
         "a page with no control is refused rather than certified",
         format!("{} reason(s): {:?}", refused.len(), refused.first()),
+    );
+    // And it is a *page-wide* refusal, not one region judged. That distinction
+    // is invisible in the sentence above --- both are one string --- and it is
+    // the whole reason `PageOutcome` has two variants.
+    let refused = ocr_gate::judge_all(&service, &out.to_string_lossy(), None, &[blind]);
+    r.check(
+        matches!(
+            &refused,
+            ocr_gate::Judged::Pages(pages)
+                if matches!(pages.as_slice(), [only]
+                    if matches!(&only.outcome, ocr_gate::PageOutcome::Whole(_)))
+        ),
+        "that refusal is about the page, not about a region",
+        format!("{refused:?}").chars().take(90).collect::<String>(),
     );
 
     let _ = std::fs::remove_file(&out);
