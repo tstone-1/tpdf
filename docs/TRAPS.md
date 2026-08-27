@@ -16978,3 +16978,65 @@ The tell is worth naming, because it is mechanical: **if a mutation that changes
 value leaves every test green, every test is written in units of that constant.**
 
 Paid for on 2026-08-27.
+
+### A control token spanning a whole line is read back only when the engine returns the line in one piece
+
+`ocr::adjudicate` decides whether an OCR engine was shown to be able to read, by asking
+whether **one** recognised span inside the control band *contains* the control token. That
+"one span" is the whole trap, and it is invisible until the token gets long.
+
+`ocr::control_from_page` chooses the control out of the text a redaction leaves behind, and
+its first version took the whole of a chosen text object. On a page of prose a PDFium text
+object is a whole line, so the token became the 52-character line
+`"REDACT ME: account 4711-0815 belongs to A. Beispiel."`. Measured with `ocr-probe` on
+2026-08-27:
+
+| fixture | verdict |
+|---|---|
+| `text-marked.pdf` | Illegible --- read back |
+| `text-truetype.pdf` | Illegible --- read back |
+| `text-base14.pdf` | **NotVerified** --- *"the control token ... was not read back"* |
+
+Nothing was wrong with `text-base14.pdf`. The same words, the same size, the same engine,
+one different font --- and Vision either did not return that line as a single span or misread
+one character in fifty-two, which comes to the same thing under a containment test. The gate
+would have refused a correct redaction on some fonts and accepted it on others, which is a
+gate somebody switches off.
+
+**The token is the longest run of non-whitespace in the chosen text**, so it is a word.
+Whatever spans the engine breaks the line into, one of them contains that word. The band is
+still what decides *which* items are the control --- position first, so a word occurring
+elsewhere on the page cannot stand in for it --- and the run rule only decides what has to be
+matched inside it.
+
+Two things to carry:
+
+- **The failure was safe and useless**, which is the shape that survives review. A control
+  that is not read back produces *NotVerified*, never a false clean, so no test of the
+  safety property could have caught it. What it costs is the feature: a gate that refuses
+  two documents in three is one nobody leaves switched on.
+- **Two fixtures agreeing is not evidence about the third.** `text-marked` and
+  `text-truetype` both passed, and the whole reason the corpus carries a base-14 fixture is
+  that base-14 fonts are drawn by different machinery. A run across the fixtures found it in
+  one go; reading the code would not have.
+
+### A control chosen from the document's own text is worth nothing when the text layer does not say what the page draws
+
+The other half of the same run, and it is the case where the honest answer looks exactly like
+a defect. `encodings.pdf` has no usable `/ToUnicode`, so PDFium returns plausible garbage for
+it --- the trap *with no `/ToUnicode`, PDFium returns plausible garbage rather than nothing*
+is already in this file. The control chooser reads what the document says, so its token came
+out as `"(QFRGLQJ\u{3}SUREH\u{3}$%&"`, which is a shift-by-three of *"Encoding probe ABC"* and
+is nowhere on the page. Vision reads the pixels correctly; the two never meet;
+`adjudicate` returns *NotVerified*.
+
+That is the right verdict and the gate needs no repair. What needed repair was the **check**:
+written one way --- *the chosen control must certify* --- it reported a defect in the chooser
+for a document whose text layer is a lie. It runs both ways now, against the agreement the
+probe already measures a few lines earlier: where the engine's reading and the document's own
+text agree, the chosen control must certify; where they do not, it must refuse.
+
+Two checks wearing one name, and the one that matters is the second: a control chosen from
+the object graph is only evidence when the object graph describes the page. Do not scope this
+to OCR --- it is the general form of *a writer and its own reader agree about a document that
+is wrong*, arriving in a subsystem whose whole job is to not believe itself.

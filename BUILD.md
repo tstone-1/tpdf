@@ -2119,7 +2119,7 @@ single retry cannot make cheap.
 ### `ocr-probe`: does the recogniser work, and is the flip right
 
 macOS only --- it is the Vision binding it exercises. Nothing in it is wired into the viewer;
-OCR has interfaces and one engine, and no worker yet.
+OCR has interfaces, one engine and a control chooser, and no worker yet.
 
 ```
 cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- \
@@ -2128,10 +2128,40 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- 
 
 | fixture | result |
 |---|---|
-| `text-base14`, `text-cid`, `rotated` | 6/6 |
-| `outline-simple`, `form` | 5/5, 1 skipped |
+| `text-base14`, `text-marked`, `text-truetype`, `text-cid`, `rotated` | 7/7 |
+| `outline-simple` | 6/6, 1 skipped |
+| `form` | 5/5, 2 skipped |
 | `columns` | 2/2, 4 skipped --- two columns leave no vertically isolated span to use as a control |
 | `vector-heavy` | 1/1 against the *inverted* claim: the page has no text, so reading none is correct |
+| `links` | **5/6**, 1 skipped --- one expected red, below |
+| `encodings` | **5/6**, 1 skipped --- one expected red, below |
+
+**The seventh check is the control chooser**, added 2026-08-27, and it is the only place
+`ocr::control_from_page`'s claim meets a real engine. The three gate checks above it take their
+control strip out of **Vision's own output**, which is the engine agreeing with itself; this one
+chooses from what the *document* says and then asks Vision to read it back. It runs in both
+directions: where the engine's reading and the document's text agree the chosen control must
+certify, and where they do not it must refuse.
+
+**Two fixtures report one red each, both of them expected, and they are expected for opposite
+reasons.** An expected red beside a green run is a bad thing to leave lying around --- this
+file has an entry about exactly that --- so here is what each is and what it would take to
+remove it.
+
+`encodings.pdf` fails *what it read matches the embedded text*, 0 of 2 words. That is the
+fixture doing its job: it has no usable `/ToUnicode`, PDFium returns plausible garbage, and the
+check compares the engine's reading against that garbage. Making it green needs a way to tell a
+broken engine from a broken text layer, and there is not one --- the check *is* that
+comparison. The chooser check reads the same disagreement and reports the refusal as a pass,
+which is the honest verdict about the gate rather than about the fixture.
+
+`links.pdf` fails *a blank strip adjudicates Illegible*: the strip control picked the token
+`"Donn"` and Vision, handed the same rows inside a composite, read `"Dann 1"`. Nothing is wrong
+with the page. It is the weakness the chooser exists for, showing up in the check that predates
+it --- a control taken from the engine's own earlier reading is not stable across a second call
+on a different image. The same fixture passes the chooser check with `"lantern"`, chosen from
+the document. **The fix is to give those three checks the same control source**, which is a
+change to three verified checks and is deliberately not in the increment that added the fourth.
 
 **The check that earns its keep is the ordering one.** `normalised_to_points` has unit tests
 and they cannot catch the thing that matters, because they assert arithmetic against numbers

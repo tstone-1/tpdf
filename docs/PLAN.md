@@ -1890,8 +1890,8 @@ step 1's other two shapes and is not here.
 
 > Both halves of that closed later the same week and the note is kept as it was written,
 > because the sections below are the record of closing them: the commands arrived on
-> 2026-08-27 and *Redact selection* on the same day. Marking **by pattern** is the one
-> still open.
+> 2026-08-27, *Redact selection* on the same day, and *Redact every search result* --- step
+> 1's third shape --- with them.
 
 Twelve mutations stand behind it, nine in Rust and three in the frontend, and the one worth
 naming is *snapshot a document without its pending redactions*: `SNAPSHOT_EVERY` is 32, so a
@@ -2011,14 +2011,15 @@ asserted through **two independent readers** --- `verify::scan` over the bytes a
 re-extracting the written file. The survivor is the control: a scan that finds nothing
 because it cannot look is the failure this repository has recorded from several directions.
 
-What is **not** built: the carriers this still does not reach --- form values, page labels
-and embedded files, every one of which §6's table names; and a region over an
-image, which is reported and left. Three rows of that table **are** reached since
+What is **not** built: the carriers this still does not reach --- page labels, embedded files
+and the targets of annotation actions, every one of which §6's table names; and a region over
+an image, which is reported and left. Five rows of that table **are** reached since
 2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
 the structure element the span belongs to; an annotation whose rectangle is over a region,
-replies and popup included; and the document's own description of itself, `/Info` and the XMP
-packet, taken whole. A fourth followed on 2026-08-27: the **outline**, entry by entry, which
-is the commonest of the four in the wild and the only one a reader can see in tpdf itself.
+replies and popup included; the document's own description of itself, `/Info` and the XMP
+packet, taken whole; the **outline**, entry by entry, which is the commonest of them in the
+wild and the only one a reader can see in tpdf itself; and the **form**, whose fields keep a
+copy of every answer a reader typed.
 **In-place apply and the journal truncation landed the same day** and have a subsection of
 their own below. The six subsections say what each does and does not cover.
 
@@ -2055,11 +2056,12 @@ mis-addressed removal is one that deletes the wrong words and reports success.
 The over-redaction control is the half that keeps the rest honest: a word on **another line**
 must survive, because a removal that emptied the page would pass every other check perfectly.
 
-What is not built here: images and paths (reported, not removed), annotations, form values,
-metadata, the outline, and everything else in the carrier table above that lives outside the
-page's content stream. The shadow text *inside* it is cleared --- see below. **A command
-reaches this now** --- see the section above, which is what turned this from a primitive into
-a feature.
+What is not built here: images and paths, which are reported and left. That is the whole of
+it now, and the sentence used to go on for two more lines --- annotations, form values,
+metadata, the outline --- because when it was written this module removed text and nothing
+else. Every one of those is in `redact.rs` today, in its own subsection below; the shadow
+text *inside* the content stream is cleared here. **A command reaches this now** --- see the
+section above, which is what turned this from a primitive into a feature.
 
 #### The carriers inside the content stream --- done 2026-08-27
 
@@ -2615,6 +2617,115 @@ the constant move --- raising the bound to 100,000 left it green. That is the tr
 that measures along the axis it is policing, arriving in a check written the same week as the
 entry for it. The fix is a check on the **value**, in absolute numbers taken from the sweep:
 above 123 and below 722. Both directions of the constant now redden it.
+
+#### Step 4's control: what an OCR gate is allowed to believe --- built 2026-08-27
+
+Step 4 renders the redacted regions and OCRs them, "confirming no legible text survives". It
+is the only check in the list that can say anything at all about an **image** carrier, because
+step 3's byte scan cannot see into a `/DCTDecode` stream and refusing every such stream would
+refuse every scanned page in existence.
+
+**Ranked by measurement, and this time the number is large.** Treating every text object's own
+box as the region a reader would draw over that line, across the same 41 real documents ---
+154,095 regions:
+
+| | |
+|---|---|
+| regions where the removal takes everything it covers | 93,776 (60.9%) |
+| regions holding an object it cannot take | **60,319 (39.1%)** |
+| documents with at least one such region | 24 of 41 |
+| documents where *every* region is one | 8 of 41 |
+
+By kind, counting each region once: **path 49,521**, form 9,310, image 2,979, shading 23. A
+rule under a line of text is what almost every real document has, which is why paths dominate
+--- and a path cannot be waved through, because text converted to outlines is a path that
+draws the shape of the words. So today, on two documents in five, a reader who redacts a line
+gets a file with the words gone and a sentence saying it could not be proved clean. Step 4 is
+what turns those into an answer.
+
+**A gate is only as good as its control**, and `docs/TRAPS.md`'s entry *a control that is
+easier than the check certifies nothing* is the failure it has to make unreachable. An OCR
+engine that reads nothing produces exactly the same output when the page is clean, when the
+language pack is missing, when the process died and when it was handed the wrong image. So
+[`ocr::adjudicate`] may return *Illegible* only when the engine was shown to read **on this
+image at this size**, which means something legible has to be in the probe image on purpose.
+
+`Control::no_easier_than` has always taken the band and the token on trust from whoever called
+it. `ocr::control_from_page` is the mechanism instead: it chooses the control out of the text
+the redaction leaves behind, and three properties decide a candidate, each of them a way the
+gate could otherwise certify a page it had proved nothing about.
+
+1. **No region covers it.** A word the removal was supposed to take is not evidence that the
+   engine can read --- it is evidence the removal failed. The test is `redact::overlaps`, made
+   `pub` for this, because it is the same question that decided which words the removal took
+   and two answers to it would let the gate certify against a word that should be gone.
+2. **It is set no larger than the smallest box the regions covered.** A control in 12 pt says
+   nothing about a 6 pt footnote in the same region.
+3. **It draws at least `MIN_CONTROL_CHARS` characters.**
+
+**The constant is four, measured against the same corpus and with the price in front of it.**
+Coverage runs 71.9% at two characters, 68.5% at three, **58.3% at four**, 45.9% at six and
+35.5% at eight. There is no flat part to sit on --- every character costs coverage --- so the
+value is a judgement taken against a curve rather than a threshold the data picked. Four,
+because `adjudicate` matches by asking whether one recognised span *contains* the token, and a
+two- or three-character token is a fragment an engine emits from noise; a fragment matching by
+accident certifies a page nothing was read on. A region with no control is reported *not
+verified*, which is what all 39.1% get today, so the constant trades how often the gate can
+speak and never how often it is right.
+
+**Two coordinate systems, kept apart in the types.** `ControlChoice::crop` is on the page,
+because that is what has to be rendered; a `Control`'s band is in the *probe image*, because
+that is where `adjudicate` partitions items. The band is not the crop moved: the probe image is
+the region under test with the control strip appended below it, so the band's top is the
+region's height. `ControlChoice::placed(band)` takes that rectangle from its caller and
+nothing else --- returning a `Control` from the chooser would mean guessing an offset only the
+caller knows, and this repository has more than one entry about a rectangle produced in one
+space and read in another.
+
+**The token is a word and not the line it sits on, and that is the finding of this
+increment.** The first version took the whole of a chosen text object, which on a page of
+prose is a whole line. `ocr-probe` on `text-base14.pdf` then reported *NotVerified* on a page
+where nothing was wrong --- the 52-character line was not read back --- while the identical
+line on `text-marked.pdf` and `text-truetype.pdf` came back perfectly. `adjudicate` asks
+whether **one** recognised span contains the token, so a line-long token is only matched when
+the engine happens to return that line in one piece, and whether it does turns on the font. A
+gate that refuses a correct redaction depending on the font is a gate somebody switches off.
+The token is the longest run of non-whitespace in the chosen text; it is still matched by
+position first, so a word occurring elsewhere on the page cannot stand in for it.
+
+**The second finding is a fixture disagreeing with its own page, and the gate is right to
+refuse.** `encodings.pdf` has no usable `/ToUnicode`, so PDFium returns plausible garbage ---
+the chooser's token is `"(QFRGLQJ\u{3}SUREH\u{3}$%&"`, which is nowhere on the page Vision
+reads. A control chosen from the document's own text is only evidence when that text says what
+the page draws. So the probe's check runs **both ways**: on a page where the two agree the
+chosen control must certify, and on a page where they do not it must refuse. Written as one
+check with two directions, because the version that only knew the first would have called
+`encodings.pdf` a defect in the chooser.
+
+**Evidence.** Nine mutations, each caught by the test named for it, and every rule above has
+one aimed at it --- including *widen the height slack to a whole point*, which is the absolute
+check `docs/TRAPS.md`'s *a bound written against its own constant* asks for. `ocr-probe`
+carries the chooser against the real engine on seven fixtures: `text-base14`, `text-marked`,
+`text-truetype`, `text-cid`, `rotated` and `links` certify, and `encodings` refuses. The three
+gate checks beside it choose their control strip out of **Vision's own output**, which is the
+engine agreeing with itself; this one chooses from what the document says, and it is the only
+place that claim meets an engine at all.
+
+**And on `links.pdf` the two disagree, which is the argument for the chooser as a
+measurement rather than as a preference.** The strip control picked `"Donn"` --- Vision's own
+earlier reading of those rows --- and Vision, handed the same rows inside a composite, read
+`"Dann 1"`; that check has been red on that fixture and nothing about the page is wrong. The
+chooser passes on the same fixture with `"lantern"`, taken from the object graph. Giving those
+three checks the same control source is the obvious next thing for this probe and is
+deliberately not in the increment that added the fourth: they are verified checks, and
+changing what they are built on is its own piece of work.
+
+**Not done, and neither half is hidden by this.** There is no OCR **worker**: `ocr.rs`'s own
+ladder measured Vision killed by SIGTRAP under the parser worker's profile and needing general
+`file-read` to run at all, so it needs a process of its own under `OCR_SANDBOX_PROFILE` and
+nothing spawns one. And nothing calls the gate --- `redact_copy` and `redact_in_place` still
+verify by byte scan alone, so the 39.1% above is unchanged today. This increment is the part
+that decides whether step 4 can be honest; the process and the caller are the two after it.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 
