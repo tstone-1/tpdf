@@ -292,7 +292,15 @@ fn page_stream(doc: &Document, page: lopdf::ObjectId) -> Result<String, String> 
     Ok(String::from_utf8_lossy(&data).into_owned())
 }
 
-/// A region over a picture is not redactable by this module, and says so.
+/// A region over a drawing is not redactable by this module, and says so ---
+/// while the picture beside it now is.
+///
+/// **This checked an image until 2026-08-27**, when a region over a picture
+/// stopped being a refusal and became a removal. It went on passing, on the two
+/// **path** objects the same page carries: the check's subject moved and nothing
+/// went red, which is the shape `docs/TRAPS.md` records more than once. So it
+/// now asserts both halves --- the paths are still reported, and the image is
+/// named as removable --- and a change to either direction reddens it.
 fn incomplete(pdfium: &Pdfium, root: &Path) -> Result<String, String> {
     let (file, page) = INCOMPLETE;
     let source = root.join("testdata").join(file);
@@ -314,13 +322,27 @@ fn incomplete(pdfium: &Pdfium, root: &Path) -> Result<String, String> {
     let plan = redact::covered(&objects, &[], whole);
     if plan.is_complete() {
         return Err(
-            "a region covering a /DCTDecode image reports a complete plan, so a caller acting \
-             on it would take the words and leave the picture of the words"
+            "a region covering a drawing reports a complete plan, so a caller acting on it \
+             would take the words and leave the picture of the words"
                 .to_string(),
         );
     }
+    if plan.unhandled.iter().any(|object| object.kind == "image") {
+        return Err(
+            "an image is still reported as unremovable, so the removal below is not being \
+             asked for and this check is measuring the paths instead"
+                .to_string(),
+        );
+    }
+    if plan.images.is_empty() {
+        return Err(format!(
+            "{file} has a /DCTDecode image inside the region and the plan names none, so a \
+             redaction over a scanned page would remove nothing"
+        ));
+    }
     Ok(format!(
-        "the plan is incomplete and names why: {}",
+        "{} image(s) are removable and the plan is still incomplete, naming why: {}",
+        plan.images.len(),
         plan.unhandled
             .iter()
             .map(redact::Unhandled::sentence)

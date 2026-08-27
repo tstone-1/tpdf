@@ -1249,6 +1249,18 @@ pub struct PlannedRedaction {
     /// went is to compare its title against what went. See
     /// `redact::covered_outline`.
     pub taking: Vec<String>,
+    /// Which of the page's images the removal deletes, ascending.
+    ///
+    /// `redact::RegionPlan::images`, merged across the page's regions the way
+    /// [`shows`](Self::shows) is.
+    #[serde(default)]
+    pub images: Vec<usize>,
+    /// How many image objects PDFium found on this page.
+    ///
+    /// [`text_objects`](Self::text_objects) for pictures, carried for the same
+    /// reason: `redact::remove_images` refuses when it disagrees.
+    #[serde(default)]
+    pub image_objects: usize,
     /// Text inside a Form XObject the removal takes, as `(form, ordinal)`.
     ///
     /// `redact::RegionPlan::form_shows`, merged across the page's regions the way

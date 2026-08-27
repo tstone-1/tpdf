@@ -2013,9 +2013,9 @@ because it cannot look is the failure this repository has recorded from several 
 
 What is **not** built: the carriers this still does not reach --- page labels, embedded files
 and the targets of annotation actions, every one of which §6's table names; and a region over
-an image or a path, which is reported and left. **Text inside a Form XObject is reached since
-2026-08-27** --- the largest of those by region count, 9,310 of 154,095, and the only one made
-of ordinary text; it has a subsection of its own below. Five rows of that table **are** reached
+a **path**, which is reported and left. **Text inside a Form XObject and a region over an
+image are both reached since 2026-08-27** --- 9,310 and 2,979 of 154,095 regions --- and each
+has a subsection of its own below. Five rows of that table **are** reached
 since 2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
 the structure element the span belongs to; an annotation whose rectangle is over a region,
 replies and popup included; the document's own description of itself, `/Info` and the XMP
@@ -2058,8 +2058,8 @@ mis-addressed removal is one that deletes the wrong words and reports success.
 The over-redaction control is the half that keeps the rest honest: a word on **another line**
 must survive, because a removal that emptied the page would pass every other check perfectly.
 
-What is not built here: images and paths, which are reported and left. Text inside a Form
-XObject **is** built, since 2026-08-27. That is the whole of
+What is not built here: paths, which are reported and left. Text inside a Form XObject and a
+region over an image **are** built, since 2026-08-27. That is the whole of
 it now, and the sentence used to go on for two more lines --- annotations, form values,
 metadata, the outline --- because when it was written this module removed text and nothing
 else. Every one of those is in `redact.rs` today, in its own subsection below; the shadow
@@ -2640,8 +2640,9 @@ box as the region a reader would draw over that line, across the same 41 real do
 | documents where *every* region is one | 8 of 41 |
 
 By kind, counting each region once: **path 49,521**, form 9,310, image 2,979, shading 23. The
-form row is closed as of 2026-08-27 --- see *The text inside a Form XObject* below --- so what
-these numbers size today is paths and images. A
+form and image rows are both closed as of 2026-08-27 --- see the two subsections below --- so
+what these numbers size today is **paths**, and the 39.1% above is correspondingly too high by
+an amount nobody has re-measured. A
 rule under a line of text is what almost every real document has, which is why paths dominate
 --- and a path cannot be waved through, because text converted to outlines is a path that
 draws the shape of the words. So today, on two documents in five, a reader who redacts a line
@@ -2965,6 +2966,68 @@ only to delete text. And the two carriers `remove_shows` clears --- the marked-c
 property list and the structure element --- are addressed from the **page**, so a span
 inside a form carrying an `/MCID` in the page's own numbering is already reached by
 `clear_shadow_text`; nothing new was needed and nothing is claimed.
+
+#### A region over a picture --- done 2026-08-27
+
+The carrier a reader meets head-on: drag a region over a scanned page or a figure, and
+until now nothing was removed and the report said the file could not be shown clean.
+Images ≥10% of the sheet sit on **99 pages in 18 of 40** real documents.
+
+**It needs no decoder**, which is the thing that made this affordable and which an
+earlier note in this file got wrong. Removing an image is removing the `Do` operation
+that draws it --- the same mechanism as a show operator --- and `sweep::collect`, which
+every rewrite already runs, drops the object once nothing points at it.
+
+**Whole images, and that is a decision.** An image cannot be partly removed without
+decoding and re-encoding it, so the choice is all of it or none, and none of it means a
+region dragged over a face leaves the face. It is route B's posture one level up:
+removing part of a line means removing the operation that drew it. The cost is a page
+whose background image goes because a reader redacted one line over it --- measured at
+**35 of 930** placed images covering more than half their sheet, 3.8% --- and the
+review panel now says how many pictures a region takes before anything is written.
+
+**Two removals, and only the second one redacts.** Deleting the `Do` stops the page
+drawing the picture; the stream is still an object, still reachable from the page's
+resources, and every pixel is still in the file. The resource entry goes too, which
+leaves it unreferenced for the sweep. That is not a subtlety --- the first working
+version did the first half only, and the file it wrote held the whole picture.
+
+**What found it is the shape of the check.** `redact-apply-probe` greps the written
+bytes for the image's **own pixels**, against a fixture that stores them uncompressed
+so the grep is possible. *The page no longer draws it* and *the bytes have left the
+file* read almost the same and are not the same, and only the second is a redaction.
+The rewrite's sweep is conditional on a list of the carriers that orphan objects, and
+an image removal was not on it; every existing sweep test calls `sweep::collect` by
+hand, so none of them could see the condition being wrong. `docs/TRAPS.md` carries it.
+
+**A picture drawn more than once is refused**, by the same two counts `remove_form_shows`
+uses --- a graph reference count is blind to one page drawing the same XObject twice.
+Removing one of its `Do` operations would hide it here and leave it drawn elsewhere, so
+the object stays reachable and the pixels stay: a redaction that removed the picture
+from view and nothing else.
+
+**Evidence.** `redact-apply-probe` grew an image section, 8 checks on
+`image-region.pdf`: the region names the picture rather than refusing; the marked
+picture's pixels are gone; **the other picture on the page is still there**; the page's
+own text is untouched; the copy still opens with both pages; the shared picture is named
+before the refusal is asked for; that removal is refused; and it wrote no file. Eleven
+unit tests in `redact.rs`, one in `save.rs` driving the **rewrite** rather than the
+sweep, and seven mutations each caught by the test named for it, plus three over the
+panel sentence.
+
+**`redact-probe`'s refusal check was measuring the wrong thing and still passing.** It
+asserted that a whole-page region on `hostile-scan.pdf` reports an incomplete plan,
+which it does --- on the two **path** objects that page also carries. The image stopped
+being the reason and nothing went red. It now asserts both halves: no image is reported
+unremovable, at least one is named removable, and the paths are still refused.
+
+**Not done, and stated rather than discovered.** Paths are still reported and left ---
+49,521 of 154,095 regions, and a rule under a line of text is what almost every document
+has, so taking them wholesale would damage every redaction. An **inline** image
+(`BI…ID…EI`) has no `Do` to remove, so the correspondence guard refuses; measured across
+41 documents and 1,189 pages there are **zero** of them, and the guard is what makes the
+rare file safe rather than wrong. And `docs/PLAN.md`'s own 39.1% figure predates both
+this and the form carrier, so it is now too high by an amount nobody has measured.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

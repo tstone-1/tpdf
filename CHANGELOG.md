@@ -236,6 +236,27 @@ never a bare success --- and it arrives when the file is already the redacted on
 That is the reason for the warning rather than an argument against it. Reach for
 *Redact and save as* while you are still deciding.
 
+### Changed: a region over a picture now removes the picture
+
+Drag a region over a photo, a figure or a scanned page and it used to remove
+nothing --- the report said so, but the words were still there. It removes them
+now, and the picture's own bytes leave the file rather than just going undrawn.
+
+**A picture is removed whole.** Removing part of one means decoding and
+re-encoding it, so the choice is all of it or none of it, and none of it means a
+region dragged over a face leaves the face. The redactions panel says how many
+pictures a region takes before you commit --- worth reading, because a rectangle
+over a line of text can cover a background image you were not thinking about, and
+afterwards there is no copy of it in the file.
+
+**A picture the document draws more than once is refused instead.** Removing it
+where you marked it would leave every other copy, and the picture itself, in the
+file.
+
+Drawings are still left where they are, and the report still says so: a rule
+under a line of text is on almost every page, so removing those would damage
+every redaction.
+
 ### Changed: redaction reaches text that a page draws through a reusable block
 
 Some documents draw a line of text not on the page itself but inside a reusable

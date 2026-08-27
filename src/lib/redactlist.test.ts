@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RedactList, noticeFor, rowLineFor, warningFor } from "./redactlist";
+import { RedactList, noticeFor, rowLineFor, takesFor, warningFor } from "./redactlist";
 import {
   PageMap,
   pageId,
@@ -114,6 +114,57 @@ describe("the four things a row can say about its words", () => {
 
   it("treats whitespace under the region as no words at all", () => {
     expect(rowLineFor("  \n ").text).toBe("No text in this region");
+  });
+});
+
+describe("what a row says a removal will take", () => {
+  /** A plan taking some text and `many` pictures. */
+  function taking(many: number): RegionPlan {
+    return {
+      shows: [0],
+      taking: "clause 4",
+      unhandled: [],
+      images: Array.from({ length: many }, (_, at) => at),
+    };
+  }
+
+  it("says nothing at all when the plan has not arrived", () => {
+    expect(takesFor(undefined)).toBe("");
+  });
+
+  it("says nothing when the region takes no picture", () => {
+    // The control. A sentence that appeared on every region would be one a
+    // reader stops seeing, and this is the only state in which it must not.
+    expect(takesFor(taking(0))).toBe("");
+  });
+
+  it("says a picture goes whole, because that cannot be undone afterwards", () => {
+    expect(takesFor(taking(1))).toBe("Also removes a picture it covers, whole");
+  });
+
+  it("counts them when there is more than one", () => {
+    expect(takesFor(taking(3))).toBe("Also removes 3 pictures it covers, whole");
+  });
+
+  it("survives a plan written before pictures were removable", () => {
+    // The field is optional because a reply from an older build carries none,
+    // and reading `.length` off `undefined` would break the panel rather than
+    // the sentence.
+    expect(takesFor({ shows: [0], taking: "clause 4", unhandled: [] })).toBe("");
+  });
+
+  it("is a different sentence from the warning, not the same one", () => {
+    // They are opposite facts about one region -- what goes and what survives --
+    // and a reader seeing them merged would have to work out which half was
+    // which. Only one of the two is a reason to distrust the result.
+    const both: RegionPlan = {
+      shows: [0],
+      taking: "clause 4",
+      unhandled: [{ at: 0, kind: "path" }],
+      images: [0],
+    };
+    expect(takesFor(both)).toBe("Also removes a picture it covers, whole");
+    expect(warningFor(both)).toBe("Also covers a path, which a removal cannot take");
   });
 });
 

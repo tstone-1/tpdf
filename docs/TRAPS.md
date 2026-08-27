@@ -17216,3 +17216,41 @@ named for that half.
 The general form is worth carrying: **when a thing can be shared two ways, a count
 of one kind of sharing is not a sharing check.** The same question arises for an
 image XObject, for a shared appearance stream, and for a page tree node.
+
+### Removing the `Do` stops the page drawing the picture, and leaves every byte of it in the file
+
+A redaction over an image is two removals and only the second one redacts. Deleting
+the `Do` operation stops the page drawing it. The stream is still an object, still
+reachable from the page's `/Resources /XObject`, and every pixel is still there for
+anyone who opens the file with anything other than a viewer. So the resource entry
+goes too, which leaves the object unreferenced — and `sweep::collect`, which the
+rewrite already runs, is what actually takes the bytes.
+
+**It did not run.** `rewrite`'s sweep is conditional, on a list of the carriers that
+orphan objects: dropped pages, a move, an annotation, an outline entry, a form field.
+An image removal orphans a stream in exactly the same way and was not on that list, so
+the first working version deleted the `Do`, deleted the resource entry, and wrote the
+picture out anyway.
+
+Nothing in the unit suite could see it, and the reason is worth carrying. Every
+existing sweep test calls `sweep::collect` **by hand** — the widget-appearance one
+says so in its own body, asserting the object survives before the sweep and not after.
+That is a test of the sweep. It is not a test of the *condition*, and the condition is
+what was wrong.
+
+What found it was a probe check written as *the picture's own pixels are not in the
+written bytes*, against a fixture that stores its images **uncompressed** so the grep
+is possible at all. The two candidate checks read almost the same and are not:
+
+| check | what it proves | what it misses |
+|---|---|---|
+| the page no longer draws the image | the `Do` went | every byte of the picture, still in the file |
+| the image's pixels are not in the bytes | it was redacted | nothing |
+
+Two things to carry. **When a removal unlinks rather than deletes, the check belongs on
+the bytes, not on the structure** — and a fixture whose payload is compressed cannot
+support that check, so the fixture is part of the test rather than an input to it. And
+**a conditional cleanup is a list, so every new caller has to join it**; the list had
+four entries and no mechanism to make a fifth announce itself. The unit test written
+afterwards drives the *rewrite* rather than the sweep, which is the level the defect
+lived at.

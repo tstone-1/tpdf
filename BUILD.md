@@ -370,12 +370,19 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # a removal that emptied the whole stream would pass everything else here. Then a
 # form the document draws twice is refused and no file is written.
 #
+# Its image section is the same shape on image-region.pdf, 8 checks, and the one
+# that matters greps the written bytes for the picture's OWN PIXELS rather than
+# asking what the page draws. Those read almost the same and are not: deleting
+# the `Do` stops the page drawing it and leaves every byte in the file. That is
+# why the fixture stores its images uncompressed, and it is what caught the
+# rewrite's sweep condition not listing image removals.
+#
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
-# form-xobject.pdf a runner CAN build -- it is pure Python with no system font --
-# so its section runs there.
+# form-xobject.pdf and image-region.pdf a runner CAN build -- both are pure
+# Python with no system font -- so those sections run there.
 #
-#   macOS arm64, 2026-08-27   36 checks, 0 failures
+#   macOS arm64, 2026-08-27   44 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

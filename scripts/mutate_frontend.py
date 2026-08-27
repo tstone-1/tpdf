@@ -4201,6 +4201,35 @@ MUTATIONS += [
         "counts the regions and says nothing has been removed",
     ),
     Mutation(
+        # Say nothing about the pictures a region takes. A reader commits without
+        # being told that a figure their rectangle happened to cover will be gone
+        # from the file, whole, with no copy left.
+        "redactlist: take a picture without saying so",
+        "src/lib/redactlist.ts",
+        "  const many = plan?.images?.length ?? 0;\n  if (many === 0) return \"\";",
+        "  const many = plan?.images?.length ?? 0;\n  if (many >= 0) return \"\";",
+        "says a picture goes whole, because that cannot be undone afterwards",
+    ),
+    Mutation(
+        # Say it on every region. A sentence that is always there is one a reader
+        # stops seeing, which costs exactly the regions where it matters.
+        "redactlist: claim every region takes a picture",
+        "src/lib/redactlist.ts",
+        "  if (many === 0) return \"\";\n  return many === 1",
+        "  if (false) return \"\";\n  return many === 1",
+        "says nothing when the region takes no picture",
+    ),
+    Mutation(
+        # Read the field without allowing for a reply that has none. A plan from
+        # a build before pictures were removable then breaks the panel rather
+        # than the sentence.
+        "redactlist: assume every plan carries a picture list",
+        "src/lib/redactlist.ts",
+        "  const many = plan?.images?.length ?? 0;",
+        "  const many = (plan as { images: number[] }).images.length;",
+        "survives a plan written before pictures were removable",
+    ),
+    Mutation(
         # Say nothing about regions that are on no page. They are listed with an
         # em dash for a page and no explanation of what that means.
         "redactlist: leave the unplaceable regions out of the notice",

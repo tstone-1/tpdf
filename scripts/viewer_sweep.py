@@ -171,6 +171,12 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "matrix, two lines in one form, a form nested in a form and a form "
         "drawn twice. No viewer path -- every check on it is about a removal",
     ),
+    (
+        "image-region",
+        "images a redaction region can be dragged over, for redact-apply-probe: "
+        "one marked, one beside it, and one drawn twice. Their pixels are "
+        "uncompressed so a probe can grep for them. No viewer path",
+    ),
 ]
 
 # The names come from the run's own JSON roll, never from the printed column.

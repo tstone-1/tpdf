@@ -166,6 +166,19 @@ export interface RegionPlan {
    * words still there is the confident lie `docs/PLAN.md` §6 forbids.
    */
   unhandled: { at: number; kind: string }[];
+  /**
+   * Which of the page's images the removal would delete.
+   *
+   * Ordinals, meaning nothing here for {@link shows}' reason; what the panel
+   * reads is **how many**. It has to say so, because taking a whole picture is
+   * the one consequence of a redaction a reader cannot undo afterwards and
+   * cannot see from the region they drew: an image is removed entire, since
+   * removing part of one means decoding and re-encoding it.
+   *
+   * Optional because a reply written before images were removable carries no
+   * such field, and a panel that read `undefined.length` would break on it.
+   */
+  images?: number[];
 }
 
 /**

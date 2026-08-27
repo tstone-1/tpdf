@@ -2043,11 +2043,20 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
     // indirect action dictionary, and both name the page the redacted heading
     // was on. `forget` removes the entry and every reference to it; what it
     // cannot remove is what the entry was the only reference *to*.
+    //
+    // And so does one that took a **picture**, which is the same shape a fourth
+    // time and is the one this condition was missing: `remove_images` deletes
+    // the `Do` and drops the resource entry, which leaves the image stream
+    // reachable from nothing --- and an unswept file still holds every byte of
+    // it. `redact-apply-probe` found that by grepping the written bytes for the
+    // picture's own pixels rather than asking what the page draws, which are
+    // different claims and only the second is a redaction.
     if !dropped.is_empty()
         || moved
         || redacted.annots > 0
         || redacted.outline > 0
         || redacted.fields > 0
+        || redacted.images > 0
     {
         crate::sweep::collect(&mut doc)?;
     }
@@ -2204,6 +2213,16 @@ fn apply_redactions(
             done.shows += took.removed;
         }
 
+        // **Then the pictures.** A region over an image removed nothing until
+        // 2026-08-27, which on a scanned page is a redaction that does not
+        // redact. Removing the `Do` stops the page drawing it; dropping the
+        // resource entry is what leaves the object unreachable, so the sweep
+        // this rewrite already runs takes the bytes with it.
+        let took =
+            crate::redact::remove_images(doc, page, &redaction.images, redaction.image_objects)
+                .map_err(Refusal::from)?;
+        done.images += took.removed;
+
         // **The annotations, and every reference to them.** An annotation over
         // the region is `docs/PLAN.md` §6's *Annotations* row: its `/Contents`
         // is a comment about the words, routinely quoting them, and every reader
@@ -2340,6 +2359,8 @@ struct Redacted {
     outline: usize,
     /// Form fields removed, the widgets under them included.
     fields: usize,
+    /// Images removed, counted by the `Do` operations that drew them.
+    images: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
@@ -8410,6 +8431,8 @@ mod tests {
             taking: Vec::new(),
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }];
         assert!(
             !plan.is_identity(),
@@ -8444,6 +8467,8 @@ mod tests {
             taking: Vec::new(),
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }];
         assert!(
             !both.only_adds_marks(),
@@ -8470,6 +8495,8 @@ mod tests {
                 taking: Vec::new(),
                 form_shows: Vec::new(),
                 form_text_objects: Vec::new(),
+                images: Vec::new(),
+                image_objects: 0,
             },
             crate::edits::PlannedRedaction {
                 source: 0,
@@ -8479,6 +8506,8 @@ mod tests {
                 taking: Vec::new(),
                 form_shows: Vec::new(),
                 form_text_objects: Vec::new(),
+                images: Vec::new(),
+                image_objects: 0,
             },
         ];
         let mut doc = Document::with_version("1.7");
@@ -8541,6 +8570,8 @@ mod tests {
                 taking: Vec::new(),
                 form_shows: Vec::new(),
                 form_text_objects: Vec::new(),
+                images: Vec::new(),
+                image_objects: 0,
             }],
         )
         .expect("the plan is applicable");
@@ -8622,6 +8653,8 @@ mod tests {
                 taking: Vec::new(),
                 form_shows: Vec::new(),
                 form_text_objects: Vec::new(),
+                images: Vec::new(),
+                image_objects: 0,
             }],
         )
         .expect("the plan is applicable");
@@ -8984,6 +9017,8 @@ mod tests {
             taking: vec!["Holding the secret account here".to_string()],
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }]
     }
 
@@ -9233,6 +9268,91 @@ mod tests {
         );
     }
 
+    /// A rewrite that removed only a picture still sweeps.
+    ///
+    /// **The condition in `rewrite`, not the sweep itself**, and that is the
+    /// distinction the check below it does not make: every other test here calls
+    /// `sweep::collect` by hand, so all of them passed while a rewrite that
+    /// removed a picture never swept at all. The `Do` went, the resource entry
+    /// went, the stream stayed reachable from nothing, and every byte of the
+    /// picture was written out.
+    ///
+    /// `redact-apply-probe` found it by grepping the written bytes for the
+    /// picture's own pixels; this is that finding at a level `cargo test`
+    /// reaches, and it is why the check greps rather than asking what the page
+    /// draws --- those are different claims and only the second is a redaction.
+    #[test]
+    fn a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file() {
+        let scratch = Scratch::new("sweep-image");
+        let source = scratch.join("in.pdf");
+        let out = scratch.join("out.pdf");
+        // Four bytes that occur nowhere else in the file, so "gone" is
+        // unambiguous. Uncompressed for the same reason the fixture is.
+        const PIXELS: &[u8] = &[0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef];
+        std::fs::write(&source, document_drawing_an_image(PIXELS)).expect("write fixture");
+
+        let mut plan = plan_of(&[0]);
+        plan.redactions = vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: Vec::new(),
+            text_objects: 0,
+            areas: Vec::new(),
+            taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
+            images: vec![0],
+            image_objects: 1,
+        }];
+        write_copy(&source, &plan, &out).expect("save");
+        let bytes = std::fs::read(&out).expect("read back");
+        assert!(
+            !bytes.windows(PIXELS.len()).any(|w| w == PIXELS),
+            "the picture's own pixels are still in the written file"
+        );
+    }
+
+    /// A one-page document drawing one uncompressed image.
+    fn document_drawing_an_image(pixels: &[u8]) -> Vec<u8> {
+        use lopdf::Stream;
+        let mut doc = Document::with_version("1.7");
+        let image = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Width" => 2,
+                "Height" => 1,
+                "ColorSpace" => "DeviceRGB",
+                "BitsPerComponent" => 8,
+            },
+            pixels.to_vec(),
+        ));
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            b"q 10 0 0 10 0 0 cm /Im0 Do Q\n".to_vec(),
+        ));
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image } },
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut out = Vec::new();
+        doc.save_to(&mut out).expect("serialise the fixture");
+        out
+    }
+
     /// The appearance stream of a removed widget draws the value it held.
     ///
     /// **Not a new mechanism --- a property of the existing sweep, pinned here
@@ -9460,6 +9580,8 @@ mod tests {
             ],
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }]
     }
 
@@ -9514,6 +9636,8 @@ mod tests {
             taking: Vec::new(),
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }]
     }
 
@@ -9535,6 +9659,8 @@ mod tests {
             taking: Vec::new(),
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }];
         let mut doc = Document::with_version("1.7");
         let why = apply_redactions(&mut doc, &[(1, 0)], &past)
