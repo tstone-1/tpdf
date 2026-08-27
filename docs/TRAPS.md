@@ -16884,3 +16884,53 @@ neighbouring operation, since a refusal written too wide is the failure that mak
 class of document unopenable.
 
 Paid for on 2026-08-27.
+
+### The guard the type checker asked for made the loop bound untestable
+
+`areasFrom` turns a selection's flat run array into redaction regions, four numbers at a
+time. The first version bounded the loop and then checked the values:
+
+```ts
+for (let at = 0; at + 4 <= quads.length; at += 4) {
+  const [a, b, c, d] = quads.slice(at, at + 4);
+  if (a === undefined || b === undefined || c === undefined || d === undefined) continue;
+```
+
+The second line is not belt and braces anybody chose. `noUncheckedIndexedAccess` types every
+indexed read as possibly `undefined`, so the compiler *demands* a check the loop bound has
+already made unreachable — and the mutation aimed at the loop bound then reported SURVIVED,
+which was correct. Loosening the bound let a two-number tail through, the check caught it,
+and the behaviour did not move. The mirror mutation would have survived for the mirror
+reason.
+
+**Neither is testable, and the property is unguarded the day somebody deletes the remaining
+one.** That is worse than one guard, because two green mutations read as two covered
+mechanisms.
+
+**The fix is to keep one, not to strengthen the test.** The loop iterates unbounded and one
+`if (run.length < 4) continue;` decides, which is reachable, mutable, and the thing the
+compiler was asking for anyway:
+
+```ts
+for (let at = 0; at < quads.length; at += 4) {
+  const run = quads.slice(at, at + 4);
+  if (run.length < 4) continue;
+  const [a = NaN, b = NaN, c = NaN, d = NaN] = run;
+```
+
+**`NaN` rather than `0` for the defaults the type checker still wants**, and that is what
+makes the mutation *observable* rather than merely different. Deleting the length check lets a
+partial run through as `NaN`s; every comparison with `NaN` is false, so the "a side smaller
+than half a point is not a region" bound does not rescue it either, and a region equal to
+nothing is marked for removal. With `0` defaults the same mutation produces a plausible
+region at the page's corner — still wrong, and far more likely to be waved through by an
+assertion that only checks the count.
+
+**The general shape, and it is the ordinary case rather than an exotic one:** a strict
+compiler adds guards you did not write, in exactly the places you have already made
+impossible. Every such guard is a second mechanism, and this repository has already recorded
+what two mechanisms with one limit do to a mutation run. When a mutation survives against a
+guard the compiler asked for, the question is which of the two to delete — not which
+assertion to sharpen.
+
+Paid for on 2026-08-27.

@@ -3938,8 +3938,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- **Marking for redaction by selecting text, or by searching for a pattern** --- an email",
-        "- **Marking** <!-- built: file.print --> **for redaction by selecting text, or by searching for a pattern** --- an email",
+        "- **Marking for redaction by searching for a pattern** --- an email address, an order",
+        "- **Marking** <!-- built: file.print --> **for redaction by searching for a pattern** --- an email address, an order",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -4453,6 +4453,91 @@ MUTATIONS += [
         "      run: () => {},",
         "redact the open file through the command, with no value to carry",
     ),
+    Mutation(
+        # One box around the page's runs instead of one region per run. A
+        # bounding box over a selection that spans lines covers everything
+        # between them, which on a two-column page is the other column.
+        "redactsel: put one box around a page's runs rather than one per run",
+        "src/lib/selection.ts",
+        "    areas.push([left, top, right, bottom]);",
+        "    if (areas.length > 0) {\n      const [l, t, r, b] = areas[0] as [number, number, number, number];\n      areas[0] = [\n        Math.min(l, left),\n        Math.min(t, top),\n        Math.max(r, right),\n        Math.max(b, bottom),\n      ];\n    } else {\n      areas.push([left, top, right, bottom]);\n    }",
+        "turns three runs into three regions, and not into one box around them",
+    ),
+    Mutation(
+        # Keep a run with no width. It holds no glyph's centre, so it can only
+        # remove nothing -- and a row in the review list that will never remove
+        # anything makes the list overstate what is about to happen.
+        "redactsel: mark a run with no width",
+        "src/lib/selection.ts",
+        "    if (right - left < MIN_REDACTION_SIDE) continue;",
+        "",
+        "drops a run with no width and keeps the one beside it",
+    ),
+    Mutation(
+        # The other side, which a width-only check cannot see.
+        "redactsel: mark a run with no height",
+        "src/lib/selection.ts",
+        "    if (bottom - top < MIN_REDACTION_SIDE) continue;",
+        "",
+        "drops a run with no height and keeps the one beside it",
+    ),
+    Mutation(
+        # Measure the bound against the area rather than against each side. A
+        # run a hundredth of a point wide and two hundred long has a larger area
+        # than many real words and is still nothing.
+        "redactsel: bound the region's area rather than its sides",
+        "src/lib/selection.ts",
+        "    if (right - left < MIN_REDACTION_SIDE) continue;",
+        "    if ((right - left) * (bottom - top) < MIN_REDACTION_SIDE) continue;",
+        "measures the bound against each side rather than against the area",
+    ),
+    Mutation(
+        # Trust the sides as they arrive. Nothing in the viewer produces a run
+        # with its right edge left of its left one, and a region is a claim
+        # about what will be destroyed.
+        "redactsel: trust the order of a run's sides",
+        "src/lib/selection.ts",
+        "    const left = Math.min(a, c);\n    const right = Math.max(a, c);",
+        "    const left = a;\n    const right = c;",
+        "orders the sides rather than trusting them",
+    ),
+    Mutation(
+        # Read a trailing group that is not a whole run. The `NaN` defaults then
+        # reach the arithmetic, and every comparison with a `NaN` is false -- so
+        # the side bound does not stop it either and a region equal to nothing
+        # is marked for removal.
+        #
+        # The first version of this mutation loosened the LOOP BOUND instead and
+        # SURVIVED, correctly: the bound and this check were two mechanisms for
+        # one limit, so removing either left the other rescuing the partial run.
+        # The fix was to keep one of them, not to strengthen the test.
+        "redactsel: read a trailing group that is not a whole run",
+        "src/lib/selection.ts",
+        "    if (run.length < 4) continue;",
+        "",
+        "drops a trailing group that is not a whole run",
+    ),
+    Mutation(
+        # Arm the drag on a reader who has already said which words they meant.
+        # The palette entry looks correct throughout, which is why this command
+        # is aimed separately in the window harness rather than covered by its
+        # neighbour.
+        "redactsel: reach the drag's action from the selection command",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.redactSelection(),",
+        "      run: () => actions.redactRegion(),",
+        "reaches the selection's own action rather than the drag's",
+    ),
+    Mutation(
+        # Offer it with nothing selected. It would mark nothing, and a command
+        # that runs and does nothing reads as a broken command -- which is the
+        # same reason the four mark commands carry this guard.
+        "redactsel: offer the selection command with nothing selected",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.hasSelection(),\n      run: () => actions.redactSelection(),",
+        "      enabled: withDocument,\n      run: () => actions.redactSelection(),",
+        "withholds redacting a selection when there is none",
+    ),
 ]
 
 TEST_FILES = [
@@ -4516,6 +4601,13 @@ TEST_FILES = [
     # guard -- a mutation that cannot go red and a mutation nothing catches are
     # indistinguishable from the verdict alone.
     "src/lib/checkreport.test.ts",
+    # Added 2026-08-27 with `edit.redactSelection`, in the same edit as the
+    # mutations below rather than after them. `selection.ts` had been covered by
+    # no mutation until this increment gave it a decision worth one, which is
+    # the pattern the notes above name for the ninth time: the tests come first,
+    # the mutations a step later, and this list is remembered a step later
+    # still.
+    "src/lib/selection.test.ts",
     # Added 2026-08-21 with the properties dialog. Eighth time, and it happened
     # exactly as the note above predicts: the tests were written first, the
     # mutations second, and this list is edited only by whoever writes the

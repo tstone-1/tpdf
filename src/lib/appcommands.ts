@@ -155,6 +155,20 @@ export interface AppActions {
    */
   redactRegion(): void;
   /**
+   * Marks the selected text for removal, one region per line it covers.
+   *
+   * The other way of saying what to remove, and the one that needs no aim: a
+   * dragged rectangle is a guess about where the words are, and this names the
+   * glyphs. `docs/PLAN.md` §6's step 1 either way --- it destroys nothing, the
+   * regions join the review list, and undo takes them back off.
+   *
+   * Separate from {@link redactRegion} rather than a mode of it, for
+   * {@link markSelection}'s reason one level up: a reader who has selected the
+   * words wants them marked in one press, and a command that asked which way
+   * would cost two.
+   */
+  redactSelection(): void;
+  /**
    * Move the page the reader is on `delta` slots along, in the document.
    *
    * A signed step rather than a pair of commands, so that the two palette
@@ -829,6 +843,23 @@ export function registerAppCommands(
       title: "Redact region by dragging",
       enabled: withDocument,
       run: () => actions.redactRegion(),
+    },
+    {
+      // **The other way to say what to remove**, and the one a reader reaches
+      // for first: selecting the words needs no aim, where a dragged rectangle
+      // is a guess about where they are. It sits directly under the drag so
+      // that a reader who found one has met the other.
+      //
+      // Guarded on the selection the way the four mark commands are, and for
+      // the same reason rather than by copying them: with nothing selected it
+      // would mark nothing, and a command that runs and does nothing reads as a
+      // broken command. No chord, for `edit.highlightSelection`'s reason --- a
+      // chord for something that only ever applies to a selection teaches
+      // itself badly.
+      id: "edit.redactSelection",
+      title: "Redact selection",
+      enabled: () => withDocument() && actions.hasSelection(),
+      run: () => actions.redactSelection(),
     },
     {
       // **Crop by dragging.** The one page operation only the reader can decide:

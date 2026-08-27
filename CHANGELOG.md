@@ -39,6 +39,21 @@ A pending redaction is an instruction about the document rather than something
 added to it. It is kept apart from your marks at every level and cannot be
 written into a saved file, a copy or an extract by any route.
 
+### Added: mark a redaction by selecting the words
+
+**Redact selection**, beside *Redact region by dragging*. Select the text and
+mark it: one region per line it covers, and no aiming. A dragged rectangle is a
+guess about where the words are; a selection names them.
+
+Everything after that is the same --- the regions join the review list, the
+overlay draws them in red with the words still readable underneath, undo takes
+them back off, and nothing is removed until you apply it.
+
+**One region per line, not one box around the selection.** A box drawn around a
+selection that runs over several lines also covers whatever sits between them:
+the other column on a two-column page, a figure, a note in the margin. A region
+you did not mark is a region you cannot check.
+
 ### Added: review what you marked, in the sidebar
 
 **Show redactions** opens a new sidebar tab listing every region you have marked,

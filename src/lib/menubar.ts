@@ -228,6 +228,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // are about content ceasing to exist, and both are palette-and-menu only,
       // with no accelerator, for the reason `edit.deletePage` states.
       "edit.redactRegion",
+      "edit.redactSelection",
       "edit.deletePage",
     ],
   },

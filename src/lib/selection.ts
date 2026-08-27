@@ -139,3 +139,72 @@ export class Selection {
     return pages;
   }
 }
+
+/**
+ * The smallest region worth marking for removal, in PDF points.
+ *
+ * A run can come back with no width --- a selection that ends exactly where a
+ * line does contributes an empty run at the line's end --- and a region with no
+ * area contains no glyph's centre, so it would remove nothing. Dropping it is
+ * not tidiness: every region a reader is shown is a row they have to read and
+ * certify, and a row that will never remove anything makes the list overstate
+ * what the removal is going to do.
+ *
+ * Half a point rather than zero, because a run one hundredth of a point wide is
+ * the same nothing arrived at by rounding.
+ */
+export const MIN_REDACTION_SIDE = 0.5;
+
+/**
+ * Turns one page's selection runs into regions to mark for removal.
+ *
+ * The viewer hands over a **flat** array --- four numbers per run, `left`,
+ * `top`, `right`, `bottom`, already out of the crop and in the file's own space
+ * --- because that is the shape `Edits.mark` takes. `Edits.redact` documents
+ * itself as taking a region in exactly that space, so the two consumers agree
+ * by what is written down rather than by anyone's reading of the geometry.
+ *
+ * **One region per run, not one box around the page's runs.** A bounding box
+ * over a selection that spans lines covers everything between them, which on a
+ * two-column page is the other column and on any page is whatever sits in the
+ * margin. Route B removes a whole text-showing operation, so the *lines* that
+ * go are the same either way; what differs is everything else the rectangle
+ * swallowed, and a region a reader did not draw is a region they cannot check.
+ *
+ * The sides are ordered rather than trusted. Nothing in the viewer produces a
+ * run with `right` left of `left`, and a region is a claim about what will be
+ * destroyed, so it costs two comparisons to stop depending on that.
+ *
+ * A trailing group of fewer than four numbers is dropped. It cannot arrive from
+ * `selectionQuadsByPage`, which builds the array four at a time --- which is
+ * exactly why the loop must not read past the end on the day something else
+ * calls this.
+ */
+export function areasFrom(
+  quads: readonly number[],
+): [number, number, number, number][] {
+  const areas: [number, number, number, number][] = [];
+  for (let at = 0; at < quads.length; at += 4) {
+    const run = quads.slice(at, at + 4);
+    // **One mechanism, deliberately.** The obvious form bounds the loop at
+    // `at + 4 <= quads.length` *and* checks here, and then neither can be
+    // tested: whichever one a mutation removes, the other still rescues the
+    // partial run, so both report SURVIVED and the property is unguarded the
+    // day somebody deletes the remaining one. See `docs/TRAPS.md` on two
+    // mechanisms with the same limit.
+    if (run.length < 4) continue;
+    // `NaN` rather than `0` as the default `noUncheckedIndexedAccess` asks
+    // for. It is unreachable past the check above, and if it ever is reached a
+    // `NaN` propagates into a region that equals nothing, where a `0` would be
+    // a plausible coordinate at the page's corner.
+    const [a = NaN, b = NaN, c = NaN, d = NaN] = run;
+    const left = Math.min(a, c);
+    const right = Math.max(a, c);
+    const top = Math.min(b, d);
+    const bottom = Math.max(b, d);
+    if (right - left < MIN_REDACTION_SIDE) continue;
+    if (bottom - top < MIN_REDACTION_SIDE) continue;
+    areas.push([left, top, right, bottom]);
+  }
+  return areas;
+}

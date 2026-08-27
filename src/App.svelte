@@ -16,6 +16,7 @@
     type AppActions,
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
+  import { areasFrom } from "./lib/selection";
   import {
     ContextMenu,
     menuForSurface,
@@ -397,6 +398,7 @@
     deletePage: () => void deletePage(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
+    redactSelection: () => void redactSelection(),
     movePage: (delta) => void movePage(delta),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
@@ -482,6 +484,35 @@
     // the millisecond by the next `applyEdit`.
     if (marks.length > 0 && edits) {
       sidebar?.setMarks(markRows(edits.state.marks, edits.map));
+    }
+  }
+
+  /**
+   * Marks the selected text for removal, one region per line it covers.
+   *
+   * **`markSelection`'s shape and a different destination.** Both take their
+   * geometry from `selectionQuadsByPage`, which is what makes the two agree
+   * about space without either of them reasoning about it: those quads are what
+   * `Edits.mark` takes, and `Edits.redact` documents itself as taking a region
+   * in exactly that space. A selection spanning pages becomes regions on each,
+   * because a region belongs to one page the way `/QuadPoints` does.
+   *
+   * One region per run rather than one box per page --- see {@link areasFrom},
+   * where that decision lives and can be tested. Nothing here decides anything:
+   * the model accepts or refuses, and `applyEdit` has already said so.
+   *
+   * **No `covered` bookkeeping**, which is the one line of `markSelection` that
+   * is missing rather than moved. That map exists so a mark's row can show the
+   * words it sits on; a redaction's row is about what will be *removed*, and
+   * the panel gets that from the backend's own plan rather than from what the
+   * reader had selected when they asked. The two would be the same string today
+   * and would part company the moment route B took a whole line.
+   */
+  async function redactSelection(): Promise<void> {
+    for (const { page, quads } of viewer?.selectionQuadsByPage() ?? []) {
+      for (const area of areasFrom(quads)) {
+        await applyEdit((e) => e.redact(page, area));
+      }
     }
   }
 
