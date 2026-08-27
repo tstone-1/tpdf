@@ -2284,13 +2284,18 @@ what it read is one nobody can run twice.
 The cheap half is 1.8 s over 40 documents and 2,893 regions; with the gate on it is about 12 s
 for a twentieth of that sample, which is why the two halves are separable.
 
-**`--full-width` is worth knowing about before you read a gate number.** `ocr_gate::strip`
-renders the rows a rectangle covers as a full-width tile, so widening a region leaves the row
-band identical and should move no verdict. It moves them a great deal --- 54 *still readable*
-became 9 on one sample --- because a wider region covers more words, which changes the control
-the gate may choose, which changes the render scale. The region feeds two mechanisms, so
-varying it isolates neither, and the gate half's counts are **verdicts and not a leak rate**.
-The probe's own report says so on the line beneath them.
+**`--full-width` is a control that failed to isolate what it was aimed at, and is kept for
+what it found instead.** `ocr_gate::strip` renders the rows a rectangle covers as a
+full-width tile, so widening a region leaves the row band identical and should move no
+verdict. It moves them a great deal --- 54 *still readable* became 9 on one sample --- because
+a wider region covers more words, which changes the control the gate may choose, which
+changes the render scale. The region feeds two mechanisms, so varying it isolates neither;
+what it establishes is that **the verdict turns heavily on the control choice**, which
+nothing else here measures.
+
+The gate half reads `ocr_gate::judge_all` rather than `run`, so it has the engine's own
+rectangles and reports how many surviving reads were inside the region's own columns. Since
+`ocr_gate::mask_columns` that has been all of them, on 104 regions and again on 448.
 
 ### `redact-gate-probe`: does the redaction gate certify a clean file and refuse a dirty one
 
@@ -2312,9 +2317,20 @@ to nothing.
 
 | fixture | result |
 |---|---|
-| `text-base14`, `text-marked`, `rotated`, `links`, `text-cid`, `outline-simple` | 5/5 |
-| `columns` | 0/0, 1 skipped --- no word of six characters or more to redact |
+| `columns`, `text-base14`, `text-marked`, `rotated`, `links`, `text-cid`, `outline-simple` | 8/8 |
 | `encodings` | 0/0, 1 skipped --- one text object is every word on the page, so no control survives |
+
+**`columns` ran 0/0 until 2026-08-27 and it is the fixture that matters most.** Its longest
+word is `alpha`, five characters, and the target filter was six --- so the one corpus that
+puts a *second* text object on the region's own rows was the one this skipped. Every other
+fixture draws a line as a single text object, so redacting a word in it takes the whole line
+and there is no neighbour left to misread. Lowering the floor to five moves no other corpus,
+because the choice is the longest word on the page.
+
+Removing the `ocr_gate::mask_columns` call turns `columns.pdf` red on two checks --- *the
+redacted file is certified* and *a word beside the region on its own rows is not reported*
+--- and no other corpus on any. That is the control for the mask, and it is the only fixture
+where the right rule and the wrong rule disagree.
 
 **The control is the same gate run against the file that was not redacted.** A gate that
 certifies everything passes *the redacted file has no reasons* perfectly, so that row on its
@@ -3957,6 +3973,14 @@ starts at 0 and increments within the month.
    the one Windows-only caller, and sixteen commits went by at 15/15 before a rehearsal tag
    turned both runner legs red. That leg reported *four* failures, since clippy, test and
    bins all stop at the same `error[E0308]`.
+
+   ⚠ **If it does not return in about a minute, it is wedged rather than slow --- kill it and
+   run it again.** On 2026-08-27 it sat for 15 min 45 s with its log frozen at the banner,
+   and the same command on the same tree finished in **21.83 s** a minute later. The
+   instrument is CPU time, not elapsed: `ps -eo pid,etime,time,args | grep
+   "[x]86_64-pc-windows-msvc"` showed 2 s of CPU across sixteen minutes. Add `--verbose`
+   while diagnosing --- output is captured and shown only on failure otherwise, which is
+   exactly wrong for a run that never ends. See the trap of that name.
 
    It is `cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` with
    the environment that command needs, and it does not link, so no MSVC linker is involved.

@@ -1247,6 +1247,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A form drawn twice on one page is one reference in the object graph (the graph count sees a form shared across pages and is blind to one drawn twice here; two counts from two sources, and the fixture carries the shape the count cannot see)
 - Removing the `Do` stops the page drawing the picture, and leaves every byte of it in the file (the rewrite's sweep is conditional on a list an image removal was not on; every existing sweep test calls `collect` BY HAND, so none of them could see it — the check belongs on the bytes, and the fixture has to be uncompressed for that check to exist)
 - A comment saying two rules are the same is not a check that they are (a form's children were refused wherever they sat on the sheet: 174 of 1,131 refusals over 40 documents, 15.4%, about objects nowhere near the region — and every image refusal in the corpus was one; no fixture could tell the two rules apart, because every form's unreachable child sat on top of its own text)
+- Filtering the engine's answer is weaker than not showing it the pixels (masking the band gives 6 surviving reads where filtering by box gives 9 — three spans whose box overlapped the region while their ink was beside it; and the gate went from certifying 1 region in 6 to 3 in 5)
 - The gate reads a band of rows, so a region narrower than its line is judged with its neighbours (54 of 104 regions the removal took whole came back "still reads as text", and that number is NOT a leak count — the rectangles never leave the module; the control moved 54 to 9 for a reason it was not aimed at, because the region feeds the control chooser as well as the strip)
 
 ### Text matching, and scripts that are not English
@@ -1640,6 +1641,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An uninhabited type carries its impossibility into every caller
 - A `null` that means "inferred" is not a `null` that means "unknown"
 - A directory that exists is not the library you need
+- A wedged compile and a slow one look identical, and CPU time is the only thing that separates them (15 min 45 s with 2 s of CPU, against 21.83 s for the same command re-run; the build lock, the pipe and the log were all checked and were not it, the mechanism is undetermined, and the fix is to kill and re-run before theorising)
 - A stale Windows resource artifact disables the cross-check and reads as a broken checkout (the 26.8.8 trailing-slash leftover in local form; the installed case has a hook and the developer case did not)
 - The comment naming the grep that would have caught it, four times running (the fix for a stale COUNT was a stale RULE, and the doc comment even wrote out the command; four probes could not bind on Windows and it was found by accident -- if a command is short enough for a comment it is short enough for a test)
 - A list of documented blockers can be wrong in the direction that looks thorough

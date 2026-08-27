@@ -17,25 +17,27 @@
 //!    only by writing the file and reading the pixels back, so it runs over a
 //!    sample of the sample.
 //!
-//! **The second answer is a count of verdicts and is not a leak rate**, and the
-//! difference matters enough to be the first thing said about it.
+//! **The second answer was not a leak rate until 2026-08-27**, and it is worth
+//! knowing why rather than reading the number on trust.
 //! [`tpdf_lib::ocr_gate`]'s `strip` renders *"the rows one point rectangle
-//! covers, rendered as a full-width tile"* --- so a region narrower than the
-//! line it sits on is judged together with its neighbours, which the removal
-//! was never asked to take and must not. Under route B a removal takes the
-//! whole text-showing operation, so on a producer that emits a line as one
-//! operation the band really is blank; on one that emits a line as several, the
-//! surviving fragments are read and reported as *the removed area still reads as
-//! text*. This probe cannot tell those apart, because [`tpdf_lib::ocr_gate::run`]
-//! returns sentences and the rectangles the engine found are not in them.
+//! covers, rendered as a full-width tile"*, so a region narrower than the line
+//! it sits on was judged together with its neighbours --- which the removal was
+//! never asked to take and must not. `ocr_gate::mask_columns` blanks those
+//! columns now, and this probe reads
+//! [`tpdf_lib::ocr_gate::judge_all`] rather than `run`, so it has the engine's
+//! own rectangles and can say whether a surviving read was inside the region or
+//! beside it. On the same 104 regions: 54 still-readable became 6, and all 6
+//! are inside.
 //!
-//! `--full-width` widens every region to the page and is the control that sized
-//! how much the verdict turns on something other than the pixels under the
-//! region: the row band is identical either way, and on the same sample the
-//! *still readable* count went from 54 to 9. Not because the columns are read
-//! --- `strip` provably ignores them --- but because a wider region covers more
+//! `--full-width` widens every region to the page. It was the control that
+//! failed to isolate what it was aimed at, and it is kept because what it found
+//! instead is worth having: the row band is identical either way, so no verdict
+//! should have moved, and 54 became 9. Not because the columns were read ---
+//! `strip` provably ignored them --- but because a wider region covers more
 //! words, which moves the control the gate chooses, which moves the render
-//! scale, which moves what the engine reads.
+//! scale, which moves what the engine reads. **The verdict turns heavily on the
+//! control choice**, which is a fact about the gate that nothing else here
+//! measures.
 //!
 //! **The second question is not the one the plan asks, and that is the finding
 //! this probe was built to check.** §6 says of the 39.1%: *"Step 4 is what turns
@@ -62,7 +64,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
-use tpdf_lib::ocr_gate::{self, GatePage};
+use tpdf_lib::ocr::Legibility;
+use tpdf_lib::ocr_gate::{self, GatePage, Judged, PageOutcome};
 use tpdf_lib::render::{Backend, RenderService};
 use tpdf_lib::{save, worker, worker_child};
 
@@ -104,11 +107,21 @@ struct Tally {
     /// narrower than its line is judged with the neighbours the removal was
     /// right to keep. See the module note.
     caught: usize,
+    /// Of those, the ones where **every** span the engine read overlaps the
+    /// region's own columns. Since `ocr_gate::mask_columns` this should be all
+    /// of them, and the gap is how much the band still reads that is not the
+    /// region.
+    caught_inside: usize,
     /// The gate could not answer.
     unanswered: usize,
-    /// A reason this probe did not recognise. Never silently bucketed: an
-    /// outcome nobody classified is a finding about this probe.
-    unclassified: Vec<String>,
+    /// Of those, the ones where the **control** was not read back --- the engine
+    /// ran and could not read text of that size on that image, so its finding
+    /// nothing else says nothing. Counted apart because it is the cost of
+    /// masking: a mostly-blank probe image is a different image to recognise.
+    no_control: usize,
+    /// The gate showed the region unreadable, which is the only verdict that
+    /// may be presented as clean.
+    proved: usize,
 }
 
 pub fn main() {
@@ -449,21 +462,59 @@ fn run_gate(
         return;
     }
     tally.gate_pages += pages.len();
-    tally.gate_regions += pages.iter().map(|p| p.regions.len()).sum::<usize>();
-    for reason in ocr_gate::run(service, &out.to_string_lossy(), None, &pages) {
-        // Classified by what the reason says, and an unrecognised one is
-        // reported rather than bucketed: `ocr_gate::reason` has three arms and a
-        // probe that quietly folded a fourth into either count would report a
-        // number nobody could check.
-        if reason.contains("still reads as text") {
-            tally.caught += 1;
-        } else if reason.contains("could not be shown unreadable")
-            || reason.contains("could not be read back")
-            || reason.contains("could not be reopened")
-        {
-            tally.unanswered += 1;
-        } else {
-            tally.unclassified.push(reason);
+    let asked: Vec<[f32; 4]> = pages.iter().flat_map(|p| p.regions.clone()).collect();
+    tally.gate_regions += asked.len();
+
+    // The verdicts, not the sentences. `ocr_gate::reason` throws the engine's
+    // own rectangles away, so a probe reading its output could not tell text
+    // that survived *inside* the region from a neighbour beside it on the same
+    // rows -- which was the whole reason this half's numbers could not be
+    // reported as a leak rate before `ocr_gate::mask_columns` existed.
+    match ocr_gate::judge_all(service, &out.to_string_lossy(), None, &pages) {
+        Judged::Refused(_) => tally.unanswered += asked.len(),
+        Judged::Pages(judged) => {
+            let mut at = 0usize;
+            for page in &judged {
+                match &page.outcome {
+                    // One answer for the page, so every region on it is
+                    // unanswered rather than one of them being.
+                    PageOutcome::Whole(_) => {
+                        let here = pages
+                            .iter()
+                            .find(|p| p.page == page.page)
+                            .map_or(0, |p| p.regions.len());
+                        tally.unanswered += here;
+                        at += here;
+                    }
+                    PageOutcome::Regions(verdicts) => {
+                        for verdict in verdicts {
+                            let region = asked.get(at).copied().unwrap_or_default();
+                            at += 1;
+                            match verdict {
+                                Legibility::Illegible { .. } => tally.proved += 1,
+                                Legibility::NotVerified { why } => {
+                                    tally.unanswered += 1;
+                                    if why.contains("control token") {
+                                        tally.no_control += 1;
+                                    }
+                                }
+                                Legibility::Legible { found } => {
+                                    tally.caught += 1;
+                                    // Inside the region's own columns, or beside
+                                    // it? After masking there should be no
+                                    // second kind, and a measurement that takes
+                                    // that on trust is not a measurement.
+                                    if found.iter().all(|item| {
+                                        item.rect[0] < region[2] && region[0] < item.rect[2]
+                                    }) {
+                                        tally.caught_inside += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     let _ = std::fs::remove_file(&out);
@@ -508,31 +559,38 @@ fn report(t: &Tally, seconds: f32) {
             t.gate_regions, t.gate_pages
         );
         println!(
-            "  the row band still reads as text   {:>6}  ({:.2}%)",
+            "  still reads as text               {:>6}  ({:.2}%)",
             t.caught,
             pct(t.caught, t.gate_regions)
         );
-        println!("      not a leak count --- the band is the page's full width");
+        println!(
+            "      of those, every span inside the region's own columns: {}",
+            t.caught_inside
+        );
         println!(
             "  could not be shown unreadable     {:>6}  ({:.2}%)",
             t.unanswered,
             pct(t.unanswered, t.gate_regions)
         );
         println!(
-            "  shown unreadable                  {:>6}  ({:.2}%)",
-            t.gate_regions
-                .saturating_sub(t.caught)
-                .saturating_sub(t.unanswered),
-            pct(
-                t.gate_regions
-                    .saturating_sub(t.caught)
-                    .saturating_sub(t.unanswered),
-                t.gate_regions
-            )
+            "      of those, the control was not read back: {}",
+            t.no_control
         );
-    }
-    for reason in &t.unclassified {
-        println!("[WARN] a reason this probe does not classify: {reason}");
+        println!(
+            "  shown unreadable                  {:>6}  ({:.2}%)",
+            t.proved,
+            pct(t.proved, t.gate_regions)
+        );
+        // Every region has exactly one verdict, and three counters is the shape
+        // a miscount hides in. The `[WARN]` is the check: a probe whose own
+        // arithmetic does not close cannot be quoted.
+        let counted = t.caught + t.unanswered + t.proved;
+        if counted != t.gate_regions {
+            println!(
+                "[WARN] {counted} verdicts for {} regions --- this probe has lost some",
+                t.gate_regions
+            );
+        }
     }
     println!("\nran in {seconds:.1}s");
 }

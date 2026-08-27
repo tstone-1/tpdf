@@ -3164,11 +3164,85 @@ the engine reads. So the experiment did not isolate the variable it was aimed at
 what it establishes instead is worth more: **the gate's verdict on identical pixels of
 interest turns heavily on its control choice.**
 
-**Not done, and ranked here because this is where it was found:** the gate's spatial unit.
-The band should be masked to the region's columns before the engine sees it, and the
-verdicts should carry the rectangles so a caller can tell a leak from a neighbour. Both
-are one increment, and neither can be measured until the first is built --- a check that
-cannot distinguish the two outcomes is not a check.
+~~**Not done, and ranked here because this is where it was found:** the gate's spatial
+unit.~~ **Built the same day --- see below.**
+
+#### The gate reads the region, not the row --- built 2026-08-27
+
+`ocr_gate::mask_columns` blanks every pixel of the region strip outside the region's own
+columns, before [`stack`] appends the control and before the engine sees any of it. White,
+which is what `stack` already fills its margins and gap with, so the mask reads as more
+blank space rather than as an edge.
+
+**It is sound rather than approximate, and the reason is route B.** `redact::covered` marks
+a text object when it *overlaps* the region, and a removal takes the whole text-showing
+operation --- so after a correct removal no glyph overlapping the region survives.
+Everything the mask erases is therefore something the reader did not mark and the removal
+was right to keep, and there is no half-erased survivor to misread, because a survivor
+straddling the edge would have been removed with its operation.
+
+**The A/B, same 104 regions on 40 real documents, one variable:**
+
+| | full-width band | masked to the region |
+|---|---|---|
+| still reads as text | 54 (51.9%) | **6 (5.8%)** |
+| ...with every span inside the region's own columns | 9 | **6** |
+| could not be shown unreadable | 32 | 35 |
+| ...because the control was not read back | 20 | 23 |
+| **shown unreadable --- the only verdict that certifies** | **18 (17.3%)** | **63 (60.6%)** |
+
+So **45 of the 54 were neighbours**, and the gate went from certifying one region in six to
+three in five. That is the number that matters: step 4 shipped able to speak about almost
+nothing, and the reason was geometry rather than the engine.
+
+**The third row is the argument for masking rather than filtering.** The obvious cheaper fix
+is to keep the full-width band and discard any span whose box falls outside the region ---
+and that reading gave **9** where masking gives 6. Three spans had a box overlapping the
+region's columns while their ink was mostly beside it, which is `docs/TRAPS.md`'s *an OCR
+engine's bounding box is a detection, not a measurement* arriving in the obvious repair. Not
+showing the engine the pixels is stronger than arguing with it afterwards.
+
+**The cost is stated rather than buried**: three more regions where the control was not read
+back. A mostly-blank probe image is a different image to recognise, and the engine's answer
+on it is the engine's business. Three regions moved from a wrong *legible* to an honest *not
+verified*, which is the direction §6 requires.
+
+**A larger sample agrees and leaves one question open.** 448 gate regions over the same 40
+documents: 5.4% still reads as text against 5.8%, 55.8% shown unreadable against 60.6%, and
+**every one of the 24 surviving reads had every span inside the region's own columns** ---
+which is what the masked gate is supposed to guarantee and is now measured rather than
+argued. The open question is the other column: 174 regions could not be shown unreadable and
+only 68 of those were the control. **The remaining 106 have no attributed reason**, and that
+is where the next increment on this subsystem should look, because a third of the gate's
+regions returning *not verified* for reasons nobody has bucketed is the same shape as the
+39.1% this section started with.
+
+**And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
+one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose
+`PageOutcome` is either `Whole` (the page could not be judged at all: no control survived,
+the probe image will not fit, the control strip would not render) or `Regions`, one
+`Legibility` per region in the order they were given. `run` is a thin wrapper that flattens
+that into sentences, so the two cannot come to disagree about what a page's outcome was.
+
+The two variants are a type rather than a convention because a page-wide refusal used to be
+returned as a one-element list of *sentences*, which a caller counting them reads as one
+region judged. `redact-gate-probe` asserts both shapes.
+
+**The fixture that discriminates is `columns.pdf`, and it already existed.** Every other
+corpus draws a line as one text object, so redacting a word in it takes the whole line and
+leaves no neighbour on those rows to misread; `columns.pdf` puts `alpha n` and `beta n` at
+the same *y* as two separate objects. Its longest word is `alpha`, five characters, and the
+probe's target filter was *six* --- so the one fixture that could tell the two rules apart
+was the one it skipped. Lowering the floor to five moves no other corpus, because the choice
+is the longest word on the page.
+
+**Evidence.** Six unit tests on `mask_columns` --- the columns it keeps, rounding outward
+rather than inward, a region wider than the page, a region dragged right to left, a region
+off the page refused rather than blanked, and a strip that is not whole rows --- five
+mutations each caught by the test named for it, and `redact-gate-probe` at 8/8 on seven
+corpora. Removing the mask call turns `columns.pdf` red on two checks and no other corpus on
+any, which is the control: it is the only fixture where the right rule and the wrong rule
+disagree.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

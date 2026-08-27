@@ -17300,6 +17300,43 @@ The general form, and it is cheap to apply: when a comment says one rule is the 
 another, the two rules are in different functions and only one of them has been read
 recently. Grep for the other one.
 
+### Filtering the engine's answer is weaker than not showing it the pixels
+
+The fix for the entry below is `ocr_gate::mask_columns`: blank every pixel of the region
+strip outside the region's own columns before the engine sees any of it. The obvious
+cheaper fix is the other one --- keep the full-width band, and discard any span whose box
+falls outside the region. Both were measured on the same 104 regions across 40 real
+documents, and they do not agree.
+
+| | full-width band | masked to the region |
+|---|---|---|
+| still reads as text | 54 | **6** |
+| ...with every span inside the region's own columns | 9 | **6** |
+| shown unreadable --- the only verdict that certifies | 18 | **63** |
+
+**The middle row is the finding.** Filtering by box says 9 where masking says 6. Three
+spans had a bounding box overlapping the region's columns while their ink was mostly
+beside it --- which is *an OCR engine's bounding box is a detection, not a measurement*,
+already an entry here, arriving inside the repair for a different one. A box is what the
+engine thought it saw; the pixels are what it was given. Argue with the second.
+
+The general shape: when a check can be made by **restricting the input** or by **filtering
+the output**, the input is the one that cannot be wrong about itself. The output filter
+needs the producer's own coordinates to be accurate, and this producer says in its own
+documentation that they are not.
+
+**Sound rather than approximate, and only because of route B.** `redact::covered` marks a
+text object when it *overlaps* the region, and a removal takes the whole text-showing
+operation, so after a correct removal no glyph overlapping the region survives. Everything
+the mask erases is something the reader did not mark. Change the removal to split a text
+object and this reasoning has to be redone, because a half-erased survivor at the boundary
+is something an engine reads as something.
+
+**The honest cost, which is three regions**: on a mostly-blank probe image the control was
+not read back three times more often. That moves them from a wrong *legible* to an honest
+*not verified*, which is the safe direction, and it is stated rather than left for someone
+to find in the numbers.
+
 ### The gate reads a band of rows, so a region narrower than its line is judged with its neighbours
 
 `ocr_gate::strip`'s own doc comment says it: *"The rows one point rectangle covers,
@@ -17336,3 +17373,44 @@ worth more than the experiment's stated aim.
 The lesson for the next experiment rather than for the next feature: an input that feeds
 two mechanisms cannot isolate either. The region reaches both the strip and the control
 chooser, so varying it was never going to say anything about the strip alone.
+
+**Closed the same day** by `ocr_gate::mask_columns`, and the entry stays because the
+measurement is the useful part: 45 of the 54 were neighbours, and a gate that could
+certify one region in six now certifies three in five. The entry above it records why the
+fix is a mask rather than a filter over the engine's own boxes.
+
+### A wedged compile and a slow one look identical, and CPU time is the only thing that separates them
+
+`scripts/check_windows.py` sat for **15 minutes 45 seconds** on 2026-08-27 with its log
+frozen at the first line. The same command, killed and re-run on the same tree a minute
+later, finished in **21.83 seconds** and reported `[OK]`.
+
+**The instrument is `ps -o time=`, not `etime=`.** The two `clippy-driver` processes had
+used **2.08 and 2.22 seconds of CPU** across those sixteen minutes: 0.2% of one core. A
+compile that is merely slow burns a core; one that is blocked burns nothing, and from the
+outside both are a command that has not returned. Elapsed time cannot tell them apart and
+neither can the log, because a captured-output run prints nothing until it exits.
+
+```
+ps -eo pid,etime,time,args | grep "[x]86_64-pc-windows-msvc"
+```
+
+Three things that were checked and were **not** the cause, so the next person does not
+re-check them: nothing external held the build lock (`lsof .cargo-lock` showed only cargo's
+own `cargo check`); `subprocess.run(capture_output=True)` reads both pipes concurrently, so
+it is not the pipe-fill deadlock that shape usually implies; and the log's 79 bytes were the
+script's own banner, not a truncated compile.
+
+**The mechanism is undetermined and this entry says so rather than guessing.** The session
+had `pkill`ed several `cargo clippy` runs mid-flight over the preceding hour, which is the
+obvious suspect and is not evidence. What is durable is the diagnosis: **kill it and re-run
+before spending any time on a theory**, because a re-run costs 22 seconds and settles it.
+
+The general form is already here twice for other tools --- `codex exec` at 0.04 s of CPU over
+17 minutes, and a `pgrep` wait loop satisfied on its first evaluation. This is the same
+question asked of a compiler: *is it working, or is it merely running?*
+
+**Run it with `--verbose`.** `check_windows.py` captures its output by default and shows it
+only on failure, which is right for a green run and is exactly wrong while diagnosing one
+that never ends. Streaming is what turned the second attempt from a guess into `Checking
+tpdf` followed by `Finished in 21.83s`.

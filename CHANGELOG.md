@@ -236,6 +236,25 @@ never a bare success --- and it arrives when the file is already the redacted on
 That is the reason for the warning rather than an argument against it. Reach for
 *Redact and save as* while you are still deciding.
 
+### Fixed: redacting a word no longer reports the rest of the sentence
+
+After removing what you marked, tpdf renders the area back and has an OCR engine
+read it, so that words baked into a picture cannot slip through. It was reading
+the whole width of the page at that height, not the area you marked --- so
+redacting a name in the middle of a line reported the rest of the line as though
+the removal had left it. It had, and it was right to.
+
+It reads your area now. Across 40 real documents, **redactions tpdf can prove
+clean went from one region in six to three in five**, and of the reads that
+remain, every one is inside the area that was marked.
+
+Two smaller consequences, both stated because they are visible. Three regions in
+that sample moved to *could not be checked* rather than a wrong *still readable*
+--- a nearly blank picture is harder for an engine to work on, and an honest "not
+checked" is the answer tpdf owes you. And *Redact every match* and *Redact
+selection* benefit most: both mark parts of lines, which is exactly the case that
+was being misreported.
+
 ### Fixed: a redaction is no longer refused over something on the other side of the page
 
 Redact a line inside a letterhead, a chart or any other reusable block, and tpdf

@@ -5750,6 +5750,54 @@ MUTATIONS += [
         "an_unmeasurable_child_stays_unmeasurable",
     ),
     Mutation(
+        # Keep the columns outside the region instead of blanking them, which is
+        # what the gate did until 2026-08-27: `strip` renders full-width rows, so
+        # every word beside the region on those rows was read back as though the
+        # removal had left it. 54 of 104 regions on 40 real documents.
+        "mask: keep the columns beside the region",
+        "src/ocr_gate.rs",
+        "        row[..left * 4].fill(0xFF);\n        row[right * 4..].fill(0xFF);",
+        "        let _ = (left, right);",
+        "masking_keeps_the_region_s_own_columns_and_blanks_the_rest",
+    ),
+    Mutation(
+        # Blank one side only. A region is two edges and a check that reads one
+        # of them passes on this.
+        "mask: blank only what is left of the region",
+        "src/ocr_gate.rs",
+        "        row[right * 4..].fill(0xFF);",
+        "        let _ = right;",
+        "masking_keeps_the_region_s_own_columns_and_blanks_the_rest",
+    ),
+    Mutation(
+        # Round the region's edges inward rather than outward. A glyph whose ink
+        # lands in the boundary pixel is then half erased, and half a glyph is
+        # something an engine reads as something.
+        "mask: round the region's edges inward",
+        "src/ocr_gate.rs",
+        "    let left = (rect[0].min(rect[2]) * scale).floor().max(0.0) as usize;",
+        "    let left = (rect[0].min(rect[2]) * scale).ceil().max(0.0) as usize;",
+        "masking_widens_to_whole_pixels_rather_than_clipping_the_region",
+    ),
+    Mutation(
+        # Blank a strip whose columns miss the page instead of refusing. It then
+        # reads as nothing, and reading nothing is the answer that certifies.
+        "mask: blank a region that is not on the page at all",
+        "src/ocr_gate.rs",
+        "    if left >= right {\n        return Err(format!(",
+        "    if false {\n        return Err(format!(",
+        "a_region_beside_the_page_is_refused_rather_than_blanked",
+    ),
+    Mutation(
+        # Take the rectangle's corners in the order given rather than by min and
+        # max. A region dragged right to left then masks nothing.
+        "mask: assume a region is dragged left to right",
+        "src/ocr_gate.rs",
+        "    let left = (rect[0].min(rect[2]) * scale).floor().max(0.0) as usize;\n    let right = ((rect[0].max(rect[2]) * scale).ceil().max(0.0) as usize).min(width_px as usize);",
+        "    let left = (rect[0] * scale).floor().max(0.0) as usize;\n    let right = ((rect[2] * scale).ceil().max(0.0) as usize).min(width_px as usize);",
+        "a_region_reversed_left_to_right_masks_the_same_columns",
+    ),
+    Mutation(
         # Report every child of a form the region touches, which is what this did
         # until 2026-08-27. A form is routinely a whole-page container, so a
         # region over one line inside a letterhead was refused for every picture

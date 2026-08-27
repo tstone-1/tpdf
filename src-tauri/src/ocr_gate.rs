@@ -334,6 +334,75 @@ pub fn stack(
     Ok((out, total, placed))
 }
 
+/// Blanks every pixel of a strip outside a rectangle's columns.
+///
+/// **The strip is the page's full width and the region usually is not.**
+/// [`strip`] renders the rows a rectangle covers as a full-width tile, because
+/// two crops of different widths do not stack; without this, everything on those
+/// rows is shown to the engine, and `adjudicate` calls anything it reads *the
+/// removed area still reads as text*. A reader who marks a name in the middle of
+/// a sentence --- which is what *Redact selection* and *Redact every match* both
+/// produce --- would be told their redaction could not be shown clean because
+/// the rest of the sentence is still there, which it is supposed to be. Measured
+/// over 40 real documents before this existed: 54 of 104 regions the removal
+/// took whole came back that way.
+///
+/// **Blanking is sound rather than approximate, and the reason is route B.**
+/// [`crate::redact::covered`] marks a text object when it *overlaps* the region,
+/// and a removal takes the whole text-showing operation, so after a correct
+/// removal no glyph overlapping the region survives. Everything the mask erases
+/// is therefore something the reader did not mark and the removal was right to
+/// keep --- there is no half-erased survivor to misread, because a survivor
+/// straddling the edge would have been removed.
+///
+/// White (`0xFF` in every channel) is what [`stack`] fills its margins and gap
+/// with, so the mask reads to the engine as more of the same blank space rather
+/// than as an edge.
+///
+/// # Errors
+///
+/// If the strip is not a whole number of `width_px`-pixel rows --- the same
+/// refusal [`stack`] makes, and for the same reason: pixels that came across a
+/// process boundary must be checked rather than sliced on trust.
+///
+/// If the rectangle's columns miss the strip entirely. That is the column
+/// analogue of [`rows_of`] answering `None`, and it must be a refusal for the
+/// same reason: a fully blanked strip reads as nothing, and reading nothing is
+/// the answer that certifies.
+pub fn mask_columns(
+    strip: &mut [u8],
+    width_px: u32,
+    rect: [f32; 4],
+    scale: f32,
+) -> Result<(), String> {
+    let stride = (width_px as usize).saturating_mul(4);
+    if stride == 0 || scale <= 0.0 || !rect.iter().all(|v| v.is_finite()) {
+        return Err(format!(
+            "a region at {rect:?} pt cannot be masked on a strip {width_px} px wide at scale \
+             {scale}"
+        ));
+    }
+    if strip.is_empty() || strip.len() % stride != 0 {
+        return Err(format!(
+            "the region strip is {} bytes, which is not a whole number of {width_px}-pixel rows",
+            strip.len()
+        ));
+    }
+    let left = (rect[0].min(rect[2]) * scale).floor().max(0.0) as usize;
+    let right = ((rect[0].max(rect[2]) * scale).ceil().max(0.0) as usize).min(width_px as usize);
+    if left >= right {
+        return Err(format!(
+            "the area at {rect:?} pt is not on a page {width_px} px wide, so there was nothing to \
+             read for the check"
+        ));
+    }
+    for row in strip.chunks_exact_mut(stride) {
+        row[..left * 4].fill(0xFF);
+        row[right * 4..].fill(0xFF);
+    }
+    Ok(())
+}
+
 /// The device rows a point rectangle covers, clamped to a page and never empty.
 ///
 /// This is how a rectangle becomes a tile request: the strips are rendered at
@@ -430,8 +499,76 @@ pub fn run(
     password: Option<String>,
     pages: &[GatePage],
 ) -> Vec<String> {
+    match judge_all(service, path, password, pages) {
+        Judged::Refused(why) => vec![why],
+        Judged::Pages(pages) => pages
+            .iter()
+            .flat_map(|page| match &page.outcome {
+                PageOutcome::Whole(verdict) => reason(page.page, verdict).into_iter().collect(),
+                PageOutcome::Regions(verdicts) => verdicts
+                    .iter()
+                    .filter_map(|verdict| reason(page.page, verdict))
+                    .collect::<Vec<_>>(),
+            })
+            .collect(),
+    }
+}
+
+/// What the gate decided about one page.
+///
+/// **Two shapes rather than one, because a page has two ways to end.** A page
+/// that could not be judged at all --- no control survived the removal, the probe
+/// image will not fit, the control strip would not render --- has one answer, not
+/// one per region, and flattening those into a list of the same length as
+/// `regions` would say the gate looked at each of them when it looked at none.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageOutcome {
+    /// The page could not be judged. Always a non-certifying verdict.
+    Whole(Legibility),
+    /// One verdict per region, in the order [`GatePage::regions`] gave them.
+    Regions(Vec<Legibility>),
+}
+
+/// One page's regions and what the engine made of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageVerdicts {
+    /// The page this is about, zero-based, as [`GatePage::page`] carried it.
+    pub page: u32,
+    /// What the gate decided.
+    pub outcome: PageOutcome,
+}
+
+/// What a whole gate run decided.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Judged {
+    /// Nothing was judged, and the reason is about the machine or the file
+    /// rather than about any region: there is no engine on this platform, or the
+    /// written file would not reopen. One sentence, not one per region.
+    Refused(String),
+    /// One entry per [`GatePage`] handed in, in that order.
+    Pages(Vec<PageVerdicts>),
+}
+
+/// [`run`], with the verdicts kept instead of flattened into sentences.
+///
+/// **The rectangles are the point.** [`reason`] turns a
+/// [`Legibility::Legible`] into a sentence quoting the first few spans, and the
+/// boxes the engine reported go with the rest --- so a caller could not ask
+/// *where* on the page the surviving text was, which is the difference between a
+/// leak inside the region and a neighbour beside it. Since
+/// [`mask_columns`] there should be no neighbours left, and a measurement that
+/// can only take that on trust is not a measurement.
+///
+/// `run` is a wrapper over this rather than a second walk of the same pages, so
+/// the two cannot come to disagree about what a page's outcome was.
+pub fn judge_all(
+    service: &crate::render::RenderService,
+    path: &str,
+    password: Option<String>,
+    pages: &[GatePage],
+) -> Judged {
     if pages.is_empty() {
-        return Vec::new();
+        return Judged::Pages(Vec::new());
     }
     // The engine first, because it is the one refusal that is about the machine
     // rather than about this document: on a platform with no engine there is no
@@ -439,52 +576,58 @@ pub fn run(
     // per region saying the same thing.
     let mut engine = match crate::ocr_worker::OcrWorker::spawn() {
         Ok(worker) => worker,
-        Err(why) => return vec![format!("the removed areas could not be read back. {why}")],
+        Err(why) => {
+            return Judged::Refused(format!("the removed areas could not be read back. {why}"))
+        }
     };
 
     let opened =
         match wait(|reply| service.open(std::path::PathBuf::from(path), false, password, reply)) {
             Ok(info) => info,
             Err(refusal) => {
-                return vec![format!(
-                "the written file could not be reopened to read the removed areas back, so they \
-                 could not be shown unreadable: {}",
-                refusal.reason
-            )]
+                return Judged::Refused(format!(
+                    "the written file could not be reopened to read the removed areas back, so \
+                     they could not be shown unreadable: {}",
+                    refusal.reason
+                ))
             }
         };
 
-    let mut why = Vec::new();
-    for page in pages {
-        why.extend(gate_one_page(service, &mut engine, opened.id, page));
-    }
+    let judged = pages
+        .iter()
+        .map(|page| PageVerdicts {
+            page: page.page,
+            outcome: gate_one_page(service, &mut engine, opened.id, page),
+        })
+        .collect();
 
     let _: Result<(), String> = wait(|reply| service.close(opened.id, reply));
-    why
+    Judged::Pages(judged)
 }
 
-/// One page of [`run_ocr_gate`]: choose a control, render the strips, adjudicate.
+/// One page of [`judge_all`]: choose a control, render the strips, adjudicate.
 ///
 /// Split out because the page loop has three ways to end early and a `continue`
 /// carrying a reason is how the version written inline came to have a path that
 /// skipped a region silently.
+///
+/// Those three ends are [`PageOutcome::Whole`] and the fourth is
+/// [`PageOutcome::Regions`]. They are a type rather than a convention because a
+/// page-wide refusal used to be returned as a one-element list of *sentences*,
+/// which a caller counting them would have read as one region judged.
 fn gate_one_page(
     service: &crate::render::RenderService,
     engine: &mut crate::ocr_worker::OcrWorker,
     doc: u32,
     page: &GatePage,
-) -> Vec<String> {
+) -> PageOutcome {
     let survivors = surviving(&page.words, &page.regions, &page.taking);
     let choice = match crate::ocr::control_from_page(&survivors, &page.regions) {
         Ok(choice) => choice,
         Err(too_easy) => {
-            return vec![reason(
-                page.page,
-                &crate::ocr::Legibility::NotVerified {
-                    why: format!("{too_easy}"),
-                },
-            )
-            .unwrap_or_default()]
+            return PageOutcome::Whole(Legibility::NotVerified {
+                why: format!("{too_easy}"),
+            })
         }
     };
 
@@ -506,11 +649,7 @@ fn gate_one_page(
         capacity,
     ) {
         Ok(scale) => scale,
-        Err(why) => {
-            return vec![
-                reason(page.page, &crate::ocr::Legibility::NotVerified { why }).unwrap_or_default(),
-            ]
-        }
+        Err(why) => return PageOutcome::Whole(Legibility::NotVerified { why }),
     };
     let width_px = (page.width_pt * scale).ceil() as u32;
     let height_px = (page.height_pt * scale).ceil() as u32;
@@ -526,23 +665,20 @@ fn gate_one_page(
         scale,
     ) {
         Ok(rows) => rows,
-        Err(why) => {
-            return vec![
-                reason(page.page, &crate::ocr::Legibility::NotVerified { why }).unwrap_or_default(),
-            ]
-        }
+        Err(why) => return PageOutcome::Whole(Legibility::NotVerified { why }),
     };
 
-    let mut why = Vec::new();
-    for region in &page.regions {
-        let verdict = judge(
-            service, engine, doc, page, *region, &choice, &control, width_px, height_px, scale,
-        );
-        if let Some(reason) = reason(page.page, &verdict) {
-            why.push(reason);
-        }
-    }
-    why
+    PageOutcome::Regions(
+        page.regions
+            .iter()
+            .map(|region| {
+                judge(
+                    service, engine, doc, page, *region, &choice, &control, width_px, height_px,
+                    scale,
+                )
+            })
+            .collect(),
+    )
 }
 
 /// One region's verdict: render it, stack the control under it, ask the engine.
@@ -559,10 +695,16 @@ fn judge(
     height_px: u32,
     scale: f32,
 ) -> crate::ocr::Legibility {
-    let under = match strip(service, doc, page.page, region, width_px, height_px, scale) {
+    let mut under = match strip(service, doc, page.page, region, width_px, height_px, scale) {
         Ok(rows) => rows,
         Err(why) => return crate::ocr::Legibility::NotVerified { why },
     };
+    // The strip is the page's full width and the region usually is not, so
+    // everything beside it on those rows would otherwise be read back as though
+    // the removal had left it. It did, and it was right to.
+    if let Err(why) = mask_columns(&mut under, width_px, region, scale) {
+        return crate::ocr::Legibility::NotVerified { why };
+    }
     let (pixels, height, band) = match stack(&under, control, width_px, scale) {
         Ok(built) => built,
         Err(why) => return crate::ocr::Legibility::NotVerified { why },
@@ -612,6 +754,14 @@ pub fn unanswered(e: &crate::ocr::RecogniseError) -> Legibility {
 /// widths do not. Raw rather than PNG: the pixels are going straight into
 /// another process's buffer, and an encode and a decode either side of that
 /// would be paid for nothing.
+///
+/// **Full width is not what the engine is shown.** [`mask_columns`] blanks the
+/// region strip outside the region's own columns before it is stacked, because
+/// a full-width band judges a region together with everything beside it on those
+/// rows --- which for a name marked in the middle of a sentence is the rest of
+/// the sentence. This function is the render; the crop that matters happens
+/// after it and in memory, since the width is what makes stacking possible at
+/// all.
 fn strip(
     service: &crate::render::RenderService,
     doc: u32,
@@ -688,6 +838,78 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
 mod tests {
     use super::*;
     use crate::ocr::{EngineId, RecognisedItem};
+
+    /// A strip of `rows` rows, `width` pixels wide, every channel `0x11` --- a
+    /// value nothing here writes, so a pixel still holding it was not masked.
+    fn strip_of(width: u32, rows: u32) -> Vec<u8> {
+        vec![0x11; (width as usize) * (rows as usize) * 4]
+    }
+
+    /// The columns of `strip` that are **not** blank white, on its first row.
+    fn inked(strip: &[u8], width: u32) -> Vec<usize> {
+        (0..width as usize)
+            .filter(|x| strip[x * 4..x * 4 + 4] != [0xFF; 4])
+            .collect()
+    }
+
+    #[test]
+    fn masking_keeps_the_region_s_own_columns_and_blanks_the_rest() {
+        // 10 pt wide at scale 2 is 20 px; the region is points 3..7, so pixels
+        // 6..14. Two rows, because a mask that only did the first would pass a
+        // check that read one.
+        let mut strip = strip_of(20, 2);
+        mask_columns(&mut strip, 20, [3.0, 0.0, 7.0, 4.0], 2.0).expect("masked");
+        assert_eq!(inked(&strip, 20), (6..14).collect::<Vec<_>>());
+        assert_eq!(inked(&strip[20 * 4..], 20), (6..14).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn masking_widens_to_whole_pixels_rather_than_clipping_the_region() {
+        // 3.4..6.6 pt at scale 1 covers parts of pixels 3 and 6, and a region is
+        // a claim about what disappears --- so the pixel a glyph's edge lands in
+        // belongs to the region rather than to its neighbour.
+        let mut strip = strip_of(10, 1);
+        mask_columns(&mut strip, 10, [3.4, 0.0, 6.6, 1.0], 1.0).expect("masked");
+        assert_eq!(inked(&strip, 10), (3..7).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_region_wider_than_the_page_leaves_every_column() {
+        let mut strip = strip_of(8, 1);
+        mask_columns(&mut strip, 8, [-50.0, 0.0, 500.0, 1.0], 1.0).expect("masked");
+        assert_eq!(inked(&strip, 8), (0..8).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_region_reversed_left_to_right_masks_the_same_columns() {
+        // `Rect` is not normalised anywhere it comes from, and a drag rightwards
+        // and a drag leftwards are the same region.
+        let mut forwards = strip_of(20, 1);
+        let mut backwards = strip_of(20, 1);
+        mask_columns(&mut forwards, 20, [3.0, 0.0, 7.0, 4.0], 2.0).expect("masked");
+        mask_columns(&mut backwards, 20, [7.0, 0.0, 3.0, 4.0], 2.0).expect("masked");
+        assert_eq!(forwards, backwards);
+    }
+
+    #[test]
+    fn a_region_beside_the_page_is_refused_rather_than_blanked() {
+        // The column analogue of `rows_of` answering None, and it has to be a
+        // refusal for that function's reason: a fully blank strip reads as
+        // nothing, and reading nothing is the answer that certifies.
+        let mut strip = strip_of(10, 1);
+        let why = mask_columns(&mut strip, 10, [40.0, 0.0, 60.0, 1.0], 1.0)
+            .expect_err("a region off the page is not maskable");
+        assert!(why.contains("nothing to"), "{why}");
+        assert_eq!(inked(&strip, 10), (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_strip_that_is_not_whole_rows_is_refused() {
+        let mut strip = vec![0x11; 41];
+        let why = mask_columns(&mut strip, 10, [0.0, 0.0, 10.0, 1.0], 1.0)
+            .expect_err("41 bytes is not a whole number of 10-pixel rows");
+        assert!(why.contains("41 bytes"), "{why}");
+    }
 
     fn page(text: &str, boxes: &[[f32; 4]]) -> PageText {
         let codes: Vec<u32> = text.chars().map(|c| c as u32).collect();
