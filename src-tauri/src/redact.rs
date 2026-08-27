@@ -155,6 +155,23 @@ pub struct Plan {
     /// caller that acts anyway ships a page whose words are gone and whose
     /// picture of those words is not.
     pub unhandled: Vec<Unhandled>,
+    /// Ordinals among the page's **image objects**, ascending.
+    ///
+    /// The same ordinals [`remove_images`] addresses `Do` operations by, counted
+    /// the way [`shows`](Self::shows) counts show operators.
+    ///
+    /// **Whole images, and that is a decision rather than a limitation.** An
+    /// image cannot be partly removed without decoding and re-encoding it, so
+    /// the choice is all of it or none of it --- and none of it means a region
+    /// dragged over a face leaves the face. It is route B's posture one level up:
+    /// removing part of a line means removing the operation that drew it, and
+    /// removing part of a picture means removing the picture.
+    ///
+    /// The cost is a page whose background image goes because a reader redacted
+    /// one line over it. Measured on 41 real documents: 35 of 930 placed images
+    /// cover more than half their sheet, so that is 3.8% of images, and the panel
+    /// says how many pictures a region takes before anything is written.
+    pub images: Vec<usize>,
     /// Text inside a Form XObject that the region covers.
     ///
     /// `(form position in the page's object list, ordinal inside that form)`,
@@ -233,6 +250,20 @@ pub struct RegionPlan {
     /// when this disagrees with the operators `lopdf` finds, and the caller that
     /// applies a plan has no other way to learn it.
     pub text_objects: usize,
+    /// Which of the page's images the removal would delete.
+    ///
+    /// [`Plan::images`], carried through. The frontend reads how many there are
+    /// --- taking a whole picture is a consequence a reader has to see before
+    /// committing --- and the coordinator hands them to [`remove_images`].
+    #[serde(default)]
+    pub images: Vec<usize>,
+    /// How many image objects PDFium found on the page this region is on.
+    ///
+    /// [`text_objects`](Self::text_objects) for pictures, carried for the same
+    /// reason: [`remove_images`] refuses when it disagrees with the `Do`
+    /// operations `lopdf` finds.
+    #[serde(default)]
+    pub image_objects: usize,
     /// Text inside a Form XObject the region covers, as `(form, ordinal)`.
     ///
     /// [`Plan::form_shows`], carried through, and separate from
@@ -349,11 +380,19 @@ pub struct Applied {
 pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Plan {
     let mut plan = Plan::default();
     let mut text_ordinal = 0usize;
+    let mut images = 0usize;
     for (at, object) in objects.iter().enumerate() {
         let is_text = object.kind == "text";
         let ordinal = text_ordinal;
         if is_text {
             text_ordinal += 1;
+        }
+        // Counted for every image on the page whether or not the region covers
+        // it, because the ordinal is a position among the page's images and a
+        // counter that only advanced on a hit would name the wrong one.
+        let image_ordinal = images;
+        if object.kind == "image" {
+            images += 1;
         }
         // A form whose text this *can* reach is not unhandled, so the decision
         // about it is made below rather than here. Asking `forms` rather than
@@ -367,6 +406,8 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
         }
         if is_text {
             plan.shows.push(ordinal);
+        } else if object.kind == "image" {
+            plan.images.push(image_ordinal);
         } else if let Some(form) = inside {
             for (ordinal, text) in form.text.iter().enumerate() {
                 if overlaps(text.bounds, region) {
@@ -1159,20 +1200,12 @@ pub fn remove_form_shows(
         ));
     }
     let name = &names[which];
-    let drawn_here = names.iter().filter(|other| *other == name).count();
     let id = form_id(doc, page, name)?;
-
-    // Both shapes of sharing, and they are counted differently on purpose. A
-    // form drawn twice on this page is **one** reference in the object graph, so
-    // the graph count alone would call it unshared; a form drawn on two pages is
-    // two references and no more than one `Do` here.
-    let elsewhere = references_to(doc, id);
-    if drawn_here > 1 || elsewhere > 1 {
+    if let Some(times) = drawn_more_than_once(doc, id, &names, name) {
         return Err(format!(
-            "the text you marked is inside a form that this document draws {} time(s). Removing \
-             it would change every one of them, including places you did not mark, so nothing \
-             was removed.",
-            drawn_here.max(elsewhere)
+            "the text you marked is inside a form that this document draws {times} time(s). \
+             Removing it would change every one of them, including places you did not mark, so \
+             nothing was removed."
         ));
     }
 
@@ -1246,16 +1279,192 @@ pub fn remove_form_shows(
     })
 }
 
-/// The XObject names a page's content draws that resolve to Form XObjects.
+/// Deletes the numbered images from a page, and the bytes behind them.
 ///
-/// In the order the `Do` operations appear, which is the order PDFium enumerates
-/// the corresponding page objects in. An `XObject` name the page's resources do
-/// not list, or one whose `/Subtype` is not `/Form`, is skipped rather than
-/// refused: an image drawn by `Do` is an ordinary thing to find here and is not
-/// one of the objects being counted.
-fn form_draws(doc: &Document, page: ObjectId, content: &Content) -> Result<Vec<String>, String> {
+/// `ordinals` are positions among the page's **image objects**, as [`covered`]
+/// produces them. `image_objects` is how many PDFium reported, and is the same
+/// correspondence guard [`remove_shows`] applies to text.
+///
+/// ## Two removals, and only the second one redacts
+///
+/// Deleting the `Do` operation stops the page drawing the image. It does **not**
+/// remove the image: the stream is still an object in the file, reachable from
+/// the page's `/Resources /XObject`, and every byte of the picture is still
+/// there for anyone who opens the file with something other than a viewer. So
+/// the resource entry goes too, which leaves the object unreferenced --- and
+/// `sweep::collect`, which every rewrite runs, is what drops it. `redact-apply-
+/// probe` greps the written file for the image's own pixels rather than asking
+/// whether the page still draws it, because those are different claims and only
+/// the second is a redaction.
+///
+/// ## An image drawn more than once is refused
+///
+/// Removing one of its `Do` operations would hide it here and leave it drawn
+/// elsewhere, so the object stays reachable and the pixels stay in the file --- a
+/// redaction that removed the picture from the reader's view and nothing else.
+/// Removing *all* of them would take drawings the reader never marked. The same
+/// two counts as `remove_form_shows` and for the same reason: a graph reference
+/// count is blind to one page drawing the same image twice.
+///
+/// # Errors
+///
+/// The page having no content or it not decoding within [`MAX_CONTENT_BYTES`];
+/// the image-`Do` count disagreeing with `image_objects`; an ordinal naming no
+/// image; an image drawn more than once anywhere; or the rewritten stream not
+/// encoding.
+pub fn remove_images(
+    doc: &mut Document,
+    page: ObjectId,
+    ordinals: &[usize],
+    image_objects: usize,
+) -> Result<Removed, String> {
+    // **Before anything is read**, and it decides more than cost. This runs on
+    // every redaction and most of them name no picture, so without it an
+    // ordinary text removal pays a content decode --- and, the part that is
+    // observable, it is subject to the correspondence guard below. That guard
+    // protects a *removal by position*; a call that removes nothing cannot get a
+    // position wrong, so a page whose image count disagrees must still succeed
+    // when no picture was marked. `a_disagreeing_image_count_refuses_only_a_real
+    // _removal` is that property, and it is what makes this line testable rather
+    // than a speed-up nothing can see.
+    if ordinals.is_empty() {
+        return Ok(Removed {
+            shows_before: 0,
+            removed: 0,
+            carriers: 0,
+            struct_carriers: 0,
+        });
+    }
+
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    let mut content = Content::decode(&data)
+        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+
+    let drawn = xobject_draws(doc, page, &content, b"Image");
+    if drawn.len() != image_objects {
+        return Err(format!(
+            "the page draws {} image(s) and PDFium reported {image_objects}. Removing one by \
+             position needs those to agree, so nothing was removed.",
+            drawn.len()
+        ));
+    }
+
+    let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());
+    let mut names: Vec<String> = Vec::new();
+    for &ordinal in ordinals {
+        let (at, name) = drawn.get(ordinal).ok_or_else(|| {
+            format!(
+                "there is no image {ordinal} on this page, which draws {}",
+                drawn.len()
+            )
+        })?;
+        let id = form_id(doc, page, name)?;
+        let here: Vec<String> = drawn.iter().map(|(_, other)| other.clone()).collect();
+        if let Some(times) = drawn_more_than_once(doc, id, &here, name) {
+            return Err(format!(
+                "the picture you marked is drawn {times} time(s) in this document. Removing it \
+                 here would leave every other copy, and the picture itself, in the file --- so \
+                 nothing was removed."
+            ));
+        }
+        positions.push(*at);
+        names.push(name.clone());
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    let removed = positions.len();
+
+    for at in positions.into_iter().rev() {
+        content.operations.remove(at);
+    }
+    let encoded = content
+        .encode()
+        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+    doc.change_page_content(page, encoded)
+        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+
+    // **The half that redacts.** Without it the stream is still reachable from
+    // the page and every byte of the picture stays in the file.
+    forget_xobjects(doc, page, &names)?;
+
+    Ok(Removed {
+        shows_before: drawn.len(),
+        removed,
+        carriers: 0,
+        struct_carriers: 0,
+    })
+}
+
+/// Drops these names from a page's `/Resources /XObject`.
+///
+/// What makes the objects unreachable, so the rewrite's own `sweep::collect`
+/// drops them. Nothing here deletes an object directly: a removal that reached
+/// into `doc.objects` would have to know what else points at it, which is
+/// exactly the question the sweep answers by walking.
+fn forget_xobjects(doc: &mut Document, page: ObjectId, names: &[String]) -> Result<(), String> {
+    // Nothing to forget is not a page without a resource list, and the two must
+    // not share an outcome: the second is a contradiction worth refusing, the
+    // first is the ordinary case.
+    if names.is_empty() {
+        return Ok(());
+    }
+    let (resources, ids) = doc
+        .get_page_resources(page)
+        .map_err(|why| format!("the page's resources could not be read: {why}"))?;
+    // The dictionary may be the page's own or inherited through an indirect
+    // object; only the second can be edited in place, and the first is edited
+    // through the page. Both are reached the same way `get_page_resources`
+    // found them.
+    let xobject_id = resources
+        .and_then(|dict| dict.get(b"XObject").ok().cloned())
+        .and_then(|value| value.as_reference().ok());
+    if let Some(id) = xobject_id {
+        let dict = doc
+            .get_object_mut(id)
+            .and_then(|object| object.as_dict_mut())
+            .map_err(|why| format!("the page's XObject list could not be read: {why}"))?;
+        for name in names {
+            dict.remove(name.as_bytes());
+        }
+        return Ok(());
+    }
+    for id in ids.into_iter().chain(std::iter::once(page)) {
+        let Ok(dict) = doc
+            .get_object_mut(id)
+            .and_then(|object| object.as_dict_mut())
+        else {
+            continue;
+        };
+        let Some(Object::Dictionary(xobjects)) = dict
+            .get_mut(b"Resources")
+            .ok()
+            .and_then(|value| value.as_dict_mut().ok())
+            .and_then(|res| res.get_mut(b"XObject").ok())
+        else {
+            continue;
+        };
+        for name in names {
+            xobjects.remove(name.as_bytes());
+        }
+        return Ok(());
+    }
+    Err("the page's resources name no XObject list to remove from".to_string())
+}
+
+/// The XObject names a page's content draws whose `/Subtype` is `subtype`.
+///
+/// `(operation index, name)`, in the order the `Do` operations appear --- which
+/// is the order PDFium enumerates the corresponding page objects in.
+fn xobject_draws(
+    doc: &Document,
+    page: ObjectId,
+    content: &Content,
+    subtype: &[u8],
+) -> Vec<(usize, String)> {
     let mut out = Vec::new();
-    for operation in &content.operations {
+    for (at, operation) in content.operations.iter().enumerate() {
         if operation.operator != "Do" {
             continue;
         }
@@ -1263,20 +1472,34 @@ fn form_draws(doc: &Document, page: ObjectId, content: &Content) -> Result<Vec<S
             continue;
         };
         let name = String::from_utf8_lossy(raw).into_owned();
-        if let Ok(id) = form_id(doc, page, &name) {
-            let is_form = doc
-                .get_object(id)
-                .and_then(|object| object.as_stream())
-                .ok()
-                .and_then(|stream| stream.dict.get(b"Subtype").ok())
-                .and_then(|value| value.as_name().ok())
-                .is_some_and(|subtype| subtype == b"Form");
-            if is_form {
-                out.push(name);
-            }
+        let Ok(id) = form_id(doc, page, &name) else {
+            continue;
+        };
+        let is_wanted = doc
+            .get_object(id)
+            .and_then(|object| object.as_stream())
+            .ok()
+            .and_then(|stream| stream.dict.get(b"Subtype").ok())
+            .and_then(|value| value.as_name().ok())
+            .is_some_and(|found| found == subtype);
+        if is_wanted {
+            out.push((at, name));
         }
     }
-    Ok(out)
+    out
+}
+
+/// The XObject names a page's content draws that resolve to Form XObjects.
+///
+/// [`xobject_draws`] with the subtype fixed, rather than a second walk: the two
+/// differ in one byte string, and a near-copy of a walk is the shape that drifts
+/// --- `docs/TRAPS.md` records an existing mutation's anchor going ambiguous the
+/// moment this file grew one.
+fn form_draws(doc: &Document, page: ObjectId, content: &Content) -> Result<Vec<String>, String> {
+    Ok(xobject_draws(doc, page, content, b"Form")
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect())
 }
 
 /// The object a page's `/Resources /XObject` gives that name.
@@ -1305,6 +1528,30 @@ fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, Strin
             "the page's resources do not name an XObject {name}"
         )),
     }
+}
+
+/// How many times this document draws `id`, when that is more than once.
+///
+/// **Two counts from two sources, and neither is sufficient alone.** A reference
+/// count over the object graph sees an XObject named by two pages' resource
+/// dictionaries; it is blind to one page drawing the same XObject **twice**,
+/// which is one dictionary entry and two `Do` operations. `names` is what this
+/// page draws, in order, so the second shape is counted there.
+///
+/// One function rather than the same pair written out in `remove_form_shows` and
+/// `remove_images`: the *rule* is one rule, and near-copies of it are what
+/// `docs/TRAPS.md` records drifting. The **sentences** stay at the call sites,
+/// because a form and a picture are different things to a reader --- the same
+/// split [`Unhandled::sentence`] makes.
+fn drawn_more_than_once(
+    doc: &Document,
+    id: ObjectId,
+    names: &[String],
+    name: &str,
+) -> Option<usize> {
+    let here = names.iter().filter(|other| *other == name).count();
+    let elsewhere = references_to(doc, id);
+    (here > 1 || elsewhere > 1).then(|| here.max(elsewhere))
 }
 
 /// How many times the document's object graph refers to `id`.
@@ -1950,8 +2197,8 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
 #[cfg(test)]
 mod tests {
     use super::{
-        covered, covered_annots, is_show, overlaps, remove_form_shows, remove_shows, FormObject,
-        FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,
+        covered, covered_annots, is_show, overlaps, remove_form_shows, remove_images, remove_shows,
+        FormObject, FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -2088,6 +2335,218 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A page drawing `n` images, each its own object with its own marker byte.
+    fn page_with_images(n: usize) -> (Document, lopdf::ObjectId, Vec<lopdf::ObjectId>) {
+        let mut doc = Document::with_version("1.7");
+        let mut ids = Vec::new();
+        let mut xobjects = Dictionary::new();
+        let mut drawn = String::new();
+        for at in 0..n {
+            let id = doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Image",
+                    "Width" => 1,
+                    "Height" => 1,
+                },
+                vec![at as u8; 3],
+            ));
+            xobjects.set(format!("Im{at}"), Object::Reference(id));
+            drawn.push_str(&format!("q 1 0 0 1 0 0 cm /Im{at} Do Q\n"));
+            ids.push(id);
+        }
+        let content = doc.add_object(Stream::new(dictionary! {}, drawn.into_bytes()));
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => Object::Dictionary(xobjects) },
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        (doc, page, ids)
+    }
+
+    /// The XObject names a page's resources still list.
+    fn resource_names(doc: &Document, page: lopdf::ObjectId) -> Vec<String> {
+        let (resources, _) = doc.get_page_resources(page).expect("resources");
+        let Some(dict) = resources else {
+            return Vec::new();
+        };
+        let xobjects = dict
+            .get(b"XObject")
+            .and_then(|value| doc.dereference(value).map(|(_, v)| v))
+            .and_then(Object::as_dict)
+            .expect("xobjects");
+        let mut out: Vec<String> = xobjects
+            .iter()
+            .map(|(name, _)| String::from_utf8_lossy(name).into_owned())
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn image_at(bounds: [f32; 4]) -> PageObject {
+        PageObject {
+            bounds,
+            kind: "image".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_region_over_an_image_names_it_rather_than_refusing() {
+        // Until 2026-08-27 this was `unhandled`, which is a redaction that does
+        // nothing on a scanned page.
+        let objects = [image_at([0.0, 0.0, 100.0, 100.0])];
+        let plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
+        assert_eq!(plan.images, vec![0]);
+        assert!(plan.unhandled.is_empty());
+        assert!(plan.is_complete());
+    }
+
+    #[test]
+    fn an_image_ordinal_counts_images_and_not_every_object() {
+        // The counter advances on every image whether or not the region covers
+        // it, or the second picture on a page would be named as the first.
+        let objects = [
+            text([0.0, 0.0, 10.0, 10.0]),
+            image_at([0.0, 0.0, 10.0, 10.0]),
+            text([0.0, 0.0, 10.0, 10.0]),
+            image_at([0.0, 50.0, 100.0, 100.0]),
+        ];
+        let plan = covered(&objects, &[], [10.0, 60.0, 20.0, 70.0]);
+        assert_eq!(
+            plan.images,
+            vec![1],
+            "the second image, not the fourth object"
+        );
+        assert!(plan.shows.is_empty());
+    }
+
+    #[test]
+    fn a_region_that_misses_the_picture_does_not_name_it() {
+        let objects = [image_at([0.0, 0.0, 10.0, 10.0])];
+        assert_eq!(
+            covered(&objects, &[], [500.0, 500.0, 600.0, 600.0]),
+            Plan::default()
+        );
+    }
+
+    #[test]
+    fn removing_an_image_takes_its_draw_and_its_resource_entry() {
+        // Two removals, and only the second one redacts: without the resource
+        // entry the stream is still reachable and every byte of the picture
+        // stays in the file.
+        let (mut doc, page, _) = page_with_images(2);
+        let took = remove_images(&mut doc, page, &[1], 2).expect("removed");
+        assert_eq!(took.removed, 1);
+        assert_eq!(
+            operators(&doc, page),
+            vec!["q", "cm", "Do", "Q", "q", "cm", "Q"]
+        );
+        assert_eq!(resource_names(&doc, page), vec!["Im0".to_string()]);
+    }
+
+    #[test]
+    fn removing_one_image_leaves_the_other_drawn_and_listed() {
+        // The control. A removal that emptied the page would pass the check
+        // above on its first assertion and this is what tells them apart.
+        let (mut doc, page, _) = page_with_images(3);
+        remove_images(&mut doc, page, &[1], 3).expect("removed");
+        let names = resource_names(&doc, page);
+        assert_eq!(names, vec!["Im0".to_string(), "Im2".to_string()]);
+        assert_eq!(
+            operators(&doc, page)
+                .iter()
+                .filter(|op| *op == "Do")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn an_image_drawn_twice_on_one_page_is_refused() {
+        // One reference in the object graph and two `Do` operations. Removing
+        // one would stop this page drawing it once and leave every byte of the
+        // picture in the file, reachable from the other draw.
+        let (mut doc, page, _) = page_with_images(1);
+        let content = doc
+            .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+            .unwrap();
+        let mut twice = content.clone();
+        twice.extend_from_slice(&content);
+        doc.change_page_content(page, twice).unwrap();
+        let why = remove_images(&mut doc, page, &[0], 2).unwrap_err();
+        assert!(why.contains("drawn 2 time(s)"), "{why}");
+        assert_eq!(resource_names(&doc, page), vec!["Im0".to_string()]);
+    }
+
+    #[test]
+    fn an_image_another_page_also_names_is_refused() {
+        let (mut doc, page, ids) = page_with_images(1);
+        doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Resources" => dictionary! {
+                "XObject" => dictionary! { "Im0" => Object::Reference(ids[0]) }
+            },
+        });
+        let why = remove_images(&mut doc, page, &[0], 1).unwrap_err();
+        assert!(why.contains("drawn 2 time(s)"), "{why}");
+        assert_eq!(resource_names(&doc, page), vec!["Im0".to_string()]);
+    }
+
+    #[test]
+    fn an_image_count_that_disagrees_with_pdfium_removes_nothing() {
+        let (mut doc, page, _) = page_with_images(2);
+        let why = remove_images(&mut doc, page, &[0], 5).unwrap_err();
+        assert!(why.contains("PDFium reported 5"), "{why}");
+        assert_eq!(resource_names(&doc, page).len(), 2, "nothing went");
+    }
+
+    #[test]
+    fn an_image_ordinal_past_the_end_removes_nothing() {
+        let (mut doc, page, _) = page_with_images(2);
+        let why = remove_images(&mut doc, page, &[9], 2).unwrap_err();
+        assert!(why.contains("no image 9"), "{why}");
+        assert_eq!(resource_names(&doc, page).len(), 2, "nothing went");
+    }
+
+    #[test]
+    fn a_disagreeing_image_count_refuses_only_a_real_removal() {
+        // The correspondence guard protects a removal *by position*. A call that
+        // removes nothing cannot name the wrong picture, so it must not be
+        // refused -- and `apply_redactions` makes this call on every redaction,
+        // including the ones about text on a page it cannot count images on.
+        let (mut doc, page, _) = page_with_images(2);
+        remove_images(&mut doc, page, &[], 99).expect("nothing was being removed");
+        assert!(
+            remove_images(&mut doc, page, &[0], 99).is_err(),
+            "and a real removal on the same disagreement is still refused"
+        );
+    }
+
+    #[test]
+    fn removing_no_image_leaves_the_page_exactly_as_it_was() {
+        // The control for every check above: `remove_images` runs on every
+        // redaction, including the ones that name no picture at all.
+        let (mut doc, page, _) = page_with_images(2);
+        let before = operators(&doc, page);
+        let took = remove_images(&mut doc, page, &[], 2).expect("nothing to do");
+        assert_eq!(took.removed, 0);
+        assert_eq!(operators(&doc, page), before);
+        assert_eq!(resource_names(&doc, page).len(), 2);
     }
 
     #[test]
@@ -2500,33 +2959,57 @@ mod tests {
     }
 
     /// §6's deny-by-default rule: an object this cannot remove is reported.
+    ///
+    /// **This named an image until 2026-08-27**, when a region over a picture
+    /// stopped being a refusal and became a removal. The rule did not change and
+    /// still needs a subject, so it names a **path** --- which cannot be taken
+    /// wholesale, because a rule under a line of text is what almost every real
+    /// document has and taking those would damage every redaction. `docs/PLAN.md`
+    /// §6 measures paths at 49,521 of 154,095 realistic regions for that reason.
     #[test]
-    fn an_image_in_the_region_makes_the_plan_incomplete() {
+    fn an_object_this_cannot_remove_makes_the_plan_incomplete() {
         let objects = [
             text([0.0, 0.0, 100.0, 20.0]),
-            image([0.0, 0.0, 100.0, 20.0]),
+            PageObject {
+                bounds: [0.0, 0.0, 100.0, 20.0],
+                kind: "path".to_string(),
+            },
         ];
         let plan = covered(&objects, &[], [10.0, 5.0, 20.0, 15.0]);
         assert_eq!(plan.shows, vec![0], "the text is still removable");
         assert!(
             !plan.is_complete(),
-            "and the picture over it is not, so the region is not redactable here"
+            "and the drawing over it is not, so the region is not redactable here"
         );
         assert_eq!(
             plan.unhandled,
             vec![Unhandled {
                 at: 1,
-                kind: "image".to_string()
+                kind: "path".to_string()
             }],
             "the finding names which object and what it is"
         );
         assert!(
             plan.unhandled[0]
                 .sentence()
-                .contains("object 1 is of kind image"),
+                .contains("object 1 is of kind path"),
             "and the sentence it renders as names both: {:?}",
             plan.unhandled[0].sentence()
         );
+    }
+
+    #[test]
+    fn a_picture_beside_the_text_is_removed_with_it() {
+        // The mirror of the check above, and the change that made it necessary:
+        // a region over a line of text and the picture over it now names both.
+        let objects = [
+            text([0.0, 0.0, 100.0, 20.0]),
+            image([0.0, 0.0, 100.0, 20.0]),
+        ];
+        let plan = covered(&objects, &[], [10.0, 5.0, 20.0, 15.0]);
+        assert_eq!(plan.shows, vec![0]);
+        assert_eq!(plan.images, vec![0]);
+        assert!(plan.is_complete());
     }
 
     /// Touching is not overlapping, in both directions.

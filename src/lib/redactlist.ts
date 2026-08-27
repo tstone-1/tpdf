@@ -204,6 +204,28 @@ export function warningFor(plan: RegionPlan | undefined): string {
   return `Also covers ${said}, which a removal cannot take`;
 }
 
+/**
+ * What a region takes besides text, or `""` when it takes nothing else.
+ *
+ * **A different sentence from {@link warningFor}, and deliberately not folded
+ * into it.** That one says what will *survive*; this says what will *go*. They
+ * are opposite facts about the same region and a reader who saw them in one
+ * line would have to work out which half was which --- and only one of the two
+ * is a reason not to trust the result.
+ *
+ * A picture is removed whole, because removing part of one means decoding and
+ * re-encoding it. That is worth a sentence before anything is written: the
+ * region a reader dragged over a word can cover a figure they did not think
+ * about, and afterwards there is no copy of it in the file.
+ */
+export function takesFor(plan: RegionPlan | undefined): string {
+  const many = plan?.images?.length ?? 0;
+  if (many === 0) return "";
+  return many === 1
+    ? "Also removes a picture it covers, whole"
+    : `Also removes ${many} pictures it covers, whole`;
+}
+
 /** The redactions panel: a row per pending region, in page order. */
 export class RedactList {
   private readonly notice: HTMLElement;
@@ -438,7 +460,22 @@ export class RedactList {
       this.opts.onRemove(redaction.id);
     });
 
-    const warning = warningFor(this.opts.planFor(redaction.id));
+    const plan = this.opts.planFor(redaction.id);
+    const takes = takesFor(plan);
+    if (takes) {
+      // Above the warning, because it is the one that changes what the reader
+      // gets rather than what they should distrust. Same weight otherwise, for
+      // the reason the warning gives below: neither is an error, and a row that
+      // shouts is a row nobody reads past the third one.
+      const said = document.createElement("div");
+      said.dataset.part = "takes";
+      said.textContent = takes;
+      said.style.cssText =
+        "opacity:0.6;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;" +
+        "white-space:nowrap;";
+      text.append(said);
+    }
+    const warning = warningFor(plan);
     if (warning) {
       // Under the words rather than beside them, and dimmed rather than red:
       // this is a fact about what will survive, not an error, and a row that

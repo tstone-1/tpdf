@@ -142,10 +142,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   outlines. Nothing is called clean on that evidence unless the recogniser was first shown
   to be working on the same image, and on Windows, where there is no recogniser to ask, the
   report says so and the file is not certified. The document you have open is untouched, so if you
-  do not like the result you still have your marks. It removes **text**: a region covering a
-  picture or a drawing leaves that where it is, and says so both in the panel before you
-  commit and in the report afterwards, because a file with the words gone and a picture of
-  the words still in it is worse than no redaction at all. Text a page draws through a
+  do not like the result you still have your marks. A region covering a **picture** removes
+  the picture, whole and bytes included --- removing part of one would mean re-encoding it,
+  so the panel says how many a region takes before you commit, and a picture the document
+  draws more than once is refused rather than half removed. A region covering a **drawing**
+  leaves it where it is and says so, in the panel and in the report, because a file with the
+  words gone and a picture of the words still in it is worse than no redaction at all. Text a page draws through a
   reusable block --- a letterhead, a table cell, a stamp --- is removed like any other,
   unless the document draws that block more than once, in which case it is refused rather
   than changing pages you did not mark. It also takes whole lines ---

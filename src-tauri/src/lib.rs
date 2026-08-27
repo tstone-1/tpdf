@@ -825,8 +825,14 @@ async fn ask_redactions(
         // last plan for the same reason.
         let mut form_shows: Vec<(usize, usize)> = Vec::new();
         let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
+        // And the pictures. `image_objects` is a property of the page like
+        // `text_objects` and is taken from the last plan for the same reason.
+        let mut images: Vec<usize> = Vec::new();
+        let mut image_objects = 0usize;
         for plan in plans {
             text_objects = plan.text_objects;
+            image_objects = plan.image_objects;
+            images.extend(plan.images.iter().copied());
             form_text_objects = plan.form_text_objects.clone();
             for object in &plan.unhandled {
                 concerns.push(format!("page {}: {}", page + 1, object.sentence()));
@@ -851,6 +857,10 @@ async fn ask_redactions(
         form_shows.sort_unstable();
         form_shows.dedup();
         shows_total += form_shows.len();
+        // Two regions over one picture name the same `Do`, and removing it
+        // twice is removing it once.
+        images.sort_unstable();
+        images.dedup();
         // One text extraction per page, on the document as the reader has it.
         // `None` for the crop because `redaction_plans` uses the file's own, and
         // a word list measured from a different corner than the regions were
@@ -880,6 +890,8 @@ async fn ask_redactions(
             taking: taken,
             form_shows,
             form_text_objects,
+            images,
+            image_objects,
         });
     }
 

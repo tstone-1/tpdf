@@ -999,8 +999,14 @@ MUTATIONS = [
         # into the slot -- invisible with two lines, wrong with three.
         "redact: remove show operators front-first instead of back-first",
         "src/redact.rs",
-        "    for at in positions.into_iter().rev() {",
-        "    for at in positions.into_iter() {",
+        # Widened when `remove_images` arrived carrying the same three-line loop.
+        # Third sibling in one session, and `docs/TRAPS.md` records the shape:
+        # a near-copy makes an existing anchor ambiguous without the anchor
+        # moving, and an ambiguous anchor is refused. The operand is what tells
+        # the two apart -- one removes from the page's content, the other from a
+        # decoded copy of it that is written back whole.
+        "    for at in positions.into_iter().rev() {\n        content.operations.remove(at);\n    }\n\n    // **After the content stream",
+        "    for at in positions.into_iter() {\n        content.operations.remove(at);\n    }\n\n    // **After the content stream",
         "removing_two_operators_removes_the_two_that_were_named",
     ),
     Mutation(
@@ -5624,6 +5630,81 @@ MUTATIONS += [
 ]
 
 
+#: A region over a picture. Two removals, and only the second one redacts:
+#: deleting the `Do` stops the page drawing the image, and dropping the resource
+#: entry is what leaves the stream unreachable so the sweep takes its bytes.
+MUTATIONS += [
+    Mutation(
+        # Report a picture as unremovable again. Every region over one is then
+        # refused, which is the behaviour that made a redaction over a scanned
+        # page remove nothing.
+        "image: refuse a picture instead of removing it",
+        "src/redact.rs",
+        "        } else if object.kind == \"image\" {\n            plan.images.push(image_ordinal);",
+        "        } else if false {\n            plan.images.push(image_ordinal);",
+        "a_region_over_an_image_names_it_rather_than_refusing",
+    ),
+    Mutation(
+        # Advance the image ordinal only for the images a region covers. The
+        # second picture on a page is then named as the first, and the removal
+        # takes the wrong one.
+        "image: number the pictures a region covers rather than the page's",
+        "src/redact.rs",
+        "        let image_ordinal = images;\n        if object.kind == \"image\" {\n            images += 1;\n        }",
+        "        let image_ordinal = images;\n        if object.kind == \"image\" && overlaps(object.bounds, region) {\n            images += 1;\n        }",
+        "an_image_ordinal_counts_images_and_not_every_object",
+    ),
+    Mutation(
+        # Leave the resource entry. The page stops drawing the picture and every
+        # byte of it stays in the file, reachable from the page -- a redaction
+        # that removed the picture from view and nothing else.
+        "image: stop drawing the picture and leave it in the file",
+        "src/redact.rs",
+        "    forget_xobjects(doc, page, &names)?;",
+        "    let _ = &names;",
+        "removing_an_image_takes_its_draw_and_its_resource_entry",
+    ),
+    Mutation(
+        # Drop every image the page draws rather than the ones named. The check
+        # above passes on it; only the control tells them apart.
+        "image: drop every picture on the page",
+        "src/redact.rs",
+        "    let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());\n    let mut names: Vec<String> = Vec::new();\n    for &ordinal in ordinals {",
+        "    let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());\n    let mut names: Vec<String> = Vec::new();\n    for &ordinal in &(0..drawn.len()).collect::<Vec<_>>() {",
+        "removing_one_image_leaves_the_other_drawn_and_listed",
+    ),
+    Mutation(
+        # Drop the correspondence guard. Nothing connects PDFium's image objects
+        # to the page's `Do` operations but order.
+        "image: remove whichever picture is at that position",
+        "src/redact.rs",
+        "    if drawn.len() != image_objects {",
+        "    if false {",
+        "an_image_count_that_disagrees_with_pdfium_removes_nothing",
+    ),
+    Mutation(
+        # Sweep only for the carriers that were already listed. An image removal
+        # then unlinks the stream and the rewrite writes it out anyway, which is
+        # the defect `redact-apply-probe` found by grepping pixels.
+        "image: leave the unlinked picture for the writer to emit",
+        "src/save.rs",
+        "        || redacted.images > 0\n    {\n        crate::sweep::collect(&mut doc)?;",
+        "    {\n        crate::sweep::collect(&mut doc)?;",
+        "a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file",
+    ),
+    Mutation(
+        # Read the page even when no picture was marked. The correspondence
+        # guard then refuses a call that was removing nothing, so an ordinary
+        # text redaction on a page whose image count disagrees fails for a
+        # removal it was not making.
+        "image: read the page even when no picture was marked",
+        "src/redact.rs",
+        "    if ordinals.is_empty() {\n        return Ok(Removed {",
+        "    if false {\n        return Ok(Removed {",
+        "a_disagreeing_image_count_refuses_only_a_real_removal",
+    ),
+]
+
 #: Text inside a Form XObject: reaching it, placing it, and refusing to touch a
 #: form the document draws more than once. PDFium enumerates a form as ONE page
 #: object, so every one of these is about a level `remove_shows` cannot see.
@@ -5703,8 +5784,8 @@ MUTATIONS += [
         # unshared and the removal changes a place the reader did not mark.
         "form: count only the object graph, not the page's draws",
         "src/redact.rs",
-        "    if drawn_here > 1 || elsewhere > 1 {",
-        "    if elsewhere > 1 {",
+        "    (here > 1 || elsewhere > 1).then(|| here.max(elsewhere))",
+        "    (elsewhere > 1).then(|| here.max(elsewhere))",
         "a_form_drawn_twice_on_one_page_is_refused",
     ),
     Mutation(
@@ -5712,8 +5793,8 @@ MUTATIONS += [
         # `Do` here, so the page count alone calls it unshared.
         "form: count only the page's draws, not the object graph",
         "src/redact.rs",
-        "    let elsewhere = references_to(doc, id);",
-        "    let elsewhere = 0;\n    let _ = references_to(doc, id);",
+        "    let here = names.iter().filter(|other| *other == name).count();\n    let elsewhere = references_to(doc, id);",
+        "    let here = names.iter().filter(|other| *other == name).count();\n    let elsewhere = 0;\n    let _ = references_to(doc, id);",
         "a_form_another_page_also_draws_is_refused",
     ),
     Mutation(

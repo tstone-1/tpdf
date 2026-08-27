@@ -205,6 +205,7 @@ fn run(library: &Path) -> Result<bool, String> {
     ok &= annotations(bindings, &root)?;
     ok &= in_place(bindings, &source)?;
     ok &= forms(bindings, &root)?;
+    ok &= images(bindings, &root)?;
 
     println!(
         "{}",
@@ -680,6 +681,137 @@ fn forms(
     Ok(ok)
 }
 
+/// A region over a picture removes the picture, and its bytes leave the file.
+///
+/// **Two claims, and only the second is a redaction.** Deleting the `Do` stops
+/// the page drawing the image; the stream is still an object, still reachable
+/// from the page's resources, and every byte of the picture is still there for
+/// anyone who opens the file with something other than a viewer. So this greps
+/// the written bytes for the image's own pixels rather than asking what the page
+/// draws --- which is why `image-region.pdf` stores them **uncompressed**, as one
+/// repeated marker per image. A compressed stream could not be searched for, and
+/// a check that could not tell the two claims apart would pass on either.
+fn images(
+    bindings: &'static dyn pdfium_render::prelude::PdfiumLibraryBindings,
+    root: &Path,
+) -> Result<bool, String> {
+    const IMAGE_FILE: &str = "image-region.pdf";
+    /// The marked picture's pixels. Must leave the file.
+    const MARKED: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+    /// The other picture on the same page, not marked. Must stay --- without it,
+    /// a removal that dropped every image would pass every other check here.
+    const BESIDE_IT: [u8; 4] = [0xca, 0xfe, 0xd0, 0x0d];
+    const ON_THE_PAGE: &str = "Sphinx of black quartz";
+
+    let source = root.join("testdata").join(IMAGE_FILE);
+    if !source.exists() {
+        println!("[SKIP] {} is not built", source.display());
+        return Ok(true);
+    }
+    let document = OpenDocument::open(bindings, &source, None).map_err(|why| why.reason)?;
+    let mut ok = true;
+
+    let page = document.page(0).map_err(|e| e.to_string())?;
+    let objects = tpdf_lib::objects::read(&page).map_err(|e| e.to_string())?;
+    let Some((at, first)) = objects
+        .all
+        .iter()
+        .enumerate()
+        .find(|(_, object)| object.kind == "image")
+    else {
+        println!("[FAIL] page 1 of {IMAGE_FILE} draws no image");
+        return Ok(false);
+    };
+    let _ = at;
+    let r = first.bounds;
+    let region = [r[0] + 1.0, r[1] + 1.0, r[2] - 1.0, r[3] - 1.0];
+    let plan = redact::covered(&objects.all, &objects.forms, region);
+    ok &= check(
+        "a region over a picture names it rather than refusing",
+        plan.images == vec![0] && plan.unhandled.is_empty(),
+    );
+
+    let out = std::env::temp_dir().join("tpdf-redact-image-probe.pdf");
+    let _ = std::fs::remove_file(&out);
+    let planned = image_plan(0, &objects, &plan, region);
+    save::write_copy(&source, &planned, &out).map_err(|why| why.message)?;
+    let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
+    let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+    ok &= check(
+        "the marked picture's own pixels are gone from the file",
+        !holds(&MARKED),
+    );
+    ok &= check(
+        "the other picture on the page is still there",
+        holds(&BESIDE_IT),
+    );
+    ok &= check(
+        "the page's own text is untouched",
+        bytes
+            .windows(ON_THE_PAGE.len())
+            .any(|w| w == ON_THE_PAGE.as_bytes()),
+    );
+    // Reopening is what says the file is still a PDF rather than merely shorter:
+    // a rewrite that dropped an object something still pointed at would satisfy
+    // both checks above.
+    ok &= check(
+        "and the copy still opens with both its pages",
+        OpenDocument::open(bindings, &out, None)
+            .map(|d| d.page_count())
+            .unwrap_or(0)
+            == 2,
+    );
+    let _ = std::fs::remove_file(&out);
+
+    // --- page 2: the picture drawn twice ------------------------------------
+    let page = document.page(1).map_err(|e| e.to_string())?;
+    let twice = tpdf_lib::objects::read(&page).map_err(|e| e.to_string())?;
+    let Some(first) = twice.all.iter().find(|object| object.kind == "image") else {
+        println!("[FAIL] page 2 of {IMAGE_FILE} draws no image");
+        return Ok(false);
+    };
+    let r = first.bounds;
+    let region = [r[0] + 1.0, r[1] + 1.0, r[2] - 1.0, r[3] - 1.0];
+    let plan = redact::covered(&twice.all, &twice.forms, region);
+    ok &= check(
+        "the shared picture is named before the refusal is asked for",
+        !plan.images.is_empty(),
+    );
+    let planned = image_plan(1, &twice, &plan, region);
+    let out = std::env::temp_dir().join("tpdf-redact-image-shared-probe.pdf");
+    let _ = std::fs::remove_file(&out);
+    let refused = save::write_copy(&source, &planned, &out);
+    ok &= check(
+        "a picture the document draws twice is refused",
+        refused
+            .as_ref()
+            .err()
+            .is_some_and(|why| why.message.contains("drawn 2 time(s)")),
+    );
+    ok &= check("the refusal wrote no file", !out.exists());
+    let _ = std::fs::remove_file(&out);
+    Ok(ok)
+}
+
+/// A plan removing exactly the images `plan` names from one page.
+fn image_plan(
+    page: u32,
+    objects: &tpdf_lib::objects::PageObjects,
+    plan: &redact::Plan,
+    region: [f32; 4],
+) -> Plan {
+    let mut planned = form_plan(page, objects, plan, region);
+    if let Some(redaction) = planned.redactions.first_mut() {
+        redaction.images = plan.images.clone();
+        redaction.image_objects = objects
+            .all
+            .iter()
+            .filter(|object| object.kind == "image")
+            .count();
+    }
+    planned
+}
+
 /// A plan removing exactly what `plan` names from one page.
 fn form_plan(
     page: u32,
@@ -711,6 +843,8 @@ fn form_plan(
                 .iter()
                 .map(|form| (form.at, form.text.len()))
                 .collect(),
+            images: Vec::new(),
+            image_objects: 0,
         }],
     }
 }
@@ -758,6 +892,8 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             taking: vec![region.taking.trim().to_string()],
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
         }],
     }
 }

@@ -89,6 +89,14 @@ FIXTURES: list[tuple[str, list[str]]] = [
         "testdata/form-xobject.pdf",
         ["testdata/make_form_xobject_pdf.py", "testdata/form-xobject.pdf"],
     ),
+    # Also pure Python. Its images are deliberately UNCOMPRESSED, so a probe can
+    # grep the written file for their pixels -- "the page stopped drawing it" and
+    # "the bytes have left the file" are different claims and only the second is
+    # a redaction.
+    (
+        "testdata/image-region.pdf",
+        ["testdata/make_image_pdf.py", "testdata/image-region.pdf"],
+    ),
     # A page tree that states the four inheritable attributes on the node above
     # its pages rather than on them. Nothing else in the corpus does, so every
     # other fixture is blind to a copy that lifts a page out of the tree that

@@ -1234,6 +1234,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - PDFium synthesises an appearance for `/Text` and not for `/Stamp` (0 pixels against 336 on one page through one code path; which subtypes a renderer draws for is a list rather than a rule, and the two zeroes are why the third row of the table exists)
 - A form's text is on the page's text layer, and the page's object list cannot reach it (a reader could search for and select words a redaction could not remove; `FPDFText_GetTextObject` hands back the INNER text object, `FPDFPageObj_GetBounds` on a child answers in the FORM's space, and all four corners have to go through the matrix)
 - A form drawn twice on one page is one reference in the object graph (the graph count sees a form shared across pages and is blind to one drawn twice here; two counts from two sources, and the fixture carries the shape the count cannot see)
+- Removing the `Do` stops the page drawing the picture, and leaves every byte of it in the file (the rewrite's sweep is conditional on a list an image removal was not on; every existing sweep test calls `collect` BY HAND, so none of them could see it — the check belongs on the bytes, and the fixture has to be uncompressed for that check to exist)
 
 ### Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters

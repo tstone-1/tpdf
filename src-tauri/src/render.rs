@@ -1718,6 +1718,12 @@ pub fn redaction_plans_of(
             let plan = redact::covered(&objects.all, &objects.forms, want);
             redact::RegionPlan {
                 text_objects: objects.text.len(),
+                images: plan.images.clone(),
+                image_objects: objects
+                    .all
+                    .iter()
+                    .filter(|object| object.kind == "image")
+                    .count(),
                 form_shows: plan.form_shows.clone(),
                 // Every form on the page, whether or not this region touches it.
                 // See the field: a plan merges a page's regions, and a count
