@@ -247,11 +247,15 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 #                     its page. The first run of this probe marked a word that
 #                     lives on every page, removed it from one, and correctly
 #                     reported it still in the file.
-#   text-marked.pdf   the same line, held FIVE times: as /ActualText on a
+#   text-marked.pdf   the same line, held SIX times: as /ActualText on a
 #                     marked-content span, on the structure element that span
-#                     belongs to, in two annotations, and in /Info -- of which
+#                     belongs to, in two annotations, in /Info, and in an
+#                     outline entry whose title is a substring of it -- of which
 #                     only the annotation away from the region survives a
-#                     redaction, which is what redact-apply-probe measures.
+#                     redaction, which is what redact-apply-probe measures. Its
+#                     outline is FOUR entries with the carrier in the middle of
+#                     the sibling chain, which is the shape that catches a
+#                     removal that drops the object without splicing.
 #                     Since 2026-08-27 the span's copy is cleared by the removal
 #                     itself, so the check reads the carriers apart rather than
 #                     asking whether the secret is anywhere in the file: the key
@@ -325,6 +329,15 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # A check ahead of all of them asserts every marker is in the fixture to begin
 # with, without which no direction could fail.
 #
+# THE OUTLINE is read back through outline::read rather than out of the bytes,
+# because a byte scan cannot answer this carrier's question: an entry spliced out
+# of the chain but still an object is neither present nor absent by a grep. It is
+# also the point -- outline::read is what feeds the sidebar, so a title it still
+# returns is a title a reader still sees. Four checks: the carrier gone, its
+# child gone, OUTLINE-BEFORE surviving, and OUTLINE-AFTER still REACHABLE. The
+# last is what the fixture's shape is for -- see TRAPS.md on forgetting a node in
+# a linked list, and note that deleting the splice leaves the first three green.
+#
 # IN PLACE is the last phase and it is the same removal pointed at the reader's
 # own file: stage a sibling, check the source has not moved, rename over it, and
 # read back the path rather than the buffer. It works on a COPY of
@@ -339,7 +352,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
 #
-#   macOS arm64, 2026-08-27   19 checks, 0 failures
+#   macOS arm64, 2026-08-27   23 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

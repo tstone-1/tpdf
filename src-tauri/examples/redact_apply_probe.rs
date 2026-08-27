@@ -27,7 +27,7 @@ use std::process::ExitCode;
 
 use tpdf_lib::document::OpenDocument;
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
-use tpdf_lib::{progressive, redact, render, save, text, verify};
+use tpdf_lib::{outline, progressive, redact, render, save, text, verify};
 
 /// The fixture, what to remove, and what has to survive.
 const FILE: &str = "text-base14.pdf";
@@ -57,6 +57,17 @@ const STRUCT_ANCESTOR: &str = "STRUCT-ANCESTOR";
 /// In the element owning a line nobody redacted. Must stay --- a rule that
 /// stripped the whole tree would pass both checks above.
 const STRUCT_OTHER: &str = "STRUCT-OTHER";
+/// The outline entry before the carrier. Must stay --- and it is the one that
+/// catches a removal that drops the object without splicing the chain, since
+/// that leaves it with no `/Next` and the entry after it unreachable.
+const OUTLINE_BEFORE: &str = "OUTLINE-BEFORE";
+/// Under the carrier, with a title that matches nothing. Must go anyway: a
+/// section's subsections belong to the section.
+const OUTLINE_CHILD: &str = "OUTLINE-CHILD";
+/// After the carrier. Must stay, and reaching it at all is the check.
+const OUTLINE_AFTER: &str = "OUTLINE-AFTER";
+
+/// In `/Info /Producer`, and nowhere else in the file. Must go: a redaction
 /// In `/Info /Producer`, and nowhere else in the file. Must go: a redaction
 /// takes the document's own description of itself, `/Info` and XMP alike.
 ///
@@ -368,6 +379,44 @@ fn annotations(
         &format!("and {REMOVE:?} is still in the file, which the surviving annotation keeps"),
         report.found.contains(REMOVE),
     );
+
+    // **The outline, read through PDFium rather than out of the bytes.** Every
+    // check above asks whether a marker is anywhere in the file, which cannot
+    // answer the question this carrier poses: an entry is *reachable* or it is
+    // not, and an entry that is still an object but has been spliced out of the
+    // chain is neither present nor absent by a byte scan. So this walks it the
+    // way the sidebar does.
+    //
+    // Which is also the point: `outline::read` is what feeds the panel, so a
+    // title it still returns is a title a reader still sees in tpdf, in the file
+    // that was supposed to have lost it.
+    let after = OpenDocument::open(bindings, &out, None).map_err(|why| why.reason)?;
+    let titles: Vec<String> = outline::read(&after)
+        .items
+        .iter()
+        .flat_map(flatten)
+        .collect();
+    println!("[..] the redacted file's outline reads {titles:?}");
+    ok &= check(
+        "the outline entry naming the removed line is gone",
+        !titles.iter().any(|title| REMOVE.contains(title.as_str())),
+    );
+    ok &= check(
+        &format!("and so is what hung under it ({OUTLINE_CHILD})"),
+        !titles.iter().any(|title| title == OUTLINE_CHILD),
+    );
+    // The two controls, and the second is the one this phase exists for. A
+    // removal that drops the entry without splicing takes `/Next` off
+    // OUTLINE-BEFORE, so a walk reaches it and stops --- OUTLINE-AFTER is then
+    // still an object in the file and invisible to every reader.
+    ok &= check(
+        &format!("the entry before it survives ({OUTLINE_BEFORE})"),
+        titles.iter().any(|title| title == OUTLINE_BEFORE),
+    );
+    ok &= check(
+        &format!("and the one after it is still REACHABLE ({OUTLINE_AFTER})"),
+        titles.iter().any(|title| title == OUTLINE_AFTER),
+    );
     Ok(ok)
 }
 
@@ -502,8 +551,23 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             shows: region.shows.clone(),
             text_objects: region.text_objects,
             areas: vec![region.area],
+            // What `lib.rs` carries from the same field, so the probe drives
+            // the outline carrier through the same input the command does.
+            taking: vec![region.taking.trim().to_string()],
         }],
     }
+}
+
+/// An outline item's title and every title beneath it.
+///
+/// Depth-first and flat, because what this phase asks is *which titles does a
+/// reader still see* --- and the shape of the tree is not part of that question.
+fn flatten(item: &outline::OutlineItem) -> Vec<String> {
+    let mut out = vec![item.title.clone()];
+    for child in &item.children {
+        out.extend(flatten(child));
+    }
+    out
 }
 
 /// The characters of a page as one string, in the file's own order.

@@ -2037,7 +2037,13 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
     // measured for pages: `forget` unlinks the annotation and every reference to
     // it, which leaves its appearance stream --- a drawing of the very words that
     // went --- reachable from nothing and written out regardless.
-    if !dropped.is_empty() || moved || redacted.annots > 0 {
+    //
+    // So does one that took an outline entry, which is the same shape a third
+    // time: an entry's destination may be an indirect array and its `/A` an
+    // indirect action dictionary, and both name the page the redacted heading
+    // was on. `forget` removes the entry and every reference to it; what it
+    // cannot remove is what the entry was the only reference *to*.
+    if !dropped.is_empty() || moved || redacted.annots > 0 || redacted.outline > 0 {
         crate::sweep::collect(&mut doc)?;
     }
 
@@ -2184,6 +2190,31 @@ fn apply_redactions(
     // control for it is `a_copy_that_is_not_a_redaction_keeps_its_metadata`.
     if done.shows > 0 || done.annots > 0 || !redactions.is_empty() {
         done.metadata = strip_metadata(doc)?;
+
+        // **The outline, and it is the one carrier a reader can see in tpdf
+        // itself.** A bookmark's title is the heading it points at, so redacting
+        // the heading leaves a verbatim copy in the outline and the sidebar goes
+        // on drawing it. Measured on 41 real PDFs on 2026-08-27: 8 carry outline
+        // entries and 163 of their 165 titles are verbatim page text, against 4%
+        // when each document's titles are matched against the next document's
+        // pages --- the control that makes the 99% mean anything.
+        //
+        // Entry by entry rather than `pagetree::drop_outline`, which is right
+        // for a page deletion --- where every destination names a page that is
+        // gone --- and wrong here: one redacted heading must not cost a reader
+        // 131 bookmarks. `redact::covered_outline` decides which, and
+        // `redact::drop_outline_items` splices the chain before the objects go.
+        // That splice is the whole of it, and `docs/TRAPS.md` says why `forget`
+        // alone would truncate the outline silently.
+        //
+        // Under the same guard as the metadata for the same reason: this runs on
+        // every rewrite, and an ordinary copy must keep its bookmarks.
+        let taken: Vec<String> = redactions
+            .iter()
+            .flat_map(|redaction| redaction.taking.iter().cloned())
+            .collect();
+        let entries = crate::redact::covered_outline(doc, &taken);
+        done.outline = crate::redact::drop_outline_items(doc, &entries).map_err(Refusal::from)?;
     }
     Ok(done)
 }
@@ -2234,6 +2265,8 @@ struct Redacted {
     annots: usize,
     /// How many of `/Info` and `/Metadata` were there to remove.
     metadata: usize,
+    /// Outline entries removed, the subtrees under them included.
+    outline: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
@@ -8301,6 +8334,7 @@ mod tests {
             shows: vec![0],
             text_objects: 4,
             areas: Vec::new(),
+            taking: Vec::new(),
         }];
         assert!(
             !plan.is_identity(),
@@ -8332,6 +8366,7 @@ mod tests {
             shows: vec![0],
             text_objects: 4,
             areas: Vec::new(),
+            taking: Vec::new(),
         }];
         assert!(
             !both.only_adds_marks(),
@@ -8355,12 +8390,14 @@ mod tests {
                 shows: vec![0],
                 text_objects: 1,
                 areas: Vec::new(),
+                taking: Vec::new(),
             },
             crate::edits::PlannedRedaction {
                 source: 0,
                 shows: vec![0],
                 text_objects: 1,
                 areas: Vec::new(),
+                taking: Vec::new(),
             },
         ];
         let mut doc = Document::with_version("1.7");
@@ -8420,6 +8457,7 @@ mod tests {
                 shows: vec![0],
                 text_objects: 1,
                 areas: vec![[90.0, 90.0, 210.0, 130.0]],
+                taking: Vec::new(),
             }],
         )
         .expect("the plan is applicable");
@@ -8498,6 +8536,7 @@ mod tests {
                 shows: vec![0],
                 text_objects: 1,
                 areas: vec![[90.0, 90.0, 210.0, 130.0]],
+                taking: Vec::new(),
             }],
         )
         .expect("the plan is applicable");
@@ -8571,6 +8610,296 @@ mod tests {
         assert_eq!(done.metadata, 0);
     }
 
+    /// A redaction takes the outline entry that names what went.
+    ///
+    /// §6's *Document level* row, and the one carrier a reader can see in tpdf
+    /// itself: the sidebar draws the outline, so a heading redacted off the page
+    /// comes back on screen in the file that was supposed to have lost it.
+    #[test]
+    fn a_redaction_takes_the_outline_entry_naming_what_it_removed() {
+        let (mut doc, page, chain) = outlined_document();
+        let done = apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+        assert_eq!(done.outline, 2, "the entry and the child under it");
+        assert!(doc.get_object(chain.carrier).is_err(), "the entry is gone");
+        assert!(doc.get_object(chain.child).is_err(), "and its subtree");
+    }
+
+    /// **The control that catches the linked-list defect.**
+    ///
+    /// `pagetree::forget` removes a dictionary key whose value names a doomed
+    /// object, which is right for `/Info` and wrong for a sibling chain: it
+    /// would take `/Next` off the entry *before* the removed one, so a reader
+    /// walking `/First` then `/Next` stops there and never reaches what follows.
+    /// The file stays valid and no parser complains.
+    ///
+    /// So the carrier sits in the middle on purpose and this asserts the entry
+    /// **after** it is still reachable by walking, rather than merely still in
+    /// `doc.objects` --- which it would be either way.
+    ///
+    /// **Named for the outline rather than for what it asserts**, and that is
+    /// not cosmetic. It was first called
+    /// `the_entries_around_a_removed_one_are_still_reachable_by_walking`, and a
+    /// `cargo test outline` run --- the obvious way to exercise this group ---
+    /// silently did not include it. The mutation that deletes the splice was
+    /// then read as reddening one test when it reddens two, and the check
+    /// written for exactly that defect looked incapable of failing. A filtered
+    /// run is only as good as the names, which is why the mutation harness runs
+    /// the whole suite.
+    #[test]
+    fn an_outline_removal_leaves_the_entries_around_it_reachable() {
+        let (mut doc, page, chain) = outlined_document();
+        apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+
+        let mut walked = Vec::new();
+        let mut at = doc
+            .get_dictionary(chain.root)
+            .and_then(|root| root.get(b"First"))
+            .and_then(Object::as_reference)
+            .ok();
+        while let Some(id) = at {
+            walked.push(id);
+            assert!(walked.len() < 10, "the chain loops: {walked:?}");
+            at = doc
+                .get_dictionary(id)
+                .and_then(|item| item.get(b"Next"))
+                .and_then(Object::as_reference)
+                .ok();
+        }
+        assert_eq!(
+            walked,
+            vec![chain.before, chain.after],
+            "both survivors, in order, reached from /First"
+        );
+        assert_eq!(
+            doc.get_dictionary(chain.after)
+                .and_then(|item| item.get(b"Prev"))
+                .and_then(Object::as_reference)
+                .ok(),
+            Some(chain.before),
+            "/Prev names the entry that is now before it"
+        );
+        assert_eq!(
+            doc.get_dictionary(chain.root)
+                .and_then(|root| root.get(b"Last"))
+                .and_then(Object::as_reference)
+                .ok(),
+            Some(chain.after),
+            "the root still names its last child"
+        );
+    }
+
+    /// `/Count` is recomputed rather than left saying what the outline was.
+    ///
+    /// The `/Size` shape from spike 0.4, one subsystem along: a stale count
+    /// renders identically and is structurally wrong.
+    #[test]
+    fn a_removal_leaves_the_outline_counting_what_is_left() {
+        let (mut doc, page, chain) = outlined_document();
+        apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+        assert_eq!(
+            doc.get_dictionary(chain.root)
+                .and_then(|root| root.get(b"Count"))
+                .and_then(Object::as_i64)
+                .ok(),
+            Some(2),
+            "four entries were visible and two are left"
+        );
+    }
+
+    /// **The over-removal control.** An entry naming nothing that went stays.
+    ///
+    /// A rule that dropped the whole outline --- which is what a page deletion
+    /// correctly does --- would pass every check above. One redacted heading
+    /// must not cost a reader their table of contents.
+    #[test]
+    fn an_outline_entry_naming_something_else_survives_a_redaction() {
+        let (mut doc, page, chain) = outlined_document();
+        apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+        assert!(doc.get_object(chain.before).is_ok(), "before it");
+        assert!(doc.get_object(chain.after).is_ok(), "and after it");
+        assert!(
+            doc.catalog().expect("catalog").has(b"Outlines"),
+            "and the document still has an outline at all"
+        );
+    }
+
+    /// A copy that is not a redaction keeps every bookmark.
+    ///
+    /// The metadata control's twin, and it exists for the same reason: this runs
+    /// on every rewrite, so without the guard an ordinary Save a copy would
+    /// quietly lose the entry naming whatever the reader had happened to select.
+    ///
+    /// **Its mutation is the metadata one**, `save: strip metadata on every save
+    /// rather than on a redaction`, because there is one condition guarding both
+    /// and a mutation of it reddens both. That entry names its twin; a second
+    /// entry with the same anchor and an equivalent replacement would be
+    /// padding. The mutation written for this specifically was deleted: feeding
+    /// `covered_outline` an empty needle makes it match *nothing*, which reddens
+    /// the three removal checks and leaves this one exactly as green as a clean
+    /// tree does --- an over-removal control cannot be proved by a mutation that
+    /// under-removes.
+    #[test]
+    fn a_copy_that_is_not_a_redaction_keeps_its_outline() {
+        let (mut doc, page, chain) = outlined_document();
+        let done = apply_redactions(&mut doc, &[page], &[]).expect("applicable");
+        assert_eq!(done.outline, 0);
+        for id in [
+            chain.root,
+            chain.before,
+            chain.carrier,
+            chain.child,
+            chain.after,
+        ] {
+            assert!(
+                doc.get_object(id).is_ok(),
+                "{id:?} survives an ordinary save"
+            );
+        }
+    }
+
+    /// A title too short to be distinctive is left alone.
+    ///
+    /// A bookmark called `1` is a substring of almost any line, so matching on
+    /// it would take the outline off a document for the sake of a chapter
+    /// number.
+    #[test]
+    fn a_very_short_outline_title_is_not_matched() {
+        let (mut doc, page, chain) = outlined_document();
+        if let Ok(Object::Dictionary(item)) = doc.get_object_mut(chain.carrier) {
+            item.set("Title", Object::string_literal("re"));
+        }
+        let done = apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+        assert_eq!(done.outline, 0, "nothing matched");
+        assert!(doc.get_object(chain.carrier).is_ok());
+    }
+
+    /// The object ids `outlined_document` hands back.
+    struct Chain {
+        root: lopdf::ObjectId,
+        before: lopdf::ObjectId,
+        carrier: lopdf::ObjectId,
+        child: lopdf::ObjectId,
+        after: lopdf::ObjectId,
+    }
+
+    /// A document whose outline is four entries with the carrier in the middle.
+    ///
+    /// ```text
+    /// /Outlines
+    ///   OUTLINE-BEFORE
+    ///   "the secret account"      <- a substring of what the redaction takes
+    ///     OUTLINE-CHILD
+    ///   OUTLINE-AFTER
+    /// ```
+    ///
+    /// The carrier is the **second** of three siblings, which is the whole shape
+    /// of the fixture: a removal that drops the object without splicing takes
+    /// `/Next` off `OUTLINE-BEFORE`, and `OUTLINE-AFTER` becomes unreachable
+    /// while every object is still present.
+    fn outlined_document() -> (Document, lopdf::ObjectId, Chain) {
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT (Holding the secret account here) Tj ET".to_vec(),
+        ));
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+
+        let root = doc.new_object_id();
+        let before = doc.new_object_id();
+        let carrier = doc.new_object_id();
+        let child = doc.new_object_id();
+        let after = doc.new_object_id();
+        doc.objects.insert(
+            before,
+            Object::Dictionary(dictionary! {
+                "Title" => Object::string_literal("OUTLINE-BEFORE"),
+                "Parent" => root,
+                "Next" => carrier,
+            }),
+        );
+        doc.objects.insert(
+            carrier,
+            Object::Dictionary(dictionary! {
+                "Title" => Object::string_literal("the secret account"),
+                "Parent" => root,
+                "Prev" => before,
+                "Next" => after,
+                "First" => child,
+                "Last" => child,
+                "Count" => 1,
+            }),
+        );
+        doc.objects.insert(
+            child,
+            Object::Dictionary(dictionary! {
+                "Title" => Object::string_literal("OUTLINE-CHILD"),
+                "Parent" => carrier,
+            }),
+        );
+        doc.objects.insert(
+            after,
+            Object::Dictionary(dictionary! {
+                "Title" => Object::string_literal("OUTLINE-AFTER"),
+                "Parent" => root,
+                "Prev" => carrier,
+            }),
+        );
+        doc.objects.insert(
+            root,
+            Object::Dictionary(dictionary! {
+                "Type" => "Outlines",
+                "First" => before,
+                "Last" => after,
+                "Count" => 4,
+            }),
+        );
+
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "Outlines" => root,
+        });
+        doc.trailer.set("Root", catalog);
+        (
+            doc,
+            page,
+            Chain {
+                root,
+                before,
+                carrier,
+                child,
+                after,
+            },
+        )
+    }
+
+    /// A plan reporting that it took the line `outlined_document` draws.
+    fn naming_the_secret(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
+        vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: vec![0],
+            text_objects: 1,
+            areas: Vec::new(),
+            taking: vec!["Holding the secret account here".to_string()],
+        }]
+    }
+
     /// A one-page document that describes itself in both places.
     ///
     /// Returns the page, the `/Info` object and the XMP packet.
@@ -8619,6 +8948,7 @@ mod tests {
             shows: vec![0],
             text_objects: 1,
             areas: Vec::new(),
+            taking: Vec::new(),
         }]
     }
 
@@ -8637,6 +8967,7 @@ mod tests {
             shows: vec![0],
             text_objects: 1,
             areas: Vec::new(),
+            taking: Vec::new(),
         }];
         let mut doc = Document::with_version("1.7");
         let why = apply_redactions(&mut doc, &[(1, 0)], &past)
