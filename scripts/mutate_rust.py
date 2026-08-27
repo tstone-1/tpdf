@@ -1008,8 +1008,13 @@ MUTATIONS = [
         # which is a redaction that removes the wrong words and says it worked.
         "redact: remove by position even when the two counts disagree",
         "src/redact.rs",
-        "    if shows.len() != text_objects {",
-        "    if false {",
+        # Widened when `remove_form_shows` arrived carrying the same guard one
+        # level down. `docs/TRAPS.md` records the shape: a near-copy of a
+        # function makes an existing anchor ambiguous without the anchor moving,
+        # and an ambiguous anchor is refused, so the mutation stops being able to
+        # fail. The page's message is what distinguishes them.
+        "    if shows.len() != text_objects {\n        return Err(format!(\n            \"the page has",
+        "    if false {\n        return Err(format!(\n            \"the page has",
         "a_count_that_disagrees_with_pdfium_refuses_and_removes_nothing",
     ),
     Mutation(
@@ -1487,8 +1492,10 @@ MUTATIONS = [
         # moved into the slot.
         "redact: act on a repeated ordinal twice",
         "src/redact.rs",
-        "    positions.dedup();",
-        "    positions.reverse();\n    positions.sort_unstable();",
+        # Widened for the reason above: `remove_form_shows` deduplicates the same
+        # way, and the line after it is what tells the two apart.
+        "    positions.dedup();\n    let removed = positions.len();\n\n    // **Before the removal",
+        "    positions.reverse();\n    positions.sort_unstable();\n    let removed = positions.len();\n\n    // **Before the removal",
         "the_same_ordinal_twice_removes_one_operator",
     ),
     Mutation(
@@ -5616,6 +5623,128 @@ MUTATIONS += [
     ),
 ]
 
+
+#: Text inside a Form XObject: reaching it, placing it, and refusing to touch a
+#: form the document draws more than once. PDFium enumerates a form as ONE page
+#: object, so every one of these is about a level `remove_shows` cannot see.
+MUTATIONS += [
+    Mutation(
+        # Leave a form child's box in the form's own space. Measured on
+        # `form-xobject.pdf`: a form placed at (60, 600) reports a child at
+        # (0.9, 19.9), so the region covers nothing, the removal takes nothing,
+        # and the save reports success.
+        "form: leave a form's text in the form's own space",
+        "src/objects.rs",
+        "    let [a, b, c, d, e, f] = m;",
+        "    let [a, b, c, d, e, f] = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];\n    let _ = m;",
+        "a_translated_form_moves_its_text_by_exactly_the_translation",
+    ),
+    Mutation(
+        # Take the transformed diagonal instead of bounding all four corners. A
+        # quarter turn then gives a rectangle whose left is greater than its
+        # right, which overlaps nothing at all.
+        #
+        # **Aimed at the fold rather than at the corner list, because the obvious
+        # mutation is a no-op.** Duplicating two of the four corners still leaves
+        # the extremes in `xs` and `ys`, and `min`/`max` over a list containing
+        # them recovers the same rectangle -- so that edit landed, built, and
+        # changed nothing. It is the bounding that has to go.
+        "form: place a turned form from its diagonal",
+        "src/objects.rs",
+        "    [\n        xs.iter().copied().fold(f32::INFINITY, f32::min),\n        ys.iter().copied().fold(f32::INFINITY, f32::min),\n        xs.iter().copied().fold(f32::NEG_INFINITY, f32::max),\n        ys.iter().copied().fold(f32::NEG_INFINITY, f32::max),\n    ]",
+        "    [xs[0], ys[0], xs[3], ys[3]]",
+        "a_rotated_form_needs_all_four_corners",
+    ),
+    Mutation(
+        # Put the unmeasurable box through the matrix. It becomes infinite rather
+        # than everything, and an object PDFium would not place stops being
+        # reported for every region -- which is a removal stepping over what it
+        # could not see.
+        "form: transform a child PDFium would not measure",
+        "src/objects.rs",
+        "    if rect == UNMEASURABLE {\n        return UNMEASURABLE;\n    }",
+        "    if false {\n        return UNMEASURABLE;\n    }",
+        "an_unmeasurable_child_stays_unmeasurable",
+    ),
+    Mutation(
+        # Take every line in a covered form, not the ones the region covers. A
+        # region over one line of a form then removes the whole form, which is
+        # content the reader did not mark.
+        "form: take every line of a form the region reaches",
+        "src/redact.rs",
+        "                if overlaps(text.bounds, region) {\n                    plan.form_shows.push((at, ordinal));\n                }",
+        "                let _ = overlaps(text.bounds, region);\n                plan.form_shows.push((at, ordinal));",
+        "a_region_over_a_form_takes_only_the_lines_it_covers",
+    ),
+    Mutation(
+        # Report a form as unhandled even when the descent read it. Every region
+        # over a form is then refused, which is what the code did before this
+        # carrier was reachable at all.
+        "form: refuse a form whose text was read",
+        "src/redact.rs",
+        "        let inside = (object.kind == \"form\")\n            .then(|| forms.iter().find(|form| form.at == at))\n            .flatten();",
+        "        let inside: Option<&FormObject> = None;\n        let _ = forms;",
+        "a_region_over_a_forms_text_names_it_by_form_and_ordinal",
+    ),
+    Mutation(
+        # Report what the descent could not reach only when some of the form's
+        # text was also covered. A region over a form holding nothing but a
+        # nested form then takes nothing and says nothing, which is the quiet
+        # case becoming the silent one.
+        "form: report the unreachable only beside a hit",
+        "src/redact.rs",
+        "            plan.unhandled.extend(form.unreachable.iter().cloned());",
+        "            if !plan.form_shows.is_empty() {\n                plan.unhandled.extend(form.unreachable.iter().cloned());\n            }",
+        "what_the_descent_could_not_reach_is_reported_even_when_nothing_was_covered",
+    ),
+    Mutation(
+        # Stop counting the `Do` operations on this page. A form drawn twice here
+        # is ONE reference in the object graph, so the graph count alone calls it
+        # unshared and the removal changes a place the reader did not mark.
+        "form: count only the object graph, not the page's draws",
+        "src/redact.rs",
+        "    if drawn_here > 1 || elsewhere > 1 {",
+        "    if elsewhere > 1 {",
+        "a_form_drawn_twice_on_one_page_is_refused",
+    ),
+    Mutation(
+        # The mirror: stop counting references. A form another page draws is one
+        # `Do` here, so the page count alone calls it unshared.
+        "form: count only the page's draws, not the object graph",
+        "src/redact.rs",
+        "    let elsewhere = references_to(doc, id);",
+        "    let elsewhere = 0;\n    let _ = references_to(doc, id);",
+        "a_form_another_page_also_draws_is_refused",
+    ),
+    Mutation(
+        # Remove ascending. An earlier removal moves every later index, so the
+        # second ordinal names whatever slid into its place.
+        "form: remove a form's lines in ascending order",
+        "src/redact.rs",
+        "    for where_ in positions.into_iter().rev() {\n        inside.operations.remove(where_);\n    }",
+        "    for where_ in positions.into_iter() {\n        inside.operations.remove(where_);\n    }",
+        "removing_two_lines_from_one_form_takes_both_and_keeps_the_rest",
+    ),
+    Mutation(
+        # Drop the correspondence guard. Nothing connects PDFium's form objects
+        # to the page's `Do` operations but order, so a disagreement removes text
+        # from whichever form happens to be at that position.
+        "form: remove from whichever form is at that position",
+        "src/redact.rs",
+        "    if names.len() != forms.len() {",
+        "    if false {",
+        "a_form_count_that_disagrees_with_pdfium_removes_nothing",
+    ),
+    Mutation(
+        # The same guard one level down: the form's own show operators against
+        # what PDFium counted inside it.
+        "form: remove by position without checking the count",
+        "src/redact.rs",
+        "    if shows.len() != text_objects {\n        return Err(format!(\n            \"this form has {} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Removing by position needs those to agree, so nothing was removed.\",",
+        "    if false {\n        return Err(format!(\n            \"this form has {} text-showing operator(s) and PDFium reported {text_objects} text \\\n             object(s). Removing by position needs those to agree, so nothing was removed.\",",
+        "a_show_count_that_disagrees_with_pdfium_removes_nothing",
+    ),
+]
 
 #: The join between the redaction and the engine: which words a page has, how big
 #: to render them, what image the engine is shown, and what a verdict is called.

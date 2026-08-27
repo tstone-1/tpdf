@@ -1715,9 +1715,19 @@ pub fn redaction_plans_of(
         .iter()
         .map(|region| {
             let want = crop_from_display(turns, width, height, file_box, *region);
-            let plan = redact::covered(&objects.all, want);
+            let plan = redact::covered(&objects.all, &objects.forms, want);
             redact::RegionPlan {
                 text_objects: objects.text.len(),
+                form_shows: plan.form_shows.clone(),
+                // Every form on the page, whether or not this region touches it.
+                // See the field: a plan merges a page's regions, and a count
+                // present only when some region covered that form would be
+                // missing exactly when another region needed it.
+                form_text_objects: objects
+                    .forms
+                    .iter()
+                    .map(|form| (form.at, form.text.len()))
+                    .collect(),
                 // Joined by a space, because a row shows one line and the
                 // operations either side of a break are two operations. What is
                 // deliberately not done here is trimming: an operation that
@@ -1729,6 +1739,19 @@ pub fn redaction_plans_of(
                     .iter()
                     .filter_map(|ordinal| objects.text.get(*ordinal))
                     .map(String::as_str)
+                    // Then the text inside forms, which is drawn on the same
+                    // page and is as much *what this removal takes* as the
+                    // page's own -- so it reaches every reader that asks what
+                    // went: the review panel, the byte scan's needles, the
+                    // outline and form carriers, and the OCR gate's survivors.
+                    .chain(plan.form_shows.iter().filter_map(|(at, ordinal)| {
+                        objects
+                            .forms
+                            .iter()
+                            .find(|form| form.at == *at)
+                            .and_then(|form| form.text.get(*ordinal))
+                            .map(|text| text.draws.as_str())
+                    }))
                     .collect::<Vec<_>>()
                     .join(" "),
                 unhandled: plan.unhandled,

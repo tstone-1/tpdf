@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use pdfium_render::prelude::*;
 
 use crate::progressive::RawPage;
-use crate::redact::PageObject;
+use crate::redact::{FormObject, FormText, PageObject, Unhandled};
 use crate::text::RawTextPage;
 
 /// A page's objects, and what the text ones draw.
@@ -53,6 +53,12 @@ pub struct PageObjects {
     /// strings are ordinary: a text object PDFium places no characters against
     /// draws nothing this can read.
     pub text: Vec<String>,
+    /// The Form XObjects on this page, and the text inside each.
+    ///
+    /// One entry per `form` object in [`all`](Self::all) --- always, even when the
+    /// descent found nothing --- so a caller can tell a form this looked inside
+    /// from a form it could not, and `redact::covered` can refuse the second.
+    pub forms: Vec<FormObject>,
 }
 
 /// What PDFium calls an object of this type, for a refusal a person reads.
@@ -105,6 +111,11 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageObje
     // ordinals are the thing a removal addresses by.
     let mut ordinal_of: HashMap<usize, usize> = HashMap::new();
     let mut text_objects = 0usize;
+    // The form objects, kept with their handles so the descent below is a second
+    // pass rather than a nested one --- the page's own text has to occupy an
+    // unbroken range of ordinals starting at zero, and interleaving the two
+    // would put a form's children in the middle of it.
+    let mut form_handles: Vec<(usize, FPDF_PAGEOBJECT)> = Vec::new();
 
     for index in 0..count.max(0) {
         // SAFETY: `index` is below the reported object count.
@@ -126,16 +137,168 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageObje
             ordinal_of.insert(object as usize, text_objects);
             text_objects += 1;
         }
+        if kind == "form" {
+            form_handles.push((all.len(), object));
+        }
         all.push(PageObject {
             bounds: bounds_of(page, object),
             kind: kind.to_string(),
         });
     }
 
+    // The second pass. Every text child gets an ordinal above the page's own, so
+    // one walk of the page's characters serves both -- which it can, because a
+    // character inside a form is on the *page's* text page like every other.
+    // Measured on `form-xobject.pdf`, whose 157 characters include both lines of
+    // a form and one from a form nested inside a form, and whose
+    // `FPDFText_GetTextObject` hands back the **inner** text object rather than
+    // the form. That is what makes a pointer-keyed map work at all.
+    let mut forms: Vec<FormObject> = Vec::new();
+    let mut slot_of: Vec<(usize, usize)> = Vec::new();
+    for (at, handle) in form_handles {
+        let form = descend(
+            page,
+            handle,
+            at,
+            text_objects + slot_of.len(),
+            &mut ordinal_of,
+        );
+        for ordinal in 0..form.text.len() {
+            slot_of.push((forms.len(), ordinal));
+        }
+        forms.push(form);
+    }
+
+    let mut said = draws(page, text, &ordinal_of, text_objects + slot_of.len());
+    let deep = said.split_off(text_objects.min(said.len()));
+    for ((form, ordinal), drawn) in slot_of.into_iter().zip(deep) {
+        forms[form].text[ordinal].draws = drawn;
+    }
+
     Ok(PageObjects {
-        text: draws(page, text, &ordinal_of, text_objects),
+        text: said,
         all,
+        forms,
     })
+}
+
+/// One Form XObject's text children, in page space.
+///
+/// **Descends exactly one level**, and says so: a child that is itself a form
+/// goes into [`FormObject::unreachable`] rather than being followed. Following it
+/// would need the matrices to compose and a removal to address a stream two deep,
+/// and neither is measured --- reporting what cannot be reached is the answer
+/// `docs/PLAN.md` §6 requires, and is what stops a region over a nested form
+/// being certified.
+///
+/// `first` is the ordinal the first text child takes in `ordinal_of`, which
+/// continues above the page's own so that [`draws`] can be called once.
+fn descend(
+    page: &RawPage<'_>,
+    form: FPDF_PAGEOBJECT,
+    at: usize,
+    first: usize,
+    ordinal_of: &mut HashMap<usize, usize>,
+) -> FormObject {
+    let bindings = page.bindings();
+    // SAFETY: `form` is a valid page object of type FORM, owned by the page.
+    let count = unsafe { bindings.FPDFFormObj_CountObjects(form) };
+    let matrix = matrix_of(page, form);
+    let mut out = FormObject {
+        at,
+        text: Vec::new(),
+        unreachable: Vec::new(),
+    };
+    for index in 0..count.max(0) {
+        // `c_ulong` rather than a width: PDFium takes this index as `unsigned
+        // long`, which is 64-bit on macOS and 32-bit on Windows, so `as u64`
+        // compiles on one platform and not the other. `scripts/check_windows.py`
+        // is what said so, in about eight seconds.
+        //
+        // SAFETY: `index` is below the reported child count.
+        let child = unsafe { bindings.FPDFFormObj_GetObject(form, index as std::os::raw::c_ulong) };
+        // A child PDFium enumerated and will not hand over is reported for the
+        // same reason a page object is: dropping it silently under-redacts.
+        let kind = if child.is_null() {
+            "unsupported"
+        } else {
+            // SAFETY: `child` is a valid page object owned by the form.
+            kind_of(unsafe { bindings.FPDFPageObj_GetType(child) })
+        };
+        if kind != "text" {
+            out.unreachable.push(Unhandled {
+                at,
+                kind: kind.to_string(),
+            });
+            continue;
+        }
+        ordinal_of.insert(child as usize, first + out.text.len());
+        out.text.push(FormText {
+            bounds: through(matrix, bounds_of(page, child)),
+            draws: String::new(),
+        });
+    }
+    out
+}
+
+/// A form object's matrix, or the identity when PDFium will not report one.
+///
+/// The identity is the value that changes nothing, which is the right fallback
+/// here for the reason it is the wrong one elsewhere: an unplaced form's children
+/// then land where the form's own bounds say the form is, so a region over it
+/// still covers them. Getting this wrong in the other direction --- refusing ---
+/// would turn an unreadable matrix into text nobody can remove.
+fn matrix_of(page: &RawPage<'_>, form: FPDF_PAGEOBJECT) -> [f32; 6] {
+    let mut m = FS_MATRIX {
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        e: 0.0,
+        f: 0.0,
+    };
+    // SAFETY: a writable matrix, and `form` is valid for the page's borrow.
+    let ok = unsafe { page.bindings().FPDFPageObj_GetMatrix(form, &mut m) };
+    let read = [m.a, m.b, m.c, m.d, m.e, m.f];
+    if ok == 0 || !read.iter().all(|v| v.is_finite()) {
+        return [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    }
+    read
+}
+
+/// A rectangle in a form's space, brought into the page's.
+///
+/// **Not optional and not obvious**: PDFium reports a form child's bounds in the
+/// *form's* own space. Measured on `form-xobject.pdf`, where a form placed at
+/// (60, 600) reports a child at (0.9, 19.9) --- so a region compared against the
+/// untransformed box covers nothing, and a redaction over that line removes
+/// nothing while reporting success.
+///
+/// All four corners, because a matrix may rotate or skew and two corners then
+/// describe a different rectangle from the one the glyphs occupy.
+fn through(m: [f32; 6], rect: [f32; 4]) -> [f32; 4] {
+    if rect == UNMEASURABLE {
+        return UNMEASURABLE;
+    }
+    let [a, b, c, d, e, f] = m;
+    let corners = [
+        (rect[0], rect[1]),
+        (rect[2], rect[1]),
+        (rect[0], rect[3]),
+        (rect[2], rect[3]),
+    ];
+    let mut xs = [0f32; 4];
+    let mut ys = [0f32; 4];
+    for (i, (x, y)) in corners.into_iter().enumerate() {
+        xs[i] = a * x + c * y + e;
+        ys[i] = b * x + d * y + f;
+    }
+    [
+        xs.iter().copied().fold(f32::INFINITY, f32::min),
+        ys.iter().copied().fold(f32::INFINITY, f32::min),
+        xs.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+        ys.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+    ]
 }
 
 /// One object's bounding box in the page's own space, y upwards.
@@ -253,8 +416,56 @@ mod tests {
             [500.0, 700.0, 560.0, 720.0],
             [-100.0, -100.0, -90.0, -90.0],
         ] {
-            let plan = crate::redact::covered(&objects, region);
+            let plan = crate::redact::covered(&objects, &[], region);
             assert!(!plan.is_complete(), "region {region:?} reported complete");
         }
+    }
+
+    #[test]
+    fn a_translated_form_moves_its_text_by_exactly_the_translation() {
+        // The measurement this exists for: on `form-xobject.pdf` a form placed
+        // at (60, 600) reports a child at (0.9, 19.9), and comparing a region
+        // against the untransformed box covers nothing at all.
+        let moved = through([1.0, 0.0, 0.0, 1.0, 60.0, 600.0], [0.9, 19.9, 250.0, 28.7]);
+        assert_eq!(moved, [60.9, 619.9, 310.0, 628.7]);
+    }
+
+    #[test]
+    fn the_identity_leaves_a_rectangle_where_it_was() {
+        // The fallback's own property, and the control for the test above: a
+        // form PDFium reports no matrix for must not move its children.
+        let rect = [10.0, 20.0, 30.0, 40.0];
+        assert_eq!(through([1.0, 0.0, 0.0, 1.0, 0.0, 0.0], rect), rect);
+    }
+
+    #[test]
+    fn a_scaled_form_scales_its_text() {
+        assert_eq!(
+            through([2.0, 0.0, 0.0, 3.0, 0.0, 0.0], [1.0, 1.0, 2.0, 2.0]),
+            [2.0, 3.0, 4.0, 6.0]
+        );
+    }
+
+    #[test]
+    fn a_rotated_form_needs_all_four_corners() {
+        // A quarter turn: (x, y) -> (-y, x). Taking two corners would give
+        // [-1, 1, -2, 2], whose left is greater than its right -- a rectangle
+        // that overlaps nothing, so a redaction over it would remove nothing and
+        // report success.
+        let turned = through([0.0, 1.0, -1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 2.0, 2.0]);
+        assert_eq!(turned, [-2.0, 1.0, -1.0, 2.0]);
+        assert!(turned[0] < turned[2] && turned[1] < turned[3]);
+    }
+
+    #[test]
+    fn an_unmeasurable_child_stays_unmeasurable() {
+        // Through a matrix it would become garbage -- `f32::MIN * 2` is
+        // infinite -- and an object that overlaps everything has to go on
+        // overlapping everything, which is what makes it reported rather than
+        // stepped over.
+        assert_eq!(
+            through([2.0, 0.0, 0.0, 2.0, 5.0, 5.0], UNMEASURABLE),
+            UNMEASURABLE
+        );
     }
 }

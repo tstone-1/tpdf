@@ -819,12 +819,20 @@ async fn ask_redactions(
         // whether an outline entry names it. One source, two readers --- built
         // in the same loop so they cannot come to disagree.
         let mut taken: Vec<String> = Vec::new();
+        // The same two facts one level down: which text inside a form goes, and
+        // how many text objects each form on the page holds. `form_text_objects`
+        // is a property of the page like `text_objects` and is taken from the
+        // last plan for the same reason.
+        let mut form_shows: Vec<(usize, usize)> = Vec::new();
+        let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
         for plan in plans {
             text_objects = plan.text_objects;
+            form_text_objects = plan.form_text_objects.clone();
             for object in &plan.unhandled {
                 concerns.push(format!("page {}: {}", page + 1, object.sentence()));
             }
             shows.extend(plan.shows.iter().copied());
+            form_shows.extend(plan.form_shows.iter().copied());
             areas.push(plan.area);
             let taking = plan.taking.trim();
             if !taking.is_empty() {
@@ -838,6 +846,11 @@ async fn ask_redactions(
         shows.sort_unstable();
         shows.dedup();
         shows_total += shows.len();
+        // Merged the same way, and it matters as much: two regions over one line
+        // inside a form name the same operator there too.
+        form_shows.sort_unstable();
+        form_shows.dedup();
+        shows_total += form_shows.len();
         // One text extraction per page, on the document as the reader has it.
         // `None` for the crop because `redaction_plans` uses the file's own, and
         // a word list measured from a different corner than the regions were
@@ -865,6 +878,8 @@ async fn ask_redactions(
             text_objects,
             areas,
             taking: taken,
+            form_shows,
+            form_text_objects,
         });
     }
 

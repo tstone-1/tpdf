@@ -361,10 +361,21 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # is not tidiness, since a temporary left beside a redacted document holds the
 # unredacted bytes.
 #
+# Its last section is text inside a Form XObject, on form-xobject.pdf: PDFium
+# enumerates a form as ONE page object, so remove_shows has no ordinal that names
+# what is inside it -- 9,310 of 154,095 realistic regions across 41 real
+# documents, the largest carrier a redaction could not take that is made of
+# ordinary text. Nine checks, and the discriminating ones are the third and
+# fourth: the marked line goes and the line BESIDE IT IN THE SAME FORM stays, or
+# a removal that emptied the whole stream would pass everything else here. Then a
+# form the document draws twice is refused and no file is written.
+#
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
+# form-xobject.pdf a runner CAN build -- it is pure Python with no system font --
+# so its section runs there.
 #
-#   macOS arm64, 2026-08-27   26 checks, 0 failures
+#   macOS arm64, 2026-08-27   36 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

@@ -236,6 +236,25 @@ never a bare success --- and it arrives when the file is already the redacted on
 That is the reason for the warning rather than an argument against it. Reach for
 *Redact and save as* while you are still deciding.
 
+### Changed: redaction reaches text that a page draws through a reusable block
+
+Some documents draw a line of text not on the page itself but inside a reusable
+block the page places --- a letterhead, a table cell, a stamp, anything a producer
+built once and dropped in several times. Until now you could search for those
+words, select them and mark them, and the removal would leave them where they
+were and tell you it could not prove the file was clean.
+
+It removes them now. On 41 real documents that is the largest kind of content a
+redaction could not take that is made of ordinary text.
+
+**A block the document draws more than once is refused instead**, and the message
+says how many times. Removing from it would change every place it appears,
+including pages you never marked, so nothing is written at all --- that is the
+same rule already used for text a tagged document shares between pages.
+
+Two things it still leaves, and the report says so before you commit: a block
+drawn inside another block, and a picture or a drawing inside one.
+
 ### Changed: a redaction now checks the page as a picture, not only as bytes
 
 After a redaction the file is read back, and until now that reading was a search

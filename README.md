@@ -145,7 +145,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   do not like the result you still have your marks. It removes **text**: a region covering a
   picture or a drawing leaves that where it is, and says so both in the panel before you
   commit and in the report afterwards, because a file with the words gone and a picture of
-  the words still in it is worse than no redaction at all. It also takes whole lines ---
+  the words still in it is worse than no redaction at all. Text a page draws through a
+  reusable block --- a letterhead, a table cell, a stamp --- is removed like any other,
+  unless the document draws that block more than once, in which case it is refused rather
+  than changing pages you did not mark. It also takes whole lines ---
   removing part of one means removing the instruction that drew it, so a word beside the one
   you marked goes with it. On a document tagged for accessibility it takes the second copy
   of those words that the tag keeps beside them --- both where it sits beside the words and

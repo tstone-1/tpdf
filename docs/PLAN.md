@@ -2013,8 +2013,10 @@ because it cannot look is the failure this repository has recorded from several 
 
 What is **not** built: the carriers this still does not reach --- page labels, embedded files
 and the targets of annotation actions, every one of which §6's table names; and a region over
-an image, which is reported and left. Five rows of that table **are** reached since
-2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
+an image or a path, which is reported and left. **Text inside a Form XObject is reached since
+2026-08-27** --- the largest of those by region count, 9,310 of 154,095, and the only one made
+of ordinary text; it has a subsection of its own below. Five rows of that table **are** reached
+since 2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
 the structure element the span belongs to; an annotation whose rectangle is over a region,
 replies and popup included; the document's own description of itself, `/Info` and the XMP
 packet, taken whole; the **outline**, entry by entry, which is the commonest of them in the
@@ -2056,7 +2058,8 @@ mis-addressed removal is one that deletes the wrong words and reports success.
 The over-redaction control is the half that keeps the rest honest: a word on **another line**
 must survive, because a removal that emptied the page would pass every other check perfectly.
 
-What is not built here: images and paths, which are reported and left. That is the whole of
+What is not built here: images and paths, which are reported and left. Text inside a Form
+XObject **is** built, since 2026-08-27. That is the whole of
 it now, and the sentence used to go on for two more lines --- annotations, form values,
 metadata, the outline --- because when it was written this module removed text and nothing
 else. Every one of those is in `redact.rs` today, in its own subsection below; the shadow
@@ -2636,7 +2639,9 @@ box as the region a reader would draw over that line, across the same 41 real do
 | documents with at least one such region | 24 of 41 |
 | documents where *every* region is one | 8 of 41 |
 
-By kind, counting each region once: **path 49,521**, form 9,310, image 2,979, shading 23. A
+By kind, counting each region once: **path 49,521**, form 9,310, image 2,979, shading 23. The
+form row is closed as of 2026-08-27 --- see *The text inside a Form XObject* below --- so what
+these numbers size today is paths and images. A
 rule under a line of text is what almost every real document has, which is why paths dominate
 --- and a path cannot be waved through, because text converted to outlines is a path that
 draws the shape of the words. So today, on two documents in five, a reader who redacts a line
@@ -2889,6 +2894,77 @@ to. Nothing here reads a scanned page's own image separately from the region: th
 whatever the region covers, so a redaction over part of a scan is judged on those pixels and
 no others, which is right, and a `/DCTDecode` image *outside* every region is still the byte
 scan's `deferred` list rather than anything this reads.
+
+#### The text inside a Form XObject --- done 2026-08-27
+
+The largest carrier a redaction could not take that is made of **ordinary text**.
+`docs/PLAN.md`'s own by-kind measurement puts it at **9,310 of 154,095** realistic
+regions across 41 real documents --- three times the image count, and second only to
+paths, which are mostly the rule under a line of text and cannot be taken wholesale.
+
+**The asymmetry is what made it worth doing next.** PDFium enumerates a form as one
+page object, so `remove_shows` has no ordinal that names the text inside it --- but the
+page's *text page* reaches in. `form-xobject.pdf` extracts 157 characters from page 1
+including both lines of a form and one from a form nested inside a form. A reader could
+therefore search for those words, select them, mark them, and get a file with the words
+still in it and a sentence saying the region could not be proved clean.
+
+`objects::read` descends one level. Three measurements decided the shape and none is
+guessable from the API:
+
+| question | answer, measured on `form-xobject.pdf` |
+|---|---|
+| what does `FPDFText_GetTextObject` return for a character inside a form? | the **inner** text object, so one pointer-keyed map serves the page and every form, and one character walk fills both |
+| what space are a form child's bounds in? | the **form's**. A form placed at (60, 600) reports its first line at (0.9, 19.9) |
+| can the children be enumerated at all? | yes --- `FPDFFormObj_CountObjects` and `FPDFFormObj_GetObject`, checked with `nm` against the vendored build |
+
+So the bounds go through `FPDFPageObj_GetMatrix` on the form, all four corners, because
+a matrix may turn and two corners then describe a rectangle whose left is greater than
+its right --- which overlaps nothing, so the removal would take nothing and report
+success.
+
+`redact::remove_form_shows` is `remove_shows` against the form's own stream, with the
+same correspondence guard: nothing connects PDFium's form objects to the page's `Do`
+operations but **order**, so the k-th form-`Do` is the k-th form object and a
+disagreement in the counts is a refusal rather than a removal aimed at whichever form
+happens to sit there.
+
+**A shared form is refused, and the check is two counts rather than one.** A form's
+stream belongs to the form, so removing from it changes every place it is drawn ---
+which is the posture `clear_struct_shadow_text` already takes for a structure element
+shared between pages. Counting references to the form's object id catches a form drawn
+on two pages; it is blind to one drawn **twice on one page**, which is one entry in one
+resource dictionary and two `Do` operations. Both are counted, from different sources,
+and `form-xobject.pdf` carries the second shape because it is the one a reference count
+cannot see.
+
+**Evidence.** `redact-apply-probe` grew a form section, 9 checks on `form-xobject.pdf`:
+the descent reads what a form draws; a form inside a form is reported rather than
+followed; the region names the form's line and nothing on the page; the marked line is
+gone; **the line beside it in the same form is still there**; the page's own text is
+untouched; the shared form holds the line the refusal is about; that form is refused;
+and the refusal wrote no file. Thirteen unit tests in `redact.rs`, five in `objects.rs`
+for the matrix, and eleven mutations each caught by the test named for it.
+
+**Its own fixture, and the fixture is most of the design.** Every other file in
+`testdata/` carrying `/Subtype /Form` carries it as an annotation *appearance stream*,
+which is a different thing in a different place --- so nothing in the corpus exercised
+this at all. `make_form_xobject_pdf.py` places its forms with a translating matrix so a
+bounds convention error cannot pass, gives one form two lines so *removed the right one*
+can be told from *removed everything*, nests a form inside a form so the one-level limit
+has a subject, and draws one form twice so the refusal does. Base-14 Helvetica
+throughout, so a hosted runner can build it.
+
+**Not done, and each stated rather than discovered.** A form nested inside a form is
+reported, never followed: the matrices would have to compose and the removal address a
+stream two deep, and neither is measured. An image or a path inside a form is the same
+refusal the page level already makes, one level down. A form written into the page as a
+direct stream rather than as its own object is refused, because rewriting it in place is
+not possible and copying it out would be a structural change made by a removal asked
+only to delete text. And the two carriers `remove_shows` clears --- the marked-content
+property list and the structure element --- are addressed from the **page**, so a span
+inside a form carrying an `/MCID` in the page's own numbering is already reached by
+`clear_shadow_text`; nothing new was needed and nothing is claimed.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 
