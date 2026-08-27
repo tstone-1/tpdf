@@ -5617,6 +5617,127 @@ MUTATIONS += [
 ]
 
 
+#: The join between the redaction and the engine: which words a page has, how big
+#: to render them, what image the engine is shown, and what a verdict is called.
+#: Every one of these decides whether a region can be *certified*, which is the
+#: one answer `docs/PLAN.md` §6 says must never be given by default.
+MUTATIONS += [
+    Mutation(
+        # Drop the flush after the loop. A page's last word never leaves the
+        # accumulator, so a one-word page yields nothing and the chooser refuses
+        # a page that had a perfectly good control on it.
+        "gate: forget the word the page ends on",
+        "src/ocr_gate.rs",
+        "    flush(&mut out, &mut text, &mut rect);\n    out\n}",
+        "    let _ = (&mut text, &mut rect);\n    out\n}",
+        "a_word_at_the_very_end_of_the_page_is_not_lost",
+    ),
+    Mutation(
+        # Let a character PDFium gave no box for into the geometry. Its four
+        # zeroes then pull the word's box to the page corner, and the control is
+        # cropped from somewhere the word is not.
+        "gate: place a word from a character that has no box",
+        "src/ocr_gate.rs",
+        "        if box_ == [0.0; 4] || !box_.iter().all(|v| v.is_finite()) {\n            continue;\n        }",
+        "        if !box_.iter().all(|v| v.is_finite()) {\n            continue;\n        }",
+        "a_character_with_no_box_stays_in_the_text_and_out_of_the_geometry",
+    ),
+    Mutation(
+        # Drop every word the removal names, covered ones included. The covered
+        # words are what set the size the control must be no easier than, so the
+        # chooser then measures against a bigger box and picks a control that
+        # proves less --- `docs/TRAPS.md`'s *a control that is easier than the
+        # check certifies nothing*, arriving through the filter in front of it.
+        "gate: let the survivor filter take the covered words too",
+        "src/ocr_gate.rs",
+        "            regions.iter().any(|r| crate::redact::overlaps(w.rect, *r))\n                || !gone.iter().any(|g| *g == w.text)",
+        "            !gone.iter().any(|g| *g == w.text)",
+        "a_word_a_region_covers_is_kept_even_when_the_removal_names_it",
+    ),
+    Mutation(
+        # Take whatever scale the control's size asks for. A 40 pt heading then
+        # renders below 1x and a 1 pt one at 16x, and the probe image is either
+        # unreadable or too big to hand over.
+        "gate: render at whatever scale the control asks for",
+        "src/ocr_gate.rs",
+        "    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE);",
+        "    let mut scale = MIN_CONTROL_PX / size_pt;",
+        "the_scale_never_leaves_its_bounds",
+    ),
+    Mutation(
+        # Never reduce. A probe image past the mapping is then refused outright
+        # rather than rendered at a scale that fits, so a large page loses its
+        # verification for a reason that had a remedy.
+        "gate: refuse a big probe image rather than shrinking it",
+        "src/ocr_gate.rs",
+        "    while scale > MIN_SCALE && bytes_at(width_pt, probe_height_pt, scale) > capacity {\n        scale = (scale * 0.5).max(MIN_SCALE);\n    }",
+        "    while false {\n        scale = (scale * 0.5).max(MIN_SCALE);\n    }",
+        "a_probe_image_that_will_not_fit_at_the_chosen_scale_is_rendered_smaller",
+    ),
+    Mutation(
+        # Butt the two strips together. This is the defect that shipped for an
+        # afternoon: with no gap the engine read `quartz,` as `auartz,` on
+        # `text-base14` and the gate refused a redaction that was fine.
+        "gate: stack the strips with nothing between them",
+        "src/ocr_gate.rs",
+        "    let gap = (SEPARATION_PT * scale).round().max(2.0) as u32;",
+        "    let gap = 0u32;",
+        "the_two_strips_never_touch",
+    ),
+    Mutation(
+        # Put the band's edge at the control's first row instead of in the middle
+        # of the gap. `Control::contains` tests a centre and an engine's box is a
+        # detection rather than a measurement, so a control reported a point high
+        # then counts as a survivor and a clean region is reported legible.
+        "gate: put the band edge at the control rather than in the gap",
+        "src/ocr_gate.rs",
+        "    let edge = margin + under + gap / 2;",
+        "    let edge = margin + under + gap;",
+        "the_band_edge_sits_in_the_middle_of_the_gap_not_at_the_control",
+    ),
+    Mutation(
+        # Accept a strip that is not whole rows. The row count is then wrong, so
+        # the band lands somewhere else in the image and the partition decides the
+        # verdict: a survivor counted as the control certifies the region.
+        "gate: accept a strip that is not whole rows",
+        "src/ocr_gate.rs",
+        "        if strip.is_empty() || strip.len() % stride != 0 {",
+        "        if false {",
+        "a_strip_that_is_not_whole_rows_is_refused_before_it_is_stacked",
+    ),
+    Mutation(
+        # Say nothing about a verdict that did not certify. `Applied::why` is
+        # empty exactly when `verified`, so a region the gate could not check is
+        # then reported to the reader as a clean redaction.
+        "gate: stay silent about a region that could not be checked",
+        "src/ocr_gate.rs",
+        "        Legibility::NotVerified { why } => Some(format!(",
+        "        Legibility::NotVerified { why } => (false).then(|| format!(",
+        "a_not_verified_verdict_carries_its_own_reason_through",
+    ),
+    Mutation(
+        # Let the error path drift from the rule it duplicates. `judge` builds its
+        # own `NotVerified` when no engine answered, rather than fabricating an
+        # `EngineId` for `adjudicate` to ignore --- which is a second *caller* of
+        # rule 1 and must not become a second copy of it.
+        "gate: let the engine-failure reason drift from adjudicate's",
+        "src/ocr_gate.rs",
+        "    Legibility::NotVerified {\n        why: format!(\"{e}\"),\n    }\n}",
+        "    Legibility::NotVerified {\n        why: format!(\"the engine failed: {e}\"),\n    }\n}",
+        "the_error_path_says_what_adjudicate_would",
+    ),
+    Mutation(
+        # Return a row range for a rectangle that is off the page. It is empty, so
+        # the engine is handed no rows, reads nothing, and reading nothing is the
+        # answer that certifies.
+        "gate: hand back an empty row range for an area off the page",
+        "src/ocr_gate.rs",
+        "    (bottom > top).then_some((top, bottom - top))",
+        "    Some((top, bottom.saturating_sub(top)))",
+        "a_rectangle_entirely_off_the_page_covers_no_rows_at_all",
+    ),
+]
+
 #: The OCR worker's own guards. Its input is a pipe and a shared mapping, so
 #: every one of these is about numbers that arrived from somewhere else.
 MUTATIONS += [

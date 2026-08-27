@@ -29,6 +29,12 @@
 //!   stream is found; what was not read is the **picture**, and text that exists
 //!   only as pixels is exactly what OCR is for.
 //!
+//! **That instrument exists now, and it is narrower than this list.**
+//! [`crate::ocr_gate`] renders the regions a redaction removed from and has an
+//! engine read them, so a *region* whose carrier is a picture is answered. A
+//! deferred image sitting anywhere else in the file is still exactly what this
+//! bullet says it is: bytes nobody read, reported rather than waved through.
+//!
 //! A caller that wants a single word gets [`Verdict`], which says *not verified*
 //! for either list. What the split buys is that the reason names the next step
 //! rather than ending the conversation.

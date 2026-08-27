@@ -1676,9 +1676,16 @@ profile that is badly wrong.
 
 ### 5.1 A second boundary, for OCR
 
-Defined 2026-07-31 in `src-tauri/src/ocr.rs`; no engine is implemented yet, so nothing below
-is running in production. It is recorded here because the *shape* is a trust-boundary
-decision and it was measured rather than assumed.
+Defined 2026-07-31 in `src-tauri/src/ocr.rs`, built as a process on 2026-08-27
+(`src-tauri/src/ocr_worker.rs`) and **running in production since the same day**: every
+`redact_copy` and `redact_document` renders the regions it removed from and has an engine read
+them, through `src-tauri/src/ocr_gate.rs`.
+
+**This paragraph said "no engine is implemented yet, so nothing below is running in
+production" until then**, which was true when written. It is left visible because §6 below
+records the same failure at four days' remove and calls this direction the quieter one: a
+mitigation present and disclaimed reads as diligence, and is what a reader budgets their
+remaining work against.
 
 OCR cannot run under the profile above. Measured with `scripts/vision_sandbox_probe.swift`,
 which applies a profile to itself post-launch exactly as `worker_child.rs` does — running it
@@ -1716,6 +1723,30 @@ makes "clean" unreachable except through a positive control the engine had to re
 the same probe image, sized from the smallest box the redaction covered — a control drawn larger
 than the redacted text proves only that the engine reads larger text. Every engine failure, and
 a missing control, produce `NotVerified`, never `Illegible`.
+
+**What the wiring adds to the trust boundaries, and what it deliberately does not.** The gate
+runs in the app process and touches three things:
+
+| what it handles | where it came from | what bounds it |
+|---|---|---|
+| the written file, reopened to render it | our own writer, from the reader's document | opened through `RenderService` like any other document, so it is parsed **in a parser worker** under §4's profile — the coordinator never parses it |
+| tile pixels | a parser worker's mapping | a fixed-size RGBA buffer with no format in it; `Pixels::is_consistent` refuses one whose length disagrees with its dimensions |
+| the probe image | assembled here from two strips | `room_for` in the parent and `frame_of` in the child both bound it against `PIXELS_CAPACITY`, so neither end trusts the other's arithmetic |
+
+So the gate adds **no new parse in the coordinator**. What it does add is a second worker per
+save and a second file open of a path the app just wrote — the same filesystem authority
+`save_copy` already holds.
+
+**On a platform with no engine the gate says so once and the file is not certified.**
+`OcrWorker::spawn` returns `NO_ENGINE` on Windows, which becomes one sentence in
+`Applied::why` rather than one per region, and `verified` is false. A skipped check that read
+as a clean answer would be this document's own T5 failure arriving through the platform gate.
+
+**The coverage this has, stated as a number rather than implied.** A region whose page yields
+no qualifying control is `NotVerified`: measured across 41 documents, 45.9% of realistic
+regions had no surviving word of at least `MIN_CONTROL_CHARS` characters at or below the size
+that was removed. That is the ceiling of this design, and the curve has no flat part to move
+to — see `docs/PLAN.md` §6.
 
 ## 6. Windows — a policy, and a different one
 
@@ -2086,6 +2117,21 @@ which is what makes it evidence rather than a milestone.
     answer is kilobytes and fits in a reply, and a rewrite's answer is the whole file.
     `docs/PLAN.md` §3 records the shape. Until it lands this is disclosed rather than
     mitigated, and it is reached by deleting a page and pressing ⌘S.
+
+19. **The redaction gate's coverage is a ceiling, not a threshold**, added 2026-08-27 with
+    §5.1's wiring. A region can only be certified when its page leaves a word the removal did
+    not take, no larger than the smallest box it did take, of at least `MIN_CONTROL_CHARS`
+    characters. Measured across 41 real documents, **45.9%** of realistic regions have no such
+    word, and those are reported *not verified* --- which is the safe answer and is also the
+    answer that was given before any of this existed. Raising coverage means lowering the
+    control's standard, and the measured curve has no flat part: 71.9% at two characters,
+    58.3% at four, 35.5% at eight. A two-character token is a fragment `adjudicate` would
+    match by accident.
+
+    Two things narrow it further and neither is closed. **The gate reads the region, not the
+    page**, so a `/DCTDecode` image outside every region is still `verify::Report::deferred`
+    --- bytes nobody read, reported. And on a platform with no engine there is no gate at
+    all: Windows gets one sentence saying so, which is honest and is not a mitigation.
 
 ## 8. How to re-verify any of this
 

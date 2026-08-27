@@ -236,6 +236,31 @@ never a bare success --- and it arrives when the file is already the redacted on
 That is the reason for the warning rather than an argument against it. Reach for
 *Redact and save as* while you are still deciding.
 
+### Changed: a redaction now checks the page as a picture, not only as bytes
+
+After a redaction the file is read back, and until now that reading was a search
+through the file's own bytes for the words that were supposed to go. That finds a
+word still spelled out somewhere in the file, and it is blind to a **picture** of
+that word --- text that was converted to outlines is a drawing of the letters, and
+a scanned page is an image nothing here reads. Across 41 real documents, 39% of
+realistic regions carry something of that kind.
+
+tpdf now also renders the area you removed and asks the operating system's own
+text recogniser to read it. If anything comes back, the report says so and quotes
+what it read. Nothing is called clean on this evidence unless the recogniser was
+first shown to be working: a word from elsewhere on the same page, no bigger than
+the smallest thing you removed, is put into the same image and has to be read
+back. If it is not, the answer is *could not be checked* --- never *clean*. An
+engine that cannot read is not evidence that there is nothing to read.
+
+It runs on the file that was written, never on the one you had open.
+
+**On Windows there is no recogniser to ask.** The report says that in one line and
+the file is not certified, rather than passing quietly.
+
+This costs about a fifth of a second per area on an ordinary page, on top of a
+save that was already reading the whole file.
+
 ### Fixed: a highlight could stop showing the words it covers after a deletion
 
 The comments panel fills in the words under a highlight that was left blank, a

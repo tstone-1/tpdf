@@ -25,6 +25,12 @@
 //! no format to parse, no lengths to trust, no recursion. That is a categorically
 //! smaller surface, and it is why a laxer profile here is a considered trade
 //! rather than a concession.
+//!
+//! ## Who asks
+//!
+//! [`crate::ocr_gate`], on the file a redaction just wrote. One worker per save
+//! rather than per region: [`OcrWorker::spawn`] costs 1.5 ms and a probe image
+//! about 9 ms, so the process is the cheap half.
 
 // `BufRead`, `BufReader`, `Command` and `Stdio` are used only by the macOS arms
 // below, and importing them here made three compile gates red on Windows and

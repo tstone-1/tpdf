@@ -30,6 +30,7 @@ pub mod menu;
 pub mod merge;
 pub mod objects;
 pub mod ocr;
+pub mod ocr_gate;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
 pub mod ocr_worker;
@@ -754,6 +755,13 @@ struct Asked {
     regions: usize,
     /// How many text-showing operations the removal names, after merging.
     shows: usize,
+    /// What the OCR gate needs and only the source document can supply.
+    ///
+    /// Collected here rather than after the write because after the write it
+    /// cannot be: the control the gate renders has to be no larger than the
+    /// smallest box a region covered, and the removal takes exactly those boxes.
+    /// See [`ocr_gate::GatePage`].
+    gate: Vec<ocr_gate::GatePage>,
 }
 
 /// Works out what removing every marked region would take.
@@ -782,10 +790,15 @@ async fn ask_redactions(
     let mut concerns: Vec<String> = Vec::new();
     let mut regions = 0usize;
     let mut shows_total = 0usize;
+    let mut gate: Vec<ocr_gate::GatePage> = Vec::new();
 
     for target in targets {
         let page = target.source;
         regions += target.regions.len();
+        // Kept before the move: the gate works in display space, which is the
+        // space these arrived in, while `redaction_plans` converts them to the
+        // page's own.
+        let displayed = target.regions.clone();
         let (reply, rx) = reply_channel();
         service.redaction_plans(doc, page, target.regions, reply);
         let plans = await_reply("redaction_plans", rx).await?;
@@ -825,6 +838,27 @@ async fn ask_redactions(
         shows.sort_unstable();
         shows.dedup();
         shows_total += shows.len();
+        // One text extraction per page, on the document as the reader has it.
+        // `None` for the crop because `redaction_plans` uses the file's own, and
+        // a word list measured from a different corner than the regions were
+        // would put every control somewhere else on the page.
+        //
+        // A page whose text cannot be read is not a refusal: the gate reports
+        // *not verified* for its regions, which is the answer either way.
+        let (reply, rx) = reply_channel();
+        service.text(doc, page, None, reply);
+        let (words, width_pt, height_pt) = match await_reply("redaction text", rx).await {
+            Ok(text) => (ocr_gate::words_from(&text), text.width_pt, text.height_pt),
+            Err(_) => (Vec::new(), 0.0, 0.0),
+        };
+        gate.push(ocr_gate::GatePage {
+            page,
+            regions: displayed,
+            words,
+            taking: taken.join(" "),
+            width_pt,
+            height_pt,
+        });
         planned.push(edits::PlannedRedaction {
             source: page,
             shows,
@@ -842,6 +876,38 @@ async fn ask_redactions(
         concerns,
         regions,
         shows: shows_total,
+        gate,
+    })
+}
+
+/// Runs `docs/PLAN.md` §6 step 4 over a written file, off the async runtime.
+///
+/// [`ocr_gate::run`] blocks --- it waits on a render and on another process ---
+/// and every other step of these two commands is already on a blocking thread
+/// for the same reason. The service is reached through the app handle rather
+/// than borrowed, because `spawn_blocking` needs what it captures to outlive the
+/// call and a `tauri::State` borrow does not.
+///
+/// **Nothing here refuses.** A join that failed is one more reason the file
+/// cannot be called clean, and [`redact::Applied`] is what carries it.
+async fn gate_written_file(
+    app: &tauri::AppHandle,
+    path: String,
+    pages: Vec<ocr_gate::GatePage>,
+) -> Vec<String> {
+    if pages.is_empty() {
+        return Vec::new();
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let service = handle.state::<RenderService>();
+        ocr_gate::run(&service, &path, None, &pages)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        vec![format!(
+            "the removed areas could not be checked, so the file cannot be shown clean: {e}"
+        )]
     })
 }
 
@@ -887,6 +953,7 @@ async fn ask_redactions(
 /// readable back.
 #[tauri::command]
 async fn redact_copy(
+    app: tauri::AppHandle,
     edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
@@ -894,15 +961,16 @@ async fn redact_copy(
     path: String,
 ) -> Result<redact::Applied, String> {
     let asked = ask_redactions(&edits, &service, doc).await?;
-    let plan = asked.plan;
-    let needles = asked.needles;
-    let concerns = asked.concerns;
+    let plan = asked.plan.clone();
+    let needles = asked.needles.clone();
+    let concerns = asked.concerns.clone();
     let regions = asked.regions;
     let shows_total = asked.shows;
 
     let out = std::path::PathBuf::from(path);
     let from = std::path::PathBuf::from(source);
     let written = out.clone();
+    let out_path = out.to_string_lossy().into_owned();
     let copied = tauri::async_runtime::spawn_blocking(move || save::write_copy(&from, &plan, &out))
         .await
         .map_err(|e| format!("the redaction did not run: {e}"))?
@@ -927,6 +995,10 @@ async fn redact_copy(
     if let verify::Verdict::NotVerified(reasons) = report.verdict() {
         why.extend(reasons);
     }
+    // Then §6 step 4, which is the only one of the two that can see a picture of
+    // the words. It runs on the file that was just written, never on the source
+    // --- see `ocr::RedactedPixels`, where that is a type-level rule.
+    why.extend(gate_written_file(&app, out_path, asked.gate).await);
     Ok(redact::Applied {
         regions,
         shows: shows_total,
@@ -983,6 +1055,7 @@ async fn redact_copy(
 /// back, both of which say `reopen`.
 #[tauri::command]
 async fn redact_document(
+    app: tauri::AppHandle,
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
@@ -993,7 +1066,7 @@ async fn redact_document(
         .map_err(SaveFailure::refused)?;
 
     let staging = source.clone();
-    let plan = asked.plan;
+    let plan = asked.plan.clone();
     let staged = tauri::async_runtime::spawn_blocking(move || {
         save::stage_in_place(Path::new(&staging), &plan)
     })
@@ -1014,7 +1087,7 @@ async fn redact_document(
     let closed = await_reply("redact_document", rx).await;
 
     let committing = source.clone();
-    let needles = asked.needles;
+    let needles = asked.needles.clone();
     let landed = tauri::async_runtime::spawn_blocking(move || {
         let at = Path::new(&committing);
         // One more look before the rename, closing the window staging opens.
@@ -1039,10 +1112,13 @@ async fn redact_document(
     // The objects the removal could not take come first, because they are the
     // finding a reader can act on --- see `redact_copy`, which orders them the
     // same way and for the same reason.
-    let mut why = asked.concerns;
+    let mut why = asked.concerns.clone();
     if let verify::Verdict::NotVerified(reasons) = report.verdict() {
         why.extend(reasons);
     }
+    // Then §6 step 4, against the reader's own file --- which is now the only
+    // copy, so this is the sharper of the two places it runs.
+    why.extend(gate_written_file(&app, source, asked.gate).await);
     Ok(redact::Applied {
         regions: asked.regions,
         shows: asked.shows,
