@@ -1635,8 +1635,9 @@ confident lie. The audit was hardest on this section and largely right.
 
 1. **Mark.** Drag regions, select text, or pattern-search (emails, order numbers, a word
    list) and mark all hits. Marks are journal commands rendered as an overlay; nothing is
-   destroyed and everything is undoable. *Built for a dragged region: the model, the
-   gesture, the overlay and the undo. Marking by selection or by pattern is not.*
+   destroyed and everything is undoable. *Built, all three shapes: a dragged region, a
+   selection, and every match of the pattern in the find field --- each with the model, the
+   overlay and the undo.*
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
    to catch an over- or under-selection. *Built: the panel, in page order, with the words
    the region covers and the only route off a region other than undo. The thumbnail is not.*
@@ -2641,13 +2642,25 @@ box as the region a reader would draw over that line, across the same 41 real do
 
 By kind, counting each region once: **path 49,521**, form 9,310, image 2,979, shading 23. The
 form and image rows are both closed as of 2026-08-27 --- see the two subsections below --- so
-what these numbers size today is **paths**, and the 39.1% above is correspondingly too high by
-an amount nobody has re-measured. A
+what these numbers size today is **paths**. ~~And the 39.1% above is correspondingly too high
+by an amount nobody has re-measured.~~ **Re-measured the same day**: 33.1%, over a population
+of word-sized regions rather than whole text objects --- see *What a removal can take,
+re-measured*. A
 rule under a line of text is what almost every real document has, which is why paths dominate
 --- and a path cannot be waved through, because text converted to outlines is a path that
-draws the shape of the words. So today, on two documents in five, a reader who redacts a line
-gets a file with the words gone and a sentence saying it could not be proved clean. Step 4 is
-what turns those into an answer.
+draws the shape of the words. So today, on one document in two, a reader who redacts a line
+gets a file with the words gone and a sentence saying it could not be proved clean.
+
+⚠ **This paragraph ended "Step 4 is what turns those into an answer" and that is not what the
+wiring does.** `redact_copy` assembles its reasons as `concerns` --- one per object the removal
+could not take --- and then *extends* them with the gate's, so a region whose path the gate
+proves illegible keeps its concern and the file stays uncertified. The gate can only ever
+**add** a reason. That is defensible and is probably right: proving a region holds no legible
+text is not proving it holds nothing, and §6's deny-by-default rule is what says the
+difference matters. What is not defensible is the sentence, which promised a reader that the
+39.1% would shrink when step 4 landed. The gate is a **catcher** --- it finds a removal that
+looked complete and left readable pixels --- and that is what the measurement below asks about
+instead.
 
 **A gate is only as good as its control**, and `docs/TRAPS.md`'s entry *a control that is
 easier than the check certifies nothing* is the failure it has to make unreachable. An OCR
@@ -3026,8 +3039,136 @@ unremovable, at least one is named removable, and the paths are still refused.
 has, so taking them wholesale would damage every redaction. An **inline** image
 (`BI…ID…EI`) has no `Do` to remove, so the correspondence guard refuses; measured across
 41 documents and 1,189 pages there are **zero** of them, and the guard is what makes the
-rare file safe rather than wrong. And `docs/PLAN.md`'s own 39.1% figure predates both
-this and the form carrier, so it is now too high by an amount nobody has measured.
+rare file safe rather than wrong. ~~And `docs/PLAN.md`'s own 39.1% figure predates both
+this and the form carrier, so it is now too high by an amount nobody has measured.~~
+**Measured 2026-08-27 by the section below**, and it was too high for a reason nobody
+predicted.
+
+#### What a removal can take, re-measured --- 2026-08-27
+
+The 39.1% above was measured before the form carrier existed, before the image carrier
+did, and before there was an OCR gate at all. It is quoted in four places in this file
+and in `ocr_gate.rs`'s own module documentation, and it is the number that decides which
+increment comes next --- so it is worth exactly as much as the date on it.
+
+`examples/redact_reach_probe.rs` is the instrument, and it asks two questions with two
+different tools. **How often is a region incomplete, and what carries it?** answered by
+`redaction_plans` alone --- no write, no render, no engine --- so it runs over every
+sampled region. **What does the gate say about a region the removal took whole?**
+answered only by writing the file and reading the pixels back.
+
+The population is not the old one and the report says so: one region per word of four
+characters or more, inflated by a point, three pages spread through each document and
+forty regions spread through each page. A word is what a reader drags over; the old
+figure took a whole *text object*, which on a page of prose is a whole line. **A ratio
+travels between populations and a count does not**, which is why what follows is written
+as one.
+
+40 documents, 2,893 regions, the same probe either side of the change, `git stash` as the
+control so nothing but the two edited files differs:
+
+| | before | after |
+|---|---|---|
+| the removal takes everything the region covers | 1,762 (60.9%) | **1,936 (66.9%)** |
+| the region holds something it cannot take | 1,131 (39.1%) | **957 (33.1%)** |
+| documents with at least one such region | 28 | 26 |
+| ...a path the page draws | 564 | 564 |
+| ...a path inside a form | 253 | 94 |
+| ...a picture inside a form | 406 | 350 |
+| ...a form inside a form | 8 | 0 |
+| ...a shading | 1 | 1 |
+
+**The first thing the run found is that every image refusal in the corpus was a form
+child**, and not one was a page-level picture --- so the carrier closed the day before
+really is closed, which no check here could otherwise have said. The second is the
+defect.
+
+##### A form's children were refused wherever they sat on the sheet
+
+`covered` asked whether each *page* object overlaps the region, and then reported every
+unreachable child of every form the region touched, unconditionally. `FormObject`'s own
+doc comment said those two were the same rule --- *"an image or a path inside a form is
+the same refusal the page level already makes, one level down"* --- and it was a claim
+about intent rather than about the code.
+
+A form is routinely a whole-page container: a letterhead, a header band, a chart, a
+figure with its caption. So a region over one line inside one was refused for every
+picture in the document's furniture, none of it anywhere near the words the reader
+marked. **174 of the 1,131 refusals, 15.4%, were about objects the region does not
+cover**, and the reader was told their redaction could not be shown clean because of
+them.
+
+The fix is one overlap test and one box. Every child *can* be placed --- a nested form
+has a bounding box of its own even though its contents are not followed --- so `descend`
+now puts each non-text child through the form's matrix exactly as it already did for
+text, into a `FormOther` carrying `bounds` and `kind`. `FormOther` is separate from
+`Unhandled` rather than a widening of it, because a box is no use to the panel that
+renders the sentence and this never leaves the worker.
+
+**What does not move is the destructive direction.** A child PDFium enumerated and would
+not hand over gets `UNMEASURABLE`, which overlaps every region, so an object that cannot
+be placed still cannot be excluded --- and that has a test of its own, because the fix
+without it would have turned *"could not measure it"* into *"it is not there"*. The other
+property the old comment defended also survives: a region over a form holding nothing but
+a nested form still reports it, because the test is on the child rather than on whether
+any of the form's text was also covered. Those are two different questions and only the
+second was ever being asked.
+
+**No fixture could tell the two rules apart, and that is why this survived.** Every form
+in `form-xobject.pdf` had its unreachable child sitting on top of its own text, so
+"report a child the region covers" and "report every child of a form the region touches"
+gave the same answer on all of them --- `docs/TRAPS.md`'s *a fixture where the right rule
+and the wrong rule agree cannot tell them apart*, with every ingredient present and the
+discrimination absent. Page 3 is the repair: one form carrying text at its origin and a
+filled rectangle 300 points to the right, far enough apart that no region reaches both.
+The probe asserts that separation before it asserts anything else, since two children
+that overlapped would make both of its checks pass on either rule.
+
+**Evidence.** Three unit tests in `redact.rs` --- the region that misses, the region that
+covers, and the child that cannot be placed --- two mutations each caught by the test
+named for it, and four checks in `redact-apply-probe`, which is 48/48. Adding the page
+turned that probe red immediately and correctly: `form_plan` had `baseline: 2` written
+into it, and the save refused with *"the document on disk has 3 page(s) and the edits
+were made against 2"*. It reads the count off the document now.
+
+##### What the gate says, and what that is not
+
+The second question does not have an honest answer yet, and the shape of why is the
+finding.
+
+`ocr_gate::strip` renders *"the rows one point rectangle covers, rendered as a full-width
+tile"* --- its own doc comment, and the reason is real: two strips have to stack, and two
+crops of different widths do not. So the engine is shown a full-width band at the
+region's height. A reader who drags across a whole line gets a band that is their region.
+A reader who marks a name in the middle of a sentence --- which is what *Redact selection*
+and *Redact every match* both produce --- gets a band holding the rest of the sentence,
+which the removal was never asked to take and must not.
+
+Whether that is a false refusal turns on the producer. Route B removes the whole
+text-showing operation, so where a line is one `Tj` the band really is blank; where a
+producer splits a line into several, the survivors are read back and reported as *the
+removed area still reads as text*. On the corpus, 54 of 104 regions the removal took
+whole came back that way. **That number is not a leak rate and this probe cannot make it
+one**: `ocr_gate::run` returns sentences, and the rectangles the engine found are not in
+them, so nothing here can say whether the words read back were inside the region's
+columns or beside them.
+
+**The control was worth running and answered a different question than it was asked.**
+`--full-width` widens every region to the page, which leaves the row band identical, so
+the prediction was that no verdict would move. Nine moved to *still readable* where 54
+had, and *shown unreadable* went from 28 to 79. Not because the columns are read ---
+`strip` provably ignores them, `rows_of` reads only `rect[1]` and `rect[3]` and the tile
+request is `x: 0` --- but because a wider region covers more words, which changes the
+control the gate is allowed to choose, which changes the render scale, which changes what
+the engine reads. So the experiment did not isolate the variable it was aimed at, and
+what it establishes instead is worth more: **the gate's verdict on identical pixels of
+interest turns heavily on its control choice.**
+
+**Not done, and ranked here because this is where it was found:** the gate's spatial unit.
+The band should be masked to the region's columns before the engine sees it, and the
+verdicts should carry the rectangles so a caller can tell a leak from a neighbour. Both
+are one increment, and neither can be measured until the first is built --- a check that
+cannot distinguish the two outcomes is not a check.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

@@ -17254,3 +17254,85 @@ support that check, so the fixture is part of the test rather than an input to i
 four entries and no mechanism to make a fifth announce itself. The unit test written
 afterwards drives the *rewrite* rather than the sweep, which is the level the defect
 lived at.
+
+### A comment saying two rules are the same is not a check that they are
+
+`redact::covered` asks whether each **page** object overlaps the region before it
+reports it. For a Form XObject's children it reported every one of them, whatever the
+region covered, the moment the *form* overlapped. `FormObject::unreachable`'s own doc
+comment described those as one rule --- *"an image or a path inside a form is the same
+refusal the page level already makes, one level down"* --- and that sentence was a
+statement of intent sitting six lines above code that did something else.
+
+**What it cost is not a rounding error, because a form is usually furniture.** A
+letterhead, a header band, a chart with its caption: whole-page containers holding
+pictures nobody is redacting. So a region over one line inside one was refused for every
+picture in it. Measured over 40 real documents at 2,893 word-sized regions,
+`examples/redact_reach_probe.rs`: **174 of 1,131 refusals, 15.4%, were about objects the
+region does not cover**, and the reader was told their redaction could not be shown clean
+because of them. Every image refusal in the corpus was a form child; not one was a
+page-level picture.
+
+**The fix is a box, and every child has one.** A nested form has a bounding box even
+though its contents are not followed, so `objects::descend` puts each non-text child
+through the form's matrix exactly as it already did for text. Two properties had to
+survive it, and both have tests because neither is obvious:
+
+* A child PDFium enumerated and would not hand over is `UNMEASURABLE`, which overlaps
+  every region. Without that, the fix turns *"could not measure it"* into *"it is not
+  there"* --- the destructive direction is the safe one here and it stays the default.
+* A region over a form holding nothing but a nested form still reports it. The old
+  comment defended reporting *whether or not any of the form's text was covered*, which
+  is a different question from *whether the child is under the region*, and only the
+  second was ever being asked. The test is on the child, so both hold.
+
+**Why nothing went red for a month: no fixture could tell the two rules apart.** Every
+form in `form-xobject.pdf` had its unreachable child sitting on top of its own text, so
+"report a child the region covers" and "report every child of a form the region touches"
+gave the same answer on all of them. That is the entry above about a fixture where the
+right rule and the wrong rule agree, with every ingredient present and the discrimination
+absent. The repair is a page carrying one form with text at its origin and a filled
+rectangle 300 points away, and the probe asserts that separation **before** it asserts
+anything else --- two children that overlapped would make both of its checks pass on
+either rule, which is the failure it was written to stop.
+
+The general form, and it is cheap to apply: when a comment says one rule is the same as
+another, the two rules are in different functions and only one of them has been read
+recently. Grep for the other one.
+
+### The gate reads a band of rows, so a region narrower than its line is judged with its neighbours
+
+`ocr_gate::strip`'s own doc comment says it: *"The rows one point rectangle covers,
+rendered as a full-width tile."* Full width because the region strip and the control
+strip have to stack, and two crops of different widths do not. So the engine is shown
+every column of the page at the region's height, and `adjudicate` calls anything it reads
+outside the control band *the removed area still reads as text*.
+
+A reader who drags across a whole line gets a band that is their region. A reader who
+marks a name in the middle of a sentence --- which is exactly what *Redact selection* and
+*Redact every match* produce --- gets a band holding the rest of the sentence, which the
+removal was never asked to take and must not. Whether that becomes a false refusal turns
+on the **producer**: route B removes the whole text-showing operation, so where a line is
+one `Tj` the band really is blank, and where a producer splits a line into fragments the
+survivors are read back and reported. On 40 real documents, 54 of 104 regions the removal
+had taken whole came back as still readable.
+
+**That 54 is not a leak count, and no instrument here can make it one.** `ocr_gate::run`
+returns sentences; the rectangles the engine found are not in them, so nothing outside
+that module can say whether the words read back sat inside the region's columns or beside
+them. Reporting the ratio as a leak rate would have been the confident-lie direction that
+§6 exists to forbid, arriving in a measurement instead of in a redaction.
+
+**The control was worth running and answered a question it was not asked.** Widening
+every region to the page leaves the row band identical, so the prediction was that no
+verdict would move. Nine came back still-readable where 54 had, and shown-unreadable went
+from 28 to 79. The columns are genuinely not read --- `rows_of` touches only `rect[1]` and
+`rect[3]`, and the tile request is `x: 0` --- so the cause is elsewhere: a wider region
+covers more words, which changes which control `control_from_page` is allowed to choose,
+which changes `scale_for`'s answer, which changes what the engine reads. **The gate's
+verdict on identical pixels of interest turns heavily on its control choice**, and that is
+worth more than the experiment's stated aim.
+
+The lesson for the next experiment rather than for the next feature: an input that feeds
+two mechanisms cannot isolate either. The region reaches both the strip and the control
+chooser, so varying it was never going to say anything about the strip alone.

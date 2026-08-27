@@ -131,13 +131,50 @@ pub struct FormObject {
     /// operators appear in the form's own content stream, and the order a
     /// removal addresses them by.
     pub text: Vec<FormText>,
-    /// What else is inside that this does not reach, by kind.
+    /// What else is inside that this does not reach.
     ///
     /// **A nested form is the case that matters**: descending one level is a
     /// decision, and text a level further down has to be reported rather than
     /// silently missed. An image or a path inside a form is the same refusal the
     /// page level already makes, one level down.
-    pub unreachable: Vec<Unhandled>,
+    ///
+    /// **"The same refusal" is what that last sentence claimed and not what the
+    /// code did**, and it is kept because it names the defect exactly: the page
+    /// level refuses an object *the region covers*, and this level refused every
+    /// child of a form the region touched, wherever on the sheet it sat. A form
+    /// is routinely a whole-page container --- a letterhead, a header band, a
+    /// chart --- so a region over one line inside one reported every picture in
+    /// the document's furniture. Measured over 40 real documents at 2,893
+    /// word-sized regions: form children were 636 of the 1,131 refusals, 56%,
+    /// and **every image refusal in the corpus** was one --- of which **174,
+    /// 15.4% of all refusals, were about objects the region does not cover**.
+    /// Each carries its box now, and [`covered`] asks the same question of it
+    /// that it asks of a page object.
+    pub unreachable: Vec<FormOther>,
+}
+
+/// One thing inside a Form XObject that a removal cannot address.
+///
+/// Separate from [`Unhandled`] rather than a widening of it, because the two
+/// carry different things for different readers: `Unhandled` crosses the IPC
+/// boundary and says *what* a region could not take, and a box is no use to the
+/// panel that renders that sentence. This is the placement fact [`covered`]
+/// needs in order to decide whether to report it at all, and it never leaves
+/// the worker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormOther {
+    /// Its box in the **page's** own space, the form's matrix already applied.
+    ///
+    /// [`FormText::bounds`]'s convention exactly, and for that field's reason:
+    /// PDFium answers in the form's space, and applying the matrix there rather
+    /// than here keeps [`covered`] free of a second coordinate system.
+    ///
+    /// A child PDFium enumerated and would not hand over is unmeasurable, which
+    /// overlaps every region --- so an object that cannot be placed cannot be
+    /// excluded either, and the destructive direction stays the default.
+    pub bounds: Rect,
+    /// What it is, in [`Unhandled::kind`]'s vocabulary.
+    pub kind: String,
 }
 
 /// What removing a region from one page would take, and what it would miss.
@@ -414,12 +451,26 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
                     plan.form_shows.push((at, ordinal));
                 }
             }
-            // Whatever the descent could not read is reported whether or not any
-            // of the form's text was covered. A region over a form holding a
-            // nested form and nothing else takes nothing and must say so ---
-            // reporting only when text was also found would make the quiet case
-            // the silent one.
-            plan.unhandled.extend(form.unreachable.iter().cloned());
+            // Whatever the descent could not read **and the region covers** is
+            // reported, whether or not any of the form's text was covered. Those
+            // are two different questions and this asked neither: a region over
+            // a form holding a nested form and nothing else takes nothing and
+            // must say so, which is why the test is on the child rather than on
+            // whether text was also found. The overlap test itself is the one
+            // the page level applies, and its absence here refused a region for
+            // a picture on the other side of the sheet --- see
+            // [`FormObject::unreachable`].
+            //
+            // `at` is the form's, because that is the object a reader can be
+            // told about: a child has no index of its own in the page's list.
+            for other in &form.unreachable {
+                if overlaps(other.bounds, region) {
+                    plan.unhandled.push(Unhandled {
+                        at,
+                        kind: other.kind.clone(),
+                    });
+                }
+            }
         } else {
             plan.unhandled.push(Unhandled {
                 at,
@@ -2198,7 +2249,7 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
 mod tests {
     use super::{
         covered, covered_annots, is_show, overlaps, remove_form_shows, remove_images, remove_shows,
-        FormObject, FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,
+        FormObject, FormOther, FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -2596,8 +2647,8 @@ mod tests {
         let forms = [FormObject {
             at: 0,
             text: Vec::new(),
-            unreachable: vec![Unhandled {
-                at: 0,
+            unreachable: vec![FormOther {
+                bounds: [0.0, 40.0, 100.0, 60.0],
                 kind: "form".to_string(),
             }],
         }];
@@ -2605,6 +2656,77 @@ mod tests {
         assert!(plan.form_shows.is_empty());
         assert_eq!(plan.unhandled.len(), 1);
         assert!(!plan.is_complete());
+    }
+
+    #[test]
+    fn a_form_child_the_region_misses_is_not_reported() {
+        // The fix this pairs with, and the one the corpus asked for: a form is
+        // routinely a whole-page container, so a region over one line inside one
+        // used to report every picture in the letterhead. `unreachable` is a
+        // list of objects on the sheet, not a property of the form.
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [FormObject {
+            at: 0,
+            text: vec![FormText {
+                bounds: [0.0, 40.0, 100.0, 60.0],
+                draws: String::new(),
+            }],
+            unreachable: vec![FormOther {
+                // Along the top of the sheet; the region is in the middle.
+                bounds: [0.0, 0.0, 100.0, 10.0],
+                kind: "image".to_string(),
+            }],
+        }];
+        let plan = covered(&objects, &forms, [10.0, 45.0, 20.0, 55.0]);
+        assert_eq!(plan.form_shows, vec![(0, 0)]);
+        assert!(
+            plan.unhandled.is_empty(),
+            "a picture the region does not cover is not a reason: {:?}",
+            plan.unhandled
+        );
+        assert!(plan.is_complete());
+    }
+
+    #[test]
+    fn a_form_child_the_region_covers_is_still_reported() {
+        // The control for the test above, and the half that must not move: the
+        // overlap test is what decides, so a child under the region is refused
+        // exactly as a page object under it would be.
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [FormObject {
+            at: 0,
+            text: Vec::new(),
+            unreachable: vec![FormOther {
+                bounds: [0.0, 40.0, 100.0, 60.0],
+                kind: "image".to_string(),
+            }],
+        }];
+        let plan = covered(&objects, &forms, [10.0, 45.0, 20.0, 55.0]);
+        assert_eq!(plan.unhandled.len(), 1);
+        assert_eq!(plan.unhandled[0].kind, "image");
+        // The form's own index, not the child's: a child has none on the page.
+        assert_eq!(plan.unhandled[0].at, 0);
+        assert!(!plan.is_complete());
+    }
+
+    #[test]
+    fn a_form_child_that_cannot_be_placed_is_reported_wherever_the_region_is() {
+        // The destructive direction, kept: `objects::UNMEASURABLE` overlaps
+        // every region, so a child PDFium would not hand over is refused from
+        // anywhere on the sheet. Without this the fix above would have turned
+        // "could not measure it" into "it is not there".
+        let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
+        let forms = [FormObject {
+            at: 0,
+            text: Vec::new(),
+            unreachable: vec![FormOther {
+                bounds: [f32::MIN, f32::MIN, f32::MAX, f32::MAX],
+                kind: "unsupported".to_string(),
+            }],
+        }];
+        let plan = covered(&objects, &forms, [10.0, 45.0, 20.0, 55.0]);
+        assert_eq!(plan.unhandled.len(), 1);
+        assert_eq!(plan.unhandled[0].kind, "unsupported");
     }
 
     #[test]
@@ -2616,8 +2738,8 @@ mod tests {
                 bounds: [0.0, 0.0, 100.0, 20.0],
                 draws: String::new(),
             }],
-            unreachable: vec![Unhandled {
-                at: 0,
+            unreachable: vec![FormOther {
+                bounds: [0.0, 0.0, 100.0, 20.0],
                 kind: "image".to_string(),
             }],
         }];

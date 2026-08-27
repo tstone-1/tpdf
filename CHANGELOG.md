@@ -236,6 +236,24 @@ never a bare success --- and it arrives when the file is already the redacted on
 That is the reason for the warning rather than an argument against it. Reach for
 *Redact and save as* while you are still deciding.
 
+### Fixed: a redaction is no longer refused over something on the other side of the page
+
+Redact a line inside a letterhead, a chart or any other reusable block, and tpdf
+would report that it could not prove the file clean --- naming pictures that sit
+nowhere near the words you marked. It asked the right question of the page's own
+drawing and the wrong one of everything inside a reusable block: was it in this
+block, rather than was it under your region.
+
+Both are asked the same way now. Across 40 real documents, **15% of every refusal
+was about something the region does not cover**, and a redaction is proved clean
+where it was previously left in doubt: two regions in three, up from three in
+five.
+
+Nothing is proved clean that was not before. Anything actually under the region
+is still reported, and a picture tpdf cannot place on the page is still reported
+from anywhere --- not being able to measure it is a reason to be careful, not a
+reason to assume it is elsewhere.
+
 ### Changed: a region over a picture now removes the picture
 
 Drag a region over a photo, a figure or a scanned page and it used to remove

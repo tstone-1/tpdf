@@ -99,6 +99,47 @@ PLATFORM_GATES = [
 DEFINITION = re.compile(r"^\s*(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
+#: A `#[test]` attribute, in the two spellings this tree uses. A `fn` reached
+#: with this armed is a test; every other `fn` is not, and counting those would
+#: make the check below satisfiable by an ordinary function that happens to
+#: share a name --- a control easier than the check certifies nothing.
+TEST_ATTRIBUTE = re.compile(r"^\s*#\[(?:tokio::)?test\]")
+
+
+def test_names(root: pathlib.Path) -> set[str]:
+    """Every `#[test]` function name in the tree.
+
+    The harness runs `cargo test <expect>`, which is a *substring* filter, so a
+    name it cannot match is not an error there --- it selects nothing, the
+    mutation cannot go red, and the harness reports SURVIVED. Its own guard
+    refuses the run instead, which is right and arrives only after a full
+    control pass: on 2026-08-27 that cost a run to a name the increment before
+    had renamed, `an_image_in_the_region_makes_the_plan_incomplete` becoming
+    `an_object_this_cannot_remove_makes_the_plan_incomplete`. This asks the same
+    question in about a second, and it is the Rust half of what
+    `check_mutation_test_files.py` already does for the frontend.
+
+    **Exact names, not substrings.** All 439 distinct `expect` values in the
+    Rust table are exact test-function names, measured before this was written;
+    a deliberate substring filter would have to become one, which is the trade
+    this makes on purpose --- `--only "text: "` is already in `docs/TRAPS.md` as
+    a substring filter that ran more than it named.
+    """
+    found: set[str] = set()
+    for source in sorted(root.rglob("*.rs")):
+        armed = False
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if TEST_ATTRIBUTE.match(line):
+                armed = True
+                continue
+            match = DEFINITION.match(line)
+            if match:
+                if armed:
+                    found.add(match.group(1))
+                armed = False
+    return found
+
+
 def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
     """Every `fn` name defined inside a platform-gated test module, to its gates.
 
@@ -208,6 +249,26 @@ def main() -> int:
         # which passes exactly like one that looked.
         if path != "scripts/mutate_rust.py":
             continue
+        # Does the test each mutation names exist at all? A name that matches
+        # nothing selects nothing, so the mutation reports SURVIVED --- which
+        # reads as a gap in the tests rather than a mistake in the table.
+        defined = test_names(base / "src")
+        # A scan that found no test at all agrees with a clean tree about every
+        # mutation below, which is the same shape as the empty-table guard.
+        if not defined:
+            problems.append(f"{path}: no #[test] functions found under {base / 'src'}")
+            continue
+        for mutation in table:
+            if mutation.expect not in defined:
+                problems.append(
+                    f"{path}: {mutation.name}\n"
+                    f"       expects `{mutation.expect}`, which is not a #[test] function\n"
+                    f"       anywhere under {base / 'src'}. `cargo test` would select\n"
+                    f"       nothing, so the harness refuses the whole table over it.\n"
+                    f"       Either the test was renamed, or the name is a typo."
+                )
+        print(f"[OK] {path}: every mutation names one of the {len(defined)} tests in the tree")
+
         gated = gated_tests(base / "src")
         # A scan that found no gated test at all passes every mutation below
         # while proving nothing -- the same shape as the empty table above, and

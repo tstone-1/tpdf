@@ -382,7 +382,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # form-xobject.pdf and image-region.pdf a runner CAN build -- both are pure
 # Python with no system font -- so those sections run there.
 #
-#   macOS arm64, 2026-08-27   44 checks, 0 failures
+#   macOS arm64, 2026-08-27   48 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on
@@ -2255,6 +2255,42 @@ which asks never maps the engine. `objc2-vision` links Vision, so every binary l
 `ocr_vision` maps it at launch --- 2 images of 619, before a single call. `backend-probe` can
 make that claim about `libpdfium` because `pdfium-render` `dlopen`s it. The check states the
 measured fact instead, with an emptiness control beside it. See `docs/TRAPS.md`.
+
+### `redact-reach-probe`: how much of a redaction can be proved, over a corpus
+
+Not a check --- it passes nothing and fails nothing. It is the instrument behind
+`docs/PLAN.md` §6's *What a removal can take, re-measured*, and it exists because the 39.1%
+that section had quoted since the beginning was measured before the form carrier, before the
+image carrier and before there was an OCR gate at all. **A figure that decides which increment
+comes next is worth exactly as much as the date on it.**
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-reach-probe -- \
+    ~/Downloads --pages 3 --regions 40 --no-gate
+```
+
+**Counts and shapes only.** Point it at a corpus of real documents: no page text, no
+recognised string and no filename beyond the stem leaves it, because a measurement that prints
+what it read is one nobody can run twice.
+
+| flag | what it does |
+|---|---|
+| `--pages N` | pages sampled per document, spread through it rather than off the front |
+| `--regions N` | regions sampled per page --- one per word of four characters or more |
+| `--max-mb N` | files above this are not opened; a rewrite copies the whole document |
+| `--no-gate` | skip the write-and-read-back half, which is 40x the cost |
+| `--full-width` | widen every region to the page. A **control** over the gate, not the removal |
+
+The cheap half is 1.8 s over 40 documents and 2,893 regions; with the gate on it is about 12 s
+for a twentieth of that sample, which is why the two halves are separable.
+
+**`--full-width` is worth knowing about before you read a gate number.** `ocr_gate::strip`
+renders the rows a rectangle covers as a full-width tile, so widening a region leaves the row
+band identical and should move no verdict. It moves them a great deal --- 54 *still readable*
+became 9 on one sample --- because a wider region covers more words, which changes the control
+the gate may choose, which changes the render scale. The region feeds two mechanisms, so
+varying it isolates neither, and the gate half's counts are **verdicts and not a leak rate**.
+The probe's own report says so on the line beneath them.
 
 ### `redact-gate-probe`: does the redaction gate certify a clean file and refuse a dirty one
 

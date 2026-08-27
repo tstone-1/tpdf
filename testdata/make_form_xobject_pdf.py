@@ -29,6 +29,18 @@ two of them can be confused for one another:
       removing from it changes all of them -- the refusal case, and the same
       posture the structure carrier already takes for a shared element.
 
+  page 3
+    * /Fm4 -- a form carrying text at one end and a PATH at the other, far
+      enough apart that no region reaches both. Every other form here has its
+      unreachable child sitting on top of its text, so the right rule and the
+      wrong one agree on all of them: reporting a child the region covers and
+      reporting every child of a form the region touches are the same answer
+      when the two are in the same place. Measured over 40 real documents,
+      56% of every refusal was a form child and every image refusal was one,
+      because a form is routinely a whole-page container. This is the page that
+      can tell the two rules apart, and it needs both regions: one over the
+      text, which must report nothing, and one over the path, which must.
+
 Base-14 Helvetica throughout: no font to embed, so a hosted runner can build it.
 
 Usage: python3 make_form_xobject_pdf.py <out.pdf>
@@ -45,6 +57,7 @@ KEEP_IN_FORM = "Keep this line, it is in the same form"
 CONTROL = "Sphinx of black quartz, judge my vow."
 NESTED = "This line is one level further down"
 SHARED = "This form is drawn twice"
+FAR_TEXT = "Text at one end of the form"
 
 
 def form(body: str, bbox: tuple[int, int, int, int], resources: str) -> bytes:
@@ -79,6 +92,15 @@ def build() -> bytes:
 
     fm3 = form(text(0, 0, SHARED), (0, -6, 400, 20), font_res)
 
+    # /Fm4: text at the form's origin and a filled rectangle 300 points to the
+    # right of it. Nothing in this fixture but this pair is far enough apart for
+    # a region to cover one and miss the other.
+    fm4 = form(
+        text(0, 0, FAR_TEXT) + "0 0 0 rg 300 0 40 12 re f\n",
+        (0, -6, 400, 20),
+        font_res,
+    )
+
     # Page 1 draws its own line of text, then the two forms, each translated so
     # form space is not page space.
     page1_content = (
@@ -92,8 +114,11 @@ def build() -> bytes:
         "q 1 0 0 1 60 700 cm /Fm3 Do Q\nq 1 0 0 1 60 600 cm /Fm3 Do Q\n"
     ).encode("latin-1")
 
+    # Page 3 draws the one form whose two children are far apart.
+    page3_content = "q 1 0 0 1 60 700 cm /Fm4 Do Q\n".encode("latin-1")
+
     objects[1] = b"<< /Type /Catalog /Pages 2 0 R >>"
-    objects[2] = b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>"
+    objects[2] = b"<< /Type /Pages /Kids [3 0 R 4 0 R 12 0 R] /Count 3 >>"
     objects[3] = (
         f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {WIDTH} {HEIGHT}] "
         f"/Resources << /Font << /F1 5 0 R >> "
@@ -120,6 +145,18 @@ def build() -> bytes:
         + b"\nendstream"
     )
     objects[11] = fm3
+    objects[12] = (
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {WIDTH} {HEIGHT}] "
+        f"/Resources << /Font << /F1 5 0 R >> /XObject << /Fm4 14 0 R >> >> "
+        f"/Contents 13 0 R >>"
+    ).encode("latin-1")
+    objects[13] = (
+        f"<< /Length {len(page3_content)} >>".encode("latin-1")
+        + b"\nstream\n"
+        + page3_content
+        + b"\nendstream"
+    )
+    objects[14] = fm4
 
     out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
     offsets: dict[int, int] = {}

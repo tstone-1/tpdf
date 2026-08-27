@@ -776,6 +776,17 @@ defined on both sides of the cfg needs no declaration. Proved three ways: a miss
 fails, a wrong one fails, and a scan finding no gated module anywhere fails rather than passing
 everything in silence.
 
+**And a third as of 2026-08-27: does the test it names exist at all?** That gate above looks only
+at *gated* tests, and said so in its own docstring --- *"a name the harness cannot find anywhere is
+the case its own guard owns, and is deliberately loud about"*. Loud, and after a full control
+pass: on 2026-08-27 a mutation named `an_image_in_the_region_makes_the_plan_incomplete`, which the
+increment before had renamed, and the refusal arrived minutes into a run. This is the Rust half of
+what `mutations` does for the frontend and it takes about a second. It requires an **exact**
+`#[test]` function name, which all 439 distinct `expect` values are, measured before it was
+written --- `cargo test` is a substring filter, so a deliberate substring would have to become a
+name. Three controls, all red: a name that exists nowhere, a name that is an ordinary `fn` rather
+than a test, and a scan that collected nothing.
+
 **`mutations` exists because a guard that works can still answer too late.**
 `mutate_frontend.py` runs vitest over `TEST_FILES`, a hand-kept list, and a suite absent from
 it still resolves as a name on disk --- it simply never runs, so a mutation aimed at it can
@@ -1235,6 +1246,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A form's text is on the page's text layer, and the page's object list cannot reach it (a reader could search for and select words a redaction could not remove; `FPDFText_GetTextObject` hands back the INNER text object, `FPDFPageObj_GetBounds` on a child answers in the FORM's space, and all four corners have to go through the matrix)
 - A form drawn twice on one page is one reference in the object graph (the graph count sees a form shared across pages and is blind to one drawn twice here; two counts from two sources, and the fixture carries the shape the count cannot see)
 - Removing the `Do` stops the page drawing the picture, and leaves every byte of it in the file (the rewrite's sweep is conditional on a list an image removal was not on; every existing sweep test calls `collect` BY HAND, so none of them could see it — the check belongs on the bytes, and the fixture has to be uncompressed for that check to exist)
+- A comment saying two rules are the same is not a check that they are (a form's children were refused wherever they sat on the sheet: 174 of 1,131 refusals over 40 documents, 15.4%, about objects nowhere near the region — and every image refusal in the corpus was one; no fixture could tell the two rules apart, because every form's unreachable child sat on top of its own text)
+- The gate reads a band of rows, so a region narrower than its line is judged with its neighbours (54 of 104 regions the removal took whole came back "still reads as text", and that number is NOT a leak count — the rectangles never leave the module; the control moved 54 to 9 for a reason it was not aimed at, because the region feeds the control chooser as well as the strip)
 
 ### Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
