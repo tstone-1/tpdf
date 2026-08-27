@@ -16934,3 +16934,47 @@ guard the compiler asked for, the question is which of the two to delete — not
 assertion to sharpen.
 
 Paid for on 2026-08-27.
+
+### A bound written against its own constant cannot see the constant move
+
+`tooManyMatchesToMark` refuses a match set larger than `MAX_MATCHES_TO_MARK`. The obvious
+test asserts both sides of it:
+
+```ts
+expect(tooManyMatchesToMark(MAX_MATCHES_TO_MARK)).toBeNull();
+expect(tooManyMatchesToMark(MAX_MATCHES_TO_MARK + 1)).not.toBeNull();
+```
+
+That is a good test of the **predicate** — `<=` against `<` reddens it, and so does removing
+the comparison. It is no test at all of the **constant**, because both operands move together:
+raising the bound from 500 to 100,000 left it green, and the mutation survived.
+
+The bound is not arbitrary. It was measured — across 41 real PDFs an email address matches a
+median of 2 times and at most 31, a six-digit-or-longer number at most 123, while the single
+letter `e` matches a median of 722 and at most 85,337. A bound of 100,000 permits a review
+list nobody can read, which is the same as having no review list; a bound of 100 refuses the
+work the command exists for. **Both are defects in the number, and neither is a defect in the
+predicate**, so neither has anything to do with the test above.
+
+**The fix is a second check, on the value, in absolute terms:**
+
+```ts
+expect(MAX_MATCHES_TO_MARK).toBeGreaterThan(123);  // the largest realistic count measured
+expect(MAX_MATCHES_TO_MARK).toBeLessThan(722);     // the median for a single common letter
+```
+
+Both figures are measurements rather than taste, and they are written down beside the
+assertion so the next person can re-measure rather than re-argue.
+
+**The general form: whenever a constant carries a judgement, it needs a check that does not
+name it.** A predicate written against the constant tests the comparison; only an absolute
+assertion tests the number. This project already had the entry for a check that measures along
+the axis it is policing — that one was a geometric bound whose expectation shrank with its
+measurement, and it did not transfer, because this one looks nothing like it: two separate
+`expect` lines, no arithmetic, no shared term visible on the page. The shared term is the
+identifier.
+
+The tell is worth naming, because it is mechanical: **if a mutation that changes a constant's
+value leaves every test green, every test is written in units of that constant.**
+
+Paid for on 2026-08-27.

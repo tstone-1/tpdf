@@ -163,6 +163,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   one region per line, and the review list and the removal are the same ones the drag
   feeds. Nothing is destroyed by marking it either way.
   <!-- built: edit.redactSelection -->
+- **Redact every search result** marks every match of whatever is in the find field ---
+  an email address, an order number, a reference --- so that a name on two hundred pages
+  is one command rather than two hundred. You have already seen the results before you
+  mark them, and the review list is still what you read before anything is removed. Above
+  five hundred matches it refuses and asks you to narrow the search, rather than marking
+  some of them and telling you it was done.
+  <!-- built: edit.redactMatches -->
 - **Redact and save** does all of that to the file you opened, rather than to a new one.
   It warns first and offers to save you a copy, because there is no undo across it and no
   original left afterwards: the document is closed by the write, reopened from disk, and
@@ -238,12 +245,9 @@ unbuilt while they shipped.
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->
-- **Marking for redaction by searching for a pattern** --- an email address, an order
-  number, a word list --- so that every occurrence across a long document goes in one
-  step. Dragging a region and selecting the words are both built; this is the third way
-  to say what to remove. And a region over a picture is still reported rather than
-  removed.
-  <!-- not-built: edit.redactMatches -->
+- A region over a picture is still reported rather than removed. All three ways of saying
+  what to remove are built; what a redaction cannot yet do is take a photograph out of a
+  page.
 - Forms and visual signatures. Signatures are read, never made.
   <!-- not-built: edit.fillForm edit.signDocument -->
 - In-place text editing

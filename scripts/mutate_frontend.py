@@ -3938,8 +3938,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- **Marking for redaction by searching for a pattern** --- an email address, an order",
-        "- **Marking** <!-- built: file.print --> **for redaction by searching for a pattern** --- an email address, an order",
+        "- Forms and visual signatures. Signatures are read, never made.",
+        "- Forms <!-- built: file.print --> and visual signatures. Signatures are read, never made.",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -4537,6 +4537,74 @@ MUTATIONS += [
         "      enabled: () => withDocument() && actions.hasSelection(),\n      run: () => actions.redactSelection(),",
         "      enabled: withDocument,\n      run: () => actions.redactSelection(),",
         "withholds redacting a selection when there is none",
+    ),
+    Mutation(
+        # Mark the first MAX_MATCHES_TO_MARK and report success. The reader then
+        # reviews a list that UNDERSTATES their own search, applies it, and is
+        # told the file is clean -- which is the one thing section 6 forbids.
+        "redactpat: mark as many matches as will fit rather than refusing",
+        "src/lib/search.ts",
+        "  if (count <= MAX_MATCHES_TO_MARK) return null;",
+        "  if (count <= Number.MAX_SAFE_INTEGER) return null;",
+        "permits the bound itself and refuses one more",
+    ),
+    Mutation(
+        # Refuse one short of the bound. The mirror, and it is the direction a
+        # bound tested only from above cannot see -- an implementation that
+        # refused everything would pass that half.
+        "redactpat: refuse a match set the bound permits",
+        "src/lib/search.ts",
+        "  if (count <= MAX_MATCHES_TO_MARK) return null;",
+        "  if (count < MAX_MATCHES_TO_MARK) return null;",
+        "permits the bound itself and refuses one more",
+    ),
+    Mutation(
+        # Set the bound where the pathological case lives. Measured across 41
+        # real PDFs: the single letter `e` matches 85,337 times in one of them,
+        # and a review list of that size is the same as no list.
+        "redactpat: put the bound past what anybody could review",
+        "src/lib/search.ts",
+        "export const MAX_MATCHES_TO_MARK = 500;",
+        "export const MAX_MATCHES_TO_MARK = 100000;",
+        "sits above every realistic pattern and far below the pathological one",
+    ),
+    Mutation(
+        # Put the bound below the counts a real pattern produces. A
+        # six-digit-or-longer number matched 123 times in one document, so this
+        # makes the command refuse the work it exists for.
+        "redactpat: put the bound below what a real pattern matches",
+        "src/lib/search.ts",
+        "export const MAX_MATCHES_TO_MARK = 500;",
+        "export const MAX_MATCHES_TO_MARK = 100;",
+        "sits above every realistic pattern and far below the pathological one",
+    ),
+    Mutation(
+        # A refusal that does not say the number. It is what the reader can
+        # check against the results panel in front of them; without it they have
+        # to take the refusal on trust.
+        "redactpat: refuse without saying how many there were",
+        "src/lib/search.ts",
+        "    `${count} matches is more than the ${MAX_MATCHES_TO_MARK} that can be marked at ` +",
+        "    `That is more than the ${MAX_MATCHES_TO_MARK} that can be marked at ` +",
+        "names the count and asks for a narrower search",
+    ),
+    Mutation(
+        # Sweep the document from the selection command's action. All three
+        # redaction commands reach an action, so the registry sweep passes.
+        "redactpat: reach a sibling's action from the pattern command",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.redactMatches(),",
+        "      run: () => actions.redactSelection(),",
+        "reaches the pattern command's own action rather than a sibling's",
+    ),
+    Mutation(
+        # Offer it with no matches. It would mark nothing, which reads as a
+        # broken command -- the same reason its two siblings carry a guard.
+        "redactpat: offer the pattern command with no matches",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.matchCount() > 0,",
+        "      enabled: withDocument,",
+        "withholds redacting every result when the search found none",
     ),
 ]
 

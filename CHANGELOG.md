@@ -54,6 +54,27 @@ selection that runs over several lines also covers whatever sits between them:
 the other column on a two-column page, a figure, a note in the margin. A region
 you did not mark is a region you cannot check.
 
+### Added: mark every search result for redaction at once
+
+**Redact every search result**, the third way to say what to remove. Search for
+an email address, an order number or a reference and mark every match in one
+command --- a name on two hundred pages is not something you drag or select.
+
+The pattern is whatever is in the find field, so you have already seen the
+results before you mark them. Everything after that is the same: the regions
+join the review list, undo takes them off, and nothing is removed until you
+apply it.
+
+**Above five hundred matches it refuses and asks you to narrow the search.** It
+does not mark the first five hundred and tell you it is done --- that would
+leave you reviewing a list that says less than your own search found, and then
+being told the file is clean. Real patterns are nowhere near the limit: across
+41 documents an email address matched at most 31 times and a long number at
+most 123.
+
+If any page with matches on it cannot be read, nothing is marked and it says
+so, rather than marking the pages it managed.
+
 ### Added: review what you marked, in the sidebar
 
 **Show redactions** opens a new sidebar tab listing every region you have marked,

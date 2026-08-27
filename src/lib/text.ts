@@ -510,6 +510,30 @@ export class TextCache {
     this.pending.set(page, request);
     return request;
   }
+
+  /**
+   * Fetches a page's text and answers in the *document's* space.
+   *
+   * {@link load} for {@link peekUnturned}'s purpose: anything that has to
+   * outlive the view --- a mark, a region marked for removal --- is stored
+   * against the page rather than against how somebody was holding it, so the
+   * quads it is built from cannot come from the turned view.
+   *
+   * **Not a second request path.** It awaits {@link load}, which is what
+   * deduplicates concurrent callers and what puts the raw reply in the cache,
+   * and then reads that raw reply back. Written this way rather than by
+   * duplicating the fetch, because two paths to one `page_text` call is two
+   * places for the crop argument to drift apart.
+   *
+   * Answers `null` for a page that could not be read at all --- which a caller
+   * marking a document-wide match set must **report** rather than skip: a page
+   * quietly contributing nothing leaves a review list that understates what the
+   * search found.
+   */
+  async loadUnturned(page: number): Promise<PageText | null> {
+    await this.load(page);
+    return this.peekUnturned(page);
+  }
 }
 
 /** The box of one character. */

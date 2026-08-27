@@ -4717,6 +4717,84 @@ export class Viewer {
     return parts.join("\n");
   }
 
+  /**
+   * Every search match, as run quads per page, in the model's own space.
+   *
+   * {@link selectionQuadsByPage}'s twin for the other way of saying what to
+   * remove, and it takes its geometry the same way --- `runsFor` over the
+   * **unturned** text, out of the crop before it leaves --- so both routes into
+   * `Edits.redact` produce a region in one space rather than two that agree
+   * today.
+   *
+   * **It loads rather than peeks, and that is the whole difference.** A
+   * selection is on pages the reader is looking at; a search runs over the
+   * document, and `TextCache` is bounded at roughly 150 pages. Peeking would
+   * silently contribute nothing for every match on an evicted page --- and a
+   * review list missing the matches the reader can see in the results panel is
+   * worse than no command at all. Chunked at {@link COPY_CHUNK} for
+   * `selectionText`'s reason: a document-wide sweep must not be one round trip
+   * per page, and must not be all of them at once either.
+   *
+   * **`null` when any page could not be read**, rather than a shorter list.
+   * Same rule as `copySelection`, and here it is the one that matters: a
+   * partial answer becomes a partial mark, which a reader then applies and is
+   * told is clean.
+   *
+   * A hit that runs over a page break is two halves painted by two pages, for
+   * the reason the match painter gives --- there is no shared coordinate space
+   * between two pages, so one rectangle cannot span them.
+   */
+  async matchQuadsByPage(): Promise<{ page: PageId; quads: number[] }[] | null> {
+    const halves: { slot: number; from: number; to: number }[] = [];
+    for (const match of this.searcher.matches) {
+      if (match.endPage === undefined) {
+        halves.push({ slot: match.page, from: match.start, to: match.end });
+      } else {
+        // `Infinity` for the first half's end because it runs to wherever that
+        // page's text stops, which this does not have to know and `runsFor`
+        // clamps.
+        halves.push({ slot: match.page, from: match.start, to: Infinity });
+        halves.push({ slot: match.endPage, from: 0, to: match.end });
+      }
+    }
+    const slots = [...new Set(halves.map((half) => half.slot))].sort(
+      (a, b) => a - b,
+    );
+
+    const out: { page: PageId; quads: number[] }[] = [];
+    for (let at = 0; at < slots.length; at += COPY_CHUNK) {
+      const chunk = await Promise.all(
+        slots.slice(at, at + COPY_CHUNK).map(async (slot) => ({
+          slot,
+          text: await this.text.loadUnturned(slot),
+        })),
+      );
+      for (const { slot, text } of chunk) {
+        if (!text) return null;
+        const id = this.pages.idOf(slot);
+        // The page went out of the document while this was in flight. Reported
+        // rather than skipped, for the same reason an unreadable one is.
+        if (id === undefined) return null;
+        const quads: number[] = [];
+        for (const half of halves) {
+          if (half.slot !== slot) continue;
+          for (const quad of runsFor(text, half.from, half.to)) {
+            quads.push(quad.left, quad.top, quad.right, quad.bottom);
+          }
+        }
+        if (quads.length > 0) {
+          out.push({ page: id, quads: outOfCrop(quads, this.cropAt(slot)) });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** How many matches the last search found. For a command's guard. */
+  get matchCount(): number {
+    return this.searcher.matches.length;
+  }
+
   /** The selected text, without touching the clipboard. For the check harness. */
   get selectedText(): string {
     return this.selection ? this.selection.text(this.text) : "";
