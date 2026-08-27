@@ -3150,6 +3150,8 @@ async function appCommandChecks(
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
+    redactMatches: () => fired.push("redactMatches"),
+    matchCount: () => viewer.matchCount,
     movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
@@ -3802,6 +3804,14 @@ async function appCommandChecks(
       read: () => fired.join(","),
     },
     {
+      // The third of the three, aimed separately for the same reason as the
+      // second: all three are one word apart in the source, and the one that
+      // sweeps the whole document is the one whose mis-wiring costs most.
+      id: "edit.redactMatches",
+      ...shell("redactMatches"),
+      read: () => fired.join(","),
+    },
+    {
       // The ellipse, aimed separately for the reason the note below it gives
       // about the freehand tool: it arms the same primitive as the box with a
       // different argument, which is exactly the shape where a copy-and-paste
@@ -4219,6 +4229,9 @@ async function appCommandChecks(
     // what that costs: a red that goes unread until somebody happens to look.
     // The declaration is part of adding a guarded command, not a repair.
     "edit.redactSelection",
+    // Guarded on there being search matches, which a document nobody has
+    // searched has none of. Declared with the command, as the one above was.
+    "edit.redactMatches",
     // Guarded on a note being open, which is how a reader names the mark they
     // mean. A document with no marks in it offers nothing to remove.
     "edit.removeMark",

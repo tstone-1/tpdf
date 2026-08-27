@@ -623,3 +623,44 @@ export class Search {
     if (generation === this.generation) this.onChange();
   }
 }
+
+/**
+ * How many matches may be marked for removal in one command.
+ *
+ * **Measured rather than picked.** Across 41 real PDFs, the patterns somebody
+ * actually redacts by are small: an email address matches a median of 2 times
+ * and at most 31; an IBAN, 3; a six-digit-or-longer number, a median of 3 and at
+ * most 123; a date, a median of 2. The pathological case is four orders of
+ * magnitude away --- the single letter `e` matches a median of 722 times and, in
+ * one document, **85,337**.
+ *
+ * So the bound is four times the largest realistic count and nowhere near the
+ * degenerate one. It is not there to save the machine: it is there because the
+ * review list is this subsystem's whole safety mechanism, and a list nobody can
+ * read is the same as no list.
+ */
+export const MAX_MATCHES_TO_MARK = 500;
+
+/**
+ * Why a match set is too large to mark, or `null` when it is not.
+ *
+ * **Refuses rather than truncating**, and that is the decision. Marking the
+ * first {@link MAX_MATCHES_TO_MARK} and reporting success would leave a reader
+ * reviewing a list that *understates* what their search found, then applying it
+ * and being told the file is clean --- which is the one thing §6 forbids. A
+ * refusal costs them a narrower search; a truncation costs them the words they
+ * thought had gone.
+ *
+ * The count is of **matches** and not of the regions they become, because the
+ * matches are what the reader can already see in the results panel. A message
+ * quoting a number they cannot check against anything is a message they have to
+ * take on trust.
+ */
+export function tooManyMatchesToMark(count: number): string | null {
+  if (count <= MAX_MATCHES_TO_MARK) return null;
+  return (
+    `${count} matches is more than the ${MAX_MATCHES_TO_MARK} that can be marked at ` +
+    `once. Every region has to be readable in the review list before anything is ` +
+    `removed. Narrow the search and try again.`
+  );
+}

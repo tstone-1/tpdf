@@ -229,6 +229,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // with no accelerator, for the reason `edit.deletePage` states.
       "edit.redactRegion",
       "edit.redactSelection",
+      "edit.redactMatches",
       "edit.deletePage",
     ],
   },

@@ -41,6 +41,7 @@ function harness(
   markOpen = false,
   dirty = false,
   history: { back?: boolean; forward?: boolean } = {},
+  matched = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -83,6 +84,8 @@ function harness(
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
+    redactMatches: () => fired.push("redactMatches"),
+    matchCount: () => (matched ? 3 : 0),
     movePage: (delta) => fired.push(`movePage:${delta}`),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
@@ -335,6 +338,11 @@ describe("every registered command", () => {
       true,
       true,
       true,
+      { back: true, forward: true },
+      // A search with matches, so `edit.redactMatches` is in a state where it
+      // is allowed to run --- the last argument added, and the comment above is
+      // why each of them is here rather than the guard being subtracted.
+      true,
     );
     const shell = registry
       .all()
@@ -516,6 +524,37 @@ describe("the page operations", () => {
         .find((c) => c.id === "edit.redactSelection")
         ?.enabled?.(),
     ).toBe(true);
+  });
+
+  it("reaches the pattern command's own action rather than a sibling's", () => {
+    // Three commands one word apart in the source, and this is the one whose
+    // mis-wiring costs most: it sweeps the whole document. The registry sweep
+    // cannot see it, because every one of the three reaches an action.
+    const { registry, fired } = harness(
+      true,
+      {},
+      {},
+      false,
+      false,
+      false,
+      {},
+      true,
+    );
+    expect(registry.run("edit.redactMatches")).toBe(true);
+    expect(fired).toEqual(["redactMatches"]);
+  });
+
+  it("withholds redacting every result when the search found none", () => {
+    // With no matches it would mark nothing. The control is the same registry
+    // built with matches, without which a registry that withheld it always
+    // would pass.
+    const guard = (matched: boolean) =>
+      harness(true, {}, {}, false, false, false, {}, matched)
+        .registry.all()
+        .find((c) => c.id === "edit.redactMatches")
+        ?.enabled?.();
+    expect(guard(false)).toBe(false);
+    expect(guard(true)).toBe(true);
   });
 
   it("gives the destructive redaction no keyboard shortcut", () => {
@@ -837,8 +876,11 @@ describe("the window shortcuts for editing", () => {
       rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
       deletePage: () => fired.push("deletePage"),
       cropPage: (to) => fired.push(`cropPage:${to}`),
-    redactRegion: () => fired.push("redactRegion"),
-    redactSelection: () => fired.push("redactSelection"),
+      redactRegion: () => fired.push("redactRegion"),
+      redactSelection: () => fired.push("redactSelection"),
+      redactMatches: () => fired.push("redactMatches"),
+      // This harness is about key handling, and no chord reaches a redaction.
+      matchCount: () => 0,
       movePage: (delta) => fired.push(`movePage:${delta}`),
       undoEdit: () => fired.push("undoEdit"),
       redoEdit: () => fired.push("redoEdit"),

@@ -169,6 +169,20 @@ export interface AppActions {
    */
   redactSelection(): void;
   /**
+   * Marks every search match for removal, one region per line each covers.
+   *
+   * Step 1's third and last shape, and the one that does work the other two
+   * cannot: every occurrence of an order number across two hundred pages is not
+   * a thing anybody drags or selects. The pattern is whatever is already in the
+   * find field, so the reader has seen the results before they mark them ---
+   * which is the same principle the review list is, one step earlier.
+   *
+   * Destroys nothing, like both its siblings.
+   */
+  redactMatches(): void;
+  /** How many matches the last search found, for {@link redactMatches}. */
+  matchCount(): number;
+  /**
    * Move the page the reader is on `delta` slots along, in the document.
    *
    * A signed step rather than a pair of commands, so that the two palette
@@ -860,6 +874,21 @@ export function registerAppCommands(
       title: "Redact selection",
       enabled: () => withDocument() && actions.hasSelection(),
       run: () => actions.redactSelection(),
+    },
+    {
+      // **The third way**, and the only one that scales: an order number on two
+      // hundred pages is not something a reader drags or selects. It takes the
+      // pattern from the find field rather than asking for one, so the reader
+      // has already seen what it will mark --- and it is guarded on there being
+      // matches for `edit.redactSelection`'s reason, since with none it would
+      // mark nothing and read as broken.
+      //
+      // "every search result" rather than "matches": the reader is looking at a
+      // results panel, and the title should name what is in front of them.
+      id: "edit.redactMatches",
+      title: "Redact every search result",
+      enabled: () => withDocument() && actions.matchCount() > 0,
+      run: () => actions.redactMatches(),
     },
     {
       // **Crop by dragging.** The one page operation only the reader can decide:

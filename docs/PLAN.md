@@ -2574,6 +2574,48 @@ directions**: `edit.redactSelection` was still listed under *Not built yet* and 
 claimed anywhere in the prose, and the suite named both. That is the invariant working
 exactly as its own entry says it should, one command after it was built.
 
+#### Saying what to remove by searching for it --- done 2026-08-27
+
+Step 1's third and last shape, and the one that does work the other two cannot: an order
+number on two hundred pages is not something anybody drags or selects. **The pattern is
+whatever is already in the find field**, so the reader has seen the results before they mark
+them --- which is the review list's own principle, one step earlier.
+
+**The bound is measured, and it is the only real decision here.** Across the same 41 real
+PDFs, the patterns somebody actually redacts by are small: an email address matches a median
+of 2 times and at most 31, an IBAN 3, a six-digit-or-longer number a median of 3 and at most
+123, a date a median of 2. The pathological case is four orders of magnitude away --- the
+single letter `e` matches a median of **722** times and, in one document, **85,337**.
+
+`MAX_MATCHES_TO_MARK` is 500: four times the largest realistic count, and nowhere near the
+degenerate one.
+
+**It refuses above the bound rather than truncating**, and that is the substance. Marking the
+first five hundred and reporting success would leave a reader reviewing a list that
+*understates* their own search, then applying it and being told the file is clean --- which
+is what §6 forbids in its first paragraph. A refusal costs them a narrower search; a
+truncation costs them the words they thought had gone. The message names the count, because
+that is the number they can check against the results panel in front of them.
+
+**A page that could not be read stops everything, for the same reason.** `matchQuadsByPage`
+answers `null` rather than a shorter list. This is not the selection command's situation: a
+selection is on pages the reader is looking at, and a search runs over the document, where
+`TextCache` is bounded at roughly 150 pages. Peeking would have contributed nothing for every
+match on an evicted page --- silently, and in the direction that understates.
+
+So the quads are **loaded**, chunked sixteen pages at a time for `selectionText`'s reason,
+through a new `TextCache.loadUnturned`. That is `load` followed by `peekUnturned` rather than
+a second request path, because two routes to one `page_text` call is two places for the crop
+argument to drift apart.
+
+**Evidence.** Seven mutations, and the one worth naming survived the first run and was right
+to. `permits the bound itself and refuses one more` is written against
+`MAX_MATCHES_TO_MARK` itself, so its expectation moves with the constant and it cannot see
+the constant move --- raising the bound to 100,000 left it green. That is the trap of a check
+that measures along the axis it is policing, arriving in a check written the same week as the
+entry for it. The fix is a check on the **value**, in absolute numbers taken from the sweep:
+above 123 and below 722. Both directions of the constant now redden it.
+
 #### Step 5, the independent parser --- measured 2026-08-26
 
 The step asks for a parser that did not write the file to re-check it, on the strength of

@@ -17,6 +17,7 @@
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
   import { areasFrom } from "./lib/selection";
+  import { tooManyMatchesToMark } from "./lib/search";
   import {
     ContextMenu,
     menuForSurface,
@@ -399,6 +400,8 @@
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
     redactSelection: () => void redactSelection(),
+    redactMatches: () => void redactMatches(),
+    matchCount: () => viewer?.matchCount ?? 0,
     movePage: (delta) => void movePage(delta),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
@@ -510,6 +513,45 @@
    */
   async function redactSelection(): Promise<void> {
     for (const { page, quads } of viewer?.selectionQuadsByPage() ?? []) {
+      for (const area of areasFrom(quads)) {
+        await applyEdit((e) => e.redact(page, area));
+      }
+    }
+  }
+
+  /**
+   * Marks every search match for removal.
+   *
+   * {@link redactSelection}'s shape over a different set of quads, and two
+   * things are genuinely different rather than copied.
+   *
+   * **It can refuse before it starts.** Above {@link MAX_MATCHES_TO_MARK} the
+   * reader is told the number and asked to narrow the search, because the review
+   * list is this subsystem's whole safety mechanism and a list nobody can read
+   * is the same as no list. Marking the first five hundred and reporting success
+   * would leave them reviewing a list that *understates* their own search.
+   *
+   * **A page that could not be read stops everything.** `matchQuadsByPage`
+   * answers `null` rather than a shorter list, and this says so rather than
+   * marking what it did get: a partial mark becomes a partial removal that a
+   * reader is then told is clean, which is the one thing §6 forbids.
+   */
+  async function redactMatches(): Promise<void> {
+    if (!viewer) return;
+    const refusal = tooManyMatchesToMark(viewer.matchCount);
+    if (refusal) {
+      say(refusal);
+      return;
+    }
+    const found = await viewer.matchQuadsByPage();
+    if (found === null) {
+      say(
+        "Some of the pages with matches on them could not be read, so nothing " +
+          "was marked. Nothing has been changed.",
+      );
+      return;
+    }
+    for (const { page, quads } of found) {
       for (const area of areasFrom(quads)) {
         await applyEdit((e) => e.redact(page, area));
       }
