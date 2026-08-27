@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tpdf_lib::document::OpenDocument;
 
-use tpdf_lib::ocr::{adjudicate, Control, Legibility, Options, Pixels, Recogniser};
+use tpdf_lib::ocr::{
+    adjudicate, control_from_page, Control, ControlWord, Legibility, Options, Pixels, Recogniser,
+};
 use tpdf_lib::ocr_vision::Vision;
 use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::text;
@@ -231,8 +233,12 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
     if items.is_empty() {
         r.finish();
     }
+    // Bound rather than written twice: the control chooser below reads the
+    // document's own text, so whether that text says what the page draws decides
+    // which way its check runs.
+    let text_layer_agrees = hit * 2 >= embedded_words.len();
     r.check(
-        hit * 2 >= embedded_words.len(),
+        text_layer_agrees,
         "what it read matches the embedded text",
         format!("{hit}/{} words of 4+ chars found", embedded_words.len()),
     );
@@ -384,6 +390,113 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
             other => format!("{other:?}"),
         },
     );
+
+    // ------------------------------------------- the chooser, against a real engine
+    // The three checks above take their control out of the ENGINE's own output,
+    // which is the engine agreeing with itself: of course Vision reads back a
+    // strip Vision has just read. `ocr::control_from_page` chooses from what the
+    // *document* says instead, and this is the only place that claim meets an
+    // engine at all.
+    match tpdf_lib::objects::read(&page) {
+        Err(e) => r.skip("the chosen control is read back", format!("objects: {e}")),
+        Ok(objects) => {
+            let height_pt = page.height_pt();
+            let mut words: Vec<ControlWord> = Vec::new();
+            let mut ordinal = 0usize;
+            for object in &objects.all {
+                if object.kind != "text" {
+                    continue;
+                }
+                let drawn = objects.text.get(ordinal).cloned().unwrap_or_default();
+                ordinal += 1;
+                // PDFium reports `left, bottom, right, top` with y up; `ocr.rs`
+                // is `left, top, right, bottom` with y down. Flipped here rather
+                // than tolerated there, for the reason `ControlWord::rect` says.
+                let [l, b, right, t] = object.bounds;
+                if !(l.is_finite() && b.is_finite() && right.is_finite() && t.is_finite()) {
+                    continue;
+                }
+                words.push(ControlWord {
+                    rect: [l, height_pt - t, right, height_pt - b],
+                    text: drawn,
+                });
+            }
+            // A region over the topmost word, which is a redaction a reader
+            // could plausibly have drawn and is deterministic on any page.
+            let region = words
+                .iter()
+                .min_by(|a, b| {
+                    a.rect[1]
+                        .partial_cmp(&b.rect[1])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(a.rect[0].total_cmp(&b.rect[0]))
+                })
+                .map(|w| w.rect);
+            match region.map(|region| (region, control_from_page(&words, &[region]))) {
+                None => r.skip(
+                    "the chosen control is read back",
+                    "no text objects on this page",
+                ),
+                Some((_, Err(why))) => r.skip("the chosen control is read back", why.to_string()),
+                Some((region, Ok(chosen))) => {
+                    let rows = |top: f32, bottom: f32| {
+                        let a = (top * scale).floor().max(0.0) as u32;
+                        let b = (bottom * scale).ceil().min(sheet.height as f32) as u32;
+                        (a, b.saturating_sub(a))
+                    };
+                    let (crop_top, crop_h) = rows(chosen.crop[1], chosen.crop[3]);
+                    // The band is a strip of full-width rows, so a region on the
+                    // same line would put a real survivor inside the control. The
+                    // chooser promises the chosen *word* is outside every region
+                    // and cannot promise that about its neighbours.
+                    let clash = region[1] < chosen.crop[3] && chosen.crop[1] < region[3];
+                    if clash || crop_h < 2 {
+                        r.skip(
+                            "the chosen control is read back",
+                            format!(
+                                "the control sits on the redacted line ({} row(s), clash {clash})",
+                                crop_h
+                            ),
+                        );
+                    } else {
+                        let (probe, h, band) =
+                            sheet.stack((blank_top, blank_h), (crop_top, crop_h));
+                        let px = Pixels {
+                            rgba: &probe,
+                            width: sheet.width,
+                            height: h,
+                            scale,
+                        };
+                        let control = chosen.placed(band);
+                        let verdict = adjudicate(&id, &control, &engine.recognise(px, &opts));
+                        // Two checks wearing one name, and the second is the one
+                        // worth having. A control chosen from the document's own
+                        // text is only evidence when that text says what the page
+                        // draws; `encodings.pdf` has no usable `/ToUnicode`, so
+                        // PDFium returns plausible garbage and the token is a
+                        // string nobody can read off the page. The gate must
+                        // refuse there, not certify.
+                        r.check(
+                            verdict.certifies() == text_layer_agrees,
+                            "the chosen control is read back",
+                            match (&verdict, text_layer_agrees) {
+                                (Legibility::Illegible { .. }, _) => format!(
+                                    "{:?} at {:.1} pt, chosen from the document and read back",
+                                    control.token, control.size_pt
+                                ),
+                                (other, true) => format!("{:?} -> {other:?}", control.token),
+                                (_, false) => format!(
+                                    "refused, as it must: the text layer does not say what the \
+                                     page draws, so {:?} is not on it",
+                                    control.token
+                                ),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     r.finish();
 }

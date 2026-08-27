@@ -5517,5 +5517,104 @@ MUTATIONS += [
     ),
 ]
 
+
+#: The OCR gate's control chooser. Every one of these hands the gate a control
+#: that proves less than it claims, and the verdict it produces is *Illegible* ---
+#: which is the one verdict `docs/PLAN.md` §6 lets a caller present as clean.
+MUTATIONS += [
+    Mutation(
+        # Choose the control from the words the region covered. Those are the
+        # words the removal was supposed to take, so reading one back proves the
+        # removal failed -- and the gate reads it as proof the engine can see.
+        "control: choose from the words the region covered",
+        "src/ocr.rs",
+        "            !regions\n                .iter()",
+        "            regions\n                .iter()",
+        "a_word_the_region_covers_is_never_the_control",
+    ),
+    Mutation(
+        # Size the control against the largest covered box instead of the
+        # smallest. A control in 12 pt proves an engine reads 12 pt and says
+        # nothing about the 6 pt footnote in the same region.
+        "control: size against the largest box the region covered",
+        "src/ocr.rs",
+        "        .fold(f32::INFINITY, f32::min);",
+        "        .fold(f32::NEG_INFINITY, f32::max);",
+        "control_is_sized_to_the_smallest_redacted_box_not_the_largest",
+    ),
+    Mutation(
+        # Let any surviving word be the control however large it is set. The
+        # heading at the top of the page then certifies a page of small print.
+        "control: accept a word of any size",
+        "src/ocr.rs",
+        "        .filter(|word| word.rect[3] - word.rect[1] <= size_pt + CONTROL_HEIGHT_SLACK_PT)",
+        "        .filter(|word| word.rect[3] - word.rect[1] >= 0.0 || size_pt >= 0.0)",
+        "a_word_set_larger_than_what_went_is_refused",
+    ),
+    Mutation(
+        # Widen the slack until a word a whole point taller passes. The rule
+        # survives and the number stops meaning anything, which is the shape a
+        # test written in the constant's own units cannot see -- so the test
+        # aimed at this one carries a measured height instead.
+        "control: widen the height slack to a whole point",
+        "src/ocr.rs",
+        "const CONTROL_HEIGHT_SLACK_PT: f32 = 0.01;",
+        "const CONTROL_HEIGHT_SLACK_PT: f32 = 1.0;",
+        "a_word_one_point_taller_than_what_went_does_not",
+    ),
+    Mutation(
+        # Accept a control of any length. A two-character fragment is what an
+        # engine emits from noise, and one matching by accident certifies a page
+        # nothing was read on.
+        "control: accept a token of any length",
+        "src/ocr.rs",
+        "        if chars < MIN_CONTROL_CHARS {",
+        "        if false {",
+        "a_word_too_short_to_be_a_control_is_refused",
+    ),
+    Mutation(
+        # Break a tie by the bottom-most word. Nothing is unsafe and the page
+        # stops yielding the same control twice, so every test that says WHICH
+        # control a page gives becomes a statement about iteration order.
+        "control: break a tie by the bottom-most word",
+        "src/ocr.rs",
+        "                        && (word.rect[1] < have.rect[1]",
+        "                        && (word.rect[1] > have.rect[1]",
+        "a_tie_goes_to_the_topmost_and_then_the_leftmost",
+    ),
+    Mutation(
+        # Take the whole line as the token. `adjudicate` asks whether ONE
+        # recognised span contains it, so a 52-character line is read back only
+        # when the engine happens to return that line in one piece -- measured
+        # failing on text-base14 and passing on text-marked, i.e. a gate that
+        # refuses a correct redaction depending on the font.
+        "control: take the whole line as the control token",
+        "src/ocr.rs",
+        "        token: longest_run(&chosen.text).to_string(),",
+        "        token: chosen.text.trim().to_string(),",
+        "the_token_is_a_word_and_not_the_line_it_sits_on",
+    ),
+    Mutation(
+        # Rank candidates by the length of the whole line rather than by its
+        # longest word. A line of six three-letter words then beats a single
+        # readable one, and the control it yields is a fragment.
+        "control: rank by the whole line rather than its longest word",
+        "src/ocr.rs",
+        "        let chars = longest_run(&word.text).chars().count();",
+        "        let chars = word.text.trim().chars().count();",
+        "a_line_of_short_words_does_not_outrank_one_long_one",
+    ),
+    Mutation(
+        # Take the band from the crop. The crop is on the page and the band is
+        # in the probe image, so every recognised item falls outside it, the
+        # control is never seen and a working gate refuses everything.
+        "control: place the band where the crop is",
+        "src/ocr.rs",
+        "            size_pt: self.size_pt,\n            band,",
+        "            size_pt: self.size_pt,\n            band: self.crop,",
+        "placed_takes_the_band_from_its_caller_and_nothing_else",
+    ),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

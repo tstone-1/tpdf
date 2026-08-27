@@ -286,6 +286,36 @@ impl fmt::Display for ControlTooEasy {
     }
 }
 
+/// The point size a control has to be set at to be no easier than what went.
+///
+/// The *shortest* box the redaction covered, box height in points being the
+/// closest thing to a glyph size available without asking the font.
+///
+/// One function rather than the same fold written out in [`Control::no_easier_than`]
+/// and in [`control_from_page`]: two copies of a safety rule is the drift this
+/// repository keeps recording, and here the drifted copy would be the one that
+/// decides whether a page of small print may be called clean.
+///
+/// # Errors
+///
+/// If no box had a usable height. Refusing is correct: with nothing to size
+/// against there is no honest control, and no control means no certification.
+fn size_no_easier_than(boxes: &[[f32; 4]]) -> Result<f32, ControlTooEasy> {
+    let smallest = boxes
+        .iter()
+        .map(|b| b[3] - b[1])
+        .filter(|h| h.is_finite() && *h > 0.0)
+        .fold(f32::INFINITY, f32::min);
+    if !smallest.is_finite() {
+        return Err(ControlTooEasy(
+            "no redacted box had a usable height, so there is nothing to size a control \
+             against; refusing rather than picking one"
+                .into(),
+        ));
+    }
+    Ok(smallest)
+}
+
 impl Control {
     /// Builds a control no easier to read than the text the redaction removed.
     ///
@@ -305,18 +335,7 @@ impl Control {
         token: impl Into<String>,
         band: [f32; 4],
     ) -> Result<Self, ControlTooEasy> {
-        let smallest = redacted_boxes
-            .iter()
-            .map(|b| b[3] - b[1])
-            .filter(|h| h.is_finite() && *h > 0.0)
-            .fold(f32::INFINITY, f32::min);
-        if !smallest.is_finite() {
-            return Err(ControlTooEasy(
-                "no redacted box had a usable height, so there is nothing to size a control \
-                 against; refusing rather than picking one"
-                    .into(),
-            ));
-        }
+        let smallest = size_no_easier_than(redacted_boxes)?;
         let token = token.into();
         if token.trim().is_empty() {
             return Err(ControlTooEasy(
@@ -348,6 +367,230 @@ impl Control {
         let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
         cx >= bl && cx <= br && cy >= bt && cy <= bb
     }
+}
+
+// ------------------------------------------------- choosing that control
+
+/// The fewest characters a control token may have.
+///
+/// **Measured against 41 real documents rather than picked.** Treating every
+/// text object's own box as the region a reader would draw over that line ---
+/// 154,095 of them --- and asking whether any surviving word on the same page
+/// qualifies as a control, the coverage runs 71.9% at two characters, 68.5% at
+/// three, **58.3% at four**, 45.9% at six and 35.5% at eight. There is no flat
+/// part to sit on: every character costs coverage, so the value is a judgement
+/// about what a token has to be, taken with the price in front of it.
+///
+/// Four, because [`adjudicate`] matches the control by asking whether one
+/// recognised span *contains* the token. A two- or three-character token is a
+/// fragment an engine can emit from noise, and a fragment matching by accident
+/// certifies a page nothing was read on. Four is a short whole word, and going
+/// further buys nothing that argument does not already have while costing 12.4
+/// points of coverage at six.
+///
+/// A region with no control is reported *not verified*, which is what every
+/// region gets today --- so this constant trades how often the gate can speak,
+/// never how often it is right.
+pub const MIN_CONTROL_CHARS: usize = 4;
+
+/// How much taller than the smallest covered box a control word may still be.
+///
+/// Box heights arrive as floats out of PDFium and two lines set in the same font
+/// on the same page routinely differ in the last digit. Without the slack a
+/// control word from the very line below the redacted one is refused as *easier*
+/// on a difference no reader could see, which throws away the best control on
+/// the page for a rounding error.
+const CONTROL_HEIGHT_SLACK_PT: f32 = 0.01;
+
+/// A word on the page, as the control chooser sees it.
+///
+/// Deliberately not [`RecognisedItem`]: that is what an engine *read*, and this
+/// is what the document *says*. A control chosen from an engine's own output
+/// would be the engine agreeing with itself, which is a shape this repository
+/// has recorded from several other directions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControlWord {
+    /// Its box, same convention as everything else here: `left, top, right,
+    /// bottom` in PDF points, y increasing **downwards**.
+    ///
+    /// PDFium reports a page object's bounds the other way up, so a caller
+    /// holding [`crate::redact::PageObject::bounds`] has to flip them. Only the
+    /// tie-break turns on it --- the height rule and the overlap test read the
+    /// same either way --- so a caller that gets it wrong still gets an honest
+    /// control, just the bottom-most of two equally long words rather than the
+    /// topmost. It is stated because a test that says *which* control a page
+    /// yields would otherwise be asserting the caller's convention.
+    pub rect: [f32; 4],
+    /// What it draws.
+    pub text: String,
+}
+
+/// A control chosen from a page, before anyone knows where its band will land.
+///
+/// **Two coordinate systems, kept apart on purpose.** [`crop`](Self::crop) is on
+/// the *page*, because that is what has to be rendered; a [`Control`]'s band is
+/// in the *probe image*, because that is where [`adjudicate`] partitions items.
+/// The band is not the crop moved --- the probe image is the region under test
+/// with this strip appended below it, so the band's `top` is the region's
+/// height. Returning a `Control` from here would mean guessing that offset, and
+/// `docs/TRAPS.md` carries more than one entry about a rectangle produced in one
+/// space and read in another.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControlChoice {
+    /// Where on the page the control band is cropped from.
+    pub crop: [f32; 4],
+    /// The text drawn there, which the engine has to read back.
+    pub token: String,
+    /// The size it has to be no easier than --- see [`size_no_easier_than`].
+    pub size_pt: f32,
+}
+
+impl ControlChoice {
+    /// The [`Control`] for a probe image whose control band landed at `band`.
+    ///
+    /// The token and the size come across unchanged; only the rectangle is the
+    /// caller's to supply, because only the caller knows how it composited the
+    /// probe image.
+    #[must_use]
+    pub fn placed(&self, band: [f32; 4]) -> Control {
+        Control {
+            token: self.token.clone(),
+            size_pt: self.size_pt,
+            band,
+        }
+    }
+}
+
+/// Chooses a control out of the text the redaction leaves behind.
+///
+/// `docs/PLAN.md` §6 step 4 renders the redacted regions and OCRs them, and it
+/// may only call the result clean when the engine was shown to read *on this
+/// image at this size* --- which is what a control is for. `docs/TRAPS.md`'s
+/// entry *a control that is easier than the check certifies nothing* is the
+/// failure this exists to make unreachable: the size rule and the "did the
+/// removal take it" rule are enforced here rather than left to whoever calls
+/// [`Control::no_easier_than`], which takes both on trust.
+///
+/// Three properties decide a candidate, and each of them is a way the gate could
+/// otherwise certify a page it had proved nothing about:
+///
+/// 1. **No region covers it.** A word the removal was supposed to take is not
+///    evidence that the engine can read: it is evidence the removal failed. The
+///    test is [`crate::redact::overlaps`], the same one that decided which words
+///    the removal took, so the two cannot come to disagree about a word.
+/// 2. **It is set no larger than the smallest box the regions covered.** A
+///    control in 12 pt proves nothing about a 6 pt footnote that survived.
+/// 3. **It draws at least [`MIN_CONTROL_CHARS`] characters**, because
+///    [`adjudicate`] matches the token against a recognised span by containment
+///    and a fragment matches by accident.
+///
+/// The longest qualifying word wins; ties go to the topmost and then the
+/// leftmost, so the same page always yields the same control and a test can say
+/// which.
+///
+/// # Errors
+///
+/// If nothing qualifies, and the reason says which of the three rules ran out ---
+/// a reader who is told *not verified* can act on "every line left on the page is
+/// bigger than what you removed" and cannot act on "no control".
+pub fn control_from_page(
+    words: &[ControlWord],
+    regions: &[[f32; 4]],
+) -> Result<ControlChoice, ControlTooEasy> {
+    let covered: Vec<[f32; 4]> = words
+        .iter()
+        .filter(|word| {
+            regions
+                .iter()
+                .any(|region| crate::redact::overlaps(word.rect, *region))
+        })
+        .map(|word| word.rect)
+        .collect();
+    let size_pt = size_no_easier_than(&covered)?;
+
+    let survivors: Vec<&ControlWord> = words
+        .iter()
+        .filter(|word| {
+            !regions
+                .iter()
+                .any(|region| crate::redact::overlaps(word.rect, *region))
+        })
+        .collect();
+    if survivors.is_empty() {
+        return Err(ControlTooEasy(
+            "the regions cover every word on this page, so there is nothing left for the \
+             engine to read back and nothing here can be certified"
+                .into(),
+        ));
+    }
+
+    let small: Vec<&&ControlWord> = survivors
+        .iter()
+        .filter(|word| word.rect[3] - word.rect[1] <= size_pt + CONTROL_HEIGHT_SLACK_PT)
+        .collect();
+    if small.is_empty() {
+        return Err(ControlTooEasy(format!(
+            "every word left on this page is set larger than the {size_pt:.1} pt that was \
+             removed, so reading one back would say nothing about the small print"
+        )));
+    }
+
+    // Longest wins; a tie goes to the topmost and then the leftmost. Ordered by
+    // hand rather than by sorting a key, because two of the three run the other
+    // way: more characters is better and a *smaller* top is.
+    let mut best: Option<&ControlWord> = None;
+    for word in &small {
+        let chars = longest_run(&word.text).chars().count();
+        if chars < MIN_CONTROL_CHARS {
+            continue;
+        }
+        let better = match best {
+            None => true,
+            Some(have) => {
+                let mine = have.text.trim().chars().count();
+                chars > mine
+                    || (chars == mine
+                        && (word.rect[1] < have.rect[1]
+                            || (word.rect[1] == have.rect[1] && word.rect[0] < have.rect[0])))
+            }
+        };
+        if better {
+            best = Some(word);
+        }
+    }
+    let chosen = best.ok_or_else(|| {
+        ControlTooEasy(format!(
+            "no word left on this page draws {MIN_CONTROL_CHARS} characters at {size_pt:.1} pt \
+             or smaller, and a shorter control is read back by accident"
+        ))
+    })?;
+
+    Ok(ControlChoice {
+        crop: chosen.rect,
+        token: longest_run(&chosen.text).to_string(),
+        size_pt,
+    })
+}
+
+/// The longest run of non-whitespace in a piece of drawn text.
+///
+/// **The token is a word and not the line it sits on, and that is a measurement
+/// rather than a preference.** [`adjudicate`] asks whether *one* recognised span
+/// contains the token, so a token spanning a whole line is only read back when
+/// the engine happens to return that line as a single span. Measured on
+/// 2026-08-27 with `ocr-probe`: handing Vision the whole 52-character line of
+/// `text-base14.pdf` as the token produced `NotVerified` on a page where nothing
+/// was wrong, while the same line on `text-marked.pdf` and `text-truetype.pdf`
+/// read back perfectly --- a gate that refuses a correct redaction on one font
+/// and accepts it on another.
+///
+/// One word inside the band is contained by whatever span the engine returns for
+/// that line, however it chose to break it up. It is still matched by position
+/// first, so a word occurring elsewhere on the page cannot stand in for it.
+fn longest_run(text: &str) -> &str {
+    text.split_whitespace()
+        .max_by_key(|run| run.chars().count())
+        .unwrap_or("")
 }
 
 /// The verdict of the redaction gate.
@@ -733,5 +976,217 @@ mod tests {
         assert!(!px.is_consistent(), "10 bytes is not 4x4 RGBA");
         let clean = Legibility::Illegible { engine: engine() };
         assert!(RedactedPixels::certify(px, &clean).is_err());
+    }
+
+    // ------------------------------------------------ choosing the control
+
+    fn word(text: &str, rect: [f32; 4]) -> ControlWord {
+        ControlWord {
+            rect,
+            text: text.into(),
+        }
+    }
+
+    /// One region over one 6 pt word, and four survivors, **each of which only
+    /// one rule can decide**.
+    ///
+    /// `heading` is long enough and is set at 20 pt, so only the size rule can
+    /// refuse it. `no` is the right size and draws two characters, so only the
+    /// length rule can. `readable` and `four` both qualify and differ only in
+    /// length. Written this way because two rules that both refuse a word make
+    /// each other unfalsifiable --- see `docs/TRAPS.md`.
+    fn page() -> Vec<ControlWord> {
+        vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("heading", [10.0, 30.0, 90.0, 50.0]),
+            word("no", [10.0, 60.0, 30.0, 66.0]),
+            word("readable", [10.0, 80.0, 70.0, 86.0]),
+            word("four", [10.0, 100.0, 40.0, 106.0]),
+        ]
+    }
+
+    /// Over `secret` and nothing else.
+    const OVER_SECRET: [f32; 4] = [10.0, 10.0, 90.0, 20.0];
+
+    #[test]
+    fn the_longest_word_of_the_right_size_that_survived_is_the_control() {
+        let chosen = control_from_page(&page(), &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "readable");
+        assert_eq!(chosen.crop, [10.0, 80.0, 70.0, 86.0]);
+        assert!(
+            (chosen.size_pt - 6.0).abs() < 0.001,
+            "sized against the 6 pt box that went, not against the control: {}",
+            chosen.size_pt
+        );
+    }
+
+    /// The over-selection control. The covered word is the longest on the page
+    /// and the right size, so the *only* thing that can keep it out of the
+    /// answer is that a region covers it.
+    #[test]
+    fn a_word_the_region_covers_is_never_the_control() {
+        let mut words = page();
+        words[0] = word("compromised", [12.0, 12.0, 88.0, 18.0]);
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(
+            chosen.token, "readable",
+            "a word the removal was supposed to take is not evidence the engine can read"
+        );
+    }
+
+    #[test]
+    fn a_word_set_larger_than_what_went_is_refused() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("heading", [10.0, 30.0, 90.0, 50.0]),
+        ];
+        let why = control_from_page(&words, &[OVER_SECRET]).expect_err("refused");
+        assert!(
+            why.to_string().contains("larger"),
+            "the reason has to say which rule ran out: {why}"
+        );
+    }
+
+    #[test]
+    fn a_word_too_short_to_be_a_control_is_refused() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("no", [10.0, 60.0, 30.0, 66.0]),
+        ];
+        let why = control_from_page(&words, &[OVER_SECRET]).expect_err("refused");
+        assert!(
+            why.to_string().contains("characters"),
+            "the reason has to say which rule ran out: {why}"
+        );
+    }
+
+    #[test]
+    fn a_page_whose_every_word_went_leaves_nothing_to_read_back() {
+        let words = vec![word("secret", [12.0, 12.0, 88.0, 18.0])];
+        let why = control_from_page(&words, &[OVER_SECRET]).expect_err("refused");
+        assert!(
+            why.to_string().contains("every word"),
+            "the reason has to say which rule ran out: {why}"
+        );
+    }
+
+    /// A region covering nothing has no box to size a control against, and
+    /// that refusal is [`size_no_easier_than`]'s rather than a second copy of
+    /// it here.
+    #[test]
+    fn a_region_over_no_words_has_no_size_to_measure_against() {
+        let why = control_from_page(&page(), &[[500.0, 500.0, 520.0, 510.0]]).expect_err("refused");
+        assert!(
+            why.to_string().contains("nothing to size a control"),
+            "{why}"
+        );
+    }
+
+    /// The boundary the slack exists for. A survivor exactly as tall as the
+    /// smallest covered box is *not* easier and must qualify.
+    #[test]
+    fn a_word_exactly_as_tall_as_what_went_still_qualifies() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("sameheight", [10.0, 30.0, 90.0, 36.0]),
+        ];
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "sameheight");
+    }
+
+    #[test]
+    fn a_word_one_point_taller_than_what_went_does_not() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("sameheight", [10.0, 30.0, 90.0, 37.0]),
+        ];
+        assert!(control_from_page(&words, &[OVER_SECRET]).is_err());
+    }
+
+    /// Determinism, so a test can say *which* control a page yields. Three
+    /// words of equal length: the tie has to be broken by top and then by left,
+    /// and the answer must not depend on the order they arrive in.
+    #[test]
+    fn a_tie_goes_to_the_topmost_and_then_the_leftmost() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("bbbb", [60.0, 40.0, 90.0, 46.0]),
+            word("cccc", [10.0, 60.0, 40.0, 66.0]),
+            word("aaaa", [10.0, 40.0, 40.0, 46.0]),
+        ];
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "aaaa", "topmost, then leftmost");
+        let mut reversed = words.clone();
+        reversed.reverse();
+        assert_eq!(
+            control_from_page(&reversed, &[OVER_SECRET])
+                .expect("a control")
+                .token,
+            "aaaa",
+            "the same page has to yield the same control whatever order it is read in"
+        );
+    }
+
+    /// The two coordinate systems. `placed` may take the band from its caller
+    /// and nothing else --- a band derived from the crop would be the page's
+    /// rectangle read in the probe image's space.
+    #[test]
+    fn placed_takes_the_band_from_its_caller_and_nothing_else() {
+        let chosen = control_from_page(&page(), &[OVER_SECRET]).expect("a control");
+        let band = [0.0, 200.0, 300.0, 220.0];
+        let control = chosen.placed(band);
+        assert_eq!(control.band, band);
+        assert_ne!(control.band, chosen.crop);
+        assert_eq!(control.token, chosen.token);
+        assert!((control.size_pt - chosen.size_pt).abs() < 0.001);
+    }
+
+    /// The token is a word, because [`adjudicate`] needs one recognised span to
+    /// contain the whole of it. Measured: see [`longest_run`].
+    #[test]
+    fn the_token_is_a_word_and_not_the_line_it_sits_on() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("a longer line of prose", [10.0, 30.0, 90.0, 36.0]),
+        ];
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "longer");
+    }
+
+    /// The ranking half of the same rule. The line of short words is nearly
+    /// three times as long as `readable` and holds nothing an engine could be
+    /// asked to read back, so ranking by the line would pick it.
+    #[test]
+    fn a_line_of_short_words_does_not_outrank_one_long_one() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("aaa bbb ccc ddd eee fff", [10.0, 30.0, 90.0, 36.0]),
+            word("readable", [10.0, 60.0, 70.0, 66.0]),
+        ];
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "readable");
+    }
+
+    /// And a page holding only short words is refused, however much text is on
+    /// it: three characters is a fragment an engine emits from noise.
+    #[test]
+    fn a_line_whose_longest_word_is_too_short_is_refused() {
+        let words = vec![
+            word("secret", [12.0, 12.0, 88.0, 18.0]),
+            word("aaa bbb ccc ddd eee fff", [10.0, 30.0, 90.0, 36.0]),
+        ];
+        let why = control_from_page(&words, &[OVER_SECRET]).expect_err("refused");
+        assert!(why.to_string().contains("characters"), "{why}");
+    }
+
+    /// The chosen control has to survive [`adjudicate`], or the chooser is
+    /// producing something the gate cannot use. Read back in the band: clean.
+    #[test]
+    fn a_chosen_control_read_back_in_its_band_certifies() {
+        let chosen = control_from_page(&page(), &[OVER_SECRET]).expect("a control");
+        let band = [0.0, 100.0, 200.0, 120.0];
+        let control = chosen.placed(band);
+        let read = Ok(vec![item(&chosen.token, [5.0, 102.0, 60.0, 118.0])]);
+        assert!(adjudicate(&engine(), &control, &read).certifies());
     }
 }

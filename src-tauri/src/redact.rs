@@ -322,8 +322,14 @@ fn normalised(rect: Rect) -> Rect {
 ///
 /// Strict comparisons throughout: two rectangles sharing only an edge do not
 /// overlap, so a region drawn flush against a line of text does not eat it.
+///
+/// `pub` for [`crate::ocr::control_from_page`], which has to ask the same
+/// question of the same page: which words a region covers decides what the
+/// removal takes *and* which words are left to read a control back from. Two
+/// answers to that would let the gate certify against a word the removal was
+/// supposed to have taken.
 #[must_use]
-fn overlaps(a: Rect, b: Rect) -> bool {
+pub fn overlaps(a: Rect, b: Rect) -> bool {
     let a = normalised(a);
     let b = normalised(b);
     a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
