@@ -6,9 +6,13 @@
 //! in a content stream and it is structurally blind to a *picture* of that word:
 //! text converted to outlines is a path drawing the shape of the letters, and a
 //! scanned page is a `/DCTDecode` stream whose pixels no parser here decodes.
-//! Measured across 41 real documents, **39.1% of realistic redaction regions**
-//! (60,319 of 154,095) carry something the scan cannot account for, and paths
-//! are 49,521 of them.
+//! Re-measured 2026-08-27 by `examples/redact_reach_probe.rs`, over 40 real
+//! documents and 2,893 word-sized regions: **33.1% carry something the removal
+//! cannot take**, and 68% of those are a path --- either one the page draws or
+//! one inside a Form XObject. The figure this said before, 39.1% of 154,095
+//! regions, was measured before the form and image carriers existed and over a
+//! population of whole text objects; a ratio travels between the two and a count
+//! does not, which is why only the ratio is written here.
 //!
 //! This module is the join. [`crate::ocr`] decides ([`crate::ocr::adjudicate`])
 //! and chooses the control ([`crate::ocr::control_from_page`]);
@@ -400,7 +404,8 @@ fn sample(read: &[&str]) -> String {
 /// say anything about a region whose carrier is a **picture**. The byte scan
 /// beside it reads the file's own bytes, so it finds a word still spelled out in
 /// a content stream and is structurally blind to text converted to outlines or
-/// to a scan --- 39.1% of realistic regions, measured across 41 real documents.
+/// to a scan --- 33.1% of realistic regions, measured across 40 real documents
+/// on 2026-08-27 by `examples/redact_reach_probe.rs`.
 ///
 /// Returns the reasons not to certify, one per region that could not be shown
 /// unreadable, and an empty list when every region was. **An empty list is not a

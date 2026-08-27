@@ -1037,12 +1037,14 @@ MUTATIONS = [
         # deny-by-default rule inverted: the words go and the picture of the
         # words stays, and the plan calls itself complete.
         # Re-aimed 2026-08-26, when the finding became a kind and a position
-        # rather than a sentence.
+        # rather than a sentence, and widened 2026-08-27, when a form's children
+        # gained a push of their own and the shorter anchor matched both -- the
+        # `} else {` is what makes this the page level's.
         "redact: pass over an image in the region without reporting it",
         "src/redact.rs",
-        "            plan.unhandled.push(Unhandled {",
-        "            drop(Unhandled {",
-        "an_image_in_the_region_makes_the_plan_incomplete",
+        "        } else {\n            plan.unhandled.push(Unhandled {",
+        "        } else {\n            drop(Unhandled {",
+        "an_object_this_cannot_remove_makes_the_plan_incomplete",
     ),
     Mutation(
         # Forget the two quote forms, so a redaction passes over any line drawn
@@ -5748,6 +5750,27 @@ MUTATIONS += [
         "an_unmeasurable_child_stays_unmeasurable",
     ),
     Mutation(
+        # Report every child of a form the region touches, which is what this did
+        # until 2026-08-27. A form is routinely a whole-page container, so a
+        # region over one line inside a letterhead was refused for every picture
+        # in it: 174 of 1,131 refusals across 40 real documents, 15.4%.
+        "formchild: report every child of a form the region reaches",
+        "src/redact.rs",
+        "            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {",
+        "            for other in &form.unreachable {\n                if true {",
+        "a_form_child_the_region_misses_is_not_reported",
+    ),
+    Mutation(
+        # The mirror, and the one that matters more: report nothing. A picture
+        # sitting under the region is then silently not a reason, and the region
+        # is certified complete when it is not.
+        "formchild: report no child of a form at all",
+        "src/redact.rs",
+        "            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {",
+        "            for other in &form.unreachable {\n                if !overlaps(other.bounds, region) {",
+        "a_form_child_the_region_covers_is_still_reported",
+    ),
+    Mutation(
         # Take every line in a covered form, not the ones the region covers. A
         # region over one line of a form then removes the whole form, which is
         # content the reader did not mark.
@@ -5774,8 +5797,8 @@ MUTATIONS += [
         # case becoming the silent one.
         "form: report the unreachable only beside a hit",
         "src/redact.rs",
-        "            plan.unhandled.extend(form.unreachable.iter().cloned());",
-        "            if !plan.form_shows.is_empty() {\n                plan.unhandled.extend(form.unreachable.iter().cloned());\n            }",
+        "            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {\n                    plan.unhandled.push(Unhandled {\n                        at,\n                        kind: other.kind.clone(),\n                    });\n                }\n            }",
+        "            if !plan.form_shows.is_empty() {\n            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {\n                    plan.unhandled.push(Unhandled {\n                        at,\n                        kind: other.kind.clone(),\n                    });\n                }\n            }\n            }",
         "what_the_descent_could_not_reach_is_reported_even_when_nothing_was_covered",
     ),
     Mutation(

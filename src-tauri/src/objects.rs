@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use pdfium_render::prelude::*;
 
 use crate::progressive::RawPage;
-use crate::redact::{FormObject, FormText, PageObject, Unhandled};
+use crate::redact::{FormObject, FormOther, FormText, PageObject};
 use crate::text::RawTextPage;
 
 /// A page's objects, and what the text ones draw.
@@ -226,8 +226,18 @@ fn descend(
             kind_of(unsafe { bindings.FPDFPageObj_GetType(child) })
         };
         if kind != "text" {
-            out.unreachable.push(Unhandled {
-                at,
+            // Placed, and not only named. Every child can be measured --- a
+            // nested form has a box of its own even though its contents are not
+            // followed --- and without one, `redact::covered` had to report
+            // every child of a form the region merely touched. A child that
+            // cannot be handed over is unmeasurable, which overlaps everything
+            // and is therefore still always reported.
+            out.unreachable.push(FormOther {
+                bounds: if child.is_null() {
+                    UNMEASURABLE
+                } else {
+                    through(matrix, bounds_of(page, child))
+                },
                 kind: kind.to_string(),
             });
             continue;

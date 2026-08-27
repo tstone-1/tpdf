@@ -578,6 +578,8 @@ fn forms(
     const ON_THE_PAGE: &str = "Sphinx of black quartz";
     /// Inside a form that is drawn twice. Must stay, because the removal refuses.
     const SHARED: &str = "This form is drawn twice";
+    /// Page 3, at one end of a form whose other child is 300 points away.
+    const FAR_TEXT: &str = "Text at one end of the form";
 
     let source = root.join("testdata").join(FORM_FILE);
     if !source.exists() {
@@ -585,6 +587,7 @@ fn forms(
         return Ok(true);
     }
     let document = OpenDocument::open(bindings, &source, None).map_err(|why| why.reason)?;
+    let count = document.page_count();
     let mut ok = true;
 
     // --- page 1: the ordinary case -----------------------------------------
@@ -623,7 +626,7 @@ fn forms(
 
     let out = std::env::temp_dir().join("tpdf-redact-form-probe.pdf");
     let _ = std::fs::remove_file(&out);
-    let planned = form_plan(0, &objects, &plan, region);
+    let planned = form_plan(0, count, &objects, &plan, region);
     save::write_copy(&source, &planned, &out).map_err(|why| why.message)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     let holds = |needle: &str| {
@@ -659,7 +662,7 @@ fn forms(
     let r = first.bounds;
     let region = [r[0] - 1.0, r[1] - 1.0, r[2] + 1.0, r[3] + 1.0];
     let plan = redact::covered(&shared.all, &shared.forms, region);
-    let planned = form_plan(1, &shared, &plan, region);
+    let planned = form_plan(1, count, &shared, &plan, region);
     let out = std::env::temp_dir().join("tpdf-redact-form-shared-probe.pdf");
     let _ = std::fs::remove_file(&out);
     let refused = save::write_copy(&source, &planned, &out);
@@ -678,6 +681,52 @@ fn forms(
     // one it was written to catch.
     ok &= check("the refusal wrote no file", !out.exists());
     let _ = std::fs::remove_file(&out);
+
+    // --- page 3: a child at the other end of the form ----------------------
+    // The discrimination every other page here is missing. On pages 1 and 2 the
+    // unreachable child sits on top of the form's text, so "report a child the
+    // region covers" and "report every child of a form the region touches" give
+    // the same answer and no check could tell them apart. Measured over 40 real
+    // documents, the second rule accounted for 56% of every refusal --- a form
+    // is routinely a letterhead, and a region over one line inside one reported
+    // every picture in it.
+    let page = document.page(2).map_err(|e| e.to_string())?;
+    let far = tpdf_lib::objects::read(&page).map_err(|e| e.to_string())?;
+    let Some(form) = far.forms.first() else {
+        println!("[FAIL] page 3 of {FORM_FILE} has no form XObject on it");
+        return Ok(false);
+    };
+    let Some(line) = form.text.iter().find(|t| t.draws.trim() == FAR_TEXT) else {
+        println!("[FAIL] page 3 of {FORM_FILE} does not hold {FAR_TEXT:?} inside a form");
+        return Ok(false);
+    };
+    let Some(path) = form.unreachable.iter().find(|u| u.kind == "path") else {
+        println!("[FAIL] page 3's form holds no path for the region to miss");
+        return Ok(false);
+    };
+    // The fixture's own discrimination, asserted rather than assumed: two
+    // children that overlapped would make both checks below pass on either rule.
+    ok &= check(
+        "the form's two children are far enough apart to tell the rules apart",
+        !redact::overlaps(line.bounds, path.bounds),
+    );
+
+    let r = line.bounds;
+    let over_text = [r[0] - 1.0, r[1] - 1.0, r[2] + 1.0, r[3] + 1.0];
+    let plan = redact::covered(&far.all, &far.forms, over_text);
+    ok &= check(
+        "a region over the form's text does not report the path at the other end",
+        plan.form_shows.len() == 1 && plan.unhandled.is_empty(),
+    );
+    ok &= check("that region is therefore complete", plan.is_complete());
+
+    let r = path.bounds;
+    let over_path = [r[0] + 1.0, r[1] + 1.0, r[2] - 1.0, r[3] - 1.0];
+    let plan = redact::covered(&far.all, &far.forms, over_path);
+    ok &= check(
+        "a region over the path itself still reports it",
+        plan.unhandled.iter().any(|u| u.kind == "path") && plan.form_shows.is_empty(),
+    );
     Ok(ok)
 }
 
@@ -709,6 +758,7 @@ fn images(
         return Ok(true);
     }
     let document = OpenDocument::open(bindings, &source, None).map_err(|why| why.reason)?;
+    let count = document.page_count();
     let mut ok = true;
 
     let page = document.page(0).map_err(|e| e.to_string())?;
@@ -733,7 +783,7 @@ fn images(
 
     let out = std::env::temp_dir().join("tpdf-redact-image-probe.pdf");
     let _ = std::fs::remove_file(&out);
-    let planned = image_plan(0, &objects, &plan, region);
+    let planned = image_plan(0, count, &objects, &plan, region);
     save::write_copy(&source, &planned, &out).map_err(|why| why.message)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
@@ -777,7 +827,7 @@ fn images(
         "the shared picture is named before the refusal is asked for",
         !plan.images.is_empty(),
     );
-    let planned = image_plan(1, &twice, &plan, region);
+    let planned = image_plan(1, count, &twice, &plan, region);
     let out = std::env::temp_dir().join("tpdf-redact-image-shared-probe.pdf");
     let _ = std::fs::remove_file(&out);
     let refused = save::write_copy(&source, &planned, &out);
@@ -796,11 +846,12 @@ fn images(
 /// A plan removing exactly the images `plan` names from one page.
 fn image_plan(
     page: u32,
+    count: u32,
     objects: &tpdf_lib::objects::PageObjects,
     plan: &redact::Plan,
     region: [f32; 4],
 ) -> Plan {
-    let mut planned = form_plan(page, objects, plan, region);
+    let mut planned = form_plan(page, count, objects, plan, region);
     if let Some(redaction) = planned.redactions.first_mut() {
         redaction.images = plan.images.clone();
         redaction.image_objects = objects
@@ -815,14 +866,21 @@ fn image_plan(
 /// A plan removing exactly what `plan` names from one page.
 fn form_plan(
     page: u32,
+    count: u32,
     objects: &tpdf_lib::objects::PageObjects,
     plan: &redact::Plan,
     region: [f32; 4],
 ) -> Plan {
     Plan {
         opened_as: None,
-        baseline: 2,
-        pages: (0..2)
+        // Taken from the document rather than written down. It was a literal 2
+        // until `form-xobject.pdf` gained a third page, and the save then
+        // refused with *"the document on disk has 3 page(s) and the edits were
+        // made against 2"* --- a guard doing its job about a fixture constant
+        // this file had copied. `docs/TRAPS.md`: a new corpus has to satisfy the
+        // sample points every existing check hardcodes.
+        baseline: count,
+        pages: (0..count)
             .map(|at| PageView {
                 id: u64::from(at) + 1,
                 source: at,

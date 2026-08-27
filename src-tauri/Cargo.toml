@@ -307,6 +307,10 @@ name = "redact-gate-probe"
 path = "examples/redact_gate_probe.rs"
 
 [[example]]
+name = "redact-reach-probe"
+path = "examples/redact_reach_probe.rs"
+
+[[example]]
 name = "ocr-worker-probe"
 path = "examples/ocr_worker_probe.rs"
 

@@ -168,8 +168,9 @@ NOT_WINDOW: list[tuple[str, str]] = [
     (
         "form-xobject",
         "text inside Form XObjects, for redact-apply-probe: a translating "
-        "matrix, two lines in one form, a form nested in a form and a form "
-        "drawn twice. No viewer path -- every check on it is about a removal",
+        "matrix, two lines in one form, a form nested in a form, a form "
+        "drawn twice, and a form whose text and path are 300 points apart. "
+        "No viewer path -- every check on it is about a removal",
     ),
     (
         "image-region",
