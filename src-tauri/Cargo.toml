@@ -299,6 +299,14 @@ name = "ocr-probe"
 path = "examples/ocr_probe.rs"
 
 [[example]]
+name = "ocr-sandbox-probe"
+path = "examples/ocr_sandbox_probe.rs"
+
+[[example]]
+name = "ocr-worker-probe"
+path = "examples/ocr_worker_probe.rs"
+
+[[example]]
 name = "latency-bench"
 path = "examples/latency_bench.rs"
 

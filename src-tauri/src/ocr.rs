@@ -50,6 +50,13 @@
 //! read the user's files. So OCR cannot be another [`crate::worker::Request`] on
 //! the parser worker without giving up the containment the worker exists for.
 //!
+//! **That table is executable as of 2026-08-27** --- `examples/ocr_sandbox_probe.rs`, three
+//! rungs, 7/7 on OS build 25G83, with the SIGTRAP reproducing four weeks after it was first
+//! seen. It also measures something the hand run did not: the rung that worked above allowed
+//! reads and said nothing about **writes**, while [`OCR_SANDBOX_PROFILE`] denies
+//! `file-write*` and `network*` --- and Vision reads under it. Until then the shipped constant
+//! was inherited from a neighbouring rung rather than measured.
+//!
 //! It does not have to be. The parser worker is contained because it parses
 //! **attacker-authored structure** --- an object graph, filters, fonts, a
 //! decompressor. An engine here consumes a fixed-size RGBA buffer that *we*
@@ -61,6 +68,12 @@
 //! no writes. And it stays a *separate process* --- not for containment but because
 //! the first rung above measured Vision hard-crashing its host. An engine that can
 //! take the process down must not share one with unsaved annotations.
+//!
+//! [`crate::ocr_worker`] is that process, built 2026-08-27. It maps no PDF parser, holds the
+//! pixels in a mapping the parent wrote and the child cannot, and applies the profile before
+//! it reads a single request. What it deliberately does **not** claim is that the app process
+//! never maps the engine: `objc2-vision` links Vision rather than `dlopen`ing it, so every
+//! binary linking [`crate::ocr_vision`] maps the framework at launch, called or not.
 //!
 //! ## Why the geometry is coarser than [`crate::text::PageText`]
 //!
@@ -153,7 +166,7 @@ impl Pixels<'_> {
 }
 
 /// One span of recognised text --- a word or a line, whichever the engine reports.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RecognisedItem {
     /// What the engine read.
     pub text: String,
@@ -174,7 +187,7 @@ pub struct RecognisedItem {
 /// Every variant means *the check did not happen*. None of them may be folded
 /// into an empty result, which is the entire reason this is not
 /// `Result<Vec<RecognisedItem>, String>` with an empty vec on the sad path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RecogniseError {
     /// No engine on this platform, or no data for the requested language.
     /// A real state on Windows, where OCR needs an installed language pack.
@@ -204,7 +217,7 @@ impl fmt::Display for RecogniseError {
 }
 
 /// What a caller asks of an engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Options {
     /// BCP-47 tags, most preferred first. Empty means the engine's default.
     pub languages: Vec<String>,

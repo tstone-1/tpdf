@@ -19,6 +19,7 @@ pub mod document;
 pub mod edits;
 pub mod encoding;
 pub mod fingerprint;
+pub mod images;
 pub mod invert;
 #[cfg(target_os = "macos")]
 pub mod keylayout;
@@ -31,6 +32,7 @@ pub mod objects;
 pub mod ocr;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
+pub mod ocr_worker;
 pub mod outline;
 pub mod pagetree;
 pub mod print;
@@ -2725,6 +2727,13 @@ pub fn run() {
     // and everything below --- the watchdog, the Tauri context, a window ---
     // would be wrong for it. It never returns.
     let args: Vec<String> = std::env::args().collect();
+    // The OCR worker, checked first because it is the narrower marker and
+    // because it shares nothing with the parser worker but this dispatch: it
+    // maps no PDF library, opens no document, and applies a different profile.
+    #[cfg(target_os = "macos")]
+    if args.iter().any(|a| a == ocr_worker::OCR_WORKER_ARGV) {
+        ocr_worker::child_main();
+    }
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
         // No platform gate here any more. The refusal that mattered was never
         // this one --- it is `establish_boundary`, inside the worker, which fails
@@ -3060,10 +3069,17 @@ mod tests {
     /// reason; anything else must ask the constant.
     #[test]
     fn only_the_macos_spikes_hardcode_the_library_directory() {
-        /// The two where `lib` is simply correct, because they do not build
-        /// anywhere else: `fdpass-probe` carries a POSIX `SCM_RIGHTS` handover
-        /// and `ocr-probe` drives macOS Vision.
-        const MAC_ONLY: [&str; 2] = ["fdpass_probe.rs", "ocr_probe.rs"];
+        /// The ones where `lib` is simply correct, because they do not build
+        /// anywhere else: `fdpass-probe` carries a POSIX `SCM_RIGHTS` handover,
+        /// and the three OCR spikes drive macOS Vision --- `ocr-probe` the
+        /// binding, `ocr-sandbox-probe` the SBPL profiles it runs under, and
+        /// `ocr-worker-probe` the process that holds it.
+        const MAC_ONLY: [&str; 4] = [
+            "fdpass_probe.rs",
+            "ocr_probe.rs",
+            "ocr_sandbox_probe.rs",
+            "ocr_worker_probe.rs",
+        ];
 
         let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
         let mut found: Vec<String> = Vec::new();

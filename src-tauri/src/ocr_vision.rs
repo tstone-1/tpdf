@@ -7,12 +7,16 @@
 //!
 //! ## This must not run in the app process
 //!
-//! `ocr.rs` records the ladder: under the parser worker's profile Vision is **killed by
-//! SIGTRAP**, and it needs general `file-read` to run at all. The second half is why it
-//! cannot share the parser's boundary; the first half is why it should not share *any*
-//! process whose loss matters. Nothing here spawns a worker yet --- this is the binding, and
-//! `examples/ocr_probe.rs` drives it in a throwaway process. Wiring it into a worker with
-//! [`crate::ocr::OCR_SANDBOX_PROFILE`] is the next step and is deliberately not done here.
+//! `ocr.rs` records the ladder and `examples/ocr_sandbox_probe.rs` re-measures it on demand:
+//! under the parser worker's profile Vision is **killed by SIGTRAP**, and it needs general
+//! `file-read` to run at all. The second half is why it cannot share the parser's boundary;
+//! the first half is why it should not share *any* process whose loss matters.
+//!
+//! [`crate::ocr_worker`] is the process it runs in, built 2026-08-27. What it does **not**
+//! do is keep this framework out of the app's address space: `objc2-vision` links Vision the
+//! ordinary way, so every binary that links this module maps it at launch, called or not.
+//! Linking is not calling --- see `docs/TRAPS.md`, and note that `backend-probe`'s style of
+//! evidence about `libpdfium` does not transfer here, because that one is `dlopen`ed.
 //!
 //! ## The coordinate conversion is the part that will be wrong
 //!

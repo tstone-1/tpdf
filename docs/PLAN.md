@@ -2727,6 +2727,89 @@ nothing spawns one. And nothing calls the gate --- `redact_copy` and `redact_in_
 verify by byte scan alone, so the 39.1% above is unchanged today. This increment is the part
 that decides whether step 4 can be honest; the process and the caller are the two after it.
 
+#### Step 4's process: the engine somewhere else --- built 2026-08-27
+
+The chooser above decides what the engine must read back. This is the process that reads it.
+
+**Why it cannot be a request on the parser worker** was measured on 2026-07-31 and written
+into `ocr.rs` as a three-row table: under `worker::SANDBOX_PROFILE` Vision is **killed by
+SIGTRAP**, with `/System/Library` readable it fails with `nilError`, and with reads allowed
+entirely it works. The first row is why an engine must not share a process whose loss
+matters; the second is why it must not share the *parser's* boundary, since a process holding
+a hostile document must not be able to read the user's files.
+
+**That table is executable now**, `examples/ocr_sandbox_probe.rs`, and it had to be: this
+repository's own index says a safety net that has never fired looks exactly like one that
+keeps passing, and the table had not been re-run in four weeks. It also did not measure the
+constant that shipped --- the rung that worked allowed reads and said nothing about *writes*,
+while `OCR_SANDBOX_PROFILE` denies `file-write*` and `network*`. Three rungs, each in a
+re-exec'd child that renders a page **before** the profile comes down, because the parser
+worker maps PDFium first too and sandboxing earlier would measure a different program:
+
+| rung | writes a file | reaches the listener | runs Vision |
+|---|---|---|---|
+| `bare` --- the control | ok | ok | 4 spans |
+| `ocr` --- `OCR_SANDBOX_PROFILE` | **PermissionDenied** | **PermissionDenied** | **4 spans** |
+| `parser` --- the render worker's | --- | --- | **killed by signal 5** |
+
+7/7, on OS build 25G83. So the shipped constant is measured rather than inherited from a
+neighbouring rung, and the SIGTRAP reproduces on a build four weeks newer than the one that
+first saw it. **The parent holds a real listener open and passes its port**, because
+`ConnectionRefused` and a sandbox denial are the same shape from a client's side: without
+something to connect to, every rung reports a refusal and the row measures nothing.
+
+**`ocr_worker.rs` is the worker, and both ends of the wire are in that one file.** `worker.rs`
+and `worker_child.rs` are split because they are 1,400 and 900 lines; this is neither, and the
+split cost something there worth not repeating --- `docs/TRAPS.md`'s *one untyped reply
+carrier, and the two ways serde refuses to replace it* is a payload whose shape lived in two
+processes with nothing holding the copies together, and it had already produced one wrong
+measurement. `Ask` and `Said` are written once.
+
+Three decisions in it are not guessable from the feature:
+
+- **The pixels go through a shared mapping and the request through a pipe.** The parent
+  creates a 16 MB mapping and `dup2`s it to a fixed descriptor before `exec`, exactly as the
+  render worker hands over its tile buffer; the JSON line says how to read what is already
+  there. Sending the image itself would be a base64 of megabytes per call for a buffer both
+  processes can see. The child maps it **read-only**: it never writes pixels, and a mapping it
+  cannot write is one it cannot be made to write.
+- **`Said` is externally tagged**, serde's default and the only one of the three encodings that
+  is safe here --- the trap index records internal tagging refusing a bare payload at runtime
+  and untagged silently swapping two variants of the same shape. A test asserts a bare payload
+  does not parse, which is the check that the encoding is not the third one.
+- **The reply deadline is the parent's, because the engine ignores the one it is given.**
+  `Options::deadline_ms` exists and `VNImageRequestHandler` has no timeout, so a wedged engine
+  wedges the child and a parent reading a line would wait for ever. That is *a check whose
+  failure mode is a wait cannot fail*, one layer out, and the only place it can be fixed is in
+  the process that survives it.
+
+**And a finding that cost a check its claim.** The first version of the worker probe asserted
+what `backend-probe` asserts about the parser: that the process which asks never maps the
+engine. It fails, and it always would: `pdfium-render` **`dlopen`s** its library, so a process
+that never binds it never maps it, while `objc2-vision` links Vision the ordinary way --- so
+**every binary linking `ocr_vision` maps the framework at launch, called or not**, two images
+before a single call. Linking is not calling; what the worker buys is that Vision *code* runs
+somewhere else, which is what the SIGTRAP row is about. The check states the measured fact now,
+with an emptiness control beside it, and `docs/TRAPS.md` has the entry.
+
+**Evidence.** `ocr-worker-probe`, 12/12 on `text-base14`, `text-marked`, `rotated`, `links`,
+`columns` and `encodings`: the worker reads the page, what it read is **identical** to what
+the same program reads in-process on the same bytes, the engine identity survives the wire and
+resolves, a second call reuses the same process, both refusals are checked apart, the worker
+still answers after one, and a worker killed from outside reports inside its own deadline
+rather than hanging. `vector-heavy.pdf` is skipped with the number in the reason --- A0 at
+scale 2 is 128 MB against a 16 MB buffer --- rather than rendered smaller, because shrinking
+the subject to fit the harness is how a probe comes to measure something other than what it
+names. Twelve unit tests and six mutations stand behind the parts that are decidable without
+an engine.
+
+**Not done, and it is the whole remaining half:** nothing calls this. `redact_copy` and
+`redact_in_place` still verify by byte scan alone, so the 39.1% of regions that cannot be
+proved clean is unchanged. The wiring needs the written file re-rendered region by region,
+the control cropped from it, the two stacked, and the verdict folded into `Applied::why` ---
+and it needs to answer what happens on Windows, where there is no engine and
+`OcrWorker::spawn` refuses by design.
+
 #### Step 5, the independent parser --- measured 2026-08-26
 
 The step asks for a parser that did not write the file to re-check it, on the strength of
