@@ -100,6 +100,22 @@ accessibility structure can keep elsewhere are all untouched --- so redacting a 
 document will usually still report that it could not be proved clean, and name what it
 found. That is the honest answer rather than a missing one.
 
+### Changed: redaction removes the document's title, author and other properties
+
+A PDF carries a description of itself --- title, author, subject, keywords --- in
+two places, and a title routinely says what the document is about. That is the
+thing you are redacting, so **Redact and save as** now takes both places out of
+the copy it writes.
+
+Whole, rather than only the entries that repeat the words you removed. A title
+that *paraphrases* a redacted line matches no search for those words, so there is
+nothing to match against and removing the description is the only rule that
+reaches it. Measured on 41 real documents: 15 name an author this way, 14 a title.
+
+**The cost is plain**: the copy you release has no title and no author. That is
+normal for a released document, and it applies to nothing else --- Save a copy,
+Extract, Split, Merge and printing all carry the description across untouched.
+
 ### Changed: redaction reaches the accessibility text a tagged document files separately
 
 A PDF tagged for accessibility keeps its alternate text in two places, not one:

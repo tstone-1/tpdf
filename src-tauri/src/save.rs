@@ -2159,20 +2159,81 @@ fn apply_redactions(
             crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;
         }
     }
+
+    // **The document's own description of itself, and only when something was
+    // redacted.** `docs/PLAN.md` §6's carrier table names XMP and DocInfo at
+    // document level, and a title or a subject routinely restates what the
+    // document is about --- which is what a reader is redacting.
+    //
+    // Taken whole rather than matched, and the measurement is the argument. Of
+    // 41 real PDFs, 15 carry `dc:creator`, 14 `dc:title`, 5 `dc:description`
+    // and 5 `pdf:Keywords`: free text describing the document, written by its
+    // producer. A rule that removed entries *containing* the removed words
+    // would clear an exact copy and leave a paraphrase, and a paraphrase of a
+    // redacted line is not reachable by any string rule at all. There is
+    // nothing to match against, so the only rule that reaches this carrier is
+    // to remove it.
+    //
+    // The cost is stated rather than hidden: a reader redacting one line from
+    // their own report gets a copy with no title and no author. That is normal
+    // for a document being released and it is the visible half of the trade.
+    //
+    // **Guarded on there having been a redaction at all**, which is the half
+    // that is about every other save: this function runs on every rewrite, so
+    // without the guard an ordinary copy would quietly lose its metadata. The
+    // control for it is `a_copy_that_is_not_a_redaction_keeps_its_metadata`.
+    if done.shows > 0 || done.annots > 0 || !redactions.is_empty() {
+        done.metadata = strip_metadata(doc)?;
+    }
     Ok(done)
+}
+
+/// Removes `/Info` and the catalog's `/Metadata`, and every reference to them.
+///
+/// `pagetree::forget` for the reason the annotations use it: the trailer names
+/// `/Info` and the catalog names `/Metadata`, and either may be named somewhere
+/// else as well --- an XMP packet is an ordinary stream and nothing stops a
+/// producer pointing at it twice. Removing the object without the references
+/// leaves a dangling name where there was a description.
+///
+/// Returns how many of the two were there.
+///
+/// # Errors
+///
+/// Only what `pagetree::forget` refuses: an object nested deeper than the
+/// sweep's bound.
+fn strip_metadata(doc: &mut Document) -> Result<usize, Refusal> {
+    let mut doomed: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
+    if let Ok(info) = doc.trailer.get(b"Info").and_then(Object::as_reference) {
+        doomed.insert(info);
+    }
+    if let Ok(metadata) = doc
+        .catalog()
+        .and_then(|catalog| catalog.get(b"Metadata"))
+        .and_then(Object::as_reference)
+    {
+        doomed.insert(metadata);
+    }
+    let found = doomed.len();
+    if found > 0 {
+        crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;
+    }
+    Ok(found)
 }
 
 /// What a redaction took out of the document.
 ///
-/// Two counts rather than one, because they are two carriers and the caller acts
-/// on the second: an annotation that went may have left an appearance stream
-/// reachable from nothing, which is what the sweep is for.
+/// Counts rather than one number, because they are separate carriers and the
+/// caller acts on one of them: an annotation that went may have left an
+/// appearance stream reachable from nothing, which is what the sweep is for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Redacted {
     /// Text-showing operations deleted from content streams.
     shows: usize,
     /// Annotations removed, dependents included.
     annots: usize,
+    /// How many of `/Info` and `/Metadata` were there to remove.
+    metadata: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
@@ -8456,6 +8517,109 @@ mod tests {
             fields.is_empty(),
             "the other reference to it went too: {fields:?}"
         );
+    }
+
+    /// A redaction takes the document's own description of itself.
+    ///
+    /// §6's carrier table names XMP and DocInfo at document level, and a title
+    /// or a subject routinely restates what the document is about. Both go, and
+    /// the objects go with the references.
+    #[test]
+    fn a_redaction_removes_the_documents_own_description_of_itself() {
+        let (mut doc, page, info, metadata) = described_document();
+        let done = apply_redactions(&mut doc, &[page], &redaction_of(page)).expect("applicable");
+        assert_eq!(done.metadata, 2, "both were there");
+        assert!(doc.get_object(info).is_err(), "/Info is gone");
+        assert!(doc.get_object(metadata).is_err(), "/Metadata is gone");
+        assert!(
+            !doc.trailer.has(b"Info"),
+            "and so is the trailer's name for it"
+        );
+        assert!(
+            !doc.catalog().expect("catalog").has(b"Metadata"),
+            "and the catalog's"
+        );
+    }
+
+    /// **The control, and it is about every other save rather than this one.**
+    ///
+    /// `apply_redactions` runs on every rewrite, so a strip that did not ask
+    /// whether anything was redacted would quietly take the title off every copy,
+    /// extract, split and merge tpdf writes. §T6.1's position is that a copy is a
+    /// serialisation and not a sanitation, and this is where that stays true.
+    #[test]
+    fn a_copy_that_is_not_a_redaction_keeps_its_metadata() {
+        let (mut doc, page, info, metadata) = described_document();
+        let done = apply_redactions(&mut doc, &[page], &[]).expect("applicable");
+        assert_eq!(done.metadata, 0);
+        assert!(
+            doc.get_object(info).is_ok(),
+            "/Info survives an ordinary save"
+        );
+        assert!(
+            doc.get_object(metadata).is_ok(),
+            "and so does the XMP packet"
+        );
+    }
+
+    /// A document describing itself nowhere is not an error, and reports none.
+    #[test]
+    fn a_document_with_no_metadata_at_all_reports_none() {
+        let (mut doc, page, info, metadata) = described_document();
+        crate::pagetree::forget(&mut doc, &[info, metadata].into_iter().collect()).expect("strip");
+        let done = apply_redactions(&mut doc, &[page], &redaction_of(page)).expect("applicable");
+        assert_eq!(done.metadata, 0);
+    }
+
+    /// A one-page document that describes itself in both places.
+    ///
+    /// Returns the page, the `/Info` object and the XMP packet.
+    fn described_document() -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::ObjectId) {
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let content = doc.add_object(Stream::new(dictionary! {}, b"BT (secret) Tj ET".to_vec()));
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        let metadata = doc.add_object(Stream::new(
+            dictionary! { "Type" => "Metadata", "Subtype" => "XML" },
+            b"<x:xmpmeta><dc:title>secret</dc:title></x:xmpmeta>".to_vec(),
+        ));
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "Metadata" => metadata,
+        });
+        doc.trailer.set("Root", catalog);
+        let info = doc.add_object(dictionary! {
+            "Title" => Object::string_literal("secret"),
+            "Author" => Object::string_literal("A. Beispiel"),
+        });
+        doc.trailer.set("Info", info);
+        (doc, page, info, metadata)
+    }
+
+    /// The plan that redacts the one line `described_document` draws.
+    fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
+        vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: vec![0],
+            text_objects: 1,
+            areas: Vec::new(),
+        }]
     }
 
     /// A redaction naming a page the plan does not keep is refused.

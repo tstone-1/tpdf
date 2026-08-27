@@ -1291,19 +1291,25 @@ could not take becomes a reason. So the failure mode this section would otherwis
 reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
 omission at a call site.
 
-**Residual, and it is large enough to state plainly.** This reaches two rows of
+**Residual, and it is large enough to state plainly.** This reaches three rows of
 `docs/PLAN.md` §6's carrier table and no more, all of it added 2026-08-27. The page's own
 content: the show operators, and the shadow text (`/ActualText`, `/Alt`, `/E`) in **both** of
 that row's homes --- the marked-content property list the glyphs sit inside, and the structure
 element that span belongs to, reached by `/MCID` through the parent tree, together with its
-ancestors. And an **annotation whose `/Rect` overlaps a region**, with its popup and its
-replies, removed together with every reference to it rather than unlinked from the page.
+ancestors. An **annotation whose `/Rect` overlaps a region**, with its popup and its replies,
+removed together with every reference to it rather than unlinked from the page. And the
+document's own description of itself --- `/Info` and the catalog's `/Metadata` --- taken whole,
+because a title that paraphrases a redacted line is reachable by no rule that matches text.
 
 Everything else in that table survives: an annotation *away* from every region (deliberate ---
-a reader's other comments are not theirs to lose), form values, XMP and DocInfo metadata, the
-outline, page labels, embedded files, and any prior incremental revision, since a copy is a
-serialisation rather than a sanitation (§T6.1). So does any structure element the parent-tree
-walk could not reach, which is reported as unverified rather than passed over. An image or a
+a reader's other comments are not theirs to lose), form values, the outline, page labels,
+embedded files, and any prior incremental revision, since a copy is a serialisation rather
+than a sanitation (§T6.1). So does any structure element the parent-tree walk could not reach,
+which is reported as unverified rather than passed over.
+
+**The metadata strip is a property of the redaction and of nothing else.** A copy, an extract,
+a split, a merge and a print job all still carry `/Info` and XMP across untouched, which is
+§T6.1's position and is held by one condition with a control of its own. An image or a
 vector drawing inside the region is reported and left. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
 a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is
