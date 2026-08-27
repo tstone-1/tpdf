@@ -136,7 +136,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Redact and save as** writes a new file with the marked regions' text removed from the
   page's instructions --- not covered over, removed --- and then reads that file back and
   tells you what it found. It says *verified*, or it says it could not prove the file is
-  clean and why. It never says nothing. The document you have open is untouched, so if you
+  clean and why. It never says nothing. **That reading is visual as well as textual**: the
+  area you removed is rendered and put through the system's own text recogniser, which is
+  the only way to catch words that were never text --- a scan, or a heading turned into
+  outlines. Nothing is called clean on that evidence unless the recogniser was first shown
+  to be working on the same image, and on Windows, where there is no recogniser to ask, the
+  report says so and the file is not certified. The document you have open is untouched, so if you
   do not like the result you still have your marks. It removes **text**: a region covering a
   picture or a drawing leaves that where it is, and says so both in the panel before you
   commit and in the report afterwards, because a file with the words gone and a picture of

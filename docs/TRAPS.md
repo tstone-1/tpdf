@@ -17080,3 +17080,77 @@ Three things to carry:
   was found. This file already has an entry about a check that printed the reason it should
   have failed beside an `[OK]`; this is the same mistake in the other direction, and it is
   what made the failure take a second to read instead of a minute.
+
+### Two strips butted together make the engine misread both, and the control is what pays
+
+The redaction gate shows an engine the region under test with a control strip below it: a word
+from the same page, no larger than the smallest thing the removal took, which the engine must
+read back before its silence about the rest may be believed. The first version concatenated the
+two strips --- the region's last row and the control's first row adjacent --- because the band
+that partitions them is computed from the row counts and a concatenation makes that arithmetic
+exact.
+
+It cost the gate its answer on the first fixture. `text-base14`, redacting `Beispiel.`, control
+word `quartz,`:
+
+| run | what Vision read |
+|---|---|
+| the redacted file | `"Sphinx of black quartz, judge my vow."` |
+| the unredacted file, same regions, same words | `"Sphinx of black auartz, iudae mv vow."` |
+
+`q` as `a`, `judge` as `iudae`, `my` as `mv`. `adjudicate` matches the token by containment, so
+`QUARTZ,` is not in `AUARTZ,` and the control was not read back --- which is `NotVerified`, the
+correct answer to give when the control fails, arrived at for a reason that had nothing to do
+with the document. The gate refused a redaction that was fine, and it refused the *control* run
+too, so the probe reported two red rows and neither named the cause.
+
+**The partition was innocent and looked guilty.** The control span's box was
+`[64.45, 11.79, 295.02, 26.13]` against a band starting at 15.5 --- its top well above the band
+--- which is exactly the shape of an entry already in this file about a span reported above the
+strip it came from. But `Control::contains` tests a *centre*, precisely because of that entry,
+and 18.96 is inside the band. The partition worked. Only the string was wrong.
+
+The fix is blank rows: a gap between the strips and a margin at each end. `ocr_probe`'s own
+strip chooser had already learned it from the other direction and says so in a comment --- *a
+recogniser needs the whitespace around a line as much as the line* --- and that comment did not
+transfer, because the two pieces of code look nothing alike.
+
+Three things decided in passing, each of which could have been got wrong:
+
+- **White, not more page pixels.** Rendering a few points either side gives the engine real
+  paper and pulls in whatever line of text sits there, which is then read as a *survivor* and
+  refuses a region nothing was wrong with. The safe direction, and useless.
+- **The band's edge goes in the middle of the gap**, not at the control's first row. A centre
+  test plus a boundary in blank space means a span reported a point or two off still falls on
+  the side it came from.
+- **The diagnosis needed the engine's own output**, and no reason string carried it. Both runs
+  reported `NotVerified` with the same sentence; what separated them was `"auartz,"`, which was
+  visible only after printing the items. A refusal that names a cause it cannot show is a
+  refusal nobody can check.
+
+### The words are still in the file, and the redaction is correct
+
+A probe for the redaction gate wanted one row that did not come from the gate: evidence the
+write had actually removed something, so that *the redacted file has no reasons* could not be
+satisfied by a write that changed nothing. The obvious instrument is the one the command
+already uses --- `verify::scan` for the words the removal named --- and on `text-marked.pdf` it
+went red.
+
+Nothing was wrong. That fixture carries the same line **four times**, two of the copies
+annotations, and one of those sits nowhere near the redacted line: a reader's other comments
+are not theirs to lose, so the removal is right to keep it, and the needle is therefore still
+in the file. `redact_apply_probe.rs` says so in a comment written the day before --- *asking
+whether the secret is still somewhere in the file cannot distinguish them, which is the mistake
+`redact-probe`'s own carrier check made until 2026-08-27* --- and the same mistake was made
+again, in a new probe, one day later, by someone who had not read that file.
+
+**"The words left the file" and "the words left this region" are different questions**, and a
+gate about a region must be checked with an instrument about a region. What replaced it renders
+the region's own rows either side of the write and asserts the pixels differ: independent of
+the engine, scoped to the subject, and silent about the rest of the document.
+
+The other half is worth stating, because it is why the row was nearly kept: it was already
+redundant. The probe's control run --- the same gate against the *unredacted* file --- rules out
+a no-op write on its own, since a write that changed nothing would make the two runs identical
+and both legible. A check that duplicates a stronger one, and fails on a correct file, is a
+check to delete rather than to fix.

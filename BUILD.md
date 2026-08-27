@@ -2238,6 +2238,57 @@ which asks never maps the engine. `objc2-vision` links Vision, so every binary l
 make that claim about `libpdfium` because `pdfium-render` `dlopen`s it. The check states the
 measured fact instead, with an emptiness control beside it. See `docs/TRAPS.md`.
 
+### `redact-gate-probe`: does the redaction gate certify a clean file and refuse a dirty one
+
+`docs/PLAN.md` §6 step 4 is wired into `redact_copy` and `redact_document`, and neither is
+reachable from a unit test --- they are Tauri commands, and the join between one and
+`ocr_gate::run` is the layer `docs/TRAPS.md` records as *a feature can be inert in the
+application while three layers of tests pass*. This drives the real function against a real
+render service, a real render worker, a real OCR worker and a real engine. The binary is both
+workers, the way `ocr-worker-probe` and `pool-bench` are.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-gate-probe -- \
+    testdata/text-base14.pdf
+```
+
+**No `--lib`, and not for brevity**: this runs on both platforms, so the default joins
+`PDFIUM_SUBDIR` --- `bin` on Windows, where `lib` exists, holds the *import* library and binds
+to nothing.
+
+| fixture | result |
+|---|---|
+| `text-base14`, `text-marked`, `rotated`, `links`, `text-cid`, `outline-simple` | 5/5 |
+| `columns` | 0/0, 1 skipped --- no word of six characters or more to redact |
+| `encodings` | 0/0, 1 skipped --- one text object is every word on the page, so no control survives |
+
+**The control is the same gate run against the file that was not redacted.** A gate that
+certifies everything passes *the redacted file has no reasons* perfectly, so that row on its
+own is worth nothing; the source file, with the same regions and the same words, has to come
+back **legible** and has to quote the word that is still there. One variable between the two
+runs --- which file --- and it is the one under test.
+
+The other three rows: a page the gate knows no words for must be *not verified* rather than
+clean, since a page nothing was read on is also a page nothing survived on; the region's own
+pixels must differ either side of the write; and on a platform with no engine the gate must
+say so **once**, not once per region.
+
+**That pixel row was a byte scan first and it was the wrong instrument.** `verify::scan` for
+the removed words goes red on `text-marked.pdf`, where the same line appears four times and one
+copy is an annotation the removal is right to keep --- see the trap of that name. A gate about
+a region is checked with an instrument about a region.
+
+**Costs, measured on this machine at scale 2.** The gate renders strips rather than pages, and
+these are why:
+
+| what | cost |
+|---|---|
+| `OcrWorker::spawn`, once per save | 1.5 ms |
+| one 1190 x 128 probe image through Vision | ~9 ms |
+| a whole A4 page through Vision, for comparison | 195 ms |
+| a whole page render, warm | 13--48 ms |
+| the probe's end-to-end gate run, one region, open included | 200--260 ms |
+
 ### `latency-bench`: what one tile costs, decomposed
 
 The last thing `worker-bench` measured that nothing else did. It is a **spike, not a port**:

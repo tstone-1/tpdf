@@ -2803,12 +2803,92 @@ the subject to fit the harness is how a probe comes to measure something other t
 names. Twelve unit tests and six mutations stand behind the parts that are decidable without
 an engine.
 
-**Not done, and it is the whole remaining half:** nothing calls this. `redact_copy` and
-`redact_in_place` still verify by byte scan alone, so the 39.1% of regions that cannot be
-proved clean is unchanged. The wiring needs the written file re-rendered region by region,
-the control cropped from it, the two stacked, and the verdict folded into `Applied::why` ---
-and it needs to answer what happens on Windows, where there is no engine and
-`OcrWorker::spawn` refuses by design.
+**Not done when this was written, and closed the same day** by the section below: nothing
+called it, so the 39.1% was unchanged.
+
+#### Step 4, wired --- built 2026-08-27
+
+`redact_copy` and `redact_document` run the gate on the file they just wrote, and a region
+that still reads as text is a reason in `Applied::why` beside the byte scan's. That is the
+first time anything in tpdf can say something about a **picture** of the words rather than
+about the bytes spelling them.
+
+**What the join had to supply**, which is why it is a module (`ocr_gate.rs`) and not four
+lines: which words a page has and where, how big to render them, what image the engine is
+shown, and what a verdict is called when a reader sees it.
+
+**Three coordinate spaces meet, and one is used.** The removal works in the page's own space,
+because that is where PDFium reports an object's bounds; the reader's regions arrive in
+display space; `PageText`'s character boxes are display space too. Everything here is display
+space, using the reader's own rectangles rather than the file-space ones
+`render::redaction_plans_of` derives --- safe because `redact::overlaps` survives the map
+between them (quarter turns and a flip take an axis-aligned rectangle to an axis-aligned
+rectangle), and worth it because the render, the crop and the character boxes then agree with
+no conversion anywhere.
+
+**The words come from before the removal and the pixels from after it, and neither may be
+taken from the other's moment.** The control has to be no larger than the smallest box the
+regions covered, and after the write those boxes are gone by construction --- for
+`redact_document` the file is gone too --- so the word list is captured while the reader's
+document is still open, one text extraction per page. The pixels are the opposite:
+`ocr::RedactedPixels` already makes it a type-level rule that only already-redacted pixels may
+be judged, because OCR over the pre-redaction image reinstates the secret as a text layer,
+which is one of the carriers §6 exists to defeat.
+
+**It renders strips, not pages, and that is what makes the scale worth choosing.** Both
+mappings the pixels cross are 16 MB, and a whole A4 sheet at 4x is 32 MB --- so a gate that
+rendered pages would be stuck at 2x and could never prove anything about small text. Measured
+on this machine at scale 2: a whole A4 page costs **195 ms** through the engine, a 1190 x 128
+strip **9 ms**. Rendering the page costs 13--48 ms warm; spawning the OCR worker, 1.5 ms.
+
+| what | cost |
+|---|---|
+| `OcrWorker::spawn`, once per save | 1.5 ms |
+| one strip render | a few ms |
+| one probe image through Vision | ~9 ms |
+| a whole A4 page through Vision, for comparison | 195 ms |
+| the probe's end-to-end gate run, one region, open included | **200--260 ms** |
+
+So it goes on the save path rather than becoming something a reader has to ask for. Ten
+regions across three pages is well inside the time the write already takes, and the byte scan
+beside it already reads the whole file.
+
+**The strips must not touch, and that is a finding rather than a detail.** Butted together
+they cost the gate its answer: on `text-base14` the control word `quartz,` came back as
+`auartz,` and a clean redaction was refused. Each line is cropped flush against the other, and
+a recogniser needs the whitespace around a line as much as it needs the line --- which
+`ocr_probe`'s own strip chooser had already learned from the other direction. There is a blank
+gap between them now and a margin at each end, **white rather than more page pixels**: real
+paper either side would pull in whatever line of text sits there, which is then read as a
+survivor and refuses a region nothing was wrong with. The band's edge sits in the *middle* of
+the gap, because `Control::contains` tests a span's centre and an engine's box is a detection
+rather than a measurement.
+
+**Evidence.** `redact-gate-probe`, which drives the real `ocr_gate::run` against a real
+service, a real worker and a real engine --- 5/5 on `text-base14`, `text-marked`, `rotated`,
+`links`, `text-cid` and `outline-simple`. **The control is the same gate run against the file
+that was not redacted**: a gate that certifies everything passes "the redacted file has no
+reasons" perfectly, so that row alone is worth nothing. The unredacted file comes back
+*legible* with the secret quoted; the redacted one certifies; a page the gate knows no words
+for is refused rather than certified; and the region's pixels are shown to have changed.
+Twenty-five unit tests and ten mutations stand behind the parts decidable without an engine.
+
+`columns` and `encodings` skip with their reasons stated --- no word long enough to redact, and
+a page whose single text object is every word on it, so nothing is left to read a control back
+from. The second is `encodings.pdf`'s known shape and the refusal is correct.
+
+**Windows says so once.** `OcrWorker::spawn` refuses there by design, so the gate returns one
+sentence naming the absence rather than one per region, and `verified` is false. That is
+checked by the probe on the platform that has no engine, which is the only place the branch
+can be reached.
+
+**What the gate still does not cover.** A region whose page yields no control is *not
+verified* --- 45.9% of realistic regions had no qualifying survivor at `MIN_CONTROL_CHARS`,
+which is the coverage ceiling this design has and the measured curve has no flat part to move
+to. Nothing here reads a scanned page's own image separately from the region: the strip is
+whatever the region covers, so a redaction over part of a scan is judged on those pixels and
+no others, which is right, and a `/DCTDecode` image *outside* every region is still the byte
+scan's `deferred` list rather than anything this reads.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

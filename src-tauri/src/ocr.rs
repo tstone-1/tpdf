@@ -32,6 +32,12 @@
 //! and the only route to [`Legibility::Illegible`] is through a control the engine
 //! had to read on the same image --- see [`adjudicate`].
 //!
+//! **The caller is [`crate::ocr_gate`]**, which is where the decisions this module
+//! makes meet a rendered page: it captures the page's words before the removal,
+//! chooses the scale, builds the probe image and turns a [`Legibility`] into a
+//! sentence in `redact::Applied::why`. Wired into `redact_copy` and
+//! `redact_document` on 2026-08-27.
+//!
 //! ## Where this runs, which was measured rather than reasoned
 //!
 //! Not in the parser worker. Measured 2026-07-31 on macOS 26.5.2, running Vision's
