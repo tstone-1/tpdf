@@ -2006,12 +2006,13 @@ re-extracting the written file. The survivor is the control: a scan that finds n
 because it cannot look is the failure this repository has recorded from several directions.
 
 What is **not** built: in-place apply and the journal truncation; the carriers this still
-does not reach --- form values, XMP and DocInfo metadata, the outline, page labels and
-embedded files, every one of which §6's table names; and a region over an image, which is
-reported and left. Two rows of that table **are** reached since 2026-08-27, and the
-shadow-text row in both of its homes: the marked-content property list *and* the structure
-element the span belongs to, and an annotation whose rectangle is over a region, replies and
-popup included. The three subsections below say what each does and does not cover.
+does not reach --- form values, the outline, page labels and embedded files, every one of
+which §6's table names; and a region over an image, which is reported and left. Three rows of
+that table **are** reached since 2026-08-27: the shadow-text row in both of its homes, the
+marked-content property list *and* the structure element the span belongs to; an annotation
+whose rectangle is over a region, replies and popup included; and the document's own
+description of itself, `/Info` and the XMP packet, taken whole. The four subsections below say
+what each does and does not cover.
 
 #### Step 3's primitive: removing text from a region --- built 2026-08-26
 
@@ -2230,6 +2231,41 @@ element above it, and `STRUCT-OTHER` on the element for a line nobody marked.
 all five carrier markers were in the file to begin with --- without which no direction could
 fail. `Removed` counts the two homes apart, because a run that cleared one and not the other
 is the interesting case and a single total could not say which.
+
+#### What the document says about itself --- done 2026-08-27
+
+`/Info` and the catalog's `/Metadata` are §6's *Document level* row, and a title or a subject
+routinely restates what a document is about --- which is the thing a reader is redacting.
+Both go, whole, on any save that redacts.
+
+**Taken rather than matched, and the measurement is the argument.** Of the 41 real PDFs on
+this machine, 15 carry `dc:creator`, 14 `dc:title`, 5 `dc:description` and 5 `pdf:Keywords`:
+free text written by the producer to describe the document. A rule removing entries that
+*contain* the redacted words would clear an exact copy and leave a paraphrase --- and a
+paraphrase is not reachable by any string rule, because there is nothing to match it against.
+So the only rule that reaches this carrier is to remove it.
+
+The same corpus says what **not** to lead with: `xmp:Thumbnails` can hold a rendered JPEG of
+the page, which no string rule could ever reach and which would settle the argument outright,
+and **0 of the 41 carry one**. It is true of the format and not true of any document measured,
+so it is written down here as a fact about the specification rather than used as the reason.
+
+**The cost is a reader's title and author, on the copy they are releasing.** That is normal
+for a redacted release and it is the visible half of the trade; a reader who wants the title
+kept is one line away from getting it back, and this note is where that conversation starts.
+
+**The guard is the part that is about every other save.** `save::apply_redactions` runs on
+every rewrite, so the strip asks whether anything was redacted --- without which a plain copy,
+an extract, a split and a merge would all quietly lose their metadata, and §T6.1's position
+that a copy is a serialisation rather than a sanitation would stop being true. The control is
+`a_copy_that_is_not_a_redaction_keeps_its_metadata`, and its mutation is the one that matters:
+strip on every save and the two removal checks stay green.
+
+Both halves are removed through `pagetree::forget` for the annotations' reason --- the trailer
+names `/Info` and the catalog names `/Metadata`, and removing an object without its references
+leaves a dangling name where there was a description. Each half has its own mutation, because
+`/Info` and XMP hold the same title in two forms and taking one is the plausible way to get
+this wrong.
 
 #### Step 5, the independent parser --- measured 2026-08-26
 

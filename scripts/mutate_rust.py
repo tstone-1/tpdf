@@ -1129,6 +1129,44 @@ MUTATIONS = [
         "a_parent_tree_written_as_kids_is_followed",
     ),
     Mutation(
+        # Leave the document's own description of itself. The words go from the
+        # page and /Info /Title still says what the document is about.
+        "save: leave /Info and the XMP packet on a redaction",
+        "src/save.rs",
+        "        done.metadata = strip_metadata(doc)?;",
+        "        done.metadata = 0;",
+        "a_redaction_removes_the_documents_own_description_of_itself",
+    ),
+    Mutation(
+        # Strip on every rewrite rather than on a redaction. Every copy,
+        # extract, split and merge silently loses its title and author, and the
+        # two checks above stay green -- this is the SCOPE, and without a
+        # control for it the condition is decoration.
+        "save: strip metadata on every save rather than on a redaction",
+        "src/save.rs",
+        "    if done.shows > 0 || done.annots > 0 || !redactions.is_empty() {",
+        "    if true {",
+        "a_copy_that_is_not_a_redaction_keeps_its_metadata",
+    ),
+    Mutation(
+        # Take /Info and leave the XMP packet, which holds the same title in the
+        # form PDF 2.0 prefers.
+        "save: strip /Info and leave the XMP packet beside it",
+        "src/save.rs",
+        "        doomed.insert(metadata);",
+        "        let _ = metadata;",
+        "a_redaction_removes_the_documents_own_description_of_itself",
+    ),
+    Mutation(
+        # Take the XMP packet and leave /Info, which is the half every reader
+        # still shows in its properties panel.
+        "save: strip the XMP packet and leave /Info beside it",
+        "src/save.rs",
+        "        doomed.insert(info);",
+        "        let _ = info;",
+        "a_redaction_removes_the_documents_own_description_of_itself",
+    ),
+    Mutation(
         # Take no annotation at all. The words go off the page and the comment
         # about them, which quotes them, stays -- displayed by every reader.
         "redact: leave every annotation where it is",

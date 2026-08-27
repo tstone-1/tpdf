@@ -57,6 +57,12 @@ const STRUCT_ANCESTOR: &str = "STRUCT-ANCESTOR";
 /// In the element owning a line nobody redacted. Must stay --- a rule that
 /// stripped the whole tree would pass both checks above.
 const STRUCT_OTHER: &str = "STRUCT-OTHER";
+/// In `/Info /Producer`, and nowhere else in the file. Must go: a redaction
+/// takes the document's own description of itself, `/Info` and XMP alike.
+///
+/// The producer string rather than the title, because the title *is* the secret
+/// and its going would be indistinguishable from the page's own copy going.
+const INFO_MARKER: &str = "tpdf spike 0.3 fixture";
 
 fn main() -> ExitCode {
     let library = std::env::args()
@@ -227,13 +233,14 @@ fn annotations(
         STRUCT_OVER.to_string(),
         STRUCT_ANCESTOR.to_string(),
         STRUCT_OTHER.to_string(),
+        INFO_MARKER.to_string(),
     ];
     let before = std::fs::read(&source).map_err(|why| why.to_string())?;
     let seen = verify::scan(&before, &markers, None);
     // The control for the controls: every marker has to be in the file to begin
     // with, or no assertion below can fail.
     let mut ok = check(
-        "the fixture carries all five carrier markers to begin with",
+        "the fixture carries every carrier marker to begin with",
         markers.iter().all(|marker| seen.found.contains(marker)),
     );
 
@@ -268,7 +275,11 @@ fn annotations(
         report.found.contains(STRUCT_OTHER),
     );
     ok &= check(
-        &format!("and {REMOVE:?} is still in the file, which /Info and that annotation keep"),
+        &format!("the document's own description of itself is gone ({INFO_MARKER})"),
+        !report.found.contains(INFO_MARKER),
+    );
+    ok &= check(
+        &format!("and {REMOVE:?} is still in the file, which the surviving annotation keeps"),
         report.found.contains(REMOVE),
     );
     Ok(ok)

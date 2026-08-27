@@ -249,7 +249,9 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 #                     reported it still in the file.
 #   text-marked.pdf   the same line, held FIVE times: as /ActualText on a
 #                     marked-content span, on the structure element that span
-#                     belongs to, in two annotations, and in /Info.
+#                     belongs to, in two annotations, and in /Info -- of which
+#                     only the annotation away from the region survives a
+#                     redaction, which is what redact-apply-probe measures.
 #                     Since 2026-08-27 the span's copy is cleared by the removal
 #                     itself, so the check reads the carriers apart rather than
 #                     asking whether the secret is anywhere in the file: the key
@@ -315,13 +317,18 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # removed) must go, while STRUCT-OTHER -- the element for a line nobody marked --
 # must stay. A rule that stripped the whole tree would pass the first two.
 #
+# THE DOCUMENT'S OWN DESCRIPTION goes whole: /Info and the XMP packet, asserted
+# through the fixture's /Info /Producer string, which appears nowhere else in the
+# file. The title is not used for this -- the title IS the secret, so its going
+# would be indistinguishable from the page's own copy going.
+#
 # A check ahead of all of them asserts every marker is in the fixture to begin
 # with, without which no direction could fail.
 #
 # It needs text-base14.pdf and text-marked.pdf, which a hosted runner does not
 # have. Without them the run prints [SKIP] and says so rather than passing.
 #
-#   macOS arm64, 2026-08-27   14 checks, 0 failures
+#   macOS arm64, 2026-08-27   15 checks, 0 failures
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on
