@@ -140,7 +140,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   commit and in the report afterwards, because a file with the words gone and a picture of
   the words still in it is worse than no redaction at all. It also takes whole lines ---
   removing part of one means removing the instruction that drew it, so a word beside the one
-  you marked goes with it.
+  you marked goes with it. On a document tagged for accessibility it takes the second copy
+  of those words that the tag keeps beside them; where that copy is shared between pages it
+  refuses rather than change the others.
   <!-- built: file.redactCopy -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open

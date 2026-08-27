@@ -40,9 +40,29 @@
 //! caller that applied [`Plan::shows`] and ignored [`Plan::unhandled`] would
 //! produce a file with the words gone and the picture of the words still in it.
 //! [`Plan::is_complete`] is the one question worth asking before acting.
+//!
+//! ## The words are also beside the glyphs
+//!
+//! Deleting the show operator takes the *drawing* away. It does not take the
+//! words away, because a tagged document writes them a second time into the
+//! marked-content span around them --- `/ActualText` is what a screen reader
+//! speaks, and spike 0.3 measured it surviving a surgical removal on
+//! `text-marked.pdf` while every pixel-based check passed. `docs/PLAN.md` §6
+//! calls that a *carrier* and lists a table of them.
+//!
+//! [`clear_shadow_text`] clears the ones that live in the content stream this
+//! module is already rewriting: the property list of every span a removal fell
+//! inside. That is one of the carrier table's rows and one of that row's two
+//! homes --- the same keys hang off a **structure element** in
+//! `/StructTreeRoot`, reached by `/MCID` rather than by nesting, and this does
+//! not touch them. Nor does it touch an annotation's `/Contents`, a form
+//! field's value, `/Info`, or anything else outside the page's content. Those
+//! are document-level objects and a different piece of work; `text-marked.pdf`
+//! holds two of them on purpose, so `redact-probe` can go on measuring that they
+//! are still there.
 
-use lopdf::content::Content;
-use lopdf::{Document, ObjectId};
+use lopdf::content::{Content, Operation};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 
 /// Ceiling on a decoded content stream.
 ///
@@ -296,6 +316,184 @@ pub struct Removed {
     pub shows_before: usize,
     /// How many were removed.
     pub removed: usize,
+    /// How many shadow-text keys went with them.
+    ///
+    /// An accounting observable, and it has readers rather than none: the tests
+    /// pin the count for each shape of span, and `redact-probe` refuses a run
+    /// reporting zero on a fixture built to carry one --- which is the failure a
+    /// clearing that silently found nothing would otherwise produce.
+    ///
+    /// On its own it says nothing about whether the words went. Counting a key
+    /// and removing it are two things, and the mutation that separates them is
+    /// in the table; the probe asserts the stream afterwards for the same
+    /// reason. See [`clear_shadow_text`].
+    pub carriers: usize,
+}
+
+/// The keys a marked-content property list can hold a copy of the text in.
+///
+/// `docs/PLAN.md` §6's carrier table calls these *shadow text*, and the reason
+/// they are a carrier rather than a curiosity is that each one exists precisely
+/// so that some reader gets the words when the glyphs will not do: `/ActualText`
+/// is what a screen reader speaks and what a well-behaved extractor prefers over
+/// the glyphs, `/Alt` is the description of a figure, `/E` the expansion of an
+/// abbreviation. PDF 32000-1 §14.9.3 to §14.9.5 --- one clause each, and the
+/// citation covered two of the three until it was read again.
+///
+/// **All three, not just the famous one.** `/ActualText` is the carrier spike
+/// 0.3 measured and the one the fixture holds; clearing it alone would leave two
+/// keys of the same kind, in the same dictionary, doing the same job.
+const SHADOW_TEXT: [&[u8]; 3] = [b"ActualText", b"Alt", b"E"];
+
+/// Strips shadow text from every marked-content span a removal emptied into.
+///
+/// `removed` is the ascending set of operation indices [`remove_shows`] is about
+/// to delete. A span is *touched* when any of them lies between its `BDC`/`BMC`
+/// and its `EMC`, and a touched span loses [`SHADOW_TEXT`] --- because those keys
+/// are an alternate rendering of the very glyphs being taken away, written into
+/// the content stream beside them.
+///
+/// **Touched, not emptied, and that is route B's own rule one level up.** §6's
+/// route B removes the *whole* text-showing operation containing any redacted
+/// glyph, on the grounds that a partial re-emission is the thing that gets
+/// silently wrong; the same reasoning applies to a span whose `/ActualText`
+/// restates a line of which one word was removed. Keeping it would leave a
+/// verbatim copy of the removed words in the file, which is the one outcome this
+/// module exists to prevent. Losing the alternate text for the words that
+/// survive is the visible, honest cost, exactly as eating the rest of the line
+/// is.
+///
+/// **An enclosing span counts too.** Spans nest, and an outer `/ActualText`
+/// restates everything inside it, so every open span at the moment of a removal
+/// is touched rather than only the innermost.
+///
+/// # Errors
+///
+/// A touched span whose property list is a **name** into the page's
+/// `/Resources /Properties`, where the named dictionary carries one of these
+/// keys. That dictionary may be shared with any number of other pages, and §6's
+/// clone-on-write rule forbids editing a shared resource in place --- doing so
+/// would silently alter every page that shares it. Cloning it is a page-resource
+/// edit this does not do, so the honest answer is the same one the correspondence
+/// guard gives: the redaction did not happen, and nothing was written.
+///
+/// The refusal is deliberately narrow. It fires only where the key was *seen*,
+/// so the ordinary named property list --- `/OC /MC0 BDC`, optional content,
+/// which carries no text at all --- passes straight through. A name that
+/// resolves to nothing, and a property list this cannot reach because the
+/// resource chain is malformed, are not refused either: there is no key in the
+/// span to leave behind, and any copy sitting elsewhere in the file is what
+/// [`crate::verify::scan`] is for.
+fn clear_shadow_text(
+    doc: &Document,
+    page: ObjectId,
+    operations: &mut [Operation],
+    removed: &[usize],
+) -> Result<usize, String> {
+    // (index of the BDC/BMC, whether a removal fell inside it).
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    let mut touched: Vec<usize> = Vec::new();
+    for (at, operation) in operations.iter().enumerate() {
+        match operation.operator.as_str() {
+            "BDC" | "BMC" => open.push((at, false)),
+            // An `EMC` with nothing open is a malformed stream rather than an
+            // error worth refusing over: it closes no span, so there is no
+            // property list it could have carried.
+            "EMC" => {
+                if let Some((start, inside)) = open.pop() {
+                    if inside {
+                        touched.push(start);
+                    }
+                }
+            }
+            _ => {}
+        }
+        if removed.binary_search(&at).is_ok() {
+            for frame in &mut open {
+                frame.1 = true;
+            }
+        }
+    }
+    // A span the stream never closed still marks everything after it, so a
+    // removal inside one is inside it. Dropping these would leave the carrier in
+    // exactly the malformed file least likely to be looked at twice.
+    for (start, inside) in open {
+        if inside {
+            touched.push(start);
+        }
+    }
+
+    let mut cleared = 0usize;
+    for at in touched {
+        match operations[at].operands.get_mut(1) {
+            // `BMC` takes a tag and nothing else, so there is no property list.
+            None => {}
+            Some(Object::Dictionary(properties)) => {
+                for key in SHADOW_TEXT {
+                    if properties.remove(key).is_some() {
+                        cleared += 1;
+                    }
+                }
+            }
+            Some(Object::Name(name)) => {
+                let name = name.clone();
+                if let Some(shared) = property_list(doc, page, &name) {
+                    if let Some(key) = SHADOW_TEXT.into_iter().find(|key| shared.has(key)) {
+                        return Err(format!(
+                            "the region covers a marked-content span whose property list is the \
+                             shared resource /{}, and it carries /{}. Editing it would change \
+                             every other page that uses it, so nothing was removed.",
+                            String::from_utf8_lossy(&name),
+                            String::from_utf8_lossy(key)
+                        ));
+                    }
+                }
+            }
+            // Neither a dictionary nor a name: not a property list this can read.
+            // There is nothing here to clear, and a copy of the words anywhere
+            // else in the file is what the verifier looks for.
+            Some(_) => {}
+        }
+    }
+    Ok(cleared)
+}
+
+/// The dictionary a marked-content operand's name refers to.
+///
+/// `/Resources /Properties /<name>`, following the page's own resources and then
+/// the ones it inherits, in that order --- which is the order a reader resolves
+/// them in, so a page that shadows an inherited name gets its own.
+///
+/// `None` when anything on that path is missing or is not a dictionary. See
+/// [`clear_shadow_text`] for why that is not refused.
+fn property_list<'a>(doc: &'a Document, page: ObjectId, name: &[u8]) -> Option<&'a Dictionary> {
+    let (inline, inherited) = doc.get_page_resources(page).ok()?;
+    let mut sources: Vec<&Dictionary> = Vec::new();
+    if let Some(dictionary) = inline {
+        sources.push(dictionary);
+    }
+    for id in inherited {
+        if let Ok(dictionary) = doc.get_dictionary(id) {
+            sources.push(dictionary);
+        }
+    }
+    for resources in sources {
+        let Ok(properties) = resources
+            .get(b"Properties")
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_dict)
+        else {
+            continue;
+        };
+        if let Ok(entry) = properties
+            .get(name)
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_dict)
+        {
+            return Some(entry);
+        }
+    }
+    None
 }
 
 /// Deletes the numbered show operators from a page's content stream.
@@ -361,6 +559,14 @@ pub fn remove_shows(
     positions.sort_unstable();
     positions.dedup();
     let removed = positions.len();
+
+    // **Before the removal, and that is not a preference.** A span is addressed
+    // by where its `BDC` sits among the operations, and deleting an operation
+    // renumbers every one after it -- so a carrier cleared afterwards would be
+    // found by walking indices that no longer mean what they meant. The same
+    // renumbering `positions` is walked backwards to avoid, one level up.
+    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
+
     for at in positions.into_iter().rev() {
         content.operations.remove(at);
     }
@@ -374,6 +580,7 @@ pub fn remove_shows(
     Ok(Removed {
         shows_before: shows.len(),
         removed,
+        carriers,
     })
 }
 
@@ -452,6 +659,42 @@ mod tests {
             .into_iter()
             .map(|operation| operation.operator)
             .collect()
+    }
+
+    /// The page's content stream as it is stored, which is where a carrier lives.
+    ///
+    /// [`operators`] and [`shown`] both read the decoded operation list, and a
+    /// property list is an **operand** --- so neither of them can see a
+    /// shadow-text key at all, and a check built on either would pass whether the
+    /// key went or stayed. This is what makes the carrier assertions able to
+    /// fail.
+    fn stream(doc: &Document, page: lopdf::ObjectId) -> String {
+        let data = doc
+            .get_page_content_with_limit(page, super::MAX_CONTENT_BYTES)
+            .expect("content");
+        String::from_utf8_lossy(&data).into_owned()
+    }
+
+    /// A one-page document whose `/Resources /Properties` holds one named entry.
+    ///
+    /// The shared form of a marked-content property list: `BDC` names it instead
+    /// of carrying it, and the dictionary it names may be used by any number of
+    /// other pages --- which is the whole reason `clear_shadow_text` will not
+    /// edit one.
+    fn one_page_named(
+        stream: &str,
+        name: &str,
+        entry: lopdf::Dictionary,
+    ) -> (Document, lopdf::ObjectId) {
+        let (mut doc, page) = one_page(stream);
+        let mut properties = lopdf::Dictionary::new();
+        properties.set(name.as_bytes().to_vec(), Object::Dictionary(entry));
+        let resources = doc.add_object(dictionary! { "Properties" => properties });
+        let Ok(Object::Dictionary(dictionary)) = doc.get_object_mut(page) else {
+            panic!("the page is a dictionary")
+        };
+        dictionary.set("Resources", resources);
+        (doc, page)
     }
 
     /// The string each surviving show operator draws, in order.
@@ -679,5 +922,182 @@ mod tests {
             shown(&doc, page),
             vec!["one".to_string(), "three".to_string()]
         );
+    }
+    /// The carrier the whole increment is about, with its own control.
+    ///
+    /// `/ActualText` is a second copy of the line, written beside the glyphs by
+    /// every tagged producer. Removing the show operator takes the drawing; the
+    /// words stay unless the property list goes too. The first assertion is the
+    /// control --- without it the check passes on a fixture that never had one.
+    #[test]
+    fn a_span_the_removal_touched_loses_its_copy_of_the_words() {
+        let (mut doc, page) = one_page(
+            "/Span << /ActualText (account 4711-0815) >> BDC\nBT (account 4711-0815) Tj ET\nEMC",
+        );
+        assert!(
+            stream(&doc, page).contains("4711-0815"),
+            "the fixture must carry the words twice, or this cannot fail"
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 1);
+        assert!(
+            !stream(&doc, page).contains("4711-0815"),
+            "the words are gone from the property list as well: {}",
+            stream(&doc, page)
+        );
+        assert!(
+            !stream(&doc, page).contains("ActualText"),
+            "and so is the key that held them"
+        );
+    }
+
+    /// The over-removal control, and the reason the span is *touched* not *any*.
+    ///
+    /// A page with two tagged lines, one of them redacted. Clearing every span
+    /// on the page would pass the test above perfectly and destroy the
+    /// accessibility text of every line the reader did not mark.
+    #[test]
+    fn a_span_no_removal_touched_keeps_its_shadow_text() {
+        let (mut doc, page) = one_page(
+            "/Span << /ActualText (secret) >> BDC\nBT (secret) Tj ET\nEMC\n             /Span << /ActualText (public) >> BDC\nBT (public) Tj ET\nEMC",
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 2).expect("remove");
+        assert_eq!(removed.carriers, 1, "one span was touched, not both");
+        let after = stream(&doc, page);
+        assert!(!after.contains("(secret)"), "{after}");
+        assert!(
+            after.contains("ActualText") && after.contains("(public)"),
+            "the untouched span keeps its alternate text: {after}"
+        );
+    }
+
+    /// Both spans, which is what makes the ordering in [`remove_shows`] bite.
+    ///
+    /// `clear_shadow_text` addresses a span by where its `BDC` sits among the
+    /// operations, so it has to run **before** the deletion renumbers them. With
+    /// one span the two orders agree and nothing can tell them apart; with two,
+    /// the second span's `EMC` has moved down by the time the walk reaches it,
+    /// the frame is popped before the removal inside it is seen, and its copy of
+    /// the words survives.
+    #[test]
+    fn two_spans_each_holding_a_removed_line_both_lose_their_shadow_text() {
+        let (mut doc, page) = one_page(
+            "/Span << /ActualText (first) >> BDC\nBT (first) Tj ET\nEMC\n\
+             /Span << /ActualText (second) >> BDC\nBT (second) Tj ET\nEMC",
+        );
+        let removed = remove_shows(&mut doc, page, &[0, 1], 2).expect("remove");
+        assert_eq!(removed.carriers, 2);
+        let after = stream(&doc, page);
+        assert!(
+            !after.contains("first") && !after.contains("second"),
+            "neither span kept its copy: {after}"
+        );
+    }
+
+    /// An outer span restates everything inside it, so it is touched too.
+    #[test]
+    fn an_enclosing_span_loses_its_shadow_text_as_well() {
+        let (mut doc, page) = one_page(
+            "/Part << /ActualText (outer secret) >> BDC\n             /Span << /ActualText (inner secret) >> BDC\nBT (inner secret) Tj ET\nEMC\nEMC",
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 2, "both spans held a copy");
+        assert!(
+            !stream(&doc, page).contains("secret"),
+            "{}",
+            stream(&doc, page)
+        );
+    }
+
+    /// All three keys, because they are three spellings of the same carrier.
+    #[test]
+    fn every_shadow_text_key_goes_not_just_the_famous_one() {
+        let (mut doc, page) =
+            one_page("/Span << /ActualText (a) /Alt (b) /E (c) /MCID 0 >> BDC\nBT (a) Tj ET\nEMC");
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 3);
+        let after = stream(&doc, page);
+        // **By value, not by key name.** `lopdf` writes a dictionary entry with
+        // no space --- `/E(c)` --- so an assertion looking for `"/E "` is
+        // satisfied whether the key went or stayed, which is an assertion that
+        // cannot fail. The values are distinct on purpose.
+        for gone in ["(a)", "(b)", "(c)"] {
+            assert!(!after.contains(gone), "{gone} is still there: {after}");
+        }
+        assert!(
+            after.contains("MCID"),
+            "and the rest of the property list is left alone: {after}"
+        );
+    }
+
+    /// A span the stream never closed still marks the removal inside it.
+    ///
+    /// Malformed, and the file least likely to be looked at twice. Dropping the
+    /// unclosed frame would leave the carrier exactly there.
+    #[test]
+    fn a_span_that_was_never_closed_still_loses_its_shadow_text() {
+        let (mut doc, page) = one_page("/Span << /ActualText (secret) >> BDC\nBT (secret) Tj ET");
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 1);
+        assert!(
+            !stream(&doc, page).contains("secret"),
+            "{}",
+            stream(&doc, page)
+        );
+    }
+
+    /// `BMC` takes a tag and no property list, so there is nothing to clear.
+    #[test]
+    fn a_bmc_span_has_no_property_list_and_is_not_an_error() {
+        let (mut doc, page) = one_page("/Span BMC\nBT (secret) Tj ET\nEMC");
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 0);
+        assert!(shown(&doc, page).is_empty());
+    }
+
+    /// The refusal, and it must leave the document exactly as it found it.
+    ///
+    /// A named property list may be shared with any number of other pages, so
+    /// stripping it in place would silently alter them --- `docs/PLAN.md` §6's
+    /// clone-on-write rule. Writing the file with the words still in it is the
+    /// other option and is the confident lie the module exists to prevent.
+    #[test]
+    fn a_shared_property_list_carrying_the_words_refuses_and_removes_nothing() {
+        let (mut doc, page) = one_page_named(
+            "/Span /MC0 BDC\nBT (secret) Tj ET\nEMC",
+            "MC0",
+            dictionary! { "ActualText" => Object::string_literal("secret") },
+        );
+        let before = shown(&doc, page);
+        let why = remove_shows(&mut doc, page, &[0], 1).expect_err("must refuse");
+        assert!(why.contains("/MC0") && why.contains("/ActualText"), "{why}");
+        assert!(why.contains("nothing was removed"), "{why}");
+        assert_eq!(shown(&doc, page), before, "and nothing was");
+    }
+
+    /// The over-refusal control, and it is the common case rather than a corner.
+    ///
+    /// `/OC /MC0 BDC` is optional content --- a named property list on nearly
+    /// every layered drawing --- and it carries no text at all. A refusal keyed
+    /// on the *name* rather than on the key would make those pages unredactable.
+    #[test]
+    fn a_shared_property_list_with_no_shadow_text_does_not_refuse() {
+        let (mut doc, page) = one_page_named(
+            "/OC /MC0 BDC\nBT (secret) Tj ET\nEMC",
+            "MC0",
+            dictionary! { "Type" => "OCG", "Name" => Object::string_literal("Layer 1") },
+        );
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 0);
+        assert!(shown(&doc, page).is_empty(), "and the words went");
+    }
+
+    /// A name that resolves to nothing is not a carrier, so it is not refused.
+    #[test]
+    fn a_property_list_name_that_resolves_to_nothing_does_not_refuse() {
+        let (mut doc, page) = one_page("/Span /MC0 BDC\nBT (secret) Tj ET\nEMC");
+        let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
+        assert_eq!(removed.carriers, 0);
+        assert!(shown(&doc, page).is_empty());
     }
 }

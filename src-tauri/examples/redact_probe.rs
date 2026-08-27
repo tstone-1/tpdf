@@ -69,18 +69,30 @@ const CASES: &[Case] = &[
     },
 ];
 
-/// The same line, in a document that keeps a second copy of it elsewhere.
+/// The same line, in a document that keeps three copies of it.
 ///
 /// `text-marked.pdf` is `text-base14.pdf` plus the carriers spike 0.3 was built
-/// to find: the text is also in a marked-content property list as
-/// `/ActualText`. Removing the show operator therefore takes the *drawing* away
-/// and leaves the words in the file, which is `docs/PLAN.md` §6's whole thesis
-/// --- redaction is whole-graph sanitation and not a page edit --- stated as a
-/// measurement rather than as a paragraph.
+/// to find, and it holds the line **three** times: in a marked-content
+/// property list as `/ActualText`, in a text annotation's `/Contents`, and in
+/// `/Info /Title`. Removing the show operator takes the *drawing* away and
+/// leaves all three, which is `docs/PLAN.md` §6's whole thesis --- redaction is
+/// whole-graph sanitation and not a page edit --- stated as a measurement rather
+/// than as a paragraph.
 ///
-/// Asserted in the direction that can go stale: the removal must still be
-/// **insufficient** here. The day this module learns to clear `/ActualText`,
-/// this check goes red and says so, which is the moment to move it into `CASES`.
+/// **Since 2026-08-27 the first of the three goes, and that is why this check
+/// had to change shape.** It used to assert one thing: that `verify::scan` still
+/// finds the word afterwards. Three carriers and one needle means that assertion
+/// is satisfied by *any* of them surviving --- so it stayed green when
+/// `/ActualText` started being cleared, and its own doc comment had promised it
+/// would go red on exactly that day. A check whose observable several mechanisms
+/// can produce cannot say which one it measured; `docs/TRAPS.md` records that
+/// shape from three other directions.
+///
+/// So it now reads the carriers apart: the property list must be **gone from the
+/// content stream**, with a control proving it was there, while the scan must
+/// still find the word --- which by then can only be the annotation and `/Info`.
+/// Both directions go red for their own reason, and the day the document-level
+/// carriers are cleared too, the second one says so and this moves into `CASES`.
 const CARRIED: (&str, usize, &str) = ("text-marked.pdf", 0, "4711-0815");
 
 /// A page where the region covers something this cannot remove.
@@ -217,7 +229,31 @@ fn carried(pdfium: &Pdfium, root: &Path, scratch: &Path) -> Result<String, Strin
         .get_pages()
         .get(&(page as u32 + 1))
         .ok_or("no such page")?;
+
+    // The control for the half below. Without it, "the property list is gone"
+    // passes on a fixture that never had one --- which is the same property this
+    // repository has been caught by whenever an assertion held by construction.
+    let before = page_stream(&doc, page_id)?;
+    if !before.contains("ActualText") || !before.contains(needle) {
+        return Err(format!(
+            "{file} page {page} does not carry the line in a marked-content property list, so \
+             the carrier check below cannot fail. Read testdata/make_text_pdf.py."
+        ));
+    }
+
     let removed = redact::remove_shows(&mut doc, page_id, &plan.shows, text_objects)?;
+    let after_stream = page_stream(&doc, page_id)?;
+    if removed.carriers == 0 {
+        return Err("the removal reported clearing no carrier at all".to_string());
+    }
+    if after_stream.contains(needle) {
+        return Err(format!(
+            "{needle:?} is still in the page's content stream after {} carrier(s) were \
+             reported cleared: {after_stream}",
+            removed.carriers
+        ));
+    }
+
     let bytes = tpdf_lib::save::serialise(&mut doc, "the redacted document")?;
     std::fs::write(scratch.join(format!("{file}.redacted.pdf")), &bytes)
         .map_err(|why| why.to_string())?;
@@ -225,15 +261,28 @@ fn carried(pdfium: &Pdfium, root: &Path, scratch: &Path) -> Result<String, Strin
     let after = verify::scan(&bytes, &[needle.to_string()], None);
     if !after.found.contains(needle) {
         return Err(format!(
-            "{needle:?} is gone from this file too. That would mean removing the show operator \
-             now clears the carriers as well -- read docs/PLAN.md §6 and move this into CASES."
+            "{needle:?} is gone from this file too. That would mean the document-level carriers \
+             -- the annotation's /Contents and /Info /Title -- are being cleared as well; read \
+             docs/PLAN.md §6 and move this into CASES."
         ));
     }
     Ok(format!(
-        "{} show operator(s) removed and {needle:?} is STILL in the file -- the carriers keep \
-         it, which is why §6 calls redaction whole-graph sanitation",
-        removed.removed
+        "{} show operator(s) removed, {} shadow-text key(s) cleared from the content stream, \
+         and {needle:?} is STILL in the file -- the annotation and /Info keep it, which is why \
+         §6 calls redaction whole-graph sanitation",
+        removed.removed, removed.carriers
     ))
+}
+
+/// A page's content stream as stored, which is where a marked-content carrier lives.
+///
+/// The decoded operation list cannot answer this: a property list is an
+/// *operand*, so a check reading operators sees nothing either way.
+fn page_stream(doc: &Document, page: lopdf::ObjectId) -> Result<String, String> {
+    let data = doc
+        .get_page_content_with_limit(page, redact::MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    Ok(String::from_utf8_lossy(&data).into_owned())
 }
 
 /// A region over a picture is not redactable by this module, and says so.
