@@ -75,6 +75,16 @@ const OUTLINE_AFTER: &str = "OUTLINE-AFTER";
 /// and its going would be indistinguishable from the page's own copy going.
 const INFO_MARKER: &str = "tpdf spike 0.3 fixture";
 
+/// The form field whose `/V` is the redacted line's own account number.
+///
+/// Its widget is at the far corner of the page, so the annotation pass leaves
+/// it: the value rule is the only thing that can take this field.
+const FIELD_CARRIER: &str = "FIELD-CARRIER";
+/// The widget under it, which has to come with the field it belongs to.
+const FIELD_WIDGET: &str = "WIDGET-UNDER-CARRIER";
+/// A field holding somebody else's answer. The form's over-removal control.
+const FIELD_KEEP: &str = "FIELD-KEEP";
+
 fn main() -> ExitCode {
     let library = std::env::args()
         .skip_while(|a| a != "--library")
@@ -331,6 +341,9 @@ fn annotations(
         STRUCT_ANCESTOR.to_string(),
         STRUCT_OTHER.to_string(),
         INFO_MARKER.to_string(),
+        FIELD_CARRIER.to_string(),
+        FIELD_WIDGET.to_string(),
+        FIELD_KEEP.to_string(),
     ];
     let before = std::fs::read(&source).map_err(|why| why.to_string())?;
     let seen = verify::scan(&before, &markers, None);
@@ -378,6 +391,25 @@ fn annotations(
     ok &= check(
         &format!("and {REMOVE:?} is still in the file, which the surviving annotation keeps"),
         report.found.contains(REMOVE),
+    );
+
+    // **The form.** Both widgets are hidden, so nothing on the page draws
+    // either answer --- which is the leak rather than a convenience: a byte scan
+    // finds what no reader can see. The carrier's widget is at the far corner,
+    // so the annotation pass leaves it and the *value* rule is the only thing
+    // that can take the field; the widget then has to come with it, or the page
+    // keeps an annotation whose `/Parent` is gone.
+    ok &= check(
+        &format!("the field holding what went is gone ({FIELD_CARRIER})"),
+        !report.found.contains(FIELD_CARRIER),
+    );
+    ok &= check(
+        &format!("and the widget under it came with it ({FIELD_WIDGET})"),
+        !report.found.contains(FIELD_WIDGET),
+    );
+    ok &= check(
+        &format!("the field holding somebody else's answer is not ({FIELD_KEEP})"),
+        report.found.contains(FIELD_KEEP),
     );
 
     // **The outline, read through PDFium rather than out of the bytes.** Every

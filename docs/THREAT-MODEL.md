@@ -1291,7 +1291,7 @@ could not take becomes a reason. So the failure mode this section would otherwis
 reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
 omission at a call site.
 
-**Residual, and it is large enough to state plainly.** This reaches four rows of
+**Residual, and it is large enough to state plainly.** This reaches five rows of
 `docs/PLAN.md` §6's carrier table and no more, all of it added 2026-08-27. The page's own
 content: the show operators, and the shadow text (`/ActualText`, `/Alt`, `/E`) in **both** of
 that row's homes --- the marked-content property list the glyphs sit inside, and the structure
@@ -1304,19 +1304,30 @@ And the **outline entries whose title names what went**, with the subtree under 
 bookmark title *is* the heading it points at, measured at 163 of 165 verbatim page text
 against a 4% cross-document control, which is what licenses a string rule here where one was
 refused for metadata. Entry by entry rather than the whole outline, so one redacted heading
-does not cost a reader their table of contents.
+does not cost a reader their table of contents. And the **form fields whose answer went** ---
+by either of two rules, that every widget under the field has gone, or that its value or its
+`/DV` default is text that went, which is that row's *widgets outside the redacted rectangle*
+stated as a property rather than as a location.
 
-Everything else in that table survives: an annotation *away* from every region and an outline
-entry naming something else (both deliberate --- a reader's other comments and their other
-bookmarks are not theirs to lose), form values, page labels, embedded files, and any prior
+**An XFA form is refused rather than half redacted**, which is the one place this subsystem
+answers a carrier by declining the operation. An XFA packet is a complete XML copy of every
+answer, so taking the field values and leaving it removes nothing a reader could not recover;
+a rule that reached inside it would be a second form implementation. The refusal is in the
+pre-flight, before anything is touched, and is keyed on the redaction --- an ordinary copy of
+an XFA form still works, because a serialisation makes no claim for the packet to falsify.
+
+Everything else in that table survives: an annotation *away* from every region, an outline
+entry naming something else, and a form field naming an answer that did not go (all three
+deliberate --- a reader's other comments, their other bookmarks and the rest of their form are
+not theirs to lose), page labels, embedded files, and any prior
 incremental revision, since a copy is a serialisation rather than a sanitation (§T6.1). So does any structure element the parent-tree walk could not reach,
 which is reported as unverified rather than passed over.
 
-**The metadata strip and the outline removal are properties of the redaction and of nothing
-else.** A copy, an extract, a split, a merge and a print job all still carry `/Info`, XMP and
-every bookmark across untouched, which is §T6.1's position and is held by **one** condition
-guarding both --- so one mutation of it reddens both controls, which is why only one of them
-names it. An image or a
+**The metadata strip, the outline removal and the field removal are properties of the
+redaction and of nothing else.** A copy, an extract, a split, a merge and a print job all still
+carry `/Info`, XMP, every bookmark and every answer across untouched, which is §T6.1's position
+and is held by **one** condition guarding all three --- so one mutation of it reddens all three
+controls, which is why only one of them names it. An image or a
 vector drawing inside the region is reported and left. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
 a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is

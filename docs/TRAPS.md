@@ -16810,3 +16810,77 @@ which three tests went red instead, and that list is what identified the directi
 one reading.
 
 Paid for on 2026-08-27.
+
+### Two correct rules deciding every subject make each other unfalsifiable
+
+The form-field removal has two rules, and both are right. A field goes when every widget under
+it has gone, or when its value is text that went. Eight mutations were written for the
+increment; **four survived**, and all four for one reason.
+
+The fixture's realistic field — a `/Kids` parent whose one widget sits over the redacted
+region and whose `/V` holds the answer — satisfies *both* rules at once. So does the merged
+field+widget. So does the away widget. Disabling either rule changed nothing observable
+anywhere in the fixture:
+
+```rust
+let orphaned = field.has(b"Kids") && ...     // mutated to `false && ...`
+let carries  = [b"V", b"DV"].into_iter().any(...)
+if orphaned || carries { ... }
+```
+
+`orphaned || carries` with `orphaned` forced false still fires on every subject, because
+`carries` was true for every one of them. The same shape killed the other three: no field
+carried `/DV` without a matching `/V`, so dropping `/DV` from the key list was a no-op; no
+field held a value under the four-character floor, so deleting the floor was a no-op; and
+every matched field's widgets had already gone by the annotation pass, so not collecting the
+subtree was a no-op.
+
+**Not one weak assertion among them.** Each check asserted exactly what it claimed and each
+would have caught a defect of the shape it was named for. The fixture could not discriminate,
+and that is what a surviving mutation reports — it indicts the fixture as often as the check,
+which is already written down here in another form and did not transfer, because *this*
+fixture looked comprehensive: nine objects, five shapes, a doc-comment table.
+
+**The repair is one subject per rule, and it has to be deliberate.** `orphan` — widgets over
+the region, value naming nothing that went. `held` — value that went, widget nowhere near, so
+the annotation pass leaves the widget and the subtree collection has to take it. `defaulted` —
+`/DV` and no `/V` at all. `short` — two letters that occur inside what went. Each is the only
+subject its rule decides alone, and the fixture's doc comment says so, because the next person
+to add a shape will otherwise add another one both rules fire on.
+
+**Ask it before writing the fixture, not after the mutation run:** for each rule, which object
+here would change outcome if this rule alone were deleted? If the answer is *none*, the rule
+has no test, however many assertions surround it.
+
+Paid for on 2026-08-27.
+
+### A refusal promised in the plan and never built emits nothing to grep for
+
+`docs/PLAN.md` §6 has said since before any redaction code existed that an XFA form is refused
+rather than half redacted. On 2026-08-27, four carrier increments in, there was no `XFA` string
+anywhere in the redaction path. The sentence read as a decision that had been taken; it was a
+*Not done* note that had lost its label.
+
+**Why nothing caught it, and this is the durable half.** A promised *feature* leaves evidence
+of its absence: a command nobody registered, a callback nobody wired, a button that does
+nothing when pressed. A promised **refusal** leaves none. When it is missing, the code takes
+the normal path and produces a correct-looking file — the removal runs, the report is written,
+the reader is told what went. There is no error message that failed to appear, no dead call
+site, no unhandled variant. The document's claim and the code's behaviour disagree in the one
+direction that produces no artifact.
+
+Worse for a redaction specifically: the missing refusal makes the subsystem *more* confident,
+not less. An XFA packet is a complete XML copy of every answer, so a redaction that took the
+field values and left it removed nothing recoverable — and then said so.
+
+**The check that finds these is a grep over the plan, not over the code.** Every sentence in a
+design document of the form "X is refused" or "tpdf declines Y" is a claim about a code path
+that must exist. Extract them and grep the implementation for each. Doing that here found one
+in a subsystem whose four other rows were all built and all tested.
+
+**And the mutation to write is the one that removes the refusal**, aimed at a test that feeds
+it the input it refuses — plus its mirror, a test proving the refusal does *not* fire on the
+neighbouring operation, since a refusal written too wide is the failure that makes a whole
+class of document unopenable.
+
+Paid for on 2026-08-27.

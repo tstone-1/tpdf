@@ -2043,7 +2043,12 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
     // indirect action dictionary, and both name the page the redacted heading
     // was on. `forget` removes the entry and every reference to it; what it
     // cannot remove is what the entry was the only reference *to*.
-    if !dropped.is_empty() || moved || redacted.annots > 0 || redacted.outline > 0 {
+    if !dropped.is_empty()
+        || moved
+        || redacted.annots > 0
+        || redacted.outline > 0
+        || redacted.fields > 0
+    {
         crate::sweep::collect(&mut doc)?;
     }
 
@@ -2143,7 +2148,33 @@ fn apply_redactions(
         targets.push((*page, redaction));
     }
 
+    // **XFA, and this is a refusal rather than a removal.** `docs/PLAN.md` §6
+    // says so and had said so since before any of this was written, with nothing
+    // reading it until 2026-08-27: an XFA form keeps a complete second copy of
+    // its data as XML in `/AcroForm /XFA`, and a redaction that took the field
+    // values while leaving that packet has removed nothing a reader could not
+    // recover. Sanitising it is a second document editor, so the honest answer
+    // is to say what tpdf cannot do.
+    //
+    // In the pre-flight, with the other two, because a refusal discovered half
+    // way through leaves a document with some pages redacted and some not. And
+    // guarded on there being a redaction at all, like every other clause here:
+    // an ordinary Save a copy of an XFA form is a serialisation and must go on
+    // working.
+    if !redactions.is_empty() && crate::redact::has_xfa(doc) {
+        return Err(Refusal::from(
+            "this document carries an XFA form, which keeps its own copy of \
+             every answer --- tpdf cannot redact one, and writing the file \
+             would leave that copy behind"
+                .to_string(),
+        ));
+    }
+
     let mut done = Redacted::default();
+    // Every widget the annotation pass removed, across all pages. The field pass
+    // below asks whether everything under a field has gone, which is not
+    // answerable one page at a time: a field's widgets may sit on several.
+    let mut widgets: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
     for (page, redaction) in targets {
         let took = crate::redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
             .map_err(Refusal::from)?;
@@ -2162,7 +2193,9 @@ fn apply_redactions(
         let taken = crate::redact::covered_annots(doc, page, &redaction.areas);
         if !taken.is_empty() {
             done.annots += taken.len();
-            crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;
+            let taken: std::collections::HashSet<lopdf::ObjectId> = taken.into_iter().collect();
+            widgets.extend(taken.iter().copied());
+            crate::pagetree::forget(doc, &taken).map_err(Refusal::from)?;
         }
     }
 
@@ -2215,6 +2248,20 @@ fn apply_redactions(
             .collect();
         let entries = crate::redact::covered_outline(doc, &taken);
         done.outline = crate::redact::drop_outline_items(doc, &entries).map_err(Refusal::from)?;
+
+        // **The form fields, and this runs last because its first rule needs the
+        // annotation pass to have finished.** A widget over a region is removed
+        // as an annotation, because a widget *is* one --- what survives is the
+        // field dictionary above it, which is a separate object whenever the
+        // field has `/Kids`. Measured before this was written: the kid went, the
+        // parent kept its `/V`, and nothing displayed the value while every
+        // search still found it.
+        //
+        // The second rule is the value itself, which is what reaches §6's
+        // *widgets outside the redacted rectangle*: the same answer in a second
+        // copy of the field, or one whose widget is on another page.
+        let fields = crate::redact::covered_fields(doc, &taken, &widgets);
+        done.fields = crate::redact::drop_fields(doc, &fields).map_err(Refusal::from)?;
     }
     Ok(done)
 }
@@ -2267,6 +2314,8 @@ struct Redacted {
     metadata: usize,
     /// Outline entries removed, the subtrees under them included.
     outline: usize,
+    /// Form fields removed, the widgets under them included.
+    fields: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
@@ -8897,6 +8946,480 @@ mod tests {
             text_objects: 1,
             areas: Vec::new(),
             taking: vec!["Holding the secret account here".to_string()],
+        }]
+    }
+
+    /// A redaction is refused outright on an XFA form.
+    ///
+    /// §6's rule since before any of this was written, and unread until
+    /// 2026-08-27: an XFA packet is a complete second copy of every answer, so a
+    /// redaction that took the field values and left it has removed nothing.
+    #[test]
+    fn a_redaction_of_an_xfa_form_is_refused_rather_than_half_done() {
+        let (mut doc, page, ids) = formed_document();
+        let form = ids
+            .iter()
+            .find(|(name, _)| *name == "/AcroForm")
+            .map(|(_, id)| *id)
+            .expect("the fixture has an /AcroForm");
+        if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(form) {
+            dict.set("XFA", Object::string_literal("<xdp:xdp/>"));
+        }
+        let why = apply_redactions(&mut doc, &[page], &over_the_widget(page))
+            .expect_err("an XFA form must be refused");
+        assert!(why.message.contains("XFA"), "{}", why.message);
+        // Nothing half-done: the refusal is in the pre-flight, so every widget
+        // the plan would have taken is still there.
+        for (name, id) in ids {
+            assert!(doc.get_object(id).is_ok(), "{name} survives a refusal");
+        }
+    }
+
+    /// **The control.** A copy of an XFA form is not a redaction and is written.
+    ///
+    /// §T6.1's position, and the reason the refusal is guarded: a serialisation
+    /// makes no claim about what it removed, so there is nothing for XFA to
+    /// falsify. Refusing here would make tpdf unable to open-and-save a whole
+    /// class of document for the sake of a promise it is not making.
+    #[test]
+    fn a_copy_of_an_xfa_form_is_not_refused() {
+        let (mut doc, page, ids) = formed_document();
+        let form = ids
+            .iter()
+            .find(|(name, _)| *name == "/AcroForm")
+            .map(|(_, id)| *id)
+            .expect("the fixture has an /AcroForm");
+        if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(form) {
+            dict.set("XFA", Object::string_literal("<xdp:xdp/>"));
+        }
+        apply_redactions(&mut doc, &[page], &[]).expect("a copy is not a redaction");
+    }
+
+    /// A field whose widgets have all gone goes with them.
+    ///
+    /// The gap measured before this was built: `covered_annots` removes a widget
+    /// over a region because a widget is an annotation, and the field dictionary
+    /// above it survives holding the value. Nothing draws it and every search
+    /// finds it.
+    ///
+    /// **`orphan` is asserted first because it is the only subject this rule
+    /// decides alone** --- its value names nothing that went, so a mutation
+    /// disabling the rule can only show up here. `parent` is the realistic
+    /// shape and both rules fire on it, which is why it cannot be the control.
+    #[test]
+    fn a_field_whose_widgets_all_went_does_not_keep_its_value() {
+        let (mut doc, page, ids) = formed_document();
+        let by = |want: &str| {
+            ids.iter()
+                .find(|(name, _)| *name == want)
+                .map(|(_, id)| *id)
+                .expect(want)
+        };
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(
+            doc.get_object(by("its orphan widget")).is_err(),
+            "the widget over the region went"
+        );
+        assert!(
+            doc.get_object(by("orphan field")).is_err(),
+            "and the field above it, though its value named nothing that went"
+        );
+        assert!(doc.get_object(by("its widget")).is_err(), "the widget went");
+        assert!(
+            doc.get_object(by("parent field")).is_err(),
+            "and so did the field holding its value"
+        );
+    }
+
+    /// A field matched by its value takes the widgets under it.
+    ///
+    /// `held`'s widget is nowhere near the region, so the annotation pass leaves
+    /// it: the value rule is what takes the field, and a removal that stopped at
+    /// the field dictionary would leave a widget on the page drawing the answer
+    /// from a `/Parent` that is no longer there.
+    #[test]
+    fn a_matched_field_takes_the_widgets_under_it() {
+        let (mut doc, page, ids) = formed_document();
+        let by = |want: &str| {
+            ids.iter()
+                .find(|(name, _)| *name == want)
+                .map(|(_, id)| *id)
+                .expect(want)
+        };
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(
+            doc.get_object(by("held field")).is_err(),
+            "its value was in what went"
+        );
+        assert!(
+            doc.get_object(by("its held widget")).is_err(),
+            "and the widget under it came too"
+        );
+    }
+
+    /// A default value is a copy of the answer, and goes with it.
+    ///
+    /// `/DV` is what the field was pre-filled from --- the same string in the
+    /// same dictionary --- so a redaction that took `/V` and left `/DV` removed
+    /// nothing. `defaulted` carries no `/V` at all, so it is the only subject
+    /// reading `/DV` can decide.
+    #[test]
+    fn a_field_whose_default_holds_what_went_is_taken_too() {
+        let (mut doc, page, ids) = formed_document();
+        let id = ids
+            .iter()
+            .find(|(name, _)| *name == "defaulted field")
+            .map(|(_, id)| *id)
+            .expect("defaulted field");
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(doc.get_object(id).is_err(), "a default is a copy of it");
+    }
+
+    /// **The second over-removal control.** Two letters are not a match.
+    ///
+    /// `short` holds `ME`, which occurs inside `MERGED-SECRET` and inside a
+    /// great many other words. A form is full of answers this short --- `Yes`,
+    /// a title, an initial --- and matching them would empty the form on the
+    /// first redaction of any line.
+    #[test]
+    fn a_field_value_too_short_to_be_distinctive_is_not_matched() {
+        let (mut doc, page, ids) = formed_document();
+        let id = ids
+            .iter()
+            .find(|(name, _)| *name == "short field")
+            .map(|(_, id)| *id)
+            .expect("short field");
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(
+            doc.get_object(id).is_ok(),
+            "two letters occur everywhere, and are nobody's answer"
+        );
+    }
+
+    /// A field whose value is text that went goes, wherever its widget sits.
+    ///
+    /// §6 names *widgets outside the redacted rectangle* explicitly. The away
+    /// widget is nowhere near the region and holds the same answer, which is
+    /// what a second copy of a field on another page looks like.
+    #[test]
+    fn a_field_holding_what_went_goes_even_with_its_widget_elsewhere() {
+        let (mut doc, page, ids) = formed_document();
+        let away = ids
+            .iter()
+            .find(|(name, _)| *name == "away widget")
+            .map(|(_, id)| *id)
+            .expect("away widget");
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(doc.get_object(away).is_err(), "its value was in what went");
+    }
+
+    /// **The over-removal control.** A field naming nothing that went stays.
+    ///
+    /// A rule that emptied `/AcroForm` would pass every check above, and a form
+    /// is a document's usefulness: a reader who redacted one line must not get a
+    /// copy with every other answer wiped.
+    #[test]
+    fn a_field_naming_nothing_that_went_survives_a_redaction() {
+        let (mut doc, page, ids) = formed_document();
+        let keep = ids
+            .iter()
+            .find(|(name, _)| *name == "unrelated field")
+            .map(|(_, id)| *id)
+            .expect("unrelated field");
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(
+            doc.get_object(keep).is_ok(),
+            "a different answer is not ours"
+        );
+        assert!(
+            doc.catalog().expect("catalog").has(b"AcroForm"),
+            "and the form itself is still there"
+        );
+    }
+
+    /// A checkbox's `/V` is a name, and a name is not compared against text.
+    #[test]
+    fn a_checkbox_is_never_taken_by_its_value() {
+        let (mut doc, page, ids) = formed_document();
+        let box_id = ids
+            .iter()
+            .find(|(name, _)| *name == "checkbox")
+            .map(|(_, id)| *id)
+            .expect("checkbox");
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(doc.get_object(box_id).is_ok(), "a name is not a value");
+    }
+
+    /// A copy that is not a redaction keeps every field.
+    ///
+    /// The metadata and outline controls' third sibling, guarded by the same
+    /// condition --- so `save: strip metadata on every save rather than on a
+    /// redaction` is the mutation that proves all three, and names one.
+    #[test]
+    fn a_copy_that_is_not_a_redaction_keeps_its_fields() {
+        let (mut doc, page, ids) = formed_document();
+        let done = apply_redactions(&mut doc, &[page], &[]).expect("applicable");
+        assert_eq!(done.fields, 0);
+        for (name, id) in ids {
+            assert!(
+                doc.get_object(id).is_ok(),
+                "{name} survives an ordinary save"
+            );
+        }
+    }
+
+    /// A form whose every field went loses the `/AcroForm` too.
+    ///
+    /// Kept empty it reads as a document that never had a form, while `/DA`,
+    /// `/DR` and `/NeedAppearances` go on describing fields that are gone. The
+    /// same reasoning as an emptied outline, and `drop_fields` is called
+    /// directly because no redaction of this fixture takes every field --- the
+    /// over-removal controls exist precisely to stop that happening.
+    #[test]
+    fn a_form_with_nothing_left_in_it_goes_as_well() {
+        let (mut doc, _page, ids) = formed_document();
+        let every: Vec<lopdf::ObjectId> = ids
+            .iter()
+            .filter(|(name, _)| *name != "its appearance" && *name != "/AcroForm")
+            .map(|(_, id)| *id)
+            .collect();
+        assert!(
+            doc.catalog().expect("catalog").has(b"AcroForm"),
+            "the control: it is there to begin with"
+        );
+        let gone = crate::redact::drop_fields(&mut doc, &every).expect("dropped");
+        assert_eq!(gone, every.len());
+        assert!(
+            !doc.catalog().expect("catalog").has(b"AcroForm"),
+            "and an empty form is not a form"
+        );
+    }
+
+    /// The appearance stream of a removed widget draws the value it held.
+    ///
+    /// **Not a new mechanism --- a property of the existing sweep, pinned here
+    /// because nothing said it held.** A widget's `/AP` is a separate object
+    /// reachable only from the widget, so removing the widget orphans a drawing
+    /// of the very answer that went, and `lopdf` writes every object it holds.
+    /// `sweep::collect` reaches it, and `rewrite` runs the sweep on exactly the
+    /// condition a field removal satisfies. Measured rather than assumed: before
+    /// the sweep it survives, after it, it does not.
+    #[test]
+    fn the_appearance_a_removed_widget_drew_its_value_with_is_collected() {
+        let (mut doc, page, ids) = formed_document();
+        let ap = ids
+            .iter()
+            .find(|(name, _)| *name == "its appearance")
+            .map(|(_, id)| *id)
+            .expect("appearance");
+        apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+        assert!(
+            doc.get_object(ap).is_ok(),
+            "the control: unreachable, and still in the file until the sweep"
+        );
+        crate::sweep::collect(&mut doc).expect("sweep");
+        assert!(doc.get_object(ap).is_err(), "the sweep takes it");
+    }
+
+    /// A one-page form with every shape the two rules have to tell apart.
+    ///
+    /// Two rules decide a field: every widget under it went, or its value is
+    /// text that went. **Four of these shapes exist so that exactly one rule
+    /// decides them** --- a fixture where both fire on every field cannot tell
+    /// the two apart, and four mutations survived against exactly that.
+    ///
+    /// ```text
+    ///   merged      field and widget in one object, over the region
+    ///   parent      holds the value; its one widget is over the region
+    ///   orphan      widget over the region, value naming nothing that went
+    ///   held        holds a value that went; its widget is nowhere near
+    ///   defaulted   carries what went in /DV, with no /V at all
+    ///   short       /V is two letters, and they occur inside what went
+    ///   away        holds the same answer, widget nowhere near the region
+    ///   unrelated   holds a different answer, widget nowhere near it
+    ///   checkbox    /V is a NAME, over the region's page but not its rectangle
+    /// ```
+    ///
+    /// `orphan` is the only one the first rule decides alone, `held` and
+    /// `defaulted` the only ones the second decides alone, and `short` is the
+    /// only one the length guard saves.
+    fn formed_document() -> (
+        Document,
+        lopdf::ObjectId,
+        Vec<(&'static str, lopdf::ObjectId)>,
+    ) {
+        use lopdf::{dictionary, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let content = doc.add_object(Stream::new(dictionary! {}, b"BT (page) Tj ET".to_vec()));
+        let pages_id = doc.new_object_id();
+
+        // The copy that survives removing `/V`, and the reason the sweep matters.
+        let ap = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 100.into(), 20.into()],
+            },
+            b"BT (MERGED-SECRET) Tj ET".to_vec(),
+        ));
+        let merged = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+            "T" => Object::string_literal("merged"),
+            "V" => Object::string_literal("MERGED-SECRET"),
+            "Rect" => vec![100.into(), 100.into(), 200.into(), 120.into()],
+            "AP" => dictionary! { "N" => ap },
+        });
+
+        let kid = doc.new_object_id();
+        let parent = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "T" => Object::string_literal("split"),
+            "V" => Object::string_literal("PARENT-SECRET"),
+            "Kids" => vec![kid.into()],
+        });
+        doc.objects.insert(
+            kid,
+            Object::Dictionary(dictionary! {
+                "Type" => "Annot", "Subtype" => "Widget",
+                "Parent" => parent,
+                "Rect" => vec![100.into(), 130.into(), 200.into(), 150.into()],
+            }),
+        );
+
+        // Every widget under it goes, and its value names nothing that went ---
+        // so the first rule is the only thing that can take it.
+        let orphan_kid = doc.new_object_id();
+        let orphan = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "T" => Object::string_literal("orphan"),
+            "V" => Object::string_literal("UNSAID-ANSWER"),
+            "Kids" => vec![orphan_kid.into()],
+        });
+        doc.objects.insert(
+            orphan_kid,
+            Object::Dictionary(dictionary! {
+                "Type" => "Annot", "Subtype" => "Widget",
+                "Parent" => orphan,
+                "Rect" => vec![100.into(), 95.into(), 200.into(), 115.into()],
+            }),
+        );
+
+        // Its widget survives the annotation pass, so the value rule is what
+        // takes it --- and the widget has to come with it.
+        let held_kid = doc.new_object_id();
+        let held = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "T" => Object::string_literal("held"),
+            "V" => Object::string_literal("HELD-SECRET"),
+            "Kids" => vec![held_kid.into()],
+        });
+        doc.objects.insert(
+            held_kid,
+            Object::Dictionary(dictionary! {
+                "Type" => "Annot", "Subtype" => "Widget",
+                "Parent" => held,
+                "Rect" => vec![400.into(), 400.into(), 500.into(), 420.into()],
+            }),
+        );
+
+        // Never filled in, and pre-populated with the answer anyway.
+        let defaulted = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+            "T" => Object::string_literal("defaulted"),
+            "DV" => Object::string_literal("DEFAULT-SECRET"),
+            "Rect" => vec![400.into(), 300.into(), 500.into(), 320.into()],
+        });
+        // `me` occurs inside `merged-secret`, and a form is full of answers this
+        // short.
+        let short = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+            "T" => Object::string_literal("short"),
+            "V" => Object::string_literal("ME"),
+            "Rect" => vec![400.into(), 200.into(), 500.into(), 220.into()],
+        });
+
+        let away = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+            "T" => Object::string_literal("away"),
+            "V" => Object::string_literal("AWAY-SECRET"),
+            "Rect" => vec![400.into(), 700.into(), 500.into(), 720.into()],
+        });
+        let unrelated = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+            "T" => Object::string_literal("unrelated"),
+            "V" => Object::string_literal("SOMEBODY-ELSES-ANSWER"),
+            "Rect" => vec![400.into(), 600.into(), 500.into(), 620.into()],
+        });
+        let checkbox = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Btn",
+            "T" => Object::string_literal("agreed"),
+            "V" => Object::Name(b"MERGED-SECRET".to_vec()),
+            "Rect" => vec![400.into(), 500.into(), 420.into(), 520.into()],
+        });
+
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Annots" => vec![
+                merged.into(), kid.into(), orphan_kid.into(), held_kid.into(),
+                defaulted.into(), short.into(), away.into(), unrelated.into(),
+                checkbox.into(),
+            ],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let form = doc.add_object(dictionary! {
+            "Fields" => vec![
+                merged.into(), parent.into(), orphan.into(), held.into(),
+                defaulted.into(), short.into(), away.into(), unrelated.into(),
+                checkbox.into(),
+            ],
+            "DA" => Object::string_literal("/Helv 0 Tf 0 g"),
+        });
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages_id, "AcroForm" => form,
+        });
+        doc.trailer.set("Root", catalog);
+        (
+            doc,
+            page,
+            vec![
+                ("merged widget", merged),
+                ("its appearance", ap),
+                ("parent field", parent),
+                ("its widget", kid),
+                ("orphan field", orphan),
+                ("its orphan widget", orphan_kid),
+                ("held field", held),
+                ("its held widget", held_kid),
+                ("defaulted field", defaulted),
+                ("short field", short),
+                ("away widget", away),
+                ("unrelated field", unrelated),
+                ("checkbox", checkbox),
+                ("/AcroForm", form),
+            ],
+        )
+    }
+
+    /// A region over the two widgets at the bottom left, and nothing else.
+    ///
+    /// `taking` names all three secrets because route B removes a whole line and
+    /// this fixture's answers are what that line held --- which is what makes
+    /// `away` reachable by the value rule and `unrelated` not.
+    fn over_the_widget(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
+        vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: Vec::new(),
+            text_objects: 1,
+            areas: vec![[90.0, 90.0, 210.0, 160.0]],
+            taking: vec![
+                "MERGED-SECRET PARENT-SECRET AWAY-SECRET DEFAULT-SECRET HELD-SECRET".to_string(),
+            ],
         }]
     }
 

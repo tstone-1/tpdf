@@ -2336,6 +2336,88 @@ so a title it still returns is a title a reader still sees. Deleting the splice 
 one of those four red and leaves the other three green, which is the whole reason the fixture
 puts the carrier in the middle of the chain.
 
+#### The answers the form still holds --- done 2026-08-27
+
+`docs/PLAN.md` §6's *Forms* row: field values, default values, widgets outside the redacted
+rectangle, and XFA. Four things, and the last of them is a refusal rather than a removal.
+
+**Measured before it was written, and the measurement contradicted the recommendation.** I
+ranked this second on frequency --- 4 of 41 documents carry an `/AcroForm`. Reading what is
+*in* those four: one is a blank form (13 fields, 7 of them `/Tx`, **none filled in**) and
+three carry a single `/Sig`. So the frequency argument was for a carrier this corpus does not
+actually exercise, and I said so before building it. What justifies it instead is the shape of
+the leak, which the next paragraph measures.
+
+**Half of this row already worked, and finding out which half was the whole design.** A widget
+*is* an annotation, so `covered_annots` was already removing the widget over the region.
+Running the existing code against a fixture printed:
+
+| object | before this increment |
+|---|---|
+| merged field+widget over the region | gone |
+| its appearance stream, drawing the value | orphaned, then taken by `sweep::collect` |
+| parent field with `/V`, its widget over the region | **survives** |
+| a widget elsewhere holding the same answer | **survives** |
+
+The gap is the **field dictionary**, which is a separate object whenever the field has
+`/Kids`. Nothing draws its value and every search finds it: a redaction that removed the
+drawing and left the answer.
+
+**Two rules, and each has a subject the other cannot reach.** A field goes when every widget
+under it has gone, or when its value is text that went. The first covers `parent`; the second
+covers a widget on another page holding the same answer, which is §6's *widgets outside the
+redacted rectangle* stated as a property rather than a location. `/DV` is read beside `/V` ---
+a default is the string the field was pre-filled from, in the same dictionary, so taking the
+answer and leaving the default removed nothing.
+
+**A value is compared only when it is a string.** A checkbox's `/V` is a *name*, and
+`/MERGED-SECRET` as a name is a state token rather than an answer. `as_str` refuses it, which
+is one line and the reason a checkbox is never taken by what it says.
+
+**Four characters, and this is the over-removal control that matters.** A form is full of
+short answers --- `Yes`, an initial, a title --- and `ME` occurs inside `MERGED` and inside
+most other words. Matching them would empty the form on the first redaction of any line, and a
+form is a document's usefulness.
+
+**`pagetree::forget` is the right instrument here, one increment after it was the wrong one.**
+`/Fields`, `/Kids`, `/Annots` and `/CO` are all arrays, and `forget` shortens an array
+correctly. The outline's doubly-linked chain was the exception, not the rule.
+
+**The XFA refusal is the most important part of this increment, and it is the part that was
+already promised.** §6 has said since before any of this was written that an XFA form is
+refused, and there was no `XFA` string anywhere in the redaction path --- a *Not done* note
+that read as a decision. An XFA packet is a complete XML copy of every answer, so a redaction
+that took the field values and left it removed nothing a reader could not recover. It is now a
+refusal in the pre-flight, before anything is touched.
+
+**Guarded on `!redactions.is_empty()`**, so an ordinary *Save a copy* of an XFA form still
+works. A serialisation makes no claim about what it removed, so there is nothing for the XFA
+packet to falsify; refusing it too would make tpdf unable to open and save a whole class of
+document for a promise it is not making. Both directions have a test.
+
+**Evidence.** Nine mutations and three probe checks, and **four of the mutations survived the
+first run** --- all four for one reason, which is the finding. Every field in the fixture was decided by *both* rules at
+once, so deleting either left the outcome identical: the parent field is orphaned *and* holds
+what went, and a mutation disabling the orphan rule changed nothing observable. The repair is
+four shapes each decided by exactly one rule --- `orphan` (widgets gone, value naming nothing
+that went), `held` (value that went, widget nowhere near), `defaulted` (`/DV` and no `/V`),
+`short` (two letters). None of the assertions was weak; the fixture could not discriminate,
+which is the failure a surviving mutation reports and the reason it indicts the fixture as
+often as the check.
+
+**The ninth was an uncovered branch rather than a survivor.** `drop_fields` removes an
+`/AcroForm` whose fields have all gone --- kept empty it reads as a document that never had a
+form, while `/DA`, `/DR` and `/NeedAppearances` go on describing fields that are not there.
+Nothing tested it, and by this repository's own rule a guard whose deletion reddens nothing is
+either uncovered or not a guard. It is called directly, because no redaction of the fixture
+takes every field: the over-removal controls exist precisely to stop that happening.
+
+**The probe's subject is the carrier fixture rather than a hand-built document**, which is the
+part the unit tests structurally cannot reach --- every one of them builds its document in
+Rust, so the *parser* is untested. `text-marked.pdf` carries the form now, written by the
+generator and read by `lopdf`, and its widget is placed so that the value rule is the only
+thing that can decide the field.
+
 #### Applying it to the reader's own file --- done 2026-08-27
 
 **Redact and save**, beside *Redact and save as*. Same removal, same verification, same

@@ -1243,8 +1243,8 @@ MUTATIONS = [
         # a structure element, a reader that walks the tree still finds it.
         "save: remove a redacted annotation without dropping the references to it",
         "src/save.rs",
-        "            crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;",
-        "            for id in &taken {\n                doc.objects.remove(id);\n            }",
+        "            crate::pagetree::forget(doc, &taken).map_err(Refusal::from)?;",
+        "            for id in \u0026taken {\n                doc.objects.remove(id);\n            }",
         "a_redacted_annotation_loses_the_references_that_are_not_on_the_page",
     ),
     Mutation(
@@ -1253,7 +1253,7 @@ MUTATIONS = [
         # out, and still carrying the comment about the words.
         "save: unlink a redacted annotation without removing the object",
         "src/save.rs",
-        "            crate::pagetree::forget(doc, &taken.into_iter().collect()).map_err(Refusal::from)?;",
+        "            crate::pagetree::forget(doc, &taken).map_err(Refusal::from)?;",
         "            let _ = &taken;",
         "an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not",
     ),
@@ -1357,6 +1357,99 @@ MUTATIONS = [
         "        if title.len() < MIN_OUTLINE_TITLE {",
         "        if title.is_empty() {",
         "a_very_short_outline_title_is_not_matched",
+    ),
+    Mutation(
+        # Redact an XFA form rather than refusing it. Section 6 has said to
+        # refuse since before any of this was written and nothing read it until
+        # 2026-08-27: an XFA packet is a complete second copy of every answer,
+        # so a redaction that takes the field values and leaves it has removed
+        # nothing a reader could not recover.
+        "redact: redact an XFA field form rather than refusing it",
+        "src/save.rs",
+        "    if !redactions.is_empty() && crate::redact::has_xfa(doc) {",
+        "    if !redactions.is_empty() && false {",
+        "a_redaction_of_an_xfa_form_is_refused_rather_than_half_done",
+    ),
+    Mutation(
+        # Refuse a plain copy of an XFA form too. A serialisation makes no claim
+        # about what it removed, so there is nothing for XFA to falsify -- and
+        # refusing would make tpdf unable to open-and-save a whole class of
+        # document for a promise it is not making.
+        "redact: refuse a field form's copy as well as its redaction",
+        "src/save.rs",
+        "    if !redactions.is_empty() && crate::redact::has_xfa(doc) {",
+        "    if crate::redact::has_xfa(doc) {",
+        "a_copy_of_an_xfa_form_is_not_refused",
+    ),
+    Mutation(
+        # Leave the field dictionary whose widgets all went. The gap measured
+        # before this was built: the kid goes as an annotation and the parent
+        # keeps /V, so nothing draws the value and every search finds it.
+        "redact: keep a field whose widgets have all been removed",
+        "src/redact.rs",
+        "        let orphaned =\n            field.has(b\"Kids\")",
+        "        let orphaned = false\n            \u0026\u0026 field.has(b\"Kids\")",
+        "a_field_whose_widgets_all_went_does_not_keep_its_value",
+    ),
+    Mutation(
+        # Treat a merged field -- no /Kids at all -- as orphaned. Every field
+        # that is its own widget then goes on the first redaction, which is the
+        # over-removal direction and empties the form.
+        "redact: call a field with no kids at all an orphaned one",
+        "src/redact.rs",
+        "        let orphaned =\n            field.has(b\"Kids\")",
+        "        let orphaned =\n            !field.has(b\"Kids\")",
+        "a_field_naming_nothing_that_went_survives_a_redaction",
+    ),
+    Mutation(
+        # Match a field value against nothing, so a field holding what went
+        # survives wherever its widget sits -- which is section 6's "widgets
+        # outside the redacted rectangle" left open.
+        "redact: leave a field holding what went when its widget is elsewhere",
+        "src/redact.rs",
+        "            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))",
+        "            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.is_empty())",
+        "a_field_holding_what_went_goes_even_with_its_widget_elsewhere",
+    ),
+    Mutation(
+        # Read only /V and not /DV. A default value is the same string in the
+        # same dictionary, and a redaction that took the answer and left the
+        # default it was pre-filled from has removed nothing.
+        "redact: read a field's value and not the default beside it",
+        "src/redact.rs",
+        "        let carries = [b\"V\".as_slice(), b\"DV\".as_slice()].into_iter().any(|key| {",
+        "        let carries = [b\"V\".as_slice()].into_iter().any(|key| {",
+        "a_field_whose_default_holds_what_went_is_taken_too",
+    ),
+    Mutation(
+        # Act on a field value too short to be distinctive. A form is full of
+        # short answers, and a field holding `Yes` is a substring of almost any
+        # line.
+        "redact: match a field value too short to be distinctive",
+        "src/redact.rs",
+        "            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))",
+        "            folded.iter().any(|line| line.contains(&text))",
+        "a_field_value_too_short_to_be_distinctive_is_not_matched",
+    ),
+    Mutation(
+        # Take a matched field and leave its widgets. They are annotations on a
+        # page, so the drawing stays where the reader can see it while the value
+        # behind it has gone.
+        "redact: take a matched field without the widgets under it",
+        "src/redact.rs",
+        "        collect_field_subtree(doc, id, &mut all);",
+        "        if !all.contains(&id) {\n            all.push(id);\n        }",
+        "a_matched_field_takes_the_widgets_under_it",
+    ),
+    Mutation(
+        # Keep an /AcroForm whose fields have all gone. It then reads as a
+        # document that never had a form, while /DA, /DR and /NeedAppearances go
+        # on describing fields that are not there.
+        "redact: keep a form dictionary with no fields left in it",
+        "src/redact.rs",
+        "    if empty {\n        if let Ok(catalog) = doc.catalog_mut() {",
+        "    if false {\n        if let Ok(catalog) = doc.catalog_mut() {",
+        "a_form_with_nothing_left_in_it_goes_as_well",
     ),
     Mutation(
         # Refuse every named property list rather than only the ones carrying a
@@ -1505,8 +1598,8 @@ MUTATIONS = [
         # named the deletion and missed the extract.
         "save: leave a dropped page's content in the file",
         "src/save.rs",
-        "    if !dropped.is_empty() || moved || redacted.annots > 0 || redacted.outline > 0 {",
-        "    if false {",
+        "    if !dropped.is_empty()\n        || moved\n        || redacted.annots > 0",
+        "    if false\n        \u0026\u0026 moved\n        || redacted.annots > 0",
         "extracting_a_page_leaves_the_other_pages_out_of_the_file",
     ),
     Mutation(
@@ -1515,8 +1608,8 @@ MUTATIONS = [
         # fail, and without a control for it the condition above is decoration.
         "save: sanitize a plain copy as well as a save that removed something",
         "src/save.rs",
-        "    if !dropped.is_empty() || moved || redacted.annots > 0 || redacted.outline > 0 {",
-        "    if dropped.is_empty() || !moved || true {",
+        "    if !dropped.is_empty()\n        || moved\n        || redacted.annots > 0",
+        "    if dropped.is_empty()\n        || !moved\n        || true\n        || redacted.annots > 0",
         "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
     ),
     Mutation(

@@ -165,6 +165,25 @@ Entry by entry, with whatever hangs under it, and the rest of your table of
 contents stays where it was. One redacted heading does not cost you a hundred
 bookmarks, and a bookmark naming something else is not yours to lose.
 
+### Changed: redaction also removes the form answers that went with it
+
+A form field holds its answer in the document, not on the page. Redacting the
+words drew the widget away and left the value behind it: nothing showed it, and
+every search still found it.
+
+A field goes when the widgets under it have all gone, or when its answer is text
+that went --- which covers a widget on another page holding the same answer, and
+covers the default the field was pre-filled from. A field naming somebody else's
+answer stays. So does a checkbox, whose value is a state rather than words, and
+so is anything shorter than four characters: a form is full of `Yes` and `Dr`,
+and matching those would empty it on the first redaction of any line.
+
+**An XFA form is refused rather than half redacted.** These carry a complete
+second copy of every answer in a separate XML packet, so removing the fields
+would leave everything recoverable while telling you it had gone. tpdf says so
+and writes nothing. Saving a copy of one still works: a copy makes no claim
+about what it removed.
+
 ### Added: redact the file you opened, not only a copy of it
 
 **Redact and save**, beside *Redact and save as*. The same removal and the same

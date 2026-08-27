@@ -61,6 +61,8 @@
 //! holds two of them on purpose, so `redact-probe` can go on measuring that they
 //! are still there.
 
+use std::collections::HashSet;
+
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
@@ -1351,6 +1353,247 @@ fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
         }
     }
     visible
+}
+
+/// The shortest field value a removal will act on.
+///
+/// [`MIN_OUTLINE_TITLE`]'s reason, and it bites harder here: a form is full of
+/// short answers. A field holding `Yes`, `N` or a two-digit day is a substring
+/// of almost any line, and matching on one would take a whole form apart for the
+/// sake of a checkbox.
+const MIN_FIELD_VALUE: usize = 4;
+
+/// Whether the document carries an XFA form.
+///
+/// **`docs/PLAN.md` §6 refuses a redaction of one, and this is what that refusal
+/// reads.** XFA is a dead Adobe extension that keeps a *complete second copy* of
+/// the form's data as XML in `/AcroForm /XFA`, entirely separate from the
+/// `/AcroForm` field values a redaction can reach. Removing a field's `/V` while
+/// leaving the packet holding the same answer is exactly the confident lie §6
+/// opens by forbidding --- and it is worse than an ordinary miss, because nothing
+/// a reader can see in any viewer would show the copy is there.
+///
+/// Sanitising the packet properly is a project of its own: it is an XML dialect
+/// with its own datasets, its own templates and its own scripting, so a rule
+/// that reached into it would be a second document editor. Refusing is the
+/// honest answer and §6 chose it before any of this was written.
+///
+/// **The key alone, not its contents.** `/XFA` may be a stream or an array of
+/// alternating names and streams, and either way its presence is the whole
+/// question --- so this reads no packet, which also means an XFA document costs
+/// nothing to refuse.
+#[must_use]
+pub fn has_xfa(doc: &Document) -> bool {
+    doc.catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"AcroForm").ok())
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object).ok())
+        .and_then(|object| object.as_dict().ok().cloned())
+        .is_some_and(|form| form.has(b"XFA"))
+}
+
+/// Form fields a redaction has to take with it, and the widgets under them.
+///
+/// **`docs/PLAN.md` §6's *Forms* row.** A filled field's value *is* the content ---
+/// a name, an account number, a date somebody typed --- so where a form carries
+/// one it is the document rather than a description of it.
+///
+/// Two rules, and only the second is a string match:
+///
+/// **A field whose widgets have all gone.** `covered_annots` already removes a
+/// widget over a region, because a widget *is* an annotation. What it leaves is
+/// the field dictionary above it, which is a separate object when the field has
+/// `/Kids` --- so the value stays in the file with nothing drawing it. Nothing
+/// displays it and every search finds it, which is the worst combination: a
+/// reader looking at the redacted page sees the field gone. Measured before this
+/// was written, on a fixture with a parent holding the value and one kid over
+/// the region: the kid went, the parent survived with its `/V`.
+///
+/// **A field whose value is text the removal took.** §6 names *widgets outside
+/// the redacted rectangle* explicitly, and this is what reaches them: the same
+/// answer typed into a second copy of the field, or a field whose widget sits on
+/// another page. `taken.contains(value)` for [`covered_outline`]'s reason ---
+/// route B removes a whole line and the field holds part of it.
+///
+/// `/DV` is read as well as `/V`. A default value is the same string in the same
+/// dictionary, put there by whoever built the form, and a redaction that took the
+/// answer and left the default it was pre-filled from has removed nothing.
+///
+/// **A name is not a value.** A checkbox's `/V` is `/Off` or `/Yes` --- a *name*
+/// object, not a string --- and comparing one against page text is comparing two
+/// different things. Only strings are read, which also means a checkbox is never
+/// taken by the value rule; if its widget is over the region it goes as an
+/// annotation like anything else.
+///
+/// `gone` is what the annotation pass removed, which is why this runs after it
+/// and not beside it: the first rule is *has everything under this field been
+/// taken*, and that is not answerable until it has.
+#[must_use]
+pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>) -> Vec<ObjectId> {
+    let Some(form) = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"AcroForm").ok())
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object).ok())
+        .and_then(|object| object.as_dict().ok().cloned())
+    else {
+        return Vec::new();
+    };
+    let Ok(fields) = form
+        .get(b"Fields")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_array)
+    else {
+        return Vec::new();
+    };
+    let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
+
+    let mut doomed: Vec<ObjectId> = Vec::new();
+    let mut seen: Vec<ObjectId> = Vec::new();
+    let mut queue: Vec<ObjectId> = fields
+        .iter()
+        .filter_map(|entry| entry.as_reference().ok())
+        .collect();
+    let mut budget = MAX_FIELD_NODES;
+    while let Some(id) = queue.pop() {
+        // Charged before anything is read, so a refusal costs one pop rather
+        // than one parse --- `docinfo::read_signatures` bounds the same walk the
+        // same way and for the same reason.
+        let Some(left) = budget.checked_sub(1) else {
+            break;
+        };
+        budget = left;
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let Ok(field) = doc.get_dictionary(id) else {
+            continue;
+        };
+
+        let kids: Vec<ObjectId> = field
+            .get(b"Kids")
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_array)
+            .map(|array| {
+                array
+                    .iter()
+                    .filter_map(|entry| entry.as_reference().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        queue.extend(kids.iter().copied());
+
+        // Rule one. `has(b"Kids")` rather than `!kids.is_empty()`: a field whose
+        // array `forget` has emptied still has the key, and that emptiness is
+        // precisely the signal. A merged field has no `/Kids` at all and was
+        // removed as an annotation, so it must not fall in here.
+        let orphaned =
+            field.has(b"Kids") && (kids.is_empty() || kids.iter().all(|kid| gone.contains(kid)));
+
+        // Rule two.
+        let carries = [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
+            let Ok(value) = field
+                .get(key)
+                .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            else {
+                return false;
+            };
+            // A name is not a string, and `as_str` on `/Off` answers nothing.
+            let Ok(bytes) = value.as_str() else {
+                return false;
+            };
+            let text = fold(&crate::annots::decode_text_string(bytes));
+            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
+        });
+
+        if orphaned || carries {
+            doomed.push(id);
+        }
+    }
+
+    // The subtrees, so a field taken by its value takes its widgets with it.
+    let mut all: Vec<ObjectId> = Vec::new();
+    for id in doomed {
+        collect_field_subtree(doc, id, &mut all);
+    }
+    all
+}
+
+/// How many field-tree nodes to walk before giving up.
+///
+/// `docinfo.rs` bounds its own walk of the same tree at the same number and for
+/// the same reason: the tree is the document's to shape, and a `/Kids` naming an
+/// ancestor is one dictionary away.
+const MAX_FIELD_NODES: usize = 20_000;
+
+/// Adds `id` and every `/Kids` descendant to `into`, once each.
+fn collect_field_subtree(doc: &Document, id: ObjectId, into: &mut Vec<ObjectId>) {
+    let mut stack = vec![id];
+    let mut visits = 0usize;
+    while let Some(at) = stack.pop() {
+        visits += 1;
+        if visits > MAX_FIELD_NODES {
+            return;
+        }
+        if into.contains(&at) {
+            continue;
+        }
+        into.push(at);
+        let Ok(field) = doc.get_dictionary(at) else {
+            continue;
+        };
+        if let Ok(kids) = field
+            .get(b"Kids")
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_array)
+        {
+            stack.extend(kids.iter().filter_map(|kid| kid.as_reference().ok()));
+        }
+    }
+}
+
+/// Removes form fields, and the `/AcroForm` when nothing is left in it.
+///
+/// **`pagetree::forget` is the right instrument here, which is worth saying
+/// after the outline.** Every structure naming a field is an *array* ---
+/// `/AcroForm /Fields`, a field's `/Kids`, the page's `/Annots`, and `/CO`, the
+/// calculation order --- and `forget` drops an array element by removing it,
+/// leaving the array shorter and correct. The outline's chain was the exception,
+/// not this. A field's `/Parent` back-pointer is the one dictionary key
+/// involved, and it points *up*, so a subtree removed whole carries it away.
+///
+/// # Errors
+///
+/// Only what [`crate::pagetree::forget`] refuses: an object nested deeper than
+/// the sweep's bound.
+pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, String> {
+    if doomed.is_empty() {
+        return Ok(0);
+    }
+    crate::pagetree::forget(doc, &doomed.iter().copied().collect())?;
+
+    // An `/AcroForm` with no fields left. Dropped whole rather than kept empty,
+    // for the reason an emptied outline is: a form with no fields reads as a
+    // document that never had one, and what it still carries --- `/DA`, `/DR`,
+    // `/NeedAppearances` --- describes fields that are gone.
+    let empty = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"AcroForm").ok())
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object).ok())
+        .and_then(|object| object.as_dict().ok().cloned())
+        .is_some_and(|form| {
+            form.get(b"Fields")
+                .and_then(Object::as_array)
+                .is_ok_and(|fields| fields.is_empty())
+        });
+    if empty {
+        if let Ok(catalog) = doc.catalog_mut() {
+            catalog.remove(b"AcroForm");
+        }
+    }
+    Ok(doomed.len())
 }
 
 #[cfg(test)]

@@ -152,6 +152,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   that name what went, with whatever hangs under them, leaving the rest of your table of
   contents where it is --- a bookmark's title is the heading it points at, so redacting the
   heading and keeping the bookmark puts the words back on screen in tpdf's own sidebar.
+  It takes the **form answers** that went with it, because a field keeps its answer in the
+  document rather than on the page --- a field whose widgets have all gone, or whose answer
+  is text that went, wherever the widget for it sits; a field naming somebody else's answer
+  stays. An **XFA form is refused rather than half redacted**: those keep a complete second
+  copy of every answer in a separate packet, so removing the fields would leave everything
+  recoverable while telling you it had gone.
   <!-- built: file.redactCopy -->
 - **Redact and save** does all of that to the file you opened, rather than to a new one.
   It warns first and offers to save you a copy, because there is no undo across it and no

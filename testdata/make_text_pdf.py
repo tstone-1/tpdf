@@ -426,6 +426,19 @@ def build_marked(path: str, font_path: str) -> None:
       parser agrees. `OUTLINE-BEFORE` and `OUTLINE-AFTER` are that control.
       `OUTLINE-CHILD` hangs under the carrier and its own title matches nothing,
       so it can only go by being part of the subtree.
+    * A **form**, two fields, `docs/PLAN.md` section 6's *Forms* row. A field
+      keeps its answer in the document rather than on the page, so redacting the
+      words that drew the widget leaves the value behind it -- nothing shows it
+      and every search finds it. `FIELD-CARRIER` holds the redacted line's own
+      account number and its widget (`WIDGET-UNDER-CARRIER`) sits at the far
+      corner of the page, so the annotation pass leaves the widget and the field
+      can only be taken by what it SAYS; the widget then has to come with it.
+      `FIELD-KEEP` holds somebody else's answer and is the over-removal control.
+
+      Both widgets are hidden (`/F 2`). A visible one would be drawn by PDFium's
+      form-fill environment and move every pixel comparison this corpus already
+      makes -- and a hidden field holding the answer is the more honest shape,
+      since it is exactly the leak this carrier is about.
     """
     text = "".join(LINES)
     font, font_bytes = subset_font(font_path, text, retain_gids=False)
@@ -538,12 +551,28 @@ def build_marked(path: str, font_path: str) -> None:
         b"<< /Type /StructTreeRoot /K [%d 0 R] /ParentTree %d 0 R "
         b"/ParentTreeNextKey 1 >>" % (ancestor, parent_tree),
     )
+    # Reserved here because the page's `/Annots` names the two widgets, and the
+    # dictionaries themselves are written below with the rest of the form.
+    carrier_field = pdf.reserve()
+    carrier_widget = pdf.reserve()
+    keep_field = pdf.reserve()
+
     pdf.put(
         page,
         b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
         b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R "
-        b"/Annots [%d 0 R %d 0 R] /StructParents 0 >>"
-        % (pages, WIDTH, HEIGHT, font_obj, stream, annotation, over),
+        b"/Annots [%d 0 R %d 0 R %d 0 R %d 0 R] /StructParents 0 >>"
+        % (
+            pages,
+            WIDTH,
+            HEIGHT,
+            font_obj,
+            stream,
+            annotation,
+            over,
+            carrier_widget,
+            keep_field,
+        ),
     )
     pdf.put(pages, b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page)
 
@@ -603,10 +632,49 @@ def build_marked(path: str, font_path: str) -> None:
         % (before, after),
     )
 
+    # The form. Two fields, and the shape is chosen so that the VALUE rule is
+    # the only thing that can decide either of them:
+    #
+    #   FIELD-CARRIER  /V is the redacted line's own account number, and its one
+    #                  widget sits at the far corner of the page, nowhere near
+    #                  the region. So the annotation pass leaves the widget, and
+    #                  the field can only be taken by what it says. Its widget
+    #                  must go with it.
+    #   FIELD-KEEP     /V is somebody else's answer. The over-removal control:
+    #                  a reader who redacted one line must not get a copy with
+    #                  every other answer wiped.
+    #
+    # **Both widgets are hidden (`/F 2`).** Not decoration --- a visible widget
+    # would be drawn by PDFium's form-fill environment and move every pixel
+    # comparison this corpus already makes. It is also the more honest shape: a
+    # hidden field holding the answer is exactly the leak this carrier is about,
+    # since nothing draws it and every search finds it.
+    pdf.put(
+        carrier_field,
+        b"<< /FT /Tx /T (FIELD-CARRIER) /V (%s) /Kids [%d 0 R] >>"
+        % (escape(OUTLINE_CARRIER_TITLE), carrier_widget),
+    )
+    pdf.put(
+        carrier_widget,
+        b"<< /Type /Annot /Subtype /Widget /Parent %d 0 R "
+        b"/TU (WIDGET-UNDER-CARRIER) /Rect [%d %d %d %d] /F 2 >>"
+        % (carrier_field, WIDTH - 120, HEIGHT - 60, WIDTH - 20, HEIGHT - 30),
+    )
+    pdf.put(
+        keep_field,
+        b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (FIELD-KEEP) "
+        b"/V (SOMEBODY ELSES ANSWER) /Rect [%d %d %d %d] /F 2 >>"
+        % (WIDTH - 120, HEIGHT - 100, WIDTH - 20, HEIGHT - 70),
+    )
+    acroform = pdf.add(
+        b"<< /Fields [%d 0 R %d 0 R] /DA (/Helv 0 Tf 0 g) >>"
+        % (carrier_field, keep_field)
+    )
+
     root = pdf.add(
         b"<< /Type /Catalog /Pages %d 0 R /StructTreeRoot %d 0 R "
-        b"/Outlines %d 0 R /MarkInfo << /Marked true >> >>"
-        % (pages, struct_root, outline_root)
+        b"/Outlines %d 0 R /AcroForm %d 0 R /MarkInfo << /Marked true >> >>"
+        % (pages, struct_root, outline_root, acroform)
     )
     info = pdf.add(
         b"<< /Title (%s) /Producer (tpdf spike 0.3 fixture) >>" % escape(secret)
