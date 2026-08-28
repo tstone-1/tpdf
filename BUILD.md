@@ -4710,7 +4710,24 @@ starts at 0 and increments within the month.
     **Read the body before publishing, and if you correct it, send `tag_name` with the
     correction.** It is a literal in `release.yml`, so nothing can make it go stale except
     nobody reading it, and on 2026-08-23 it listed *stamps* under "what it is not, yet" one
-    release after they shipped. A `PATCH` carrying only `body` resets the draft's `tag_name`
+    release after they shipped.
+
+    **Half of that is mechanical since 2026-08-28, and the half that is not is named.** The
+    *"What it is not, yet"* sentence carries a `<!-- not-built: -->` marker, and
+    `src/lib/readme.test.ts` --- which already imports the registry for the README's own
+    list --- asserts that nothing it names is registered, and that every id it names is also
+    called unbuilt in the README. So the two copies of that list are provably the same claim
+    rather than merely both plausible. It was built after the block was wrong in **three of
+    four** releases: stamps in `26.8.8`, *Merge documents* in `26.8.10`, and **true
+    redaction** in `26.8.11`, which was published as the release that ships it.
+
+    What it does **not** own is the `26.8.10` direction --- a capability that shipped and is
+    simply not mentioned. A release body is prose, and requiring it to name all 84 registered
+    commands would make it the palette transcribed, so that stays with this step and a person
+    reading it. Nor is every phrase covered: *"Signature verification"* names no command,
+    because verifying a signature is a behaviour rather than something in the palette. Read
+    the feature paragraphs against what you know shipped this cycle; the marker only stops
+    the notes calling a shipped command unbuilt. A `PATCH` carrying only `body` resets the draft's `tag_name`
     to `untagged-<hash>`, and publishing in that state attaches the release to no tag ---
     while `gh release list` still shows it by name and `gh release view <tag>` cannot see a
     draft at all, so neither of the two obvious instruments reports it. The GraphQL query

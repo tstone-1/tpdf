@@ -3925,6 +3925,47 @@ MUTATIONS += [
     # has actually suffered is a bullet going stale rather than a function going
     # wrong. `src/lib/readme.test.ts` is what reads it.
     Mutation(
+        # The defect 26.8.11 published: the release notes calling a capability
+        # unbuilt one release after it shipped. This is the third time in four
+        # releases that block has described an older product, and the first time
+        # anything can go red about it.
+        "release-notes: call a shipped command unbuilt",
+        ".github/workflows/release.yml",
+        "          <!-- not-built: edit.insertPages edit.fillForm edit.editText -->",
+        "          <!-- not-built: edit.insertPages edit.fillForm file.redactCopy -->",
+        "calls nothing unbuilt that the application registers",
+    ),
+    Mutation(
+        # The half that makes this worth having rather than a second list to
+        # keep: two documents can each be free of registered ids and still
+        # disagree, and a reader who meets both then gets two answers.
+        #
+        # A **mistyped** id, which is what that drift actually looks like -- one
+        # document saying `edit.editTextBox` where the other says
+        # `edit.editText`. The first attempt at this mutation used
+        # `edit.editForeignMark` and SURVIVED, correctly: the README claims that
+        # one absent too, so the two documents still agreed. A registered id
+        # would redden the check above instead, and no *real* unregistered id can
+        # break the agreement -- the README's own gate makes every unbuilt
+        # command appear in its list. So the only shape left is one that names
+        # nothing, which is also the only shape this can fail as.
+        "release-notes: claim something the README does not",
+        ".github/workflows/release.yml",
+        "          <!-- not-built: edit.insertPages edit.fillForm edit.editText -->",
+        "          <!-- not-built: edit.insertPages edit.fillForm edit.editTextBox -->",
+        "agrees with the README about what is not built",
+    ),
+    Mutation(
+        # The extraction stops matching, which reads exactly like a release body
+        # that claims nothing wrong. A regex over a YAML file is the fragile
+        # part of this check and the refusals are what own it.
+        "release-notes: rename the heredoc the notes are built in",
+        ".github/workflows/release.yml",
+        "cat > release-notes.md <<'NOTES'",
+        "cat > notes.md <<'NOTES'",
+        "finds the release notes inside the workflow",
+    ),
+    Mutation(
         # The error the whole check exists for, and the one its Python
         # predecessor could not see: `edit.stamp.approved` is built in a loop, so
         # a regex over `appcommands.ts` finds no such literal and reports the
