@@ -253,6 +253,36 @@ struct Tally {
     /// before rather than after: a count of failures at some aspect says nothing
     /// until the same bucketing is applied to the population it came from.
     all_aspect: BTreeMap<&'static str, usize>,
+    /// The silent refusals with both axes at once: rendered height crossed with
+    /// the probe image's shape.
+    ///
+    /// **The two rows above are marginals of one population, and marginals
+    /// bound an overlap rather than measuring it.** `--regions 12` on
+    /// 2026-08-30 put 12 of the 36 silent refusals under the height floor and
+    /// 12 in an image at 8:1 or squarer, which says only that between 0 and 12
+    /// of them are the same regions --- and the two ends mean opposite things:
+    /// the low end says the two tails are separate defects, the high end says
+    /// the squarer tail *is* the scale clamp seen from the other side. No
+    /// arithmetic over the two rows settles it, and the pair cannot be
+    /// recovered once the run is over.
+    ///
+    /// **It is 0** --- the end that says two defects. The cell carrying both
+    /// properties has no population at all: no region in the squarest band ever
+    /// rendered its control below the floor, so the squarer tail's silence is
+    /// not the height rule seen from another angle. The two twelves were equal
+    /// by coincidence.
+    ///
+    /// Keyed height first, so a row is a height and the cells across it are
+    /// what shapes that height occurs in.
+    silent_px_aspect: BTreeMap<(&'static str, &'static str), usize>,
+    /// The population under the same crossing, so every cell has a denominator.
+    ///
+    /// A cell is a small number over a small number here --- at `--regions 12`
+    /// on 2026-08-30 the crossing divided 366 regions into six populated cells
+    /// of twelve --- so read which cells are *populated* before reading any one
+    /// cell's rate. An unpopulated cell is not a zero rate, and the report
+    /// leaves it out rather than printing it as one.
+    all_px_aspect: BTreeMap<(&'static str, &'static str), usize>,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -737,9 +767,13 @@ fn run_gate(
                         for verdict in verdicts {
                             let region = asked.get(at).copied().unwrap_or_default();
                             at += 1;
-                            if let Some((_, chars, aspect)) = shape {
+                            if let Some((px, chars, aspect)) = shape {
                                 *tally.all_chars.entry(char_bucket(chars)).or_default() += 1;
                                 *tally.all_aspect.entry(aspect_bucket(aspect)).or_default() += 1;
+                                *tally
+                                    .all_px_aspect
+                                    .entry((px_bucket(px), aspect_bucket(aspect)))
+                                    .or_default() += 1;
                             }
                             match verdict {
                                 Legibility::Illegible { .. } => tally.proved += 1,
@@ -797,6 +831,23 @@ fn run_gate(
                                                     .unread_shape_aspect
                                                     .entry((label, aspect_bucket(aspect)))
                                                     .or_default() += 1;
+                                                // Only the silent shape is
+                                                // crossed. The other two have
+                                                // marginals on both axes and
+                                                // their overlap is unmeasured
+                                                // too -- this is scoped to the
+                                                // one open question rather
+                                                // than being a claim about
+                                                // them.
+                                                if label == SHAPE_SILENT {
+                                                    *tally
+                                                        .silent_px_aspect
+                                                        .entry((
+                                                            px_bucket(px),
+                                                            aspect_bucket(aspect),
+                                                        ))
+                                                        .or_default() += 1;
+                                                }
                                             }
                                         }
                                     }
@@ -965,6 +1016,66 @@ fn report(t: &Tally, seconds: f32) {
                     "      {bucket:<32} {bad:>6} /{all:>6}   {:.1}%, {silent} of them silent",
                     pct(bad, all)
                 );
+            }
+            // The two rows above are marginals of one population. Crossing
+            // them is what says whether the silence under the height floor and
+            // the silence in the squarest images are one set of regions or two,
+            // which decides whether the remaining work is one repair or two ---
+            // and it costs one map at a call site that already holds both
+            // values.
+            println!("  crossing the two, the silent ones sat at (silent / all, and the rate)");
+            for px in PX_BUCKETS {
+                for aspect in ASPECT_BUCKETS {
+                    let all = t.all_px_aspect.get(&(px, aspect)).copied().unwrap_or(0);
+                    let silent = t.silent_px_aspect.get(&(px, aspect)).copied().unwrap_or(0);
+                    // An unpopulated cell is not a zero rate, it is no
+                    // measurement, and printing it as 0.0% reads as the former.
+                    if all > 0 {
+                        println!(
+                            "      {px:<18}{aspect:<26} {silent:>4} /{all:>6}   {:.1}%",
+                            pct(silent, all)
+                        );
+                    }
+                }
+            }
+            // The crossing has to reproduce both rows it was derived from. They
+            // are counted at three different call sites, so either direction
+            // going out of step is a defect in the counting rather than a
+            // finding -- and a crossing that agrees with neither marginal is a
+            // third reading, not the pair.
+            for px in PX_BUCKETS {
+                let crossed: usize = ASPECT_BUCKETS
+                    .iter()
+                    .map(|a| t.silent_px_aspect.get(&(px, *a)).copied().unwrap_or(0))
+                    .sum();
+                let marginal = t
+                    .unread_shape_px
+                    .get(&(SHAPE_SILENT, px))
+                    .copied()
+                    .unwrap_or(0);
+                if crossed != marginal {
+                    println!(
+                        "[WARN] the crossing puts {crossed} silent refusal(s) at \"{px}\" where \
+                         the height row says {marginal}"
+                    );
+                }
+            }
+            for aspect in ASPECT_BUCKETS {
+                let crossed: usize = PX_BUCKETS
+                    .iter()
+                    .map(|p| t.silent_px_aspect.get(&(*p, aspect)).copied().unwrap_or(0))
+                    .sum();
+                let marginal = t
+                    .unread_shape_aspect
+                    .get(&(SHAPE_SILENT, aspect))
+                    .copied()
+                    .unwrap_or(0);
+                if crossed != marginal {
+                    println!(
+                        "[WARN] the crossing puts {crossed} silent refusal(s) at \"{aspect}\" \
+                         where the shape row says {marginal}"
+                    );
+                }
             }
             // Every shape row above has to account for every region that had a
             // control to measure. A region with no shape is already named by

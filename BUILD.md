@@ -2364,17 +2364,37 @@ four fifths of the population.
 was written. The `bad / all` form is what makes it visible; a bare percentage would have read as a
 finding.
 
-Two `[WARN]`s guard it. The three shapes plus the no-evidence count must equal the cause's own
-total, and the cross-tabulated total must equal the height-bucket total, since both count the
-regions that had a measurable control. A non-zero *carried no evidence* is a defect in
-`ocr::adjudicate` rather than a finding about the gate: the type says that arm always records
-one.
+**A fifth axis, added 2026-08-30: the two above, crossed.** The height row and the shape row are
+marginals of one population, so equal counts on them are not evidence of one set of regions. The
+crossing prints `silent / all` per cell, and populated cells only --- an unpopulated cell is not a
+zero rate, it is no measurement, and printing it as `0.0%` reads as the former. It answered the
+question the marginals could not: at `--regions 12` both rows report a **12**, and the cell
+carrying both properties has **no population at all**, so the overlap is 0 and the two tails are
+separate defects. `docs/PLAN.md` §6 has the table.
+
+Four `[WARN]`s guard all of this. The three shapes plus the no-evidence count must equal the
+cause's own total; the cross-tabulated total must equal the height-bucket total, since both count
+the regions that had a measurable control; and the crossing must reproduce **each** of the two
+rows it was derived from, checked per axis rather than over the total. The per-axis split is what
+makes a failure readable --- keying the crossing on a constant aspect fires the shape control and
+leaves the height control silent, and a constant height does the mirror, so the `[WARN]` names
+which axis drifted. A single check over the total goes red for both and names neither. A non-zero
+*carried no evidence* is a defect in `ocr::adjudicate` rather than a finding about the gate: the
+type says that arm always records one.
 
 ⚠ **`--regions N` is not only the sample size; it changes what the gate can do, so every
 percentage from this harness has to be quoted with its density.** The regions set `size_pt`
 --- the height of the smallest box any of them covers --- and they consume the pool of
 surviving words a control may come from, so sampling more of them makes `control_from_page`
-harder to satisfy. Measured over the same 40 documents and the same three pages each:
+harder to satisfy.
+
+⚠ **That also moves which pages reach the shape axis at all, so aspect-band populations are
+comparable within a run and not across runs.** A page whose control cannot be chosen contributes
+no regions to any denominator here. Between `--regions 12` and `--regions 40`, *no surviving word
+is long enough* goes from 60 to 594 and the squarest aspect band empties completely --- which is
+the opposite direction from more regions producing a taller image, and is not the capacity rule,
+since *probe image will not fit* is 0 in both. Measured over the same 40 documents and the same
+three pages each:
 
 | `--regions` | gate regions | shown unreadable | not verified | control not read back | control-selection causes |
 |---|---|---|---|---|---|

@@ -3452,6 +3452,65 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
+#### The two twelves are different regions --- measured 2026-08-30
+
+The section below left one thing explicitly unmeasured, and named it as the reason: 12 of the 36
+silent refusals had rendered their control under 8 px, and 12 sat in a probe image at 8:1 or
+squarer, and two marginals of one population bound that overlap between 0 and 12 without
+measuring it. The two ends mean opposite things --- at 12 the squarer tail *is* the scale clamp
+seen from the other side, at 0 they are separate defects. Crossing the axes costs one map at a
+call site that already holds both values, and `redact-reach-probe` now takes it. `--regions 12`,
+40 documents:
+
+| the control rendered | the probe image was | silent / all | rate |
+|---|---|---|---|
+| under 8 px | 8:1 to 16:1 | 0 / 12 | 0.0% |
+| under 8 px | wider than 16:1 | **12 / 12** | **100.0%** |
+| 12 to 16 px | 8:1 to 16:1 | 0 / 72 | 0.0% |
+| 16 px and over | up to 8:1 | **12 / 36** | 33.3% |
+| 16 px and over | 8:1 to 16:1 | 0 / 210 | 0.0% |
+| 16 px and over | wider than 16:1 | **12 / 24** | 50.0% |
+
+**The overlap is 0**, the end that says two defects. The cell that would have made them the same
+twelve --- *under 8 px* crossed with *up to 8:1* --- is not a zero rate, it has **no population at
+all**: no region in the squarest bucket ever rendered its control below the floor. So the squarer
+tail's silence is not the height rule seen from another angle. Every one of its 12 silent
+refusals was shown a control at or above 16 px, which is the height `scale_for` exists to
+guarantee.
+
+**Height alone does not produce silence; it aggravates an extreme shape.** The 12 sub-floor
+regions inside the 8:1--16:1 band are silent 0% of the time. Sub-floor is silent only in company
+with an extreme shape, where it takes the rate from 50% to 100%. That inverts the reading the
+two marginals invited: the shape is the discriminator and the height is a multiplier on it.
+
+**Each marginal got its own control, and both were shown able to fire.** The crossing must
+reproduce the two rows it was derived from, which are counted at three different call sites.
+Keying the crossing on a constant aspect reported 36 silent refusals in the squarest bucket where
+the shape row says 12, and 0 in the widest where it says 24, while the height control stayed
+silent; keying it on a constant height did the mirror. One axis broken, one control --- which a
+single `[WARN]` over the cross-tabulated total could not have said. `docs/TRAPS.md` carries the
+entry.
+
+**A denser sample moves the population, and not by shape --- so only within-run readings
+compare.** At `--regions 40` the squarest bucket holds no regions at all and the widest holds 120,
+which is the opposite direction from more regions producing a taller image. It is not the
+capacity rule: *probe image will not fit* is 0 in both runs. It is the page set --- covering more
+words leaves fewer survivors to choose a control from, so *no surviving word is long enough* goes
+from 60 to 594 and the pages that still have a control are a smaller, different set. What holds
+across both runs is what matters: the 8:1--16:1 band produced **zero** silent refusals over 294
+regions and again over 459, and *under 8 px* with *wider than 16:1* was 100% silent in both
+(12/12 and 40/40).
+
+**Ranked next, and now aimed at one tail rather than two**: pad the probe image toward the
+8:1--16:1 band from the **wide** side only --- blank rows are what `stack` already writes for its
+margins and gap, so the change is one term in `total`. The wide tail is where the mechanism is
+(80 of 80 silent refusals at `--regions 40`, and it is the only tail that survives both
+densities), and it is the direction the fixture sweep never took, because padding a 7:1 fixture
+makes it *squarer*. It stays a candidate rather than an obvious win for the reason that sweep
+gave: on `outline-simple` padding lost the token while the engine went on returning a span, so
+the experiment has to read the token back. Two controls are ready-made --- the 294 middle-band
+regions must not move, and the 12 sub-floor middle-band regions must stay silent-free.
+
 #### The silence lives at the extremes of the probe image's shape --- measured 2026-08-30
 
 The step below was ranked and taken the same day. It did not go where it expected to, and
@@ -3509,11 +3568,13 @@ its own numerator. That is the trap this file's previous section is about, met a
 increment later, by the person who had just written it down. `docs/TRAPS.md` carries the second
 half of that entry.
 
-**Ranked next, and it is a candidate rather than a question**: bound the probe image's aspect by
+~~**Ranked next, and it is a candidate rather than a question**: bound the probe image's aspect by
 padding it toward the middle band, rather than by rendering less of the page. It is one change in
 `ocr_gate::stack` with an obvious control --- the 294 regions between 8:1 and 16:1 must not move
 --- and it is a candidate rather than an obvious win because `outline-simple` shows padding losing
-the token, so the experiment has to read the token back and not merely count spans.
+the token, so the experiment has to read the token back and not merely count spans.~~
+**Superseded the same day --- see the section above.** It aimed at both tails; the crossing says
+the lower one is a separate population, so the padding is one-sided.
 
 ~~**Ranked next: reproduce the silence on a fixture.** Everything above is measured on a corpus
 whose pixels deliberately never leave the process, so nothing here can look at the image the
