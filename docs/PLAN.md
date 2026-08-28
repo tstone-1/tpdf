@@ -3230,6 +3230,11 @@ regions returning *not verified* for reasons nobody has bucketed is the same sha
 39.1% this section started with.~~ **Answered 2026-08-28 by the section below: 60, 36 and 10.
 And the third of the gate's regions was the sampling density, not the gate.**
 
+Every figure in this paragraph is the 2026-08-27 reading and is left as it was measured. The
+same command gives 56.7% and 64 on 2026-08-29, because the scale fix two subsections down moved
+the verdict columns; the masking conclusion it is here to support --- every surviving read inside
+the region's own columns --- holds at both.
+
 #### Where a *not verified* region goes --- attributed 2026-08-28
 
 The 106 are 60 *no surviving word is long enough*, 36 *the regions cover every word* and 10
@@ -3264,15 +3269,21 @@ rule harder to satisfy. Four densities, same 40 documents, same three pages each
 
 | regions per page | gate regions | **shown unreadable** | not verified | control not read back | the three control-selection causes |
 |---|---|---|---|---|---|
-| 1 | 43 | **65.1%** | 30.2% | 12 | 1 |
-| 4 | 156 | **64.1%** | 29.5% | 38 | 8 |
-| 12 | 448 | **55.8%** | 38.8% | 68 | 106 |
-| 40 | 1,389 | **26.4%** | 67.9% | 93 | 850 |
+| 1 | 43 | **69.8%** | 25.6% | 10 | 1 |
+| 4 | 156 | **67.3%** | 26.3% | 33 | 8 |
+| 12 | 448 | **56.7%** | 38.0% | 64 | 106 |
+| 40 | 1,389 | **27.1%** | 67.2% | 84 | 850 |
+
+Re-measured 2026-08-29 after the scale fix in the subsection below; the third column read
+65.1 / 64.1 / 55.8 / 26.4 before it. The left of the table is unchanged to the unit, which is
+the point of quoting it: no render scale can move a region count or a control-selection cause,
+so those columns are the control over the harness while the verdict columns are the
+measurement.
 
 **A reader marks a name or a line, not forty words on a page.** At a reader-like density the
 gate certifies about two in three, and the control-selection failures that dominate the dense
-run --- 850 of 943 --- are 8 of 46. What is left is *the control was not read back*: 38 of 46,
-82.6%, which is the priced cost of masking the region strip and is larger than the three
+run --- 850 of 934 --- are 8 of 41. What is left is *the control was not read back*: 33 of 41,
+80.5%, which is the priced cost of masking the region strip and is larger than the three
 regions this section predicted when the mask shipped.
 
 **This section already contained the reason and did not draw it.** *The region feeds two
@@ -3283,15 +3294,60 @@ ratio travels between populations and a count does not*, and this is the case wh
 does not travel either, because the population is an input to the mechanism rather than a
 sample of its subjects. Every gate figure in this file now carries its density.
 
-**What this does not say.** The 5.4--6.4% *still reads as text* is stable across all four
-densities, so the masked gate's guarantee is unaffected. And none of this makes the dense run
+**What this does not say.** The 4.7--6.4% *still reads as text* is stable across all four
+densities, and did not move when the scale did, so the masked gate's guarantee is unaffected. And none of this makes the dense run
 wrong: 40 regions is a legitimate stress of the control rule, and what it establishes is that
 the rule degrades sharply under load rather than that a reader meets it.
 
-**Ranked next on this subsystem**: *control not read back* at 82.6% of the reader-density
-refusals. It is the engine failing to read a control it was shown, on a mostly-blank probe
-image, and nothing here has yet asked whether the fault is the scale, the masking, or the
-choice of token.
+#### The control was rendered under the floor the gate sets for it --- answered 2026-08-29
+
+The question above was ranked next and asked which of three things the unread control was: the
+scale, the masking, or the choice of token. **It was the scale, and the mechanism is that the
+rule was enforced against the wrong one of two heights.**
+
+`ocr_gate::MIN_CONTROL_PX` is 16 px, and `scale_for` was given `ControlChoice::size_pt` --- the
+height of the smallest box any region covered. But `control_from_page` guarantees the control
+*word* is no taller than that box, so `size_pt` is an upper bound on the height the engine is
+actually shown. A surviving word with neither ascender nor descender is roughly half its line's
+box, and lands near 8 px while the rule believes it produced 16.
+
+`ocr_gate::geometry_for` now chooses the scale from the control's own height. It is a strict
+improvement rather than a trade, because `control_pt <= size_pt` makes the new scale no smaller
+than the old one in any case, and the safety rule --- a control may not be set *larger* than what
+was removed --- is enforced in `control_from_page` and is untouched. Same 40 documents, same
+`--pages 3 --regions 4`, one variable:
+
+| the control rendered at | before | after |
+|---|---|---|
+| under 8 px | 10 | 10 |
+| 8 to 12 px | 4 | 0 |
+| 12 to 16 px | 20 | 0 |
+| 16 px and over | 4 | 23 |
+| **total unread** | **38** | **33** |
+| **shown unreadable** | **64.10%** | **67.31%** |
+
+**Necessary, and not sufficient.** Five regions were rescued; 23 controls now clear the floor and
+are still not read back. So the scale was one defect and there is another behind it.
+
+**The other two candidates are now measured rather than guessed, and both predictions were
+wrong.** Masking is refused by reading: `mask_columns` is applied to the region strip, and the
+control strip goes into `stack` untouched, so it cannot clip the control. The token hypothesis
+was wrong in the *opposite* direction --- the prediction was that four-character tokens fail
+`adjudicate`'s containment test by being too short to match by accident, and of the 33 still
+unread, **none** drew four characters while **29 drew eight or more**. `control_from_page` picks
+the *longest* qualifying word, and `adjudicate` requires **one** recognised span to hold the whole
+token; a long run is exactly what an engine returns split in two. `docs/TRAPS.md` already carries
+*a control token spanning a whole line is read back only when the engine returns the line in one
+piece*, which was written about a token that was a line and applies to a token that is a long
+word.
+
+The ten still under 8 px are a separate and smaller thing: at the `MAX_SCALE` ceiling of 8 that
+means a control box under 1 pt tall, which is a degenerate box rather than small print.
+
+**Ranked next on this subsystem**: the token the control chooser picks. It is 29 of 33 of what
+is left, the mechanism is named above, and the cheap experiment is to prefer a *middle-length*
+qualifying word over the longest one and re-run the same corpus --- a change to
+`control_from_page`'s tie-break, with the existing table as its A/B.
 
 **And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
 one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose

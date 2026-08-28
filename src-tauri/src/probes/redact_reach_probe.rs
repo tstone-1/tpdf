@@ -143,6 +143,29 @@ struct Tally {
     /// different layer. The compiler caught the collision; a reader would not
     /// have.
     gate_refused: usize,
+    /// Every region whose cause was [`NotVerifiedCause::ControlUnread`], bucketed
+    /// by how tall the control it was shown landed in the probe image.
+    ///
+    /// **The bound this is measured against is the gate's own.**
+    /// [`ocr_gate::MIN_CONTROL_PX`] is documented as *"the shortest line the
+    /// vendored Vision build read reliably"*, and
+    /// [`ocr_gate::geometry_for`] chooses the scale from
+    /// [`tpdf_lib::ocr::ControlChoice::size_pt`] --- the smallest box a region
+    /// covered --- not from the control word. A surviving word with neither
+    /// ascender nor descender is shorter than that box, so it can land under the
+    /// floor while the scale rule believes it cleared it. Whether that accounts
+    /// for the bucket is the question this measures rather than argues.
+    unread_px: BTreeMap<&'static str, usize>,
+    /// The same regions again, bucketed by how many characters the control token
+    /// draws.
+    ///
+    /// The second candidate, and it needs its own axis because the first one did
+    /// not account for the bucket. [`tpdf_lib::ocr::MIN_CONTROL_CHARS`] is 4, and
+    /// [`tpdf_lib::ocr::adjudicate`] matches by *containment* --- one recognised
+    /// span has to hold the whole token. A four-character token is the shortest
+    /// thing that rule accepts, and whether the unread ones cluster there is a
+    /// measurement rather than an argument.
+    unread_chars: BTreeMap<&'static str, usize>,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -457,6 +480,55 @@ fn measure(
     let _: Result<(), String> = wait(|reply| service.close(opened.id, reply));
 }
 
+/// The buckets [`Tally::unread_px`] is reported in, in the order they print.
+///
+/// A fixed list rather than the map's own key order, so a bucket that no region
+/// fell into prints a zero. An omitted row and a zero row read identically to
+/// somebody scanning the output, and only one of them is honest --- the same
+/// reason [`NotVerifiedCause::ALL`] exists.
+const PX_BUCKETS: [&str; 4] = ["under 8 px", "8 to 12 px", "12 to 16 px", "16 px and over"];
+
+/// Which bucket a control of `px` pixels falls in.
+fn px_bucket(px: f32) -> &'static str {
+    if px < 8.0 {
+        PX_BUCKETS[0]
+    } else if px < 12.0 {
+        PX_BUCKETS[1]
+    } else if px < ocr_gate::MIN_CONTROL_PX {
+        PX_BUCKETS[2]
+    } else {
+        PX_BUCKETS[3]
+    }
+}
+
+/// How tall the control the gate chose for this page landed, and how long it is.
+///
+/// Calls the gate's own two functions rather than repeating what they do, which
+/// is why [`ocr_gate::geometry_for`] is public at all. `None` means the gate
+/// could not have got this far either --- a page with no usable control never
+/// reaches a per-region verdict, so a region asking this question always has an
+/// answer.
+fn control_shape(page: &GatePage) -> Option<(f32, usize)> {
+    let survivors = ocr_gate::surviving(&page.words, &page.regions, &page.taking);
+    let choice = tpdf_lib::ocr::control_from_page(&survivors, &page.regions).ok()?;
+    let geometry = ocr_gate::geometry_for(page, &choice).ok()?;
+    Some((geometry.control_px, choice.token.chars().count()))
+}
+
+/// The buckets [`Tally::unread_chars`] is reported in, in the order they print.
+const CHAR_BUCKETS: [&str; 3] = ["4 characters", "5 to 7 characters", "8 or more"];
+
+/// Which bucket a token of `chars` characters falls in.
+fn char_bucket(chars: usize) -> &'static str {
+    if chars <= tpdf_lib::ocr::MIN_CONTROL_CHARS {
+        CHAR_BUCKETS[0]
+    } else if chars < 8 {
+        CHAR_BUCKETS[1]
+    } else {
+        CHAR_BUCKETS[2]
+    }
+}
+
 /// Writes the redacted copy and reads its provable regions back.
 fn run_gate(
     service: &RenderService,
@@ -530,6 +602,22 @@ fn run_gate(
                                 Legibility::NotVerified { cause, .. } => {
                                     tally.unanswered += 1;
                                     *tally.causes.entry(cause.label()).or_default() += 1;
+                                    // Only for this one cause: the others are
+                                    // refusals to choose a control at all, so
+                                    // there is no rendered height to bucket.
+                                    if *cause == NotVerifiedCause::ControlUnread {
+                                        if let Some((px, chars)) = pages
+                                            .iter()
+                                            .find(|p| p.page == page.page)
+                                            .and_then(control_shape)
+                                        {
+                                            *tally.unread_px.entry(px_bucket(px)).or_default() += 1;
+                                            *tally
+                                                .unread_chars
+                                                .entry(char_bucket(chars))
+                                                .or_default() += 1;
+                                        }
+                                    }
                                 }
                                 Legibility::Legible { found } => {
                                     tally.caught += 1;
@@ -616,6 +704,41 @@ fn report(t: &Tally, seconds: f32) {
             );
         }
         println!("      {:<32} {:>6}", "the run was refused", t.gate_refused);
+        // How tall the control landed for the one cause where the gate got as
+        // far as showing the engine something. The bound is the gate's own, so
+        // a bucket below it is the scale rule missing what it aims at.
+        let unread = t
+            .causes
+            .get(NotVerifiedCause::ControlUnread.label())
+            .copied()
+            .unwrap_or(0);
+        if unread > 0 {
+            println!(
+                "  of the {unread} control-not-read-back, the control rendered at (floor is \
+                 {:.0} px)",
+                ocr_gate::MIN_CONTROL_PX
+            );
+            for bucket in PX_BUCKETS {
+                println!(
+                    "      {bucket:<32} {:>6}",
+                    t.unread_px.get(bucket).copied().unwrap_or(0)
+                );
+            }
+            println!("  and the control token drew");
+            for bucket in CHAR_BUCKETS {
+                println!(
+                    "      {bucket:<32} {:>6}",
+                    t.unread_chars.get(bucket).copied().unwrap_or(0)
+                );
+            }
+            let bucketed: usize = t.unread_px.values().sum();
+            if bucketed != unread {
+                println!(
+                    "[WARN] {bucketed} bucketed of {unread} --- {} had no control to measure",
+                    unread - bucketed
+                );
+            }
+        }
         // The buckets have to account for the unanswered exactly. A region can
         // reach `unanswered` by a route that carries no cause -- which is what
         // `Whole(_)` and `Refused(_)` were before this -- and the shortfall is

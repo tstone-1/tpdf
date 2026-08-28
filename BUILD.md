@@ -2306,6 +2306,15 @@ could attribute one cause of twelve. The `[WARN]` beneath them is the check --- 
 run-refusals must equal the unanswered total, so a region that reached it by a route carrying
 no cause is subtracted and named rather than absorbed.
 
+**Two extra axes print under *control not read back*, and only under that one.** It is the sole
+cause where the gate got as far as showing the engine something, so it is the only one with a
+rendered control to describe. The first bucket is how tall that control landed against
+`ocr_gate::MIN_CONTROL_PX`, which is the bound the scale rule exists to clear --- a row below the
+floor is the rule missing what it aims at, and on 2026-08-29 that was 34 of 38. The second is how
+many characters the token drew, because `ocr::adjudicate` matches by containment and one
+recognised span has to hold the whole token. Both print every bucket including the empty ones,
+and a `[WARN]` fires if they do not sum to the cause's own count.
+
 ⚠ **`--regions N` is not only the sample size; it changes what the gate can do, so every
 percentage from this harness has to be quoted with its density.** The regions set `size_pt`
 --- the height of the smallest box any of them covers --- and they consume the pool of
@@ -2314,16 +2323,26 @@ harder to satisfy. Measured over the same 40 documents and the same three pages 
 
 | `--regions` | gate regions | shown unreadable | not verified | control not read back | control-selection causes |
 |---|---|---|---|---|---|
-| 1 | 43 | 65.1% | 30.2% | 12 | 1 |
-| 4 | 156 | 64.1% | 29.5% | 38 | 8 |
-| 12 | 448 | 55.8% | 38.8% | 68 | 106 |
-| 40 | 1,389 | 26.4% | 67.9% | 93 | 850 |
+| 1 | 43 | 69.8% | 25.6% | 10 | 1 |
+| 4 | 156 | 67.3% | 26.3% | 33 | 8 |
+| 12 | 448 | 56.7% | 38.0% | 64 | 106 |
+| 40 | 1,389 | 27.1% | 67.2% | 84 | 850 |
+
+Measured 2026-08-29, after `geometry_for` began choosing the render scale from the control
+word's own height rather than from the smallest box a region covered. The four rows before that
+change read 65.1 / 64.1 / 55.8 / 26.4 in the third column.
 
 A reader marks a name or a line. **Use `--regions 4` for a figure about the gate and
 `--regions 40` for a stress of the control rule**, and say which in the sentence that quotes
-it. The `--regions 12` row reproduces `docs/PLAN.md` §6's documented run to the digit, which
-is what makes it the control for a change to this harness. The *still reads as text* rate is
-5.4--6.4% at every density and is the one figure here that does travel.
+it. The *still reads as text* rate is 4.7--6.4% at every density and is the one figure here
+that does travel.
+
+⚠ **The `--regions 12` row used to be quoted as reproducing `docs/PLAN.md` §6 to the digit, and
+that is the wrong half of the row to make a control out of.** A change to the *gate* is supposed
+to move the verdict columns, and this one did. What reproduces exactly across a gate change is
+the **left** of the table --- the region counts (43 / 156 / 448 / 1,389) and the
+control-selection causes (1 / 8 / 106 / 850), neither of which any scale can touch. Those are
+the control over the harness; the verdict columns are the measurement.
 
 ### `redact-gate-probe`: does the redaction gate certify a clean file and refuse a dirty one
 
@@ -4009,6 +4028,18 @@ starts at 0 and increments within the month.
    "[x]86_64-pc-windows-msvc"` showed 2 s of CPU across sixteen minutes. Add `--verbose`
    while diagnosing --- output is captured and shown only on failure otherwise, which is
    exactly wrong for a run that never ends. See the trap of that name.
+
+   ⚠ **That minute is the warm figure, and a change to a widely-included module makes the
+   run minutes long rather than seconds --- so the rule above will tell you to kill a healthy
+   run.** Measured 2026-08-29 after editing `ocr_gate.rs`: **~4 minutes** cold against **1 s**
+   warm on the very next invocation, both green. Two things follow. Judge by CPU, never by
+   elapsed, exactly as the paragraph above says --- but **use the `grep` form it prints and
+   not `ps -p <pid>` on the process you happen to have**, because cargo and `cargo-clippy` are
+   both near zero on a perfectly healthy run and all the work is in the `clippy-driver`
+   children. Reading the parent is what nearly cost a good run here. And expect the cold cost
+   whenever the edit was to a module the whole crate includes: the Windows target has its own
+   `target/x86_64-pc-windows-msvc` tree, so it recompiles independently of everything the
+   gates just did.
 
    It is `cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings` with
    the environment that command needs, and it does not link, so no MSVC linker is involved.

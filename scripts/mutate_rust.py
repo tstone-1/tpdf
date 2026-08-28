@@ -6038,6 +6038,31 @@ MUTATIONS += [
         "the_error_path_says_what_adjudicate_would",
     ),
     Mutation(
+        # Choose the render scale from the smallest box a region covered rather
+        # than from the control word the engine is actually shown. This is the
+        # code as it stood until 2026-08-29, and it is invisible from every
+        # verdict: the gate still runs, still refuses, and still gives its
+        # reason. What changes is that 34 of 38 unverifiable regions in a
+        # 40-document corpus were shown a control below `MIN_CONTROL_PX` -- the
+        # floor this very call exists to clear.
+        "gate: scale the probe image from the covered box, not the control",
+        "src/ocr_gate.rs",
+        "    let scale = scale_for(\n        control_pt,",
+        "    let scale = scale_for(\n        choice.size_pt,",
+        "the_scale_clears_the_floor_for_the_control_and_not_for_the_box",
+    ),
+    Mutation(
+        # Raise the scale by dropping the floor's clamp instead of by measuring
+        # the right height. The test above passes either way; only the control
+        # beside it, which requires an 8 pt control to stay at exactly 2x, can
+        # tell a fix from a blanket magnification.
+        "gate: reach the floor by raising every scale rather than the right one",
+        "src/ocr_gate.rs",
+        "    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE);",
+        "    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE) * 2.0;",
+        "a_control_no_smaller_than_its_box_is_scaled_the_same_as_before",
+    ),
+    Mutation(
         # Report every way of failing to choose a control as the same cause. The
         # sentence a reader sees is unchanged, so nothing in the application
         # differs -- and the measurement that decides the next increment loses

@@ -5167,6 +5167,12 @@ and the headline rate moves with the sample size rather than with anything about
 | 12 | 448 | 55.8% | 38.8% | 68 | 106 |
 | 40 | 1,389 | 26.4% | 67.9% | 93 | 850 |
 
+Measured 2026-08-28. The third and fourth columns read 69.8 / 67.3 / 56.7 / 27.1 and
+25.6 / 26.3 / 38.0 / 67.2 after the scale fix of 2026-08-29, and the numbers are left here as
+they were taken because the trap is about the *shape* of the table, which is unchanged: the
+left two columns and the right one are properties of the sampling and did not move at all,
+while every verdict column did.
+
 Same 40 documents, same three pages each, one variable. The two control-selection causes that
 dominate the dense run --- 798 of 943 --- are 8 of 46 at a reader-like density, and
 certification goes from one region in four to nearly two in three.
@@ -5192,6 +5198,44 @@ is not something reading the code would have told you.
 `--regions 12` returns 448 regions, 5.36% still reads, 55.80% shown unreadable, 24 surviving
 reads, 174 unanswered and 68 of them the control --- every figure §6 recorded. That is what
 says the attribution work changed no verdict, which no new measurement could have said.
+
+### A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault
+
+`ocr_gate::MIN_CONTROL_PX` is 16, documented as *"the shortest line the vendored Vision build
+read reliably"*, and `scale_for`'s own doc comment says the scale *"has to be chosen from the
+control rather than from the page"*. It was chosen from `ControlChoice::size_pt` --- the height
+of the smallest box any region covered. `control_from_page` guarantees the control word is no
+*taller* than that box, so `size_pt` is an **upper bound** on the height the engine is shown,
+and substituting it means the rule clears the floor for a quantity nobody renders. A surviving
+word with neither ascender nor descender is roughly half its line's box, so the control lands at
+about 8 px where the rule believes it produced 16.
+
+Nothing about this is visible from a verdict. The gate runs, refuses, and gives its reason ---
+*"the control token was not read back ... the engine is not able to read text of that size
+here"* --- which is a true sentence that points at the engine. Measured 2026-08-29 over 40 real
+documents at reader density: of the 38 regions refused for an unread control, **34 rendered the
+control below the gate's own floor**. Choosing the scale from `control_pt` instead moved the two
+middle buckets to zero, took `>= 16 px` from 4 to 23, and certified 5 more regions --- 64.10% to
+67.31%.
+
+**The shape to look for is two names for what a reader thinks is one height**, where one is
+provably `<=` the other and the safety rule is what makes it so. `size_pt` earns its name: it is
+the size a control may not be *easier* than, and `control_from_page` enforces it. Reusing it as
+the size the engine reads is a different question answered with the same variable, and because
+the bound is an upper one the error only ever runs the safe-looking way --- too small a render,
+never too large. A test on the scale alone cannot see it, because the scale is correct for the
+number it was given.
+
+**Two predictions about the same bucket were wrong, and the measurement is why.** The masking
+hypothesis --- that `mask_columns` clips the control --- is refused by reading: masking is
+applied to the region strip and the control strip is passed to `stack` untouched. The token
+hypothesis was wrong in the *opposite* direction from the one proposed: the prediction was that
+four-character tokens fail `adjudicate`'s containment test by being too short to match, and of
+the 33 still unread after the scale fix, **none** drew four characters and **29 drew eight or
+more**. `control_from_page` picks the *longest* qualifying word, and a long run is what an engine
+is most likely to return split across two spans --- which is the containment test failing for
+being too long. That is the ranked question after this one, and it is now a measurement rather
+than a guess.
 
 ### An OCR engine's bounding box is a detection, not a measurement
 
