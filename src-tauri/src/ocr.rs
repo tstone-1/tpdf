@@ -800,6 +800,28 @@ pub enum NotVerifiedCause {
     /// The probe image would not fit within the worker's pixel capacity at any
     /// scale that keeps the control legible. Page-wide.
     ScaleRefused,
+    /// No scale the gate may pick renders the chosen control at
+    /// [`crate::ocr_gate::MIN_CONTROL_PX`], because the control is smaller than
+    /// `MIN_CONTROL_PX / MAX_SCALE`. Page-wide.
+    ///
+    /// **Split from [`Self::ScaleRefused`] on 2026-08-30 because they are
+    /// different failures with different remedies**, and until then this one
+    /// did not report as a refusal at all: the image renders fine, the control
+    /// is simply too small to be read in it, and every such region came back
+    /// `ControlUnread` --- *the engine did not read the control back* --- which
+    /// is true and points at the engine. It is not the engine. Measured over 40
+    /// documents at two sampling densities, **every region whose control was
+    /// under 2 pt went unread: 24 of 24 and 40 of 40**, so refusing here costs
+    /// no region that was ever judged.
+    ///
+    /// Raising `MAX_SCALE` does not serve them. The scale they ask for is up to
+    /// **31.1x** against a ceiling of 8, and at that scale the page-wide probe
+    /// image exceeds the worker's 16 MB capacity: 0 of 24 and 0 of 40 would fit.
+    /// Rendering the control separately at a generous scale would fit, and is
+    /// unsound --- a control read in its own kindly rendered image says nothing
+    /// about whether the same text would have been read in the region strip,
+    /// which is the entire job of a control.
+    ControlTooSmall,
     /// The control strip would not render. Page-wide.
     ControlStrip,
     /// The region's own strip would not render.
@@ -842,6 +864,7 @@ impl NotVerifiedCause {
             Self::RegionStrip => "region strip would not render",
             Self::Mask => "region is not on the page",
             Self::Stack => "strips would not stack",
+            Self::ControlTooSmall => "no scale renders the control legibly",
             Self::EngineError => "the engine did not answer",
             Self::ControlUnread => "control not read back",
         }
@@ -852,13 +875,14 @@ impl NotVerifiedCause {
     /// A cause that never fired is the interesting reading and an absent row is
     /// not: `docs/TRAPS.md` records an empty answer from a whole-document scan
     /// being unable to say whether it looked.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::ControlNoSize,
         Self::ControlNoSurvivor,
         Self::ControlAllLarger,
         Self::ControlTooShort,
         Self::ControlEmptyToken,
         Self::ScaleRefused,
+        Self::ControlTooSmall,
         Self::ControlStrip,
         Self::RegionStrip,
         Self::Mask,

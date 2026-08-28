@@ -316,6 +316,14 @@ struct Tally {
     /// the image was halved to fit the buffer. They are not exclusive, so
     /// *both* is its own row rather than an arm that swallows one of them.
     unread_clamp: BTreeMap<&'static str, usize>,
+    /// Whether a higher scale ceiling would reach each unread control, and what
+    /// scale it would take.
+    ///
+    /// Not a proposal --- the arithmetic that decides whether the proposal is
+    /// worth writing. `worst_reach` is the largest scale any control asked for,
+    /// which is what a new ceiling would have to be.
+    unread_reach: BTreeMap<&'static str, usize>,
+    worst_reach: f32,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -681,6 +689,7 @@ fn control_shape(page: &GatePage) -> Option<Shape> {
         scale: geometry.scale,
         chars: choice.token.chars().count(),
         aspect: if h > 0.0 { w / h } else { 0.0 },
+        image_pt: (w, h),
     })
 }
 
@@ -718,6 +727,9 @@ struct Shape {
     chars: usize,
     /// The probe image's width against its height. Scale-invariant.
     aspect: f32,
+    /// The probe image's shape in points, kept so a measurement can ask what a
+    /// scale the gate did *not* choose would have cost.
+    image_pt: (f32, f32),
 }
 
 /// The buckets the control's height **in points** is reported in.
@@ -782,6 +794,43 @@ fn clamp_of(pt: f32, px: f32, scale: f32) -> &'static str {
                 CLAMPS[3]
             }
         }
+    }
+}
+
+/// What a higher [`ocr_gate::MAX_SCALE`] would do for a control the current
+/// ceiling cannot bring to the floor.
+///
+/// The one bucket every reading has agreed on is the control under
+/// `MIN_CONTROL_PX / MAX_SCALE`: unread 24 of 24 and 40 of 40, at every shape,
+/// before and after the padding that was built and reverted. Raising the ceiling
+/// is the obvious remedy and it has an obvious way of failing --- the scale such
+/// a control needs may cost more than `capacity`, in which case `scale_for`'s
+/// halving loop takes it straight back down and the refusal returns with a
+/// different cause. That is arithmetic, and this is it.
+const REACH: [&str; 3] = [
+    "the ceiling already serves it",
+    "a higher ceiling would fit",
+    "a higher ceiling would not fit",
+];
+
+/// Which of those this control is, and the scale it would have needed.
+fn reach_of(shape: &Shape) -> (&'static str, f32) {
+    let wanted = ocr_gate::scale_wanted(shape.pt);
+    // A control of zero or NaN points asks for a scale nobody can order, and
+    // `bytes_at` would answer 0 bytes for it -- which reads as "would fit", the
+    // one direction that claims the remedy works. Refuse to say so.
+    if !wanted.is_finite() {
+        return (REACH[2], wanted);
+    }
+    if wanted <= ocr_gate::MAX_SCALE {
+        return (REACH[0], wanted);
+    }
+    let (w, h) = shape.image_pt;
+    let capacity = tpdf_lib::ocr_worker::PIXELS_CAPACITY.min(tpdf_lib::worker::TILE_CAPACITY);
+    if ocr_gate::bytes_at(w, h, wanted) <= capacity {
+        (REACH[1], wanted)
+    } else {
+        (REACH[2], wanted)
     }
 }
 
@@ -977,6 +1026,7 @@ fn run_gate(
                                             scale,
                                             chars,
                                             aspect,
+                                            ..
                                         }) = shape
                                         {
                                             *tally.unread_px.entry(px_bucket(px)).or_default() += 1;
@@ -985,6 +1035,14 @@ fn run_gate(
                                                 .unread_clamp
                                                 .entry(clamp_of(pt, px, scale))
                                                 .or_default() += 1;
+                                            if let Some(sh) = shape {
+                                                let (label, wanted) = reach_of(&sh);
+                                                *tally.unread_reach.entry(label).or_default() += 1;
+                                                if wanted.is_finite() && wanted > tally.worst_reach
+                                                {
+                                                    tally.worst_reach = wanted;
+                                                }
+                                            }
                                             *tally
                                                 .unread_chars
                                                 .entry(char_bucket(chars))
@@ -1300,6 +1358,29 @@ fn report(t: &Tally, seconds: f32) {
                 println!(
                     "      {bucket:<36} {:>6}",
                     t.unread_clamp.get(bucket).copied().unwrap_or(0)
+                );
+            }
+            // Would a higher ceiling serve the one bucket every reading agrees
+            // on? Every row prints, including the empty ones.
+            println!("  and raising the scale ceiling would mean");
+            for bucket in REACH {
+                println!(
+                    "      {bucket:<36} {:>6}",
+                    t.unread_reach.get(bucket).copied().unwrap_or(0)
+                );
+            }
+            println!(
+                "      the largest scale any of them asked for: {:.1} (ceiling is {:.1})",
+                t.worst_reach,
+                ocr_gate::MAX_SCALE
+            );
+            // The reach rows partition the same regions the clamp rows do.
+            let reached: usize = t.unread_reach.values().sum();
+            let clamped_total: usize = t.unread_clamp.values().sum();
+            if reached != clamped_total {
+                println!(
+                    "[WARN] {reached} control(s) asked about the ceiling of {clamped_total} \
+                     attributed to a clamp"
                 );
             }
             // The same per-axis controls the height crossing gets, for the same

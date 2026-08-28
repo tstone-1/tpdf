@@ -2426,6 +2426,23 @@ count at 36 and took *shown unreadable* from 276 to 264. The change was reverted
 §6 and the trap entry have why. Read the aspect rows as a property of the population, and do not
 rank work off them again.
 
+**An eighth axis, added 2026-08-30: what a higher scale ceiling would do.** For every unread
+control the probe computes the scale it would have needed --- `ocr_gate::scale_wanted`, unclamped
+--- and whether the probe image fits at it, through `ocr_gate::bytes_at` against the worker's
+capacity. Both went public for this; neither is a second copy of anything. Measured: **0 of 24 and
+0 of 40 would fit**, worst case asking **31.1x** against a ceiling of 8. So raising `MAX_SCALE`
+moves the refusal from *the ceiling could not reach it* to *probe image will not fit* and changes
+nothing, which is why it was not written. Rendering the control alone at a generous scale does fit
+and is unsound --- a control read in its own kindly rendered image says nothing about the region
+strip.
+
+That measurement is what `NotVerifiedCause::ControlTooSmall` came out of: those regions now refuse
+with *no scale renders the control legibly* and a message carrying what the page removed, the scale
+it would have taken and the ceiling. **No region's outcome changes** --- at `--regions 12`, *control
+not read back* goes 66 to 42 with 24 stated, and *shown unreadable* stays at 276 --- and the
+evidence that it costs nothing was already printed: the points axis carries its denominator, and
+every region with a control under 2 pt went unread.
+
 The clamp row answers a question `ocr_gate.rs` recorded as open --- *"no measurement has separated
 them"*. A sub-floor control comes from the `MAX_SCALE` ceiling being unable to reach 16 px, or
 from the image being halved to fit the buffer, and the two can hold together, so *both* is its own

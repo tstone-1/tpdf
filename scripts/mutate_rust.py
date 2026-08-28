@@ -209,6 +209,36 @@ class Mutation:
 
 MUTATIONS = [
     Mutation(
+        # Show the engine a control no scale can render, as the gate did until
+        # 2026-08-30. The region comes back `ControlUnread` -- true, and it
+        # points at the engine, which is not where the problem is.
+        "gate: render a control no scale can bring to the floor",
+        "src/ocr_gate.rs",
+        "    if wanted > MAX_SCALE {",
+        "    if false {",
+        "a_control_no_scale_can_render_is_refused_with_a_cause_of_its_own",
+    ),
+    Mutation(
+        # Refuse the boundary too. A 2 pt control reaches exactly
+        # MIN_CONTROL_PX at MAX_SCALE and is the smallest the gate can serve;
+        # `>=` turns it into the largest it turns away.
+        "gate: refuse the smallest control the ceiling can still render",
+        "src/ocr_gate.rs",
+        "    if wanted > MAX_SCALE {",
+        "    if wanted >= MAX_SCALE {",
+        "a_control_exactly_at_the_smallest_servable_size_is_served",
+    ),
+    Mutation(
+        # File the refusal under the buffer's cause. Both are refusals from the
+        # same function, the count still adds up, and a reader is sent to
+        # `capacity` for a problem that is the control's size.
+        "gate: report an unrenderable control as a probe image that will not fit",
+        "src/ocr_gate.rs",
+        "crate::ocr::NotVerifiedCause::ControlTooSmall,",
+        "crate::ocr::NotVerifiedCause::ScaleRefused,",
+        "a_control_no_scale_can_render_is_refused_with_a_cause_of_its_own",
+    ),
+    Mutation(
         # Merge the file on disk rather than the working document. Every edit
         # the reader made -- deleted pages, turns, crops, marks -- is silently
         # absent from the result, and the page count agrees with itself for any
@@ -6088,8 +6118,11 @@ MUTATIONS += [
         # unreadable or too big to hand over.
         "gate: render at whatever scale the control asks for",
         "src/ocr_gate.rs",
-        "    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE);",
-        "    let mut scale = MIN_CONTROL_PX / size_pt;",
+        # Re-aimed 2026-08-30: the unclamped half of this rule became
+        # `scale_wanted`, so a measurement could ask what a control would have
+        # needed. The defect is the same one -- drop the clamp.
+        "    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE);",
+        "    let mut scale = scale_wanted(size_pt);",
         "the_scale_never_leaves_its_bounds",
     ),
     Mutation(
@@ -6164,8 +6197,11 @@ MUTATIONS += [
         # floor this very call exists to clear.
         "gate: scale the probe image from the covered box, not the control",
         "src/ocr_gate.rs",
-        "let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)?;",
-        "let scale = scale_for(choice.size_pt, page.width_pt, height_pt, capacity)?;",
+        # Re-aimed 2026-08-30 when this call gained a `map_err` to carry its
+        # own cause. The defect is unchanged -- size the render from the box
+        # rather than from the control the engine is shown.
+        "let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)",
+        "let scale = scale_for(choice.size_pt, page.width_pt, height_pt, capacity)",
         "the_scale_clears_the_floor_for_the_control_and_not_for_the_box",
     ),
     Mutation(
@@ -6175,8 +6211,9 @@ MUTATIONS += [
         # tell a fix from a blanket magnification.
         "gate: reach the floor by raising every scale rather than the right one",
         "src/ocr_gate.rs",
-        "    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE);",
-        "    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE) * 2.0;",
+        # Re-aimed 2026-08-30, same split as above.
+        "    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE);",
+        "    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE) * 2.0;",
         "a_control_no_smaller_than_its_box_is_scaled_the_same_as_before",
     ),
     Mutation(

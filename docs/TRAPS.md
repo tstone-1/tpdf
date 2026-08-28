@@ -5425,6 +5425,38 @@ both were proved: keying the crossing on a constant aspect fired the shape contr
 height control silent, keying it on a constant height did the mirror. One axis broken, one
 control. A single total would have gone red for both and named neither.
 
+### When the remedy is a constant, compute what it would take before you write it
+
+2026-08-30, immediately after the entry below, and the pair is the lesson. Two candidate repairs
+for the same measured defect were on the table. The first --- pad the probe image into the shape
+band the corpus never goes silent in --- was **built**: one rule, two callers, six mutations, unit
+tests, a day. It changed no verdict on 1,469 regions and was reverted. The second --- raise
+`MAX_SCALE`, so the scale rule can serve controls it currently cannot --- was **computed**: for
+every failing control, the scale it would have needed and whether the image fits at it. `0 of 24`
+and `0 of 40`, worst case asking **31.1x** against a ceiling of 8, an hour including the write-up.
+
+Both answers were negative. Only one cost a day.
+
+**The test is whether the remedy is a change to a constant or a change to a mechanism.** A
+constant's effect is usually a formula you already have: here `scale_wanted(pt)` against
+`bytes_at(w, h, scale)` and `capacity`, all of them functions the gate runs anyway. Compute it
+over the real population before writing anything --- not on a fixture, not on the arithmetic mean,
+over the actual regions --- and the answer arrives with a distribution attached rather than a
+verdict. A mechanism change usually cannot be settled that way, which is when building it is the
+cheapest instrument, and that is exactly what the padding was.
+
+**Making the formula reachable is the part that needs deciding.** `scale_wanted` exists because
+`scale_for` clamped inline and no caller could ask what a control *would* have needed; `bytes_at`
+was private. Both went public with a doc comment saying which measurement wanted them. That is a
+small, honest widening of an API --- and it is not the same as extracting a helper "for testing":
+the extraction removed a duplicate clamp expression at the same time.
+
+**And say why the obvious escape is closed, not just that it is.** Rendering the control by itself
+at a generous scale fits the buffer easily. It is unsound: a control read in its own kindly
+rendered image says nothing about whether the same text would have been read in the region strip,
+which is the whole job of a control. Written down because it looks like the way out and a reader
+who has not thought it through will reach for it.
+
 ### An intervention outranks a stratified observation, and a bucket four points wide did not break the tie
 
 2026-08-30, the third and last reading of the same question in one day. The redaction gate's silent
@@ -10546,6 +10578,15 @@ inset at all, on the argument that a `/BBox` clip leaves no ink outside the quad
 and therefore nothing to count. True, and beside the point --- it removes ink from
 inside. One run settled it, which is the standing rule about a claim regarding
 runtime behaviour belonging in an experiment rather than in a document.
+
+**A `Result<_, String>` whose caller supplies the cause is the same defect one layer up.**
+2026-08-30: `ocr_gate::geometry_for` had one error path, and its single caller wrote
+`cause: NotVerifiedCause::ScaleRefused` for whatever came back. When a second refusal was added ---
+the control is too small to render at any permitted scale, which is nothing to do with the buffer
+that `ScaleRefused` names --- there was no way for the function to say which, and the caller had
+already decided. The fix is a typed error, `Result<_, (String, NotVerifiedCause)>`; the tell is a
+call site that names a cause the callee could have known and the caller cannot. Worth grepping for
+wherever an enum of reasons sits beside a stringly-typed error.
 
 ### One predicate answering three questions is right until a second kind makes them disagree
 
