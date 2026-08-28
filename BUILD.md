@@ -2353,6 +2353,29 @@ the **left** of the table --- the region counts (43 / 156 / 448 / 1,389) and the
 control-selection causes (1 / 8 / 106 / 850), neither of which any scale can touch. Those are
 the control over the harness; the verdict columns are the measurement.
 
+### `encrypted-rewrite-probe`: does a rewrite keep an encrypted document's encryption
+
+`docs/PLAN.md` §5 said for months that letting a reader delete a page from an encrypted
+document needed QPDF. It needed `lopdf::Document::encrypt`, which `save.rs`'s `rewrite` now
+calls with the state `checked` took off the document after a password load.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example encrypted-rewrite-probe
+```
+
+Seven checks over the two encrypted fixtures and the locked case; about a second. **The
+verdict comes from `qpdf`, not from `lopdf`** --- a reload with the writer's own reader is the
+writer agreeing with itself, and here that is worse than usual, because a `lopdf` load
+*without* the password parses no objects at all and reports zero pages. The spike this grew
+from round-tripped an empty document and printed `[OK]` three times before that was caught, so
+every page count here is read back with the password and the encryption comparison is
+`qpdf --show-encryption` on the source against the output.
+
+Without `qpdf` installed the three encryption checks `[SKIP]` with that reason and the page
+counts still run. The last check is the control and is the one to read first: a rewrite that
+dropped the encryption passes both of the others, so the probe scans the written bytes for
+`/Encrypt`.
+
 ### `redact-gate-probe`: does the redaction gate certify a clean file and refuse a dirty one
 
 `docs/PLAN.md` §6 step 4 is wired into `redact_copy` and `redact_document`, and neither is

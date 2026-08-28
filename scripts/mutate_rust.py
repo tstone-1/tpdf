@@ -333,8 +333,8 @@ MUTATIONS = [
         # the same guard one function down.
         "save: refuse a copy from a source that changed, stranding the reader",
         "src/save.rs",
-        "    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;",
-        "    let copy = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;",
+        "    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;",
+        "    let copy = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;",
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
@@ -343,8 +343,8 @@ MUTATIONS = [
         # asymmetry is the whole design and a single word carries it.
         "save: let a save in place tolerate a changed file, as a copy does",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;",
-        "    let planned = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;",
+        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;",
+        "    let planned = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;",
         "a_save_in_place_is_refused_when_the_file_changed_under_it",
     ),
     Mutation(
@@ -1705,21 +1705,57 @@ MUTATIONS = [
         "each_page_takes_its_own_edit_and_the_view_rotation_on_top",
     ),
     Mutation(
-        # Rewrite a document `lopdf` decrypted on the way in. This is the guard
-        # that was wrong for four weeks: it asked the trailer, and `lopdf`
-        # removes `/Encrypt` the moment it authenticates -- which it does with
-        # the empty password, unprompted. So every permission-restricted
-        # document was reserialised in the clear.
+        # Let a print job rewrite an encrypted document. This is the regression
+        # the encryption increment introduced and did not notice: `checked` used
+        # to refuse every decrypted document, `print::route`'s `Working` arm
+        # calls `print_bytes` directly and never reaches `print::build`'s own
+        # guard, so removing that refusal removed the only one on this route.
+        # The whole suite stayed green.
+        "save: let a print job rewrite an encrypted document",
+        "src/save.rs",
+        "    if checked.encryption.is_some() {",
+        "    if false {",
+        "a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do",
+    ),
+    Mutation(
+        # Write a document `lopdf` decrypted on the way in back in the clear.
+        # **Re-aimed rather than deleted on 2026-08-29**: the guard this used to
+        # mutate -- a refusal keyed on `was_encrypted` -- is gone, because a
+        # rewrite now re-encrypts instead of refusing. The class of defect did
+        # not go with it. Dropping a document's encryption on save is still one
+        # line away, and this is that line.
         #
         # Aimed at the fixture test rather than the synthetic one on purpose:
         # the synthetic document's encryption is fake, authentication fails on
-        # it, and it therefore takes the `is_encrypted` arm below. Two arms, two
+        # it, and it therefore takes the `is_encrypted` arm. Two arms, two
         # mutations, because one fixture cannot reach both.
-        "save: rewrite a document that was decrypted on the way in",
+        "save: write a decrypted document back in the clear",
         "src/save.rs",
-        "    if doc.was_encrypted() {",
-        "    if false {",
-        "a_really_encrypted_document_is_refused_even_when_it_opens_unprompted",
+        "    if let Some(state) = &encryption {",
+        "    if let Some(state) = &encryption.filter(|_| false) {",
+        "a_really_encrypted_document_keeps_its_encryption_or_names_its_lock",
+    ),
+    Mutation(
+        # Never take the state off the document, so `rewrite` has nothing to put
+        # back. The mirror of the mutation above, at the other end of the value's
+        # journey: one deletes the write, this one deletes the read, and a fix
+        # for either alone leaves the other's defect intact.
+        "save: keep no record of the encryption a password opened",
+        "src/save.rs",
+        "    let encryption = doc.encryption_state.take();",
+        "    let encryption = None;\n    let _ = doc.encryption_state.take();",
+        "a_rewrite_of_an_encrypted_document_stays_encrypted",
+    ),
+    Mutation(
+        # Load without the reader's password. Every object then fails to parse,
+        # and the document that comes back is EMPTY rather than refused -- which
+        # is the failure shape that made the first two runs of this increment's
+        # own spike report three passes over a document with nothing in it.
+        "save: ignore the password the reader supplied",
+        "src/save.rs",
+        "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse {source:?}: {e}\"))?;",
+        "            password: None,\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse {source:?}: {e}\"))?;",
+        "a_rewrite_of_an_encrypted_document_stays_encrypted",
     ),
     Mutation(
         # The other arm: a document nothing could unlock. `lopdf` parses no
@@ -1796,8 +1832,8 @@ MUTATIONS = [
         # file next to the reader's document under a name they never chose.
         "save: stage a save in place before its guards have run",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;",
-        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;\n    let _ = early;",
+        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;",
+        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;\n    let _ = early;",
         "a_refused_save_in_place_stages_nothing",
     ),
     Mutation(

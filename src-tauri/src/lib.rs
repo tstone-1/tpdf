@@ -401,6 +401,30 @@ fn reply_channel<T: Send + 'static, E: Send + 'static>() -> (render::ReplyTo<T, 
 /// gone, and a persisted `render thread stopped` (see `diag.rs`) then says a
 /// thread died without saying what was being asked of it. The name is the one
 /// piece a reader sending the log back cannot supply.
+/// The password that opened `doc`, or `None`.
+///
+/// **A key to bytes this process already holds, not a new authority.** The
+/// rewrite needs it for the same reason the append does: `lopdf` parses no
+/// objects at all without it, so a save that did not ask would see an empty
+/// document and every check after it would agree about nothing. `save.rs`'s
+/// `checked` then re-encrypts what it wrote with the state the load recorded.
+/// `docs/THREAT-MODEL.md` §T6.9 carries what holding it costs.
+///
+/// **A failure to answer is `None` rather than a refusal**, which is
+/// `save_document`'s rule and holds here for the same reason: a plain document
+/// has no password to lose, and a locked one that arrives without its key is
+/// refused by `checked` with a message naming the lock. What must not happen is
+/// a save turned into an error because the service was busy.
+///
+/// One function rather than the six copies the alternative needs --- the ask is
+/// three lines and `docs/TRAPS.md` records more than one defect that was a
+/// second copy of a rule drifting from the first.
+async fn password_for(service: &RenderService, doc: u32, command: &str) -> Option<String> {
+    let (reply, rx) = reply_channel();
+    service.password(doc, reply);
+    await_reply(command, rx).await.unwrap_or(None)
+}
+
 async fn await_reply<T, E>(command: &str, mut rx: ReplyRx<T, E>) -> Result<T, E>
 where
     E: From<String>,
@@ -998,10 +1022,13 @@ async fn redact_copy(
     let from = std::path::PathBuf::from(source);
     let written = out.clone();
     let out_path = out.to_string_lossy().into_owned();
-    let copied = tauri::async_runtime::spawn_blocking(move || save::write_copy(&from, &plan, &out))
-        .await
-        .map_err(|e| format!("the redaction did not run: {e}"))?
-        .map_err(|why| why.message)?;
+    let password = password_for(&service, doc, "redact_copy").await;
+    let copied = tauri::async_runtime::spawn_blocking(move || {
+        save::write_copy(&from, &plan, &out, password.as_deref())
+    })
+    .await
+    .map_err(|e| format!("the redaction did not run: {e}"))?
+    .map_err(|why| why.message)?;
 
     // Read back rather than verified from what was written, which is the same
     // rule the append's own verification follows: what matters is the file on
@@ -1094,8 +1121,9 @@ async fn redact_document(
 
     let staging = source.clone();
     let plan = asked.plan.clone();
+    let password = password_for(&service, doc, "redact_document").await;
     let staged = tauri::async_runtime::spawn_blocking(move || {
-        save::stage_in_place(Path::new(&staging), &plan)
+        save::stage_in_place(Path::new(&staging), &plan, password.as_deref())
     })
     .await
     .map_err(|e| SaveFailure::refused(format!("the redaction did not run: {e}")))?
@@ -1525,6 +1553,17 @@ async fn save_document(
     // on the second; the failure path here goes the safe way by construction
     // rather than by ordering.
     let mode = save::mode_for_source(&plan, Path::new(&source));
+
+    // **Before the match, because both arms need it now.** It used to be asked
+    // after, for the append alone --- the rewrite arm read `Prepared::Rewrite(_)
+    // => None` and did not need a key, because it refused every encrypted
+    // document outright. Since 2026-08-29 a rewrite re-encrypts what it writes,
+    // so the key is what makes it possible rather than what it would have
+    // leaked. The rewrite also needs it *earlier* than the append does: the
+    // append's parse happens in the worker below, while the rewrite parses on
+    // the pool inside this match.
+    let password = password_for(&service, doc, "save_document").await;
+
     let prepared = match mode {
         // **The append's parse happens in the worker**, which is the one
         // difference between the two arms and the reason they are not one
@@ -1560,8 +1599,9 @@ async fn save_document(
         }
         save::Mode::Rewrite => {
             let staging = source.clone();
+            let key = password.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                save::stage_in_place(Path::new(&staging), &plan)
+                save::stage_in_place(Path::new(&staging), &plan, key.as_deref())
             })
             .await
             .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
@@ -1583,14 +1623,9 @@ async fn save_document(
     // right answer for both "it has none" and "the service could not say" ---
     // and if the second is wrong, the append's own read-back refuses and rolls
     // back rather than writing something unchecked.
-    let password = match &prepared {
-        Prepared::Append(_) => {
-            let (reply, rx) = reply_channel();
-            service.password(doc, reply);
-            await_reply("save_document", rx).await.unwrap_or(None)
-        }
-        Prepared::Rewrite(_) => None,
-    };
+    // Already held: asked once above the match, where the rewrite arm needs it.
+    // This was a second ask keyed on which arm ran, and both arms now want the
+    // same answer.
 
     // Past this line every failure is an `after_close`: the reader's document is
     // being taken apart, and the honest thing to report is that they have to
@@ -1735,6 +1770,7 @@ enum Prepared {
 #[tauri::command]
 async fn save_copy(
     edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
     doc: u32,
     source: String,
     path: String,
@@ -1757,8 +1793,14 @@ async fn save_copy(
     // has to be told rather than a failure. `save.rs`'s `OnChange` carries the
     // argument, including what still refuses: a changed file that also changed
     // shape is caught by the page-count guard whichever path asks.
+    let password = password_for(&service, doc, "save_copy").await;
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(Path::new(&source), &plan, Path::new(&path))
+        save::write_copy(
+            Path::new(&source),
+            &plan,
+            Path::new(&path),
+            password.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("the save did not run: {e}"))?
@@ -1785,6 +1827,7 @@ async fn save_copy(
 #[tauri::command]
 async fn extract_pages(
     edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
     doc: u32,
     source: String,
     path: String,
@@ -1794,8 +1837,14 @@ async fn extract_pages(
     // Same outcome as `save_copy` and for the same reason: an extract is a copy
     // of some of the pages, so it is written from a changed source too, and the
     // reader is told the same way.
+    let password = password_for(&service, doc, "extract_pages").await;
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(Path::new(&source), &plan, Path::new(&path))
+        save::write_copy(
+            Path::new(&source),
+            &plan,
+            Path::new(&path),
+            password.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("the extract did not run: {e}"))?
@@ -1826,6 +1875,7 @@ async fn extract_pages(
 #[tauri::command]
 async fn split_document(
     edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
     doc: u32,
     source: String,
     path: String,
@@ -1835,8 +1885,14 @@ async fn split_document(
         .iter()
         .map(|slots| edits.plan_subset(doc, slots))
         .collect::<Result<Vec<_>, String>>()?;
+    let password = password_for(&service, doc, "split_document").await;
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_split(Path::new(&source), &plans, Path::new(&path))
+        save::write_split(
+            Path::new(&source),
+            &plans,
+            Path::new(&path),
+            password.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("the split did not run: {e}"))?
@@ -1865,6 +1921,7 @@ async fn split_document(
 #[tauri::command]
 async fn merge_documents(
     edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
     doc: u32,
     source: String,
     path: String,
@@ -1873,9 +1930,16 @@ async fn merge_documents(
     // Out of the model before the move onto the pool, as `save_copy` does and
     // for the same reason.
     let plan = edits.plan(doc)?;
+    let password = password_for(&service, doc, "merge_documents").await;
     tauri::async_runtime::spawn_blocking(move || {
         let others: Vec<std::path::PathBuf> = others.into_iter().map(Into::into).collect();
-        save::write_merged(Path::new(&source), &plan, &others, Path::new(&path))
+        save::write_merged(
+            Path::new(&source),
+            &plan,
+            &others,
+            Path::new(&path),
+            password.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("the merge did not run: {e}"))?

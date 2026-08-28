@@ -130,7 +130,7 @@ fn main() -> ExitCode {
         // page, which is the plan that makes `rewrite` run the mark-and-sweep.
         for (what, plan) in plans(pages as u32) {
             let out = scratch.join(format!("{name}.{what}.pdf"));
-            if save::write_copy(fixture, &plan, &out).is_err() {
+            if save::write_copy(fixture, &plan, &out, None).is_err() {
                 // Encrypted, signed, or a shape the writer refuses by design.
                 // Its refusal is another check's subject.
                 refused += 1;

@@ -2107,16 +2107,76 @@ Anything measured through a test needs `--release`, and the same asymmetry appli
 other prebuilt native code are barely affected while our own Rust is 20-50x slower, so debug
 numbers do not merely inflate — they **reorder** what looks expensive.
 
+### Removing a refusal removes it for every caller, including the one that never had a guard of its own
+
+2026-08-29, in the increment that let a rewrite preserve encryption. `save::checked` had
+refused every document `lopdf` decrypted on the way in, because its full serialiser wrote
+plaintext. Making `rewrite` re-encrypt made that refusal wrong, so it went --- and it had two
+beneficiaries, only one of which the change was about.
+
+`print::build` guards a page-selection print itself, with its own message. `print::route`'s
+`Working` arm does not go through it: it calls `save::print_bytes` **directly**, and
+`print_bytes` had no guard because `checked`'s was underneath it. So printing a turned or
+reordered encrypted document went from *refused* to *rewritten and re-encrypted*, handing
+`NSPrintOperation` a document the print stack cannot read.
+
+**The suite stayed green, and the test that looks like it covers this is the reason it
+looked covered.** `print::tests::an_encrypted_document_is_printed_whole_or_refused` exercises
+`print::build` for every case it checks, so it passes whatever happens on the other route. A
+test named for a *subject* --- encrypted documents and printing --- does not cover the subject;
+it covers the entry point it calls. Ask which entry points reach the code, not whether a test
+with the right name exists.
+
+**What made it findable was reading the diff for a comment that had become false.** The
+replacement comment in `print_bytes` said *"the refusal `checked` makes names the lock"*,
+which was true when written and false three edits later in the same increment. Checking that
+one sentence is what surfaced the route. The general form: after removing a guard, grep its
+callers rather than its tests --- `git grep -n 'print_bytes('` answers in one command and
+returns three call sites, one of which was not in anyone's head.
+
+The repair is a refusal in `print_bytes` itself, placed **between** `checked` and `rewrite`
+so it reads the state `checked` already took off the document rather than parsing the file a
+second time to ask the same question. That is what the `Checked` split is for.
+
 ### `lopdf` silently drops encryption on save
 
 Given an AES-256 file with an empty user password — one that opens in any reader with no
 prompt — `lopdf` decrypts on load and writes **plaintext** on save. No error, no warning,
-no flag. QPDF re-encrypts with the original parameters.
+no flag.
 
 Quietly removing a document's protection is its own security failure, and it is invisible
 in every check that looks at content rather than structure. Any save path must preserve
 encryption or refuse; `qpdf --is-encrypted` (exit 0 when encrypted, 2 when not) is the
 cheap assertion.
+
+⚠ **This entry used to end *"QPDF re-encrypts with the original parameters"*, and that one
+sentence held a whole capability shut for months.** It is true of QPDF and it reads as *only*
+QPDF, which is how `docs/PLAN.md` came to say that letting a reader delete a page from an
+encrypted document meant vendoring a C++ library. It does not. `lopdf` exposes
+`Document::encrypt(&EncryptionState)`, which re-encrypts every object and writes a fresh
+`/Encrypt`, and a password load leaves the state on the public `Document::encryption_state`
+field. Measured 2026-08-29: source and rewritten output diff to nothing across all 17 fields
+of `qpdf --show-encryption`.
+
+**The general shape is worth more than the fact.** A trap entry that names one tool's remedy
+is read as an inventory of the remedies, and nobody re-checks it, because the entry is about
+the *danger* and the danger stays true. Name the mechanism the tool uses, or say plainly that
+the alternatives were not looked for. The cost here was a recommendation to take on a second
+native PDF parser, in the threat model and on two platforms, to get something already in the
+tree — and it was caught only because a reader asked *"obviously we need QPDF...?"*.
+
+Two things about the `lopdf` route that are not guessable from the two method names.
+`encrypt` begins `if self.is_encrypted() { return Err(AlreadyEncrypted) }`, and a decrypt
+leaves `encryption_state` set — so the state has to be **taken** off the document, not
+borrowed, or a decrypted document refuses to be re-encrypted. And `encrypt` walks the object
+map once, so it must run after everything that adds an object; anything added afterwards is
+written in the clear beside objects that are not.
+
+And the failure shape while measuring it: `Document::load` **without** the password parses no
+objects at all and returns a document reporting zero pages. The spike that established all of
+the above round-tripped an empty document and printed `[OK]` three times before that was
+noticed — a writer and its own reader agreeing about nothing. Read the page count back with
+the password, always.
 
 ### An incremental save is cheap on disk, not in memory --- and its cost is the parse
 
