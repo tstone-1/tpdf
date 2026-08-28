@@ -3452,6 +3452,56 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
+#### The one bucket that never moved, and the remedy that was arithmetic --- 2026-08-30
+
+Across every reading in the sections below --- shape, points, the crossing, and before and after
+an intervention --- one bucket never moved: **a control under 2 pt is unread, 24 of 24 and 40 of
+40.** 2 pt is `MIN_CONTROL_PX / MAX_SCALE`, so no scale `scale_for` may pick brings such a control
+to the floor.
+
+**Raising the ceiling does not serve them, and that was decidable without writing it.** The probe
+now computes, for every unread control, the scale it would have needed and whether the image would
+fit at it. **0 of 24 and 0 of 40 would fit.** The largest asks for **31.1x** against a ceiling of
+8, and a page-wide probe image at that scale is past the worker's 16 MB capacity --- so a higher
+ceiling moves the refusal from *the ceiling could not reach it* to *the probe image will not fit*
+and changes nothing else. Two constants, one division and one multiplication, an hour. The
+previous section spent a day building a remedy that a comparable calculation could not have
+settled, which is the difference worth noticing rather than the result.
+
+Rendering the control separately at a generous scale would fit, and is **unsound**: a control read
+in its own kindly rendered image says nothing about whether the same text would have been read in
+the region strip, which is the entire job of a control. That is the reason it is not the answer,
+and it is worth writing down because it looks like the obvious way out.
+
+**So the gate says so instead.** `NotVerifiedCause::ControlTooSmall` --- *no scale renders the
+control legibly* --- with a message naming what the page removed, the scale it would have taken and
+the ceiling. It is not a fix and does not pretend to be: no region becomes provable.
+
+| `--regions 12` | before | after |
+|---|---|---|
+| control not read back | 66 | **42** |
+| no scale renders the control legibly | --- | **24** |
+| still reads as text | 24 | 24 |
+| shown unreadable | 276 (58.47%) | 276 (58.47%) |
+
+`--regions 40` is the same shape: 96 to 56, with 40 stated. **No region's outcome changed**, which
+is the point --- and the evidence that refusing costs nothing was already in hand, because the
+points axis prints its denominator: every region whose control was under 2 pt went unread, so
+there was none to lose. The gate also stops rendering a page-wide image it cannot use.
+
+**`geometry_for` returns a typed error now**, because its one caller hard-coded
+`ScaleRefused` for whatever came back. Two refusals from one function with different remedies ---
+the buffer is too small, or the control is --- and a `String` cannot tell them apart. Sending a
+reader to `capacity` for a problem that is the control's size is the same defect as the
+`ControlUnread` it replaces, one layer up.
+
+**Ranked next**: nothing in this subsystem. Three increments have narrowed the gate's unverifiable
+regions to two populations, and both are now honestly reported: a control too small to render
+(24 and 40, stated) and an engine that answers without the token (42 and 56, evidence attached).
+Neither has a remedy that measurement supports, and the next one to try --- a different recogniser,
+or a control chosen for legibility rather than for size --- is a larger piece of work than a
+session. `docs/PLAN.md` §6's other open items are better value.
+
 #### Padding was built, measured and reverted --- 2026-08-30
 
 The section below ranked padding with a falsifiable prediction: bring every probe image into the

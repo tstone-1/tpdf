@@ -227,7 +227,7 @@ pub fn scale_for(
              {size_pt} pt, so no render scale can be chosen"
         ));
     }
-    let mut scale = (MIN_CONTROL_PX / size_pt).clamp(MIN_SCALE, MAX_SCALE);
+    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE);
     while scale > MIN_SCALE && bytes_at(width_pt, probe_height_pt, scale) > capacity {
         scale = (scale * 0.5).max(MIN_SCALE);
     }
@@ -308,12 +308,22 @@ pub struct ProbeGeometry {
 ///
 /// # Errors
 ///
-/// Whatever [`scale_for`] refuses, unchanged: the probe image will not fit even
-/// at [`MIN_SCALE`].
+/// Two refusals with different remedies, and each carries the cause it belongs
+/// to rather than leaving the caller to pick one. Until 2026-08-30 this returned
+/// a bare `String` and its only caller filed everything under
+/// [`crate::ocr::NotVerifiedCause::ScaleRefused`] --- one predicate answering two
+/// questions, which is right until a second kind of failure makes them disagree.
+///
+/// - [`crate::ocr::NotVerifiedCause::ControlTooSmall`]: no scale in
+///   `MIN_SCALE..=MAX_SCALE` renders this control at [`MIN_CONTROL_PX`]. The
+///   image would be fine; the control is smaller than
+///   `MIN_CONTROL_PX / MAX_SCALE`.
+/// - [`crate::ocr::NotVerifiedCause::ScaleRefused`]: whatever [`scale_for`]
+///   refuses --- the probe image will not fit even at [`MIN_SCALE`].
 pub fn geometry_for(
     page: &GatePage,
     choice: &crate::ocr::ControlChoice,
-) -> Result<ProbeGeometry, String> {
+) -> Result<ProbeGeometry, (String, crate::ocr::NotVerifiedCause)> {
     // The probe image is the tallest region on this page with the control strip
     // under it, which is what the scale has to fit rather than the page.
     let tallest = page
@@ -339,7 +349,23 @@ pub fn geometry_for(
     // [`crate::ocr::control_from_page`], and this does not weaken it --- since
     // `control_pt <= size_pt`, the scale can only come out larger than before.
     let height_pt = tallest + control_pt + padding;
-    let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)?;
+    // Refused before the render is sized, because this is not a question about
+    // the buffer. A control under `MIN_CONTROL_PX / MAX_SCALE` cannot be brought
+    // to the floor by any scale the gate may pick, and showing the engine one
+    // anyway is how 24 of 24 and 40 of 40 such regions came back reported as
+    // *the engine did not read the control back* --- true, and pointing at the
+    // wrong subsystem.
+    let wanted = scale_wanted(control_pt);
+    if wanted > MAX_SCALE {
+        return Err((
+            format!(
+                "the smallest thing this page removed is {control_pt:.1} pt, and a control that                  size needs {wanted:.1}x to reach {MIN_CONTROL_PX:.0} px --- past the {MAX_SCALE:.0}x                  ceiling, so no rendering of this page can prove the removal"
+            ),
+            crate::ocr::NotVerifiedCause::ControlTooSmall,
+        ));
+    }
+    let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)
+        .map_err(|why| (why, crate::ocr::NotVerifiedCause::ScaleRefused))?;
     Ok(ProbeGeometry {
         scale,
         control_px: control_pt * scale,
@@ -347,7 +373,28 @@ pub fn geometry_for(
     })
 }
 
-fn bytes_at(width_pt: f32, height_pt: f32, scale: f32) -> usize {
+/// The scale a control of `size_pt` needs to clear [`MIN_CONTROL_PX`], before
+/// any clamp is applied to it.
+///
+/// [`scale_for`] is the only caller that matters and it clamps the answer into
+/// `MIN_SCALE..=MAX_SCALE`. This exists **unclamped** so a measurement can ask
+/// what a control would have needed, which is the question that decides whether
+/// raising [`MAX_SCALE`] would serve the bucket it cannot serve today: over 40
+/// documents, every control under `MIN_CONTROL_PX / MAX_SCALE` went unread ---
+/// 24 of 24 and 40 of 40 --- and whether a higher ceiling reaches them or merely
+/// runs them into `capacity` instead is arithmetic nobody had done.
+///
+/// Split out rather than written twice, because the clamped and unclamped forms
+/// of one rule drifting apart is the failure this file has an entry about.
+pub fn scale_wanted(size_pt: f32) -> f32 {
+    MIN_CONTROL_PX / size_pt
+}
+
+/// How many bytes a probe image of this shape costs at this scale.
+///
+/// Public so a measurement can ask whether an image *would* fit at a scale the
+/// gate did not choose, without a second copy of the arithmetic.
+pub fn bytes_at(width_pt: f32, height_pt: f32, scale: f32) -> usize {
     let w = (width_pt * scale).ceil().max(0.0) as usize;
     let h = (height_pt * scale).ceil().max(0.0) as usize;
     w.saturating_mul(h).saturating_mul(4)
@@ -751,10 +798,10 @@ fn gate_one_page(
 
     let geometry = match geometry_for(page, &choice) {
         Ok(geometry) => geometry,
-        Err(why) => {
+        Err((why, cause)) => {
             return PageOutcome::Whole(Legibility::NotVerified {
                 why,
-                cause: NotVerifiedCause::ScaleRefused,
+                cause,
                 evidence: None,
             })
         }
@@ -1334,6 +1381,57 @@ mod tests {
         assert!(rows[last_region + 1..first_control]
             .iter()
             .all(|&v| v == 0xFF));
+    }
+
+    fn tiny_control_page(control_pt: f32) -> (GatePage, crate::ocr::ControlChoice) {
+        (
+            GatePage {
+                page: 0,
+                regions: vec![[0.0, 0.0, 40.0, 2.0]],
+                words: Vec::new(),
+                taking: String::new(),
+                width_pt: 600.0,
+                height_pt: 800.0,
+            },
+            crate::ocr::ControlChoice {
+                crop: [0.0, 50.0, 40.0, 50.0 + control_pt],
+                token: "control".into(),
+                size_pt: 10.0,
+            },
+        )
+    }
+
+    #[test]
+    fn a_control_no_scale_can_render_is_refused_with_a_cause_of_its_own() {
+        // 1.5 pt needs 16/1.5 = 10.7x, past the 8x ceiling. The *image* is
+        // fine, so this is not ScaleRefused -- reporting it as one sends a
+        // reader to the buffer, and before the split every such region came back
+        // ControlUnread, which sends them to the engine. Neither is where the
+        // problem is.
+        //
+        // Measured over 40 documents at two densities: every region whose
+        // control was under 2 pt went unread, 24 of 24 and 40 of 40, so refusing
+        // here costs no region that was ever judged.
+        let (page, choice) = tiny_control_page(1.5);
+        let (why, cause) = geometry_for(&page, &choice).expect_err("1.5 pt is unservable");
+        assert_eq!(cause, crate::ocr::NotVerifiedCause::ControlTooSmall);
+        // The message has to carry both numbers a reader needs to believe it:
+        // what the page removed, and what reading it would have taken.
+        assert!(why.contains("1.5 pt"), "no control size in: {why}");
+        assert!(why.contains("10.7x"), "no required scale in: {why}");
+    }
+
+    #[test]
+    fn a_control_exactly_at_the_smallest_servable_size_is_served() {
+        // 2.0 pt reaches 16 px at the 8x ceiling exactly. The comparison is `>`
+        // and not `>=`, which is what makes 2 pt the smallest control the gate
+        // can work with rather than the largest one it turns away -- and the
+        // first draft of an earlier test got this backwards and failed with
+        // `16 px`, which is the boundary being right.
+        let (page, choice) = tiny_control_page(2.0);
+        let geometry = geometry_for(&page, &choice).expect("2.0 pt is servable");
+        assert_eq!(geometry.scale, MAX_SCALE);
+        assert_eq!(geometry.control_px, MIN_CONTROL_PX);
     }
 
     #[test]
