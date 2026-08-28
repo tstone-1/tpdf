@@ -5425,6 +5425,43 @@ both were proved: keying the crossing on a constant aspect fired the shape contr
 height control silent, keying it on a constant height did the mirror. One axis broken, one
 control. A single total would have gone red for both and named neither.
 
+### A sweep that pads with `resize` is not the change it stands in for, and the difference set the next increment
+
+2026-08-30. The redaction gate's remaining unexplained failure is Vision returning **no spans at
+all** for a probe image holding a control it should read. `ocr-probe` sweeps the image's shape to
+find out where that starts, and the first version grew it with `Vec::resize`, appending white rows
+to the end of the buffer. `ocr_gate::stack` writes `margin | region | gap | control | margin`, so
+appending puts the new rows **below the bottom margin** --- the control ends up near the top of a
+tall image. A padding change in `stack` would widen the image the other way, leaving the control
+where it sits relative to the furniture.
+
+That difference produced a finding. The `resize` sweep reported `outline-simple` losing the token
+at 1.9:1 while still returning a span, and that one row is what made `docs/PLAN.md` call padding
+*"a candidate rather than an obvious win"* and shaped the whole next increment. Rebuilt through
+`stack`, at the **same height and the same aspect**, the token reads back --- and appending the
+identical number of rows below the margin still loses it at 4.0:1. So the variable was never the
+proportions; it was where the whitespace sat. **A sweep that stands in for a change must be built
+by the code that change would run.** If it is not, the sweep has a second variable in it and no
+column names it.
+
+**The fix is a column, not a rewrite.** Both constructions are legitimate and their disagreement
+is the measurement, so the sweep now prints them side by side at equal height. A confound you can
+put in a column stops being a confound.
+
+**And the control written for it could not pass.** The sweep's conclusion rests on the token being
+readable at the shape the gate actually builds --- otherwise every "no" further out is about the
+strip. That check was written as `height == real_h` inside the loop, and the loop iterates target
+*aspects*, which never produce that exact height. It failed on all four fixtures. That is the
+lucky direction: a control that cannot pass is loud, where a control that cannot fail is silent
+and ships. Read the gate's own image explicitly rather than hoping an iteration coincides with it.
+
+**A shape that could not be built must not print like one that was tried.** `stack`'s fixed rows
+--- two margins, the gap, the control strip --- are 104 to 117 px of a 1190-wide image on these
+fixtures, so nothing wider than about 11:1 is constructible from them and the band the corpus goes
+silent in (past 16:1) is out of reach entirely. Printing those rows as a blank reading would have
+said *the engine returned nothing*, which is the opposite of *the image does not exist*. They
+print how many rows short they are.
+
 ### An OCR engine's bounding box is a detection, not a measurement
 
 Found 2026-07-31 the first time `ocr-probe` ran the real Vision binding rather than its unit

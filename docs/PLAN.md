@@ -3452,6 +3452,60 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
+#### Padding was called a candidate on a confounded measurement --- corrected 2026-08-30
+
+The item ranked below was a repair aimed at the wide tail, and it carried one caveat: on
+`outline-simple` the earlier shape sweep had shown padding losing the control token while the
+engine went on returning a span, so the experiment had to read the token back. Rebuilding the
+sweep to run through `ocr_gate::stack` rather than `Vec::resize` removed that caveat, and found
+something the sweep could not have found in its old shape.
+
+**The old sweep had a second variable in it.** `stack` writes `margin | region | gap | control |
+margin`; `Vec::resize` appends white to the end of the buffer, so it grew the image *below the
+bottom margin* and left the control near the top. A padding change would not do that. Building
+each row through `stack` instead puts the white in the region strip, which is where a real page's
+extra height comes from --- and at the same height and the same aspect the answer flips:
+
+| `outline-simple`, 1190 px wide | white in the region strip | white appended below the margin |
+|---|---|---|
+| 298 px, 4.0:1 | token read back | **not read back** |
+| 595 px, 2.0:1 | token read back | token read back |
+
+So *"padding loses the token"* was about trailing whitespace after the control, not about
+proportions. Through `stack`'s own construction the token reads back at **every buildable shape**
+on `text-base14`, `outline-simple` and `encodings`. Both constructions are legitimate and their
+disagreement is the finding, so the sweep prints them side by side rather than choosing one.
+
+**The wide tail cannot be reproduced on these fixtures at all, and that is structural.** `stack`'s
+fixed rows --- two margins, the gap and the control strip --- are 104 to 117 px of a 1190-wide
+image here, capping the aspect at **10.1:1 to 11.3:1**. Every target at 12:1 and wider prints how
+many rows short it is instead of a blank reading, because a shape that was never built must not
+read like one the engine answered nothing for. Reaching past 16:1 needs a shorter control: the
+aspect is `width_pt / (tallest + control_pt + padding)` and the render scale cancels, so with
+`padding` fixed at 24 pt a 595 pt page needs the region and the control together under about
+13 pt. **That is a characterisation of the wide tail worth having** --- it is short regions with
+small controls, not wide pages.
+
+**The sweep's own control could not pass, and failed loudly.** The conclusion rests on the token
+being readable at the shape the gate actually builds, or a "no" further out says nothing about
+shape. That check was keyed on `height == real_h` inside a loop over target *aspects*, which never
+produces that height; it failed on all four fixtures and was right to. It reads the gate's own
+image explicitly now. A control that cannot pass is the lucky direction.
+
+**And the fixture table in `BUILD.md` was two counts behind.** The sweep's first control was added
+in the commit that last touched that table and the row was not moved with it, so every fixture the
+sweep runs on read one low before today. Re-measured from runs: 9/9, 8/8, 7/7, 7/8. `columns` and
+`vector-heavy` are unchanged, which is the tell that the drift is the sweep --- it is skipped on
+both.
+
+**Ranked next, and the caveat is gone rather than the risk**: pad the probe image toward the
+8:1--16:1 band from the wide side, one term in `stack`'s `total`. The destination is now measured
+--- the token reads back at every shape `stack` can build --- and the origin still is not, because
+no fixture here reaches past 11:1. Building one that does is the cheaper half and comes first: it
+needs a page with a small control, which is a fixture parameter rather than a new instrument. The
+two corpus controls stand: the 294 middle-band regions must not move, and the 12 sub-floor
+middle-band regions must stay silent-free.
+
 #### The two twelves are different regions --- measured 2026-08-30
 
 The section below left one thing explicitly unmeasured, and named it as the reason: 12 of the 36
@@ -3501,15 +3555,16 @@ across both runs is what matters: the 8:1--16:1 band produced **zero** silent re
 regions and again over 459, and *under 8 px* with *wider than 16:1* was 100% silent in both
 (12/12 and 40/40).
 
-**Ranked next, and now aimed at one tail rather than two**: pad the probe image toward the
+~~**Ranked next, and now aimed at one tail rather than two**: pad the probe image toward the
 8:1--16:1 band from the **wide** side only --- blank rows are what `stack` already writes for its
 margins and gap, so the change is one term in `total`. The wide tail is where the mechanism is
 (80 of 80 silent refusals at `--regions 40`, and it is the only tail that survives both
 densities), and it is the direction the fixture sweep never took, because padding a 7:1 fixture
 makes it *squarer*. It stays a candidate rather than an obvious win for the reason that sweep
 gave: on `outline-simple` padding lost the token while the engine went on returning a span, so
-the experiment has to read the token back. Two controls are ready-made --- the 294 middle-band
-regions must not move, and the 12 sub-floor middle-band regions must stay silent-free.
+the experiment has to read the token back.~~ **The caveat was a confound --- see the section
+above.** Two controls are ready-made and still stand: the 294 middle-band regions must not move,
+and the 12 sub-floor middle-band regions must stay silent-free.
 
 #### The silence lives at the extremes of the probe image's shape --- measured 2026-08-30
 
