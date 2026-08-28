@@ -3452,6 +3452,57 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
+#### Padding was built, measured and reverted --- 2026-08-30
+
+The section below ranked padding with a falsifiable prediction: bring every probe image into the
+8:1--16:1 band and the regions silent beyond 16:1 should become silent-free, matching the zero that
+band already produces at every control size. It was built, it worked mechanically, and the
+prediction is **false**.
+
+`ocr_gate::padded_height_pt` was one rule with two callers --- `geometry_for` for the scale budget
+and `stack` for the rows, because an image that grows after `scale_for` has outgrown the capacity
+computed for it. Blank rows went above the region strip, the side `ocr-probe`'s sweep measured as
+safe. Six mutations, four new and two re-aimed, all caught by the test named for each.
+
+**At `--regions 40` the shape changed for 120 of 1,469 regions and not one verdict moved.**
+
+| | before | after |
+|---|---|---|
+| the probe image was wider than 16:1 | 120 | **0** |
+| still reads as text | 79 | 79 |
+| control not read back | 96 | 96 |
+| read nothing at all | 80 | **80** |
+| shown unreadable | 404 (27.50%) | 404 (27.50%) |
+
+Every figure identical. At `--regions 12` it was worse than neutral: the silent count stayed at
+**36**, *read spans, none holding it* went 30 to **42**, and *shown unreadable* fell from 276 to
+**264**. Padding fixed nothing and cost 12 regions their control --- consistent with the sweep,
+which loses the token at the squarest shapes.
+
+**So the shape is a proxy after all, and the intervention says so where the stratification did
+not.** The section below concluded from a cross-tabulation that at a fixed control band of 2 to
+6 pt the shape flips the silent rate from 0 of 517 to 52 of 104. That reading is arithmetically
+correct and it was not causal: move those same regions into the band and they stay silent. The
+2 to 6 pt bucket is four points wide, and on a page of ordinary width the aspect and the control's
+size are tied within it too --- the bucket was not fine enough to break a relation the geometry
+imposes continuously. **An intervention outranks a stratified observation**, and this cost a day
+to learn twice in opposite directions.
+
+**The change is reverted rather than kept.** It is not neutral --- it costs 12 provable regions at
+one density and nothing at the other --- and keeping a change whose own prediction was refuted
+because it is principled is how a codebase acquires machinery nobody can argue against. What is
+kept is the measurement, `testdata/text-wide.pdf`, and the probe axes that took it.
+
+**Ranked next, and it is the one thing every measurement here has agreed on**: the *under 2 pt*
+control. 24 of 24 and 40 of 40 unread, at every shape, before and after padding --- the only bucket
+in any axis that is absolute. `scale_for` cannot serve it, because 2 pt is
+`MIN_CONTROL_PX / MAX_SCALE` and no scale it may pick reaches the floor. Two routes, and they want
+measuring against each other rather than picking: raise `MAX_SCALE`, which costs buffer on exactly
+the pages that are already largest; or have `control_from_page` decline a control it cannot render
+legibly and say so, which turns 24 wrong-looking refusals into 24 honest ones without making any
+region provable. The second is not a fix, and the gate saying *not verified* for a stated reason is
+worth more than saying it for none.
+
 #### The control's size in points, and a correction to the section below --- measured 2026-08-30
 
 `redact-reach-probe` now buckets by the control's height **in points**, crosses it with the probe
@@ -3486,6 +3537,11 @@ Same control band, 517 regions against 104, and the silent rate goes from zero t
 sparser run adds the same comparison at the other control size --- under 2 pt is 0 of 12 silent
 inside the band and 12 of 12 outside it --- though that one rests on a single 12-region cell and
 the denser run has no population there at all.
+
+⚠ **Refuted by intervention the same day --- see the section above.** Padding those regions into
+the band left every one of them silent, so the shape is a proxy for something the 2 to 6 pt bucket
+does not resolve. The paragraph that follows is the reading this crossing supports, and it is
+wrong.
 
 **So silence needs a wide image *and* a small control, and neither alone.** The fixture in the
 section below is still correct and was over-read: it showed a 28:1 image with a **34.5 pt** control
