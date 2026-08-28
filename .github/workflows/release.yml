@@ -275,6 +275,32 @@ jobs:
           printed, written back into the file you opened with *Save*, or written
           out to a new file with *Save a copy*.
 
+          **What it redacts.** Mark what has to go — drag a region over it,
+          select the words, or search and mark every match at once — review the
+          list in a sidebar panel that says what is under each region, then
+          *Redact and save as* to a copy or *Redact and save* over the file you
+          opened. The words are removed from the page's own drawing
+          instructions, not covered with a black rectangle: there is nothing
+          left to uncover. It reaches further than the page, too — the alternate
+          text a tagged document keeps beside the words, bookmarks that name
+          what went, comments sitting on it, form answers, and the document's
+          own title and author.
+
+          It then reads the file back and tells you what it found: *verified*,
+          or that it could not prove the file clean and why. Never a bare
+          success. That reading is visual as well as textual — the area is
+          rendered and put through the system's own text recogniser, so words
+          that were never text cannot slip through, and nothing is called clean
+          unless the recogniser was first shown to be working on the same
+          image. On Windows there is no recogniser to ask, and the report says
+          so rather than certifying.
+
+          Two things it does not do, and says so before you commit rather than
+          after. A region over a drawing leaves the drawing where it is. And it
+          takes whole lines, because removing part of one means removing the
+          instruction that drew it — so a word beside the one you marked goes
+          with it.
+
           **Documents behind a password.** An encrypted PDF opens: tpdf asks
           for the password and says so when it is wrong. A mark can be saved
           onto one, as an update appended to the end of the file, so it stays
@@ -301,13 +327,16 @@ jobs:
           and then appended to says so plainly.
 
           **What it is not, yet.** Signature verification, inserting pages,
-          true redaction, forms and text editing are not built. See the
-          roadmap in `docs/PLAN.md`.
+          forms and text editing are not built. See the roadmap in
+          `docs/PLAN.md`.
 
           (Stamps were listed here until `26.8.8`, one release after they
           shipped, and *Merge documents* was missing from the paragraph above
           until `26.8.10`, the release that added it -- the same drift in the
-          other direction, caught by the same step. Nothing can go red for a
+          other direction, caught by the same step. Third time in four
+          releases: this block still called **true redaction** unbuilt while
+          `26.8.11` was being published *as* the release that ships it, and the
+          paragraph above described none of it. Nothing can go red for a
           stale sentence in this block --
           it is a literal in the workflow, deliberately, so that no tag can
           pick up a CHANGELOG heading of the wrong shape. The cost is that it
