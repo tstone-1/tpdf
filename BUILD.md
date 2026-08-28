@@ -2153,6 +2153,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- 
 | `vector-heavy` | 1/1 against the *inverted* claim: the page has no text, so reading none is correct |
 | `links` | **7/8**, 1 skipped --- one expected red, below |
 | `encodings` | **7/8**, 1 skipped --- one expected red, below |
+| `text-wide` | 9/9 --- the wide-sheet fixture, below |
 
 ⚠ **Those counts were two behind on 2026-08-30 and are re-measured here.** The shape sweep's
 control was added in the same commit that last touched this table and the row was not moved with
@@ -2196,6 +2197,20 @@ when it is appended below the bottom margin. The earlier "padding loses the toke
 about trailing whitespace after the control, not about proportions. Through `stack`'s own
 construction the token reads back at every buildable shape on `text-base14`, `outline-simple` and
 `encodings`.
+
+**`testdata/text-wide.pdf` is the only fixture that reaches the band the corpus goes silent in**,
+and it says the shape is innocent. A 1684 pt sheet with ordinary 14 pt text builds an **18.1:1**
+probe image and sweeps to **28.1:1**, where A4 with the same text caps at 10.8:1 --- the lever is
+the page's width, so the control strip stays a comfortable 34.5 pt against A4's 30.5. Vision
+returns a span and reads the token back at 28.1:1, 24.1:1, 20.0:1, 18.1:1, 16.0:1, 8.0:1 and
+4.0:1, and loses only the token (not the span) at 2.0:1. `docs/PLAN.md` §6 has why that kills the
+padding repair: on a page of ordinary width a wide probe image *requires* a small control, so the
+corpus could never separate the two.
+
+⚠ **The two existing fixtures that come closest cannot answer it, and the sweep's own control says
+so.** `text-heavy` and `incr-xrefstream` reach 12.2:1, and on both *the token reads back at the
+gate's own shape* fails --- their controls are too small to be read reliably, so no column of
+theirs is evidence about shape. Do not read their `no`s as the wide band starting early.
 
 **The control-chooser check**, added 2026-08-27 --- the ninth on a fixture where every check runs, and named here rather than numbered because appending a check renames a number, and it is the only place
 `ocr::control_from_page`'s claim meets a real engine. The three gate checks above it take their

@@ -3452,6 +3452,59 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
+#### The aspect was never the cause --- measured 2026-08-30
+
+`testdata/text-wide.pdf` was written to reach the band the corpus goes silent in, and it does.
+A 1684 pt sheet with **ordinary 14 pt text** builds an 18.1:1 probe image and sweeps to 28.1:1,
+where A4 with the same text caps out at 10.8:1. The lever is the page's width, not the text's
+size, which is what lets the control stay a comfortable 34.5 pt strip --- A4's is 30.5 --- while the
+image goes wide. On A4 those two pull against each other; that is the arithmetic in the section
+below, and it is why no existing fixture could do this.
+
+**Nothing goes silent.** At 28.1:1, 24.1:1, 20.0:1 and the gate's own 18.1:1, Vision returns a
+span and reads the token back at every one:
+
+| aspect | spans | token read back |
+|---|---|---|
+| 28.1:1 | 1 | yes |
+| 24.1:1 | 1 | yes |
+| 20.0:1 | 1 | yes |
+| **18.1:1** (the gate's own) | 1 | yes |
+| 16.0:1 | 1 | yes |
+| 8.0:1 | 1 | yes |
+| 4.0:1 | 1 | yes |
+| 2.0:1 | 1 | **no** |
+
+So a probe image four times wider than anything the corpus calls silent reads perfectly, with a
+control of ordinary size. **The aspect is not the cause, and the padding repair is dead** --- it
+would have moved regions from a shape that is innocent to a shape that is innocent.
+
+**What the aspect was, is a proxy.** On a page of ordinary width the only way to reach 16:1 is for
+`tallest + control_pt` to come to under about 13 pt, because `padding` is a fixed 24. So on A4 a
+wide probe image *means* a small control, and the crossing in the section below already showed the
+sub-floor silent refusals sitting entirely in the widest band. This fixture separates the two for
+the first time: hold the control ordinary and widen the sheet instead, and the silence does not
+follow the shape. What is left to suspect is the control's size in points, which is what the shape
+was standing in for.
+
+**The two widest existing fixtures could not have answered this, and their own control says so.**
+`text-heavy.pdf` and `incr-xrefstream.pdf` reach 12.2:1, and on both the sweep's second control
+fails: the token does not read back at the gate's own shape, so no column of theirs is evidence
+about shape. That is the check firing for a second time on a second cause --- it was written after
+it failed for a first reason the same day --- and it is what stopped 12.2:1 being read as a clean
+wide-band result.
+
+**One asymmetry worth keeping.** The squarest end does lose the token: at 2.0:1 the engine returns
+a span and the token is not in it. That is `read spans, none holding it`, not silence, so it is
+**not** the corpus's lower tail, which was 12 of 12 *silent*. Two different failures at the two
+ends, and only the squarer one reproduces here at all.
+
+**Ranked next**: measure the control's height in points on the corpus, as its own axis beside the
+existing four. `redact-reach-probe` already has the value --- `control_shape` computes
+`geometry.control_px` and the scale that produced it --- so it is one more bucket and one more
+denominator, not a new instrument. If the silence tracks control points rather than aspect, the
+repair is in `scale_for` or in `control_from_page`, and neither is padding.
+
 #### Padding was called a candidate on a confounded measurement --- corrected 2026-08-30
 
 The item ranked below was a repair aimed at the wide tail, and it carried one caveat: on
@@ -3498,13 +3551,15 @@ sweep runs on read one low before today. Re-measured from runs: 9/9, 8/8, 7/7, 7
 `vector-heavy` are unchanged, which is the tell that the drift is the sweep --- it is skipped on
 both.
 
-**Ranked next, and the caveat is gone rather than the risk**: pad the probe image toward the
+~~**Ranked next, and the caveat is gone rather than the risk**: pad the probe image toward the
 8:1--16:1 band from the wide side, one term in `stack`'s `total`. The destination is now measured
 --- the token reads back at every shape `stack` can build --- and the origin still is not, because
 no fixture here reaches past 11:1. Building one that does is the cheaper half and comes first: it
-needs a page with a small control, which is a fixture parameter rather than a new instrument. The
-two corpus controls stand: the 294 middle-band regions must not move, and the 12 sub-floor
-middle-band regions must stay silent-free.
+needs a page with a small control, which is a fixture parameter rather than a new instrument.~~
+**Done the same day, and it killed the repair rather than confirming it --- see the section
+above.** The fixture reaches 28:1 and nothing goes silent, so the origin shape is innocent too.
+The two corpus controls stand for whatever replaces it: the 294 middle-band regions must not move,
+and the 12 sub-floor middle-band regions must stay silent-free.
 
 #### The two twelves are different regions --- measured 2026-08-30
 

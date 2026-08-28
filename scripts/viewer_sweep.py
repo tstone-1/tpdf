@@ -178,6 +178,15 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "one marked, one beside it, and one drawn twice. Their pixels are "
         "uncompressed so a probe can grep for them. No viewer path",
     ),
+    (
+        "text-wide",
+        "an ocr-probe fixture, and the only shape in the tree that reaches the "
+        "band redact-reach-probe measures real documents going silent in: a "
+        "1684 pt sheet with ordinary 14 pt text builds an 18:1 probe image "
+        "where A4 caps out near 11:1. Nothing in a window turns on the sheet "
+        "being wide, and mixed page sizes are what keeps links-rotated and "
+        "comments-rotated out of the corpora above",
+    ),
 ]
 
 # The names come from the run's own JSON roll, never from the printed column.
