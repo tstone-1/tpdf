@@ -5425,6 +5425,41 @@ both were proved: keying the crossing on a constant aspect fired the shape contr
 height control silent, keying it on a constant height did the mirror. One axis broken, one
 control. A single total would have gone red for both and named neither.
 
+### An intervention outranks a stratified observation, and a bucket four points wide did not break the tie
+
+2026-08-30, the third and last reading of the same question in one day. The redaction gate's silent
+refusals correlated with the probe image's shape; the entry below records that being called a
+proxy, then un-called, on a cross-tabulation that held the control's size in a 2 to 6 pt bucket and
+found the shape flipping the silent rate from **0 of 517** inside 8:1--16:1 to **52 of 104** beyond
+it. Same control band, opposite outcome, 621 regions. That is a strong stratified observation and
+it is what the whole next increment was ranked off.
+
+Then the increment was built, and it refuted it. Padding every probe image into the band ---
+one rule, two callers, six mutations all caught --- moved 120 of 1,469 regions out of the wide band
+at `--regions 40` and **changed no verdict at all**: 79 still-readable, 96 unread, 80 silent, 404
+provable, every figure identical before and after. At the sparser density it was worse than
+neutral, leaving the silent count at 36 while taking *shown unreadable* from 276 to 264.
+
+**The stratification was arithmetically right and causally wrong, and the reason is resolution.**
+The aspect is `width / (tallest + control_pt + const)`, so on a page of ordinary width it and the
+control's size are tied *continuously*. A four-point-wide bucket does not break a continuous
+relation --- the wide-image regions sit at the bottom of that bucket and the band regions at the
+top, and no amount of that kind of slicing separates them. **When two variables are related by an
+identity, stratifying on one of them at bucket resolution proves nothing about the other; only
+changing one and holding the rest fixed does.** The intervention took a day and it is the only
+instrument here that could have answered.
+
+**Revert the change, keep the measurement.** The padding was principled, tested, mutation-proved
+and measured to fix nothing while costing 12 regions their control. Keeping it because the
+reasoning is good is how a codebase acquires machinery nobody can argue against and nobody can
+show the value of. What survives is the fixture, the probe axes and this entry.
+
+**The order to work in, next time.** All three readings --- shape, points, and the crossing --- were
+observational, and each corrected the one before it within hours. The one bucket that never moved
+across any of them, before or after the intervention, is the control under 2 pt: 24 of 24 and 40 of
+40 unread. A quantity that is absolute in every stratification and survives an intervention is the
+one worth acting on; a rate that reshuffles between them is a description of the corpus.
+
 ### Two variables a corpus cannot separate, because on an ordinary page one forces the other
 
 2026-08-30. Three increments in a row narrowed the redaction gate's silent refusals --- the engine

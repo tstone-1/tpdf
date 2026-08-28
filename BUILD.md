@@ -2417,6 +2417,15 @@ bucket with it. Crossed with the shape it gives the comparison neither axis coul
 control of 2 to 6 pt, 517 regions inside 8:1--16:1 are 0% silent and 104 beyond 16:1 are 50%
 silent, so the shape matters at a fixed control size.
 
+⚠ **The aspect axis is a description of the corpus, not a lever --- established by building the
+lever and measuring it.** Padding every probe image into the 8:1--16:1 band was implemented in
+`ocr_gate` (one rule, two callers, six mutations all caught), and at `--regions 40` it moved 120 of
+1,469 regions out of the wide band while changing **no verdict at all**: 79 still-readable, 96
+unread, 80 silent, 404 provable, identical before and after. At `--regions 12` it left the silent
+count at 36 and took *shown unreadable* from 276 to 264. The change was reverted; `docs/PLAN.md`
+§6 and the trap entry have why. Read the aspect rows as a property of the population, and do not
+rank work off them again.
+
 The clamp row answers a question `ocr_gate.rs` recorded as open --- *"no measurement has separated
 them"*. A sub-floor control comes from the `MAX_SCALE` ceiling being unable to reach 16 px, or
 from the image being halved to fit the buffer, and the two can hold together, so *both* is its own
