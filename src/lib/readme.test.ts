@@ -62,6 +62,7 @@
 import { describe, expect, it } from "vitest";
 
 import readme from "../../README.md?raw";
+import releaseWorkflow from "../../.github/workflows/release.yml?raw";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
 
@@ -73,6 +74,34 @@ const BUILT = /<!--\s*built:\s*([^>]*?)\s*-->/g;
 
 /** `<!-- not-built: edit.redactSelection -->` */
 const ABSENT = /<!--\s*not-built:\s*([^>]*?)\s*-->/g;
+
+/** The heading in the release notes whose sentence claims commands do not exist. */
+const RELEASE_ABSENT_SECTION = "**What it is not, yet.**";
+
+/**
+ * The release notes, lifted out of the workflow that publishes them.
+ *
+ * They are a `cat > release-notes.md <<'NOTES'` heredoc rather than a file,
+ * deliberately --- `release.yml` reads nothing from `CHANGELOG.md`, so no tag can
+ * pick up a heading of the wrong shape --- and the cost of that is a block of
+ * prose nothing could go red about. Hence this.
+ *
+ * Undented by the smallest indent any non-blank line has, which is what the
+ * shell does with the heredoc; the markers would still be found without it,
+ * and doing it anyway keeps the extraction honest about producing the text a
+ * reader gets.
+ */
+function releaseNotes(): string {
+  const body = /cat > release-notes\.md <<'NOTES'\n([\s\S]*?)\n\s*NOTES\n/.exec(
+    releaseWorkflow,
+  )?.[1];
+  if (body === undefined) return "";
+  const lines = body.split("\n");
+  const indent = Math.min(
+    ...lines.filter((line) => line.trim() !== "").map((line) => line.length - line.trimStart().length),
+  );
+  return lines.map((line) => line.slice(indent)).join("\n");
+}
 
 /**
  * Registered commands the README deliberately does not mention, and why.
@@ -234,5 +263,92 @@ describe("the README against the command registry", () => {
     for (const [id, reason] of Object.entries(UNLISTED)) {
       expect(reason.split(/\s+/).length, `${id} has a reason of `).toBeGreaterThan(4);
     }
+  });
+});
+
+describe("the release notes against the command registry", () => {
+  /*
+   * **The same invariant over a second document, and it is here rather than in
+   * a gate script of its own because the second document restates the first.**
+   *
+   * `release.yml`'s notes said "Signature verification, inserting pages, true
+   * redaction, forms and text editing are not built" --- a hand-kept copy of the
+   * list the README already carries and this file already checks both ways. One
+   * copy was checked on every commit and the other was prose in a YAML string,
+   * and it is the unchecked one that has been wrong three releases running:
+   * stamps in `26.8.8`, *Merge documents* in `26.8.10`, and **true redaction**
+   * in `26.8.11`, which was published *as* the release that ships it.
+   *
+   * Nothing new is imported to do this. The registry is already here, and the
+   * workflow comes in through the same `?raw` the README does, so there is no
+   * second parser and no filesystem.
+   *
+   * ## The half this does not own, named rather than implied
+   *
+   * `26.8.10`'s failure was the other direction: *Merge documents* shipped and
+   * the notes never mentioned it. That is **not** checked and should not be ---
+   * a release body is prose, and requiring it to name all of the registry would
+   * make it the palette transcribed. Step 11 of `BUILD.md` still says to read
+   * it, and that half stays human.
+   *
+   * Nor is every phrase in the sentence covered. "Signature verification" names
+   * no command, because verifying a signature is a behaviour rather than
+   * something in the palette --- so the marker carries the three that are
+   * commands and that phrase is checked by nobody. Saying so beats a marker
+   * that guesses an id nothing registers, which is what the stamp episode was.
+   */
+  const registered = registeredIds();
+  const notes = releaseNotes();
+  const at = notes.indexOf(RELEASE_ABSENT_SECTION);
+  const absentClaims = claims(notes, ABSENT);
+
+  // The refusals, and they matter more here than in the README's half: this
+  // text is extracted from a YAML file by a regex, so an edit to the workflow's
+  // shape can leave the extraction matching nothing --- which looks exactly like
+  // a release body that claims nothing wrong.
+  it("finds the release notes inside the workflow", () => {
+    expect(notes.length, "no `cat > release-notes.md` heredoc in release.yml").toBeGreaterThan(0);
+  });
+
+  it("finds the sentence that carries the absence claims", () => {
+    expect(at, `the release notes have no '${RELEASE_ABSENT_SECTION}' paragraph`).not.toBe(-1);
+  });
+
+  it("finds unbuilt markers in the notes to check", () => {
+    expect(absentClaims.length, "no not-built markers in the release notes").toBeGreaterThan(0);
+  });
+
+  it("calls nothing unbuilt that the application registers", () => {
+    // The one that would have caught 26.8.11 before it was published.
+    const shipped = absentClaims.filter((id) => registered.includes(id));
+    expect(shipped, "called unbuilt in the release notes and registered").toEqual([]);
+  });
+
+  it("claims each command absent once", () => {
+    expect(repeated(absentClaims), "called unbuilt more than once").toEqual([]);
+  });
+
+  it("agrees with the README about what is not built", () => {
+    // **The check that makes this worth having rather than a second list to
+    // keep.** Two documents can each be free of registered commands and still
+    // disagree with one another, and a reader who meets both then gets two
+    // answers. The README's list is the one with a classification behind it ---
+    // every registered command is claimed there or excluded with a reason --- so
+    // it is the one this defers to.
+    const readmeAt = readme.indexOf(ABSENT_SECTION);
+    const readmeAbsent = claims(
+      readmeAt === -1 ? "" : readme.slice(readmeAt).split("\n## ")[0] ?? "",
+      ABSENT,
+    );
+    expect(readmeAbsent.length, "the README's own list is empty, so there is nothing to agree with").toBeGreaterThan(0);
+    const only = absentClaims.filter((id) => !readmeAbsent.includes(id));
+    expect(only, "called unbuilt in the release notes and not in the README").toEqual([]);
+  });
+
+  it("keeps the built markers out of the release notes", () => {
+    // There are none, and there should be none: the notes describe a release
+    // rather than inventory the registry, so a `built:` marker here would be
+    // the start of the second list this check exists to prevent.
+    expect(claims(notes, BUILT), "'built:' in the release notes").toEqual([]);
   });
 });

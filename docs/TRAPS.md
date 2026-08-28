@@ -11996,6 +11996,51 @@ dozen entries about. What covers it is the corpus sweep, and the rule to carry i
 that was already there and did not transfer: **a precondition an earlier phase happens to
 leave is a coincidence, not a precondition.** When a probe needs state, it makes it.
 
+### The second copy of a gated list is the one that drifts, and only it
+
+`README.md` names what tpdf cannot do in bullets carrying `<!-- not-built: <id> -->`, and
+`src/lib/readme.test.ts` checks them against the real command registry in both directions on
+every commit. That check works: it has been red for a genuine mistake and green otherwise.
+
+`release.yml`'s release-notes heredoc named the same things in a sentence --- *"Signature
+verification, inserting pages, true redaction, forms and text editing are not built"* ---
+maintained by hand, checked by nobody. **It was wrong in three of four releases**: stamps in
+`26.8.8`, *Merge documents* missing in `26.8.10`, and **true redaction** in `26.8.11`, which
+was published *as* the release that ships it.
+
+The distribution is the whole lesson. Two copies of one list, one gated and one not, and every
+failure landed on the ungated copy. That is not luck --- a list nothing checks has no failing
+case, so its errors accumulate silently while its twin's are corrected within a commit. And
+the ungated copy here is the one a stranger reads: a GitHub release page, telling somebody who
+has just downloaded the binary that it cannot do what it does.
+
+**The fix is the cheap one precisely because the pattern already existed.** Markers in the
+YAML body and a second `describe` in the test that already imports the registry and already
+pulls its document in through Vite's `?raw`. No new gate entry, no second parser, no
+filesystem. The check that makes it worth having rather than a third list to keep is the
+**agreement** one: every id the notes call unbuilt must also be called unbuilt in the README,
+so the two copies are provably the same claim rather than merely both free of registered ids.
+
+**Two of the mutations written to prove it were wrong, in the two classic ways.** The first
+control named `edit.redactCopy`; the registered id is `file.redactCopy`, so it reddened the
+agreement check and left the *registry* check --- the one that would have caught `26.8.11` ---
+unproved, while the run still looked red. The second used `edit.editForeignMark` and SURVIVED,
+correctly: the README claims that one absent too, so the documents still agreed. What can
+break the agreement is only an id naming **nothing**, because the README's own gate forces
+every genuinely unbuilt command into its list --- so the mutation is a *mistyped* id, which is
+what the drift looks like anyway. Read a red as evidence about which assertion fired, not that
+one did.
+
+**What this deliberately does not check**, and the docstring says so rather than implying
+otherwise: the `26.8.10` direction, where a shipped capability is simply never mentioned. A
+release body is prose, and requiring it to name all of a registry would make it the palette
+transcribed. That half stays with step 11 of `BUILD.md` and a person reading it.
+
+**The general form: when you write a checked list, grep for the other copies.** A second
+statement of the same fact in a document, a workflow, a comment or a commit template is not
+redundancy --- it is the copy that will be wrong, and it will be wrong in the place with the
+most readers and the least scrutiny.
+
 ### A title that is a strict prefix of another ties, and registration order decides
 
 `rank` in `src/lib/commands.ts` scores a query against a command's title: a point per

@@ -329,6 +329,7 @@ jobs:
           **What it is not, yet.** Signature verification, inserting pages,
           forms and text editing are not built. See the roadmap in
           `docs/PLAN.md`.
+          <!-- not-built: edit.insertPages edit.fillForm edit.editText -->
 
           (Stamps were listed here until `26.8.8`, one release after they
           shipped, and *Merge documents* was missing from the paragraph above
