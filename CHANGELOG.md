@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.11] - Unreleased
+## [26.8.11] - 2026-08-27
 
 ### Added: mark a region for redaction
 
@@ -235,6 +235,21 @@ The report is the one you already get --- *verified*, or *not verified* and why,
 never a bare success --- and it arrives when the file is already the redacted one.
 That is the reason for the warning rather than an argument against it. Reach for
 *Redact and save as* while you are still deciding.
+
+### Fixed: typing a command's whole name now runs that command
+
+Type **Redact and save** into the command palette and the entry that lit up was
+*Redact and save as...* --- the other command, the one that writes a copy. Press
+Enter and you got a file dialog instead of the file you opened being redacted.
+
+The palette ranks what you type against every command's name, and one name being
+the start of another was a case it had no rule for: both matched equally well, so
+the tie went to whichever was listed first. A name you have typed in full now
+wins.
+
+There is one other pair of names like that --- **Save** and *Save a copy...* ---
+and it happened to already be right, for no better reason than the order the two
+were added in.
 
 ### Fixed: redacting a word no longer reports the rest of the sentence
 

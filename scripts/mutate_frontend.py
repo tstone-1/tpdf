@@ -1580,6 +1580,39 @@ MUTATIONS = [
         "weights distance across the lines, not along them",
     ),
     Mutation(
+        # Drop the whole-title bonus. Two commands whose titles prefix one
+        # another then tie on every term the scorer has, and registration order
+        # decides -- which is how "Redact and save" came to highlight "Redact
+        # and save as..." for a reader who had typed the first one in full.
+        "rank: score a whole-title match like any other match",
+        "src/lib/commands.ts",
+        "      command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;",
+        "      false ? EXACT : 0;",
+        "ranks the exact title first, whatever the registration order",
+    ),
+    Mutation(
+        # Compare unfolded. Everything else here matches case-insensitively, so
+        # this is the one spelling where typing in lower case would change the
+        # answer -- and it would do it silently, on the input people actually
+        # type.
+        "rank: make the whole-title match case-sensitive",
+        "src/lib/commands.ts",
+        "      command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;",
+        "      command.title === trimmed ? EXACT : 0;",
+        "is case-insensitive, as every other match here is",
+    ),
+    Mutation(
+        # Reverse it, which is the mutation the two-orders test exists for: the
+        # exact match is pushed BELOW the title that merely starts with the
+        # query, so the answer is wrong from either registration order rather
+        # than from one.
+        "rank: rank a whole-title match below a partial one",
+        "src/lib/commands.ts",
+        "const EXACT = WORD_START * 4;",
+        "const EXACT = -WORD_START * 4;",
+        "ranks it first from the other registration order too",
+    ),
+    Mutation(
         "argument: run a value-taking command with no value",
         "src/lib/commands.ts",
         "      if (argument === undefined) return false;",

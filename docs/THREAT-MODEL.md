@@ -1745,8 +1745,25 @@ as a clean answer would be this document's own T5 failure arriving through the p
 **The coverage this has, stated as a number rather than implied.** A region whose page yields
 no qualifying control is `NotVerified`: measured across 41 documents, 45.9% of realistic
 regions had no surviving word of at least `MIN_CONTROL_CHARS` characters at or below the size
-that was removed. That is the ceiling of this design, and the curve has no flat part to move
+that was removed. That is a ceiling on this design, and the curve has no flat part to move
 to — see `docs/PLAN.md` §6.
+
+**It was called *the* ceiling until 2026-08-27, and it was not the binding one.** The gate
+rendered the rows a region's rectangle covers as a **full-width** strip, so the engine was
+shown the whole line and read back the neighbouring words the removal was right to leave —
+which `adjudicate` then counted as text surviving inside the region. `ocr_gate::mask_columns`
+now blanks the strip outside the region's own columns before the control is stacked under it.
+On the same 104 regions of the same corpus, with the control's standard untouched, *shown
+unreadable* went from **18 to 63** and *still reads as text* from **54 to 6**, every one of
+those six inside the region's own columns. So control availability is one of two limits and
+was the smaller; the paragraph above named the other as the only one.
+
+The cost is three regions that moved to *could not be checked* — a nearly blank image is
+harder to read a control off — which is a wrong *legible* becoming an honest *not verified*.
+What makes the masking sound is route B: `redact::covered` marks a text object when it
+**overlaps** the region, and a removal takes the whole text-showing operation, so no glyph
+overlapping the region survives a correct removal. Everything the mask erases is something the
+reader did not mark. If a removal ever splits a text object, this reasoning has to be redone.
 
 ## 6. Windows — a policy, and a different one
 
@@ -2123,10 +2140,17 @@ which is what makes it evidence rather than a milestone.
     not take, no larger than the smallest box it did take, of at least `MIN_CONTROL_CHARS`
     characters. Measured across 41 real documents, **45.9%** of realistic regions have no such
     word, and those are reported *not verified* --- which is the safe answer and is also the
-    answer that was given before any of this existed. Raising coverage means lowering the
-    control's standard, and the measured curve has no flat part: 71.9% at two characters,
-    58.3% at four, 35.5% at eight. A two-character token is a fragment `adjudicate` would
-    match by accident.
+    answer that was given before any of this existed. Lowering the control's standard is one
+    lever on coverage and a poor one, since the measured curve has no flat part: 71.9% at two
+    characters, 58.3% at four, 35.5% at eight, and a two-character token is a fragment
+    `adjudicate` would match by accident.
+
+    **This entry said that was the only lever, and it was wrong the day it was written.** The
+    other one is what the engine is shown, and it was worth more: masking the probe strip to
+    the region's own columns rather than rendering the full width of the row took *shown
+    unreadable* from 18 to 63 of the same 104 regions, with the control's standard untouched
+    (§5.1). A limit stated as the ceiling, in the document whose subject is checks that cannot
+    see what they certify, is the shape this file exists to catch.
 
     Two things narrow it further and neither is closed. **The gate reads the region, not the
     page**, so a `/DCTDecode` image outside every region is still `verify::Report::deferred`

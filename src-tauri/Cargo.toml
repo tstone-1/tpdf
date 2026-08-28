@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.8.10"
+version = "26.8.11"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"

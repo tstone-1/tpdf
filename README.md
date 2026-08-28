@@ -119,11 +119,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Mark a region for redaction** --- and nothing more than mark it. Drag out a region and
   it joins a list, drawn in red over the page with the words still readable underneath,
   because a region you cannot see through is one you cannot check. Undo takes it back off.
-  **Nothing is removed, and no file is written**: the step that destroys content is not
-  built, which is why *True redaction* is still in the list below. A tpdf that could mark
-  and not remove must not look like one that removes, so a pending region is never black,
-  never saved, and never written into a copy --- see the two entries under *What Phase 0
-  established* for why this is the hardest thing here to get right.
+  **Marking removes nothing and writes no file.** Removal is a separate command, three
+  bullets down, and keeping the two apart is the point: what you mark is what you get to
+  look at before anything happens to it. A region that has only been marked must not look
+  like one that has been removed, so a pending region is never black, never saved, and never
+  written into a copy --- see the two entries under *What Phase 0 established* for why this
+  is the hardest thing here to get right.
   <!-- built: edit.redactRegion -->
 - **Review what you marked**, in a sidebar tab that lists every pending region down the
   document with the words under it, so you can check six regions across forty pages
@@ -255,9 +256,10 @@ unbuilt while they shipped.
 - Editing a comment that came out of a file. Your own marks are yours to change; a note
   somebody else wrote is read-only, because the model knows nothing about it.
   <!-- not-built: edit.editForeignMark -->
-- A region over a picture is still reported rather than removed. All three ways of saying
-  what to remove are built; what a redaction cannot yet do is take a photograph out of a
-  page.
+- A region over a **drawing** is reported rather than removed --- a vector rule under a line
+  of text is on almost every page, so taking those would damage nearly every redaction. The
+  same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
+  inside another block. A picture on the page itself is removed, bytes included.
 - Forms and visual signatures. Signatures are read, never made.
   <!-- not-built: edit.fillForm edit.signDocument -->
 - In-place text editing
