@@ -3452,14 +3452,77 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
-**Ranked next: reproduce the silence on a fixture.** Everything above is measured on a corpus
+#### The silence lives at the extremes of the probe image's shape --- measured 2026-08-30
+
+The step below was ranked and taken the same day. It did not go where it expected to, and
+both halves are worth recording.
+
+**On a fixture the silence does not reproduce at all.** `ocr-probe` now builds the gate's own
+probe image from a fixture --- one line's height of white where the region was, the control
+strip under it, through `ocr_gate::stack` --- and re-asks Vision at that shape and at two, four
+and eight times its height, the content byte-identical in every row. Four fixtures, sixteen
+shapes, a span returned at every one:
+
+| fixture | the gate's shape | swept to | spans | token read back |
+|---|---|---|---|---|
+| `text-base14` | 1190x170, 7.0:1 | 0.9:1 | 1 at every shape | yes at every shape |
+| `text-marked` | 1190x170, 7.0:1 | 0.9:1 | 1 at every shape | yes at every shape |
+| `text-truetype` | 1190x170, 7.0:1 | 0.9:1 | 1 at every shape | yes at every shape |
+| `outline-simple` | 1190x160, 7.4:1 | 0.9:1 | 1 at every shape | **no at 1.9:1 and 0.9:1** |
+
+The first draft of that sweep measured the wrong thing, and its own number said so: it used the
+page's *tallest blank band* as the region strip --- hundreds of rows --- and produced a 548 px
+image at 2.2:1, which is not the shape under suspicion. What the gate stacks is the rows one
+dragged region covers, and after the removal took the ink and `mask_columns` blanked the columns
+beside it, those rows are white. A line's height of white is that, and the real shape is 7:1.
+
+`outline-simple`'s last column is why this is not a licence to pad: padding the image to 1.9:1
+made the engine stop reading the token back while it went on returning a span.
+
+**On the corpus the shape explains a great deal, and it is the extremes rather than one
+direction.** `redact-reach-probe` now takes the probe image's proportions from
+`ocr_gate::geometry_for` --- a ratio, so the render scale cancels out of it --- and buckets the
+failures and the population together. `--regions 12`, 40 documents:
+
+| the probe image was | unread / all | rate | of those, silent |
+|---|---|---|---|
+| up to 8:1 (the swept-safe range) | 12 / 36 | 33.3% | 12 |
+| 8:1 to 16:1 | 28 / **294** | **9.5%** | **0** |
+| wider than 16:1 | 26 / 36 | **72.2%** | 24 |
+
+Four fifths of the population sits in the middle band and fails at 9.5% with **no silent refusal
+at all**. Every one of the 36 silent refusals is in a tail: 24 beyond 16:1 and 12 below 8:1. The
+engine is not degrading with width --- it answers over the range an ordinary page produces and
+stops answering outside it, at both ends.
+
+**The two tails are not the same thing, and this cannot say what the lower one is.** A probe
+image at 8:1 or squarer means the tallest region is large against the page's width, which is
+also when `scale_for` halves the image toward `MIN_SCALE` to fit the buffer. The two axes agree
+in a way that is suggestive and not more: 12 of the 36 silent refusals rendered their control
+under 8 px, and 12 sat at 8:1 or squarer. Whether those are the same twelve is a third
+cross-tabulation, and it has not been taken --- two axes that each report a 12 do not establish
+that they are counting one set of regions.
+
+**The denominator was wrong for one run, and the tell was every row reading 100.0%.** The
+population counter was written inside the `ControlUnread` branch, where it can only ever equal
+its own numerator. That is the trap this file's previous section is about, met again one
+increment later, by the person who had just written it down. `docs/TRAPS.md` carries the second
+half of that entry.
+
+**Ranked next, and it is a candidate rather than a question**: bound the probe image's aspect by
+padding it toward the middle band, rather than by rendering less of the page. It is one change in
+`ocr_gate::stack` with an obvious control --- the 294 regions between 8:1 and 16:1 must not move
+--- and it is a candidate rather than an obvious win because `outline-simple` shows padding losing
+the token, so the experiment has to read the token back and not merely count spans.
+
+~~**Ranked next: reproduce the silence on a fixture.** Everything above is measured on a corpus
 whose pixels deliberately never leave the process, so nothing here can look at the image the
 engine was handed. `testdata/` can: if a probe image built from a fixture reproduces a zero-item
 answer, the two candidates worth trying are cheap to separate --- a probe image that is a page
 wide and a few dozen rows tall may be outside what Vision accepts at all, and a control strip
 whose crop lands on rows the word does not occupy would be blank without any step failing. Both
 are properties of the image, which is where the evidence now points, and neither can be
-distinguished from the other by any count this harness can take.
+distinguished from the other by any count this harness can take.~~ **Done the same day --- see the section above.**
 
 **And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
 one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose

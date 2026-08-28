@@ -236,6 +236,23 @@ struct Tally {
     /// Keyed by shape first so the report's rows are the shapes, which is the
     /// division that names a place to look.
     unread_shape_px: BTreeMap<(&'static str, &'static str), usize>,
+    /// The same again against the probe image's *shape* rather than the
+    /// control's height.
+    ///
+    /// A different axis, not a second reading of the one above: the aspect is a
+    /// ratio, so the render scale cancels out of it, and a probe image halved to
+    /// fit the buffer keeps its shape. It is here because a page-wide, few-rows-
+    /// tall image is what is left to suspect once the band and the control's
+    /// height are ruled out --- and because a fixture has only ever been swept to
+    /// 7.0:1, so what a real page produces was until now nobody's measurement.
+    unread_shape_aspect: BTreeMap<(&'static str, &'static str), usize>,
+    /// Every unread region's aspect, whatever its shape, so the rows above have
+    /// a denominator.
+    ///
+    /// The lesson of the token-length bucket one increment earlier, applied
+    /// before rather than after: a count of failures at some aspect says nothing
+    /// until the same bucketing is applied to the population it came from.
+    all_aspect: BTreeMap<&'static str, usize>,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -571,18 +588,28 @@ fn px_bucket(px: f32) -> &'static str {
     }
 }
 
-/// How tall the control the gate chose for this page landed, and how long it is.
+/// How tall the control the gate chose for this page landed, how long it is, and
+/// how wide the probe image it sits in is against its height.
 ///
 /// Calls the gate's own two functions rather than repeating what they do, which
 /// is why [`ocr_gate::geometry_for`] is public at all. `None` means the gate
 /// could not have got this far either --- a page with no usable control never
 /// reaches a per-region verdict, so a region asking this question always has an
 /// answer.
-fn control_shape(page: &GatePage) -> Option<(f32, usize)> {
+///
+/// The aspect is a ratio, so the render scale cancels out of it: a probe image
+/// halved to fit the buffer is the same shape as one that was not. That is what
+/// makes it a different axis from the height rather than another reading of it.
+fn control_shape(page: &GatePage) -> Option<(f32, usize, f32)> {
     let survivors = ocr_gate::surviving(&page.words, &page.regions, &page.taking);
     let choice = tpdf_lib::ocr::control_from_page(&survivors, &page.regions).ok()?;
     let geometry = ocr_gate::geometry_for(page, &choice).ok()?;
-    Some((geometry.control_px, choice.token.chars().count()))
+    let (w, h) = geometry.image_pt;
+    Some((
+        geometry.control_px,
+        choice.token.chars().count(),
+        if h > 0.0 { w / h } else { 0.0 },
+    ))
 }
 
 /// The buckets [`Tally::unread_chars`] is reported in, in the order they print.
@@ -597,6 +624,32 @@ const CHAR_BUCKETS: [&str; 3] = ["4 characters", "5 to 7 characters", "8 or more
 const SHAPE_SILENT: &str = "read nothing at all";
 const SHAPE_ABSENT: &str = "read spans, none holding it";
 const SHAPE_OUTSIDE: &str = "read it, outside its band";
+
+/// The buckets the probe image's width-to-height ratio is reported in.
+///
+/// Split at 8:1 because `ocr-probe` swept four fixtures from **7.0:1** to 0.9:1
+/// on 2026-08-30 and Vision returned a span at every one of them --- so 7:1 is
+/// measured non-silent, and anything past it is untested rather than merely
+/// suspected. The coarse top bucket is deliberate: the question is whether the
+/// silent refusals live beyond where a fixture has ever been taken, not where
+/// exactly.
+///
+/// **Non-silent, not correct.** On `outline-simple` the engine kept returning a
+/// span at every shape and stopped reading the *token* back at 1.9:1 and 0.9:1
+/// --- so padding a probe image toward square is not free, and this bucketing
+/// counts refusals rather than endorsing a remedy.
+const ASPECT_BUCKETS: [&str; 3] = ["up to 8:1 (swept safe)", "8:1 to 16:1", "wider than 16:1"];
+
+/// Which bucket a probe image of `aspect` width-to-height falls in.
+fn aspect_bucket(aspect: f32) -> &'static str {
+    if aspect <= 8.0 {
+        ASPECT_BUCKETS[0]
+    } else if aspect <= 16.0 {
+        ASPECT_BUCKETS[1]
+    } else {
+        ASPECT_BUCKETS[2]
+    }
+}
 
 /// Which bucket a token of `chars` characters falls in.
 fn char_bucket(chars: usize) -> &'static str {
@@ -684,8 +737,9 @@ fn run_gate(
                         for verdict in verdicts {
                             let region = asked.get(at).copied().unwrap_or_default();
                             at += 1;
-                            if let Some((_, chars)) = shape {
+                            if let Some((_, chars, aspect)) = shape {
                                 *tally.all_chars.entry(char_bucket(chars)).or_default() += 1;
+                                *tally.all_aspect.entry(aspect_bucket(aspect)).or_default() += 1;
                             }
                             match verdict {
                                 Legibility::Illegible { .. } => tally.proved += 1,
@@ -728,7 +782,7 @@ fn run_gate(
                                         // above; this used to look it up again
                                         // per region, which is the same value
                                         // by a second route.
-                                        if let Some((px, chars)) = shape {
+                                        if let Some((px, chars, aspect)) = shape {
                                             *tally.unread_px.entry(px_bucket(px)).or_default() += 1;
                                             *tally
                                                 .unread_chars
@@ -738,6 +792,10 @@ fn run_gate(
                                                 *tally
                                                     .unread_shape_px
                                                     .entry((label, px_bucket(px)))
+                                                    .or_default() += 1;
+                                                *tally
+                                                    .unread_shape_aspect
+                                                    .entry((label, aspect_bucket(aspect)))
                                                     .or_default() += 1;
                                             }
                                         }
@@ -881,6 +939,32 @@ fn report(t: &Tally, seconds: f32) {
                         println!("          {bucket:<28} {n:>6}");
                     }
                 }
+            }
+            // And the same three shapes against the image's proportions, with
+            // the population beside them --- a count of failures at some aspect
+            // is not evidence about that aspect until the same bucketing is
+            // applied to every region that got this far.
+            println!("  and the probe image they sat in was (unread / all, and the rate)");
+            for bucket in ASPECT_BUCKETS {
+                let all = t.all_aspect.get(bucket).copied().unwrap_or(0);
+                let bad: usize = [SHAPE_SILENT, SHAPE_ABSENT, SHAPE_OUTSIDE]
+                    .iter()
+                    .map(|label| {
+                        t.unread_shape_aspect
+                            .get(&(*label, bucket))
+                            .copied()
+                            .unwrap_or(0)
+                    })
+                    .sum();
+                let silent = t
+                    .unread_shape_aspect
+                    .get(&(SHAPE_SILENT, bucket))
+                    .copied()
+                    .unwrap_or(0);
+                println!(
+                    "      {bucket:<32} {bad:>6} /{all:>6}   {:.1}%, {silent} of them silent",
+                    pct(bad, all)
+                );
             }
             // Every shape row above has to account for every region that had a
             // control to measure. A region with no shape is already named by

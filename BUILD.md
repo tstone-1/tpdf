@@ -2154,6 +2154,20 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- 
 | `links` | **5/6**, 1 skipped --- one expected red, below |
 | `encodings` | **5/6**, 1 skipped --- one expected red, below |
 
+**A shape sweep prints above the checks**, added 2026-08-30 and not a check --- it passes and
+fails nothing. It builds the gate's own probe image through `ocr_gate::stack` (a line's height of
+white where the region was, the control strip under it) and re-asks Vision at that shape and at
+two, four and eight times its height, with the content byte-identical in every row. It exists
+because the corpus probe's largest remaining bucket is the engine *answering* and returning no
+spans at all, and a corpus measurement cannot look at the image it was handed while a fixture can.
+
+The one check beside it is the control over the sweep: the strip has to read at *some* shape, or
+every row is a statement about that strip rather than about the proportions. Measured on four
+fixtures: the gate's real shape is **7.0:1** and Vision returned a span at every shape down to
+0.9:1, so the silence does not reproduce here. On `outline-simple` it kept returning a span and
+stopped reading the *token* back at 1.9:1 and 0.9:1 --- which is why the sweep reports both
+columns, and why padding is not an obvious remedy.
+
 **The seventh check is the control chooser**, added 2026-08-27, and it is the only place
 `ocr::control_from_page`'s claim meets a real engine. The three gate checks above it take their
 control strip out of **Vision's own output**, which is the engine agreeing with itself; this one
@@ -2334,6 +2348,21 @@ population, and two marginals bound their overlap without measuring it. Measured
 197 refusals at three densities, the outside-the-band row is **0** at every one, and at
 `--regions 40` exactly 40 of the 80 silent refusals had a control at or above `MIN_CONTROL_PX`
 --- which the marginals alone could only place between 40 and 80.
+
+**A fourth axis, added 2026-08-30: the probe image's own proportions.**
+`ocr_gate::geometry_for` reports the shape it planned, and the row prints `unread / all` and a
+rate per aspect band, with the silent count beside it. It is a different axis from the control's
+rendered height rather than another reading of it, because an aspect is a ratio and the render
+scale cancels out of it --- a probe image halved to fit the buffer keeps its shape. Measured over
+40 documents at `--regions 12`: **12 / 36 up to 8:1, 28 / 294 between 8:1 and 16:1, 26 / 36 beyond
+16:1**, and all 36 silent refusals are in the two tails with none in the middle band that holds
+four fifths of the population.
+
+⚠ **That row's denominator has to be counted in the per-region loop, not inside the
+`ControlUnread` branch.** Written one scope too low it counts the failures, so every band prints
+`N / N 100.0%` --- which happened on 2026-08-30, one increment after the trap about denominators
+was written. The `bad / all` form is what makes it visible; a bare percentage would have read as a
+finding.
 
 Two `[WARN]`s guard it. The three shapes plus the no-evidence count must equal the cause's own
 total, and the cross-tabulated total must equal the height-bucket total, since both count the

@@ -5351,6 +5351,29 @@ Two more things this run settled, both in the entry above: the same bucket's mas
 was refused by *reading* the code, and a crop-padding hypothesis by an *A/B* that made the number
 worse. Three predictions, three instruments, none of them the one the prediction suggested.
 
+**And a second half, 2026-08-30, by the person who had just written the first.** A new axis was
+added to the same report --- the probe image's aspect ratio --- and its denominator was written
+*inside* the `if cause == ControlUnread` branch, one scope below where it belonged. A population
+counted inside the branch that selects the failures is the failures, so every row printed
+
+```
+      up to 8:1 (swept safe)               12 /    12   100.0%
+      8:1 to 16:1                          28 /    28   100.0%
+      wider than 16:1                      26 /    26   100.0%
+```
+
+Moving the counter up to the per-region loop, next to the denominator the previous increment had
+added for the token length, gave 12 / 36, 28 / **294** and 26 / 36 --- and that is the finding:
+four fifths of the population sits in the middle band and fails at 9.5% where the wide tail fails
+at 72.2%.
+
+**Having the rule did not prevent the defect; the report's shape caught it.** `100.0%` on every
+row is impossible for a real bucketing, and it is impossible in a way a reader sees at a glance
+--- which is the argument for printing `bad / all` and a rate rather than a rate alone. A
+percentage on its own would have read as a strong finding. So the guard worth keeping is not "remember
+the denominator" but **print both operands, and ask what would be on the page if they were the
+same number**.
+
 ### Two marginals bound an overlap and cannot measure it, and the bound reads like a finding
 
 2026-08-30, the increment after the entry above, and the same population. The redaction gate's

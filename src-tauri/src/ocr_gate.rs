@@ -267,6 +267,23 @@ pub struct ProbeGeometry {
     /// of the two produced a given reading is not recorded, and no measurement
     /// has separated them.
     pub control_px: f32,
+    /// The probe image's shape in points: width, then height.
+    ///
+    /// **The planned shape, which [`stack`] then rounds.** It rounds the margin
+    /// and the gap to whole rows and takes each strip's real row count, so the
+    /// image it builds differs from `height_pt * scale` by a few pixels. The
+    /// ratio does not move materially and the ratio is what this is for, but a
+    /// caller quoting a pixel height should quote it as planned rather than as
+    /// rendered.
+    ///
+    /// Here because a probe image a page wide and a few dozen rows tall is the
+    /// standing suspect for the gate's remaining refusals --- the engine
+    /// answering and returning no spans at all --- and until 2026-08-30 no caller
+    /// could say what shape the gate had actually asked for. `ocr-probe` swept
+    /// four fixtures from 7.0:1 to 0.9:1 and Vision returned a span at every
+    /// one, which bounds the question rather than answering it: nothing said
+    /// whether 7:1 is the shape a real page produces.
+    pub image_pt: (f32, f32),
 }
 
 /// The geometry for one page's probe image.
@@ -308,15 +325,12 @@ pub fn geometry_for(
     // be set larger than what was removed. That is enforced in
     // [`crate::ocr::control_from_page`], and this does not weaken it --- since
     // `control_pt <= size_pt`, the scale can only come out larger than before.
-    let scale = scale_for(
-        control_pt,
-        page.width_pt,
-        tallest + control_pt + padding,
-        capacity,
-    )?;
+    let height_pt = tallest + control_pt + padding;
+    let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)?;
     Ok(ProbeGeometry {
         scale,
         control_px: control_pt * scale,
+        image_pt: (page.width_pt, height_pt),
     })
 }
 
@@ -1120,6 +1134,38 @@ mod tests {
             text: "keep".into(),
         }];
         assert_eq!(surviving(&words, &[], "").len(), 1);
+    }
+
+    #[test]
+    fn the_reported_shape_is_the_page_wide_and_the_two_strips_tall() {
+        // Concrete numbers rather than the formula, because a test that
+        // recomputes `tallest + control_pt + padding` is the writer agreeing
+        // with its own reader. Page 600 pt wide; tallest region 10 pt; control
+        // word 8 pt; `stack` adds a 6 pt margin at each end and a 12 pt gap.
+        // 10 + 8 + 24 = 42, so 600 by 42 and an aspect of 14.3:1.
+        //
+        // The aspect is what this is for: measured 2026-08-30, every silent
+        // refusal in a 40-document corpus sat outside the 8:1--16:1 band, which
+        // holds four fifths of the population and fails at 9.5%.
+        let page = GatePage {
+            page: 0,
+            regions: vec![[0.0, 0.0, 40.0, 10.0], [0.0, 30.0, 40.0, 36.0]],
+            words: Vec::new(),
+            taking: String::new(),
+            width_pt: 600.0,
+            height_pt: 800.0,
+        };
+        let choice = crate::ocr::ControlChoice {
+            crop: [0.0, 50.0, 40.0, 58.0],
+            token: "control".into(),
+            size_pt: 10.0,
+        };
+        let geometry = geometry_for(&page, &choice).expect("a geometry");
+        assert_eq!(
+            geometry.image_pt,
+            (600.0, 42.0),
+            "the probe image is the page's width by the two strips plus what stack adds"
+        );
     }
 
     #[test]

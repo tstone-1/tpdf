@@ -5736,6 +5736,28 @@ MUTATIONS += [
         "an_engine_that_read_other_words_says_the_token_was_absent",
     ),
     Mutation(
+        # Report the probe image with its two dimensions the wrong way round.
+        # Every aspect then inverts, so a page-wide short image reads as a tall
+        # narrow one and the band the measurement is about lands nowhere near
+        # where it should. Nothing about the gate changes -- this is a reading
+        # only, which is why it needs a test of its own.
+        "geometry: report the probe image's shape transposed",
+        "src/ocr_gate.rs",
+        "        image_pt: (page.width_pt, height_pt),",
+        "        image_pt: (height_pt, page.width_pt),",
+        "the_reported_shape_is_the_page_wide_and_the_two_strips_tall",
+    ),
+    Mutation(
+        # Leave out what `stack` adds. The image is then reported shorter than
+        # it is and every aspect comes out wider, which biases the one axis the
+        # 2026-08-30 measurement rests on toward its own conclusion.
+        "geometry: report the probe image without the margins and the gap",
+        "src/ocr_gate.rs",
+        "    let height_pt = tallest + control_pt + padding;",
+        "    let height_pt = tallest + control_pt;",
+        "the_reported_shape_is_the_page_wide_and_the_two_strips_tall",
+    ),
+    Mutation(
         # Write the overshoot with `f32::max`, which is the obvious spelling and
         # returns the OTHER operand for a NaN -- so a rect with no centre reads
         # as inside the band, is not counted as a survivor, and can certify.
@@ -6142,8 +6164,8 @@ MUTATIONS += [
         # floor this very call exists to clear.
         "gate: scale the probe image from the covered box, not the control",
         "src/ocr_gate.rs",
-        "    let scale = scale_for(\n        control_pt,",
-        "    let scale = scale_for(\n        choice.size_pt,",
+        "let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)?;",
+        "let scale = scale_for(choice.size_pt, page.width_pt, height_pt, capacity)?;",
         "the_scale_clears_the_floor_for_the_control_and_not_for_the_box",
     ),
     Mutation(
