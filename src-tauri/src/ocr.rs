@@ -296,8 +296,22 @@ pub struct Control {
 }
 
 /// A control could not be constructed, which is itself a reason not to certify.
+///
+/// It carries a [`NotVerifiedCause`] as well as its sentence because this one
+/// refusal has **four** distinct reasons and it is by far the commonest thing
+/// the gate says: measured 2026-08-28 over 40 real documents, 850 of 943
+/// unanswered regions, 90.1%. A single bucket holding nine tenths of the answer
+/// is the same defect this attribution was built to remove, one level down.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ControlTooEasy(String);
+pub struct ControlTooEasy(String, NotVerifiedCause);
+
+impl ControlTooEasy {
+    /// Which of the four ways a control could not be chosen this was.
+    #[must_use]
+    pub fn cause(&self) -> NotVerifiedCause {
+        self.1
+    }
+}
 
 impl fmt::Display for ControlTooEasy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -330,6 +344,7 @@ fn size_no_easier_than(boxes: &[[f32; 4]]) -> Result<f32, ControlTooEasy> {
             "no redacted box had a usable height, so there is nothing to size a control \
              against; refusing rather than picking one"
                 .into(),
+            NotVerifiedCause::ControlNoSize,
         ));
     }
     Ok(smallest)
@@ -359,6 +374,7 @@ impl Control {
         if token.trim().is_empty() {
             return Err(ControlTooEasy(
                 "an empty control token is read back by every engine and by none".into(),
+                NotVerifiedCause::ControlEmptyToken,
             ));
         }
         Ok(Self {
@@ -540,6 +556,7 @@ pub fn control_from_page(
             "the regions cover every word on this page, so there is nothing left for the \
              engine to read back and nothing here can be certified"
                 .into(),
+            NotVerifiedCause::ControlNoSurvivor,
         ));
     }
 
@@ -548,10 +565,13 @@ pub fn control_from_page(
         .filter(|word| word.rect[3] - word.rect[1] <= size_pt + CONTROL_HEIGHT_SLACK_PT)
         .collect();
     if small.is_empty() {
-        return Err(ControlTooEasy(format!(
-            "every word left on this page is set larger than the {size_pt:.1} pt that was \
-             removed, so reading one back would say nothing about the small print"
-        )));
+        return Err(ControlTooEasy(
+            format!(
+                "every word left on this page is set larger than the {size_pt:.1} pt that was \
+                 removed, so reading one back would say nothing about the small print"
+            ),
+            NotVerifiedCause::ControlAllLarger,
+        ));
     }
 
     // Longest wins; a tie goes to the topmost and then the leftmost. Ordered by
@@ -578,10 +598,13 @@ pub fn control_from_page(
         }
     }
     let chosen = best.ok_or_else(|| {
-        ControlTooEasy(format!(
-            "no word left on this page draws {MIN_CONTROL_CHARS} characters at {size_pt:.1} pt \
-             or smaller, and a shorter control is read back by accident"
-        ))
+        ControlTooEasy(
+            format!(
+                "no word left on this page draws {MIN_CONTROL_CHARS} characters at \
+                 {size_pt:.1} pt or smaller, and a shorter control is read back by accident"
+            ),
+            NotVerifiedCause::ControlTooShort,
+        )
     })?;
 
     Ok(ControlChoice {
@@ -635,7 +658,132 @@ pub enum Legibility {
     NotVerified {
         /// What went wrong, in terms a user can act on.
         why: String,
+        /// Which step could not be completed, in terms a *count* can be taken
+        /// over. See [`NotVerifiedCause`].
+        cause: NotVerifiedCause,
     },
+}
+
+/// Which step of the gate did not complete.
+///
+/// **It exists because a sentence cannot be tallied.** `redact-reach-probe`
+/// bucketed these by `why.contains("control token")`, which is a second parser
+/// over prose written for a human: reword the sentence and the bucket silently
+/// reads zero, which is indistinguishable from that step never failing. The
+/// measurement that wanted it --- `docs/PLAN.md` §6, *a third of the gate's
+/// regions returning not verified for reasons nobody has bucketed* --- could
+/// therefore attribute exactly one of them, and could not report a page-wide
+/// refusal at all.
+///
+/// **One variant per step of the gate**, not a taxonomy of what went wrong
+/// underneath. Two steps can fail for the same underlying reason --- a region
+/// off the page is refused by [`super::ocr_gate`]'s `strip` and again by its
+/// `mask_columns` --- and keeping those apart is the whole point, because a
+/// count is only useful if it names a place to look.
+///
+/// The one variant with two construction sites is [`NotVerifiedCause::EngineError`],
+/// and that is deliberate rather than an exception: [`adjudicate`]'s error arm and
+/// [`super::ocr_gate::unanswered`] are two callers of one rule, which
+/// `the_error_path_says_what_adjudicate_would` already requires to agree.
+///
+/// Nothing greps for these. The probe matches the variants exhaustively, so a
+/// new step that forgets to be counted is `error[E0004]` rather than a bucket
+/// silently reading zero --- which is the failure this type replaces. No count
+/// of the variants is written in prose anywhere: [`NotVerifiedCause::ALL`] is
+/// the authority, and the sentence above said *eight* for the half hour between
+/// this type being written and its commonest variant being split into five.
+///
+/// `why` still carries the sentence, and no reader sees any of this: it never
+/// leaves the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NotVerifiedCause {
+    /// No redacted box had a usable height, so there is nothing to size a
+    /// control against. Page-wide.
+    ControlNoSize,
+    /// The regions cover every word on the page, so nothing survived for the
+    /// engine to read back. Page-wide.
+    ControlNoSurvivor,
+    /// Every word left on the page is set larger than the smallest thing the
+    /// redaction removed, so reading one back would say nothing about the small
+    /// print. Page-wide.
+    ControlAllLarger,
+    /// Words survive at the right size and none of them draws
+    /// [`MIN_CONTROL_CHARS`] characters, so any control would be short enough to
+    /// be read back by accident. Page-wide.
+    ControlTooShort,
+    /// The caller offered an empty control token. Not reachable from
+    /// [`control_from_page`], which never builds one; it belongs to
+    /// [`Control::no_easier_than`]'s other caller.
+    ControlEmptyToken,
+    /// The probe image would not fit within the worker's pixel capacity at any
+    /// scale that keeps the control legible. Page-wide.
+    ScaleRefused,
+    /// The control strip would not render. Page-wide.
+    ControlStrip,
+    /// The region's own strip would not render.
+    RegionStrip,
+    /// The region's columns could not be masked out of its strip, which is what
+    /// happens when the region is not on the page at all.
+    Mask,
+    /// The region strip and the control strip could not be stacked into one
+    /// probe image.
+    Stack,
+    /// The engine did not answer.
+    EngineError,
+    /// The engine answered and did not read the control token back, so its
+    /// silence about the rest of the image carries no information.
+    ControlUnread,
+}
+
+impl NotVerifiedCause {
+    /// A short stable label, for a report keyed by cause.
+    ///
+    /// **Here rather than in the probe that prints it, because two variants
+    /// sharing a label merge two buckets into one and nothing says so** --- the
+    /// count still adds up, and the step that stopped being reported reads as a
+    /// step that stopped failing. `every_cause_has_its_own_label` is the check;
+    /// it is the same shape as the arithmetic `[WARN]` the probe already runs
+    /// over its own three counters.
+    ///
+    /// The match is exhaustive on purpose. A new step that forgets to be
+    /// counted is `error[E0004]` here.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ControlNoSize => "nothing to size a control against",
+            Self::ControlNoSurvivor => "the regions cover every word",
+            Self::ControlAllLarger => "every surviving word is larger",
+            Self::ControlTooShort => "no surviving word is long enough",
+            Self::ControlEmptyToken => "the control token was empty",
+            Self::ScaleRefused => "probe image will not fit",
+            Self::ControlStrip => "control strip would not render",
+            Self::RegionStrip => "region strip would not render",
+            Self::Mask => "region is not on the page",
+            Self::Stack => "strips would not stack",
+            Self::EngineError => "the engine did not answer",
+            Self::ControlUnread => "control not read back",
+        }
+    }
+
+    /// Every variant, so a caller can report a zero rather than omit a row.
+    ///
+    /// A cause that never fired is the interesting reading and an absent row is
+    /// not: `docs/TRAPS.md` records an empty answer from a whole-document scan
+    /// being unable to say whether it looked.
+    pub const ALL: [Self; 12] = [
+        Self::ControlNoSize,
+        Self::ControlNoSurvivor,
+        Self::ControlAllLarger,
+        Self::ControlTooShort,
+        Self::ControlEmptyToken,
+        Self::ScaleRefused,
+        Self::ControlStrip,
+        Self::RegionStrip,
+        Self::Mask,
+        Self::Stack,
+        Self::EngineError,
+        Self::ControlUnread,
+    ];
 }
 
 impl Legibility {
@@ -679,6 +827,7 @@ pub fn adjudicate(
         Err(e) => {
             return Legibility::NotVerified {
                 why: format!("{e}"),
+                cause: NotVerifiedCause::EngineError,
             }
         }
     };
@@ -700,6 +849,7 @@ pub fn adjudicate(
                  nothing else says nothing about what survived.",
                 control.token, control.size_pt
             ),
+            cause: NotVerifiedCause::ControlUnread,
         };
     }
 
@@ -766,7 +916,7 @@ impl<'a> RedactedPixels<'a> {
                 "{} legible span(s) survive; these pixels are not redacted",
                 found.len()
             )),
-            Legibility::NotVerified { why } => {
+            Legibility::NotVerified { why, .. } => {
                 Err(format!("not verified, so not certified: {why}"))
             }
         }
@@ -788,6 +938,40 @@ impl<'a> RedactedPixels<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_cause_has_its_own_label() {
+        // Two variants sharing a label merge two buckets in a report keyed by
+        // it, and the total still adds up -- so the step that stopped being
+        // reported reads as a step that stopped failing.
+        let mut seen = std::collections::BTreeSet::new();
+        for cause in NotVerifiedCause::ALL {
+            assert!(
+                seen.insert(cause.label()),
+                "two causes share the label {:?}",
+                cause.label()
+            );
+        }
+        assert_eq!(seen.len(), NotVerifiedCause::ALL.len());
+    }
+
+    #[test]
+    fn all_lists_every_cause_once() {
+        // `ALL` is written by hand, so a new variant that the `label` match
+        // forces you to handle can still be left out of the list a report
+        // iterates -- which is a row that is silently never printed rather than
+        // printed as a zero. Nothing else in the tree would notice.
+        for cause in NotVerifiedCause::ALL {
+            assert_eq!(
+                NotVerifiedCause::ALL
+                    .iter()
+                    .filter(|c| **c == cause)
+                    .count(),
+                1,
+                "{cause:?} is in ALL more than once"
+            );
+        }
+    }
 
     fn engine() -> EngineId {
         EngineId {
@@ -843,13 +1027,15 @@ mod tests {
     #[test]
     fn a_control_with_no_usable_box_is_refused() {
         let e = Control::no_easier_than(&[[0.0, 0.0, 0.0, 0.0]], "K7QX2", [0.0, 0.0, 1.0, 1.0]);
-        assert!(e.is_err(), "a zero-height box cannot size a control");
+        let why = e.expect_err("a zero-height box cannot size a control");
+        assert_eq!(why.cause(), NotVerifiedCause::ControlNoSize);
     }
 
     #[test]
     fn an_empty_token_is_refused() {
         let e = Control::no_easier_than(&[[0.0, 0.0, 10.0, 10.0]], "   ", [0.0, 0.0, 1.0, 1.0]);
-        assert!(e.is_err(), "an empty token is trivially 'read back'");
+        let why = e.expect_err("an empty token is trivially 'read back'");
+        assert_eq!(why.cause(), NotVerifiedCause::ControlEmptyToken);
     }
 
     #[test]
@@ -974,6 +1160,7 @@ mod tests {
             },
             Legibility::NotVerified {
                 why: "engine crashed".into(),
+                cause: NotVerifiedCause::EngineError,
             },
         ] {
             assert!(
@@ -1077,6 +1264,10 @@ mod tests {
             why.to_string().contains("characters"),
             "the reason has to say which rule ran out: {why}"
         );
+        // The sentence and the cause are two different artifacts -- one is read
+        // by a person, the other counted by `redact-reach-probe` -- so they can
+        // drift apart, and only this pins the second.
+        assert_eq!(why.cause(), NotVerifiedCause::ControlTooShort);
     }
 
     #[test]
@@ -1087,6 +1278,7 @@ mod tests {
             why.to_string().contains("every word"),
             "the reason has to say which rule ran out: {why}"
         );
+        assert_eq!(why.cause(), NotVerifiedCause::ControlNoSurvivor);
     }
 
     /// A region covering nothing has no box to size a control against, and
@@ -1119,7 +1311,8 @@ mod tests {
             word("secret", [12.0, 12.0, 88.0, 18.0]),
             word("sameheight", [10.0, 30.0, 90.0, 37.0]),
         ];
-        assert!(control_from_page(&words, &[OVER_SECRET]).is_err());
+        let why = control_from_page(&words, &[OVER_SECRET]).expect_err("refused");
+        assert_eq!(why.cause(), NotVerifiedCause::ControlAllLarger);
     }
 
     /// Determinism, so a test can say *which* control a page yields. Three

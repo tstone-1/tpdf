@@ -1,11 +1,23 @@
 # tpdf — Architecture and Roadmap
 
-Status: **Phase 0 closed; Phase 1 in progress; Phase 2 begun.** The viewer runs ---
-sandboxed worker pool, virtual scroller, selection, find, outline, page strip, session
-restore and printing --- on **macOS arm64 and Windows x64**. The first edits that change a
-document landed 2026-08-16 and 2026-08-17: a page can be turned or deleted, undone, printed
-and written out as a copy. Annotations, forms and redaction are not started, and no document
-is written in place.
+Status: **Phase 0 closed; Phase 1 in progress; Phase 2 begun; Phase 3 started.** The viewer
+runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
+session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
+change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,
+cropped or extracted. Annotations followed between 2026-08-18 and 2026-08-23 --- highlight,
+underline, strike-out, squiggly, drawing, box, ellipse, text box, stamp and comment --- and a
+document has been written **in place** since 2026-08-19. Redaction shipped in `26.8.11` on
+2026-08-27, end to end: mark a region, review the list, remove the words from the page's own
+instructions, and read the result back as *verified* or *not verified, and why*. **Forms are
+not started** (Phase 4), and neither is in-place text editing (Phase 5).
+
+That last sentence read *"Annotations, forms and redaction are not started, and no document is
+written in place"* until 2026-08-28 --- wrong on three of its four clauses, against work that
+had shipped in a release. Recorded rather than quietly overwritten, for the same reason as the
+Windows paragraph below --- a status line is read first and re-read by nobody, so it outlives
+the work that closes it. `docs/TRAPS.md`: *A "Not done" note outlives the work that closes it,
+and it is the recommendation nobody re-checks*, and *The only document nobody re-reads is the
+one strangers read*.
 
 Phase 1 stays "in progress" on purpose. Its exit criterion is *tpdf is the daily default
 for reading*, which is a judgement about use rather than a list of shipped features, so it
@@ -3212,10 +3224,74 @@ documents: 5.4% still reads as text against 5.8%, 55.8% shown unreadable against
 **every one of the 24 surviving reads had every span inside the region's own columns** ---
 which is what the masked gate is supposed to guarantee and is now measured rather than
 argued. The open question is the other column: 174 regions could not be shown unreadable and
-only 68 of those were the control. **The remaining 106 have no attributed reason**, and that
+only 68 of those were the control. ~~**The remaining 106 have no attributed reason**, and that
 is where the next increment on this subsystem should look, because a third of the gate's
 regions returning *not verified* for reasons nobody has bucketed is the same shape as the
-39.1% this section started with.
+39.1% this section started with.~~ **Answered 2026-08-28 by the section below: 60, 36 and 10.
+And the third of the gate's regions was the sampling density, not the gate.**
+
+#### Where a *not verified* region goes --- attributed 2026-08-28
+
+The 106 are 60 *no surviving word is long enough*, 36 *the regions cover every word* and 10
+*every surviving word is larger*. That run reproduces the 448-region measurement above to the
+digit --- 5.36% still reads, 55.80% shown unreadable, 24 surviving reads, 174 unanswered, 68 of
+them the control --- which is the control saying the attribution changed no verdict.
+
+**It could not be answered before because the reason was thrown away twice over.**
+`Legibility::NotVerified` carried only a sentence written for a person, so
+`redact-reach-probe` bucketed it with `why.contains("control token")` --- a second parser over
+prose, where rewording the sentence makes the bucket read zero and a step that never failed
+looks identical to a step nobody is counting. Worse, the probe matched `PageOutcome::Whole(_)`
+and `Judged::Refused(_)`, discarding the verdict entirely, so every **page-wide** refusal ---
+which is to say the commonest kind --- reached the total with no reason attached at all. Three
+of the causes could not be reported by construction.
+
+`NotVerifiedCause` is the repair: one variant per step of the gate, carried beside the
+sentence, never seen by a reader. The probe matches it exhaustively, so a step that forgets to
+be counted is `error[E0004]` rather than a bucket silently reading zero, and it subtracts its
+own buckets from the unanswered total and prints a `[WARN]` if a region reached that total by a
+route carrying no cause. `ControlTooEasy` carries one too, because collapsing its four
+refusals into a single label reproduced this defect one level down --- and that label was
+holding 90% of the answer.
+
+##### The rate was a property of the sampling density, and this section's own numbers were read as the gate's
+
+The probe samples one region per word of four characters or more, *N* per page, and hands all
+of them to `control_from_page` at once. So the regions are not only the sample: they set
+`size_pt`, which is the height of the **smallest box any region covers**, and they consume the
+pool of surviving words a control may be chosen from. Sampling more of them makes the control
+rule harder to satisfy. Four densities, same 40 documents, same three pages each, one variable:
+
+| regions per page | gate regions | **shown unreadable** | not verified | control not read back | the three control-selection causes |
+|---|---|---|---|---|---|
+| 1 | 43 | **65.1%** | 30.2% | 12 | 1 |
+| 4 | 156 | **64.1%** | 29.5% | 38 | 8 |
+| 12 | 448 | **55.8%** | 38.8% | 68 | 106 |
+| 40 | 1,389 | **26.4%** | 67.9% | 93 | 850 |
+
+**A reader marks a name or a line, not forty words on a page.** At a reader-like density the
+gate certifies about two in three, and the control-selection failures that dominate the dense
+run --- 850 of 943 --- are 8 of 46. What is left is *the control was not read back*: 38 of 46,
+82.6%, which is the priced cost of masking the region strip and is larger than the three
+regions this section predicted when the mask shipped.
+
+**This section already contained the reason and did not draw it.** *The region feeds two
+mechanisms, so varying it isolates neither* is written above about `--full-width`. The same is
+true of the region **count**, which nobody said --- so the 39.1%, the 33.1% and every gate
+percentage here are quoted at whatever `--regions` produced them. The heading above says *A
+ratio travels between populations and a count does not*, and this is the case where the ratio
+does not travel either, because the population is an input to the mechanism rather than a
+sample of its subjects. Every gate figure in this file now carries its density.
+
+**What this does not say.** The 5.4--6.4% *still reads as text* is stable across all four
+densities, so the masked gate's guarantee is unaffected. And none of this makes the dense run
+wrong: 40 regions is a legitimate stress of the control rule, and what it establishes is that
+the rule degrades sharply under load rather than that a reader meets it.
+
+**Ranked next on this subsystem**: *control not read back* at 82.6% of the reader-density
+refusals. It is the engine failing to read a control it was shown, on a mostly-blank probe
+image, and nothing here has yet asked whether the fault is the scale, the masking, or the
+choice of token.
 
 **And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
 one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose

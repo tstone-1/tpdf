@@ -5151,6 +5151,48 @@ beforehand. "Vision is a system framework, it will be fine under `allow default`
 just pixels, of course it needs nothing" are both wrong, and a design was about to be written on
 whichever one got asserted first.
 
+### A rate whose sample size is also an input to the mechanism does not travel, and 40 regions a page is not a reader
+
+`redact-reach-probe` samples one region per word of four characters or more, `--regions N` per
+page, and hands them all to `ocr_gate`'s `control_from_page` at once. So the regions are not
+only the sample. They set `size_pt` --- the height of the **smallest box any region covers**,
+which is what a control has to be no easier than --- and they consume the pool of surviving
+words a control may be chosen from. Sampling more of them makes the rule harder to satisfy,
+and the headline rate moves with the sample size rather than with anything about the gate:
+
+| `--regions` | gate regions | shown unreadable | not verified | control not read back | control-selection causes |
+|---|---|---|---|---|---|
+| 1 | 43 | 65.1% | 30.2% | 12 | 1 |
+| 4 | 156 | 64.1% | 29.5% | 38 | 8 |
+| 12 | 448 | 55.8% | 38.8% | 68 | 106 |
+| 40 | 1,389 | 26.4% | 67.9% | 93 | 850 |
+
+Same 40 documents, same three pages each, one variable. The two control-selection causes that
+dominate the dense run --- 798 of 943 --- are 8 of 46 at a reader-like density, and
+certification goes from one region in four to nearly two in three.
+
+**`docs/PLAN.md` §6 already contained the reason and did not draw it.** Written there about the
+`--full-width` control, months earlier: *the region feeds two mechanisms, so varying it
+isolates neither*. Nobody said the same of the region **count**, so a third of the gate's
+regions coming back *not verified* was recorded as a property of the gate and ranked as the
+next increment. It was the density.
+
+The same section states *a ratio travels between populations and a count does not*, and writes
+its figures as ratios for exactly that reason. This is the case the rule does not cover: the
+population is an **input to the mechanism** rather than a sample of its subjects, so the ratio
+does not travel either. The test is not whether you wrote a ratio; it is whether the thing you
+varied to get your sample is read by the code under measurement.
+
+**What separates the two is one run with the sample size changed and nothing else.** It costs
+14 seconds here. The tell that it was worth doing: the *still reads as text* rate is 5.4--6.4%
+at every density --- so one figure from the same harness travels and the other does not, which
+is not something reading the code would have told you.
+
+⚠ **A control that reproduces a documented run to the digit is worth more than a fresh one.**
+`--regions 12` returns 448 regions, 5.36% still reads, 55.80% shown unreadable, 24 surviving
+reads, 174 unanswered and 68 of them the control --- every figure §6 recorded. That is what
+says the attribution work changed no verdict, which no new measurement could have said.
+
 ### An OCR engine's bounding box is a detection, not a measurement
 
 Found 2026-07-31 the first time `ocr-probe` ran the real Vision binding rather than its unit

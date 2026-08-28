@@ -882,6 +882,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A refusal that names a fallback has to keep the fallback open, and this one closed it (a passing test encoded the dead end, and its doc comment argued for it)
 - A message set before the operation that clears the message area is a message nobody sees (the working cases and the broken one are the same two lines; and the producer should state the fact, not the advice)
 - A frame-rate pass means nothing without a coverage number beside it
+- A rate whose sample size is also an input to the mechanism does not travel, and 40 regions a page is not a reader (the section already said the region feeds two mechanisms and nobody said it of the COUNT; one figure from the same harness travels and the other does not)
 - Interleaving controls for drift, not for what the last variant left behind
 - Three similarity metrics in a row, each unable to see its own failure
 - A timer that starts after the setup measures the wrong thing, and reports it
