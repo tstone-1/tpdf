@@ -1633,7 +1633,7 @@ encrypted document prints whole or not at all.
 ~~**Not done: an encrypted document still cannot be rewritten**, so a reader who deletes a
 page from one is refused. That is a `lopdf` limitation rather than a missing argument, and
 closing it means the hardened structural rewrite the stack table already names QPDF for.~~
-**Closed 2026-08-29, and it did not need QPDF.** The second sentence was wrong and was
+**Closed 2026-08-28, and it did not need QPDF.** The second sentence was wrong and was
 believed for months because nobody read `lopdf`'s own encryption module: `Document::encrypt`
 is public and re-encrypts every object against a state, and a password load leaves that state
 on `Document::encryption_state`. So `checked` takes it off the document and `rewrite` puts it
@@ -3258,7 +3258,7 @@ regions returning *not verified* for reasons nobody has bucketed is the same sha
 And the third of the gate's regions was the sampling density, not the gate.**
 
 Every figure in this paragraph is the 2026-08-27 reading and is left as it was measured. The
-same command gives 56.7% and 64 on 2026-08-29, because the scale fix two subsections down moved
+same command gives 56.7% and 64 on 2026-08-28, because the scale fix two subsections down moved
 the verdict columns; the masking conclusion it is here to support --- every surviving read inside
 the region's own columns --- holds at both.
 
@@ -3301,7 +3301,7 @@ rule harder to satisfy. Four densities, same 40 documents, same three pages each
 | 12 | 448 | **56.7%** | 38.0% | 64 | 106 |
 | 40 | 1,389 | **27.1%** | 67.2% | 84 | 850 |
 
-Re-measured 2026-08-29 after the scale fix in the subsection below; the third column read
+Re-measured 2026-08-28 after the scale fix in the subsection below; the third column read
 65.1 / 64.1 / 55.8 / 26.4 before it. The left of the table is unchanged to the unit, which is
 the point of quoting it: no render scale can move a region count or a control-selection cause,
 so those columns are the control over the harness while the verdict columns are the
@@ -3326,7 +3326,7 @@ densities, and did not move when the scale did, so the masked gate's guarantee i
 wrong: 40 regions is a legitimate stress of the control rule, and what it establishes is that
 the rule degrades sharply under load rather than that a reader meets it.
 
-#### The control was rendered under the floor the gate sets for it --- answered 2026-08-29
+#### The control was rendered under the floor the gate sets for it --- answered 2026-08-28
 
 The question above was ranked next and asked which of three things the unread control was: the
 scale, the masking, or the choice of token. **It was the scale, and the mechanism is that the
@@ -3360,7 +3360,7 @@ are still not read back. So the scale was one defect and there is another behind
 refused by reading: `mask_columns` is applied to the region strip, and the control strip goes
 into `stack` untouched, so it cannot clip the control.
 
-The token-length candidate was ranked next here for about an hour on 2026-08-29, and the
+The token-length candidate was ranked next here for about an hour on 2026-08-28, and the
 paragraph that ranked it is kept as an error rather than deleted. It said: of the 33 regions
 still unread, **none** drew four characters and **29 drew eight or more**; `control_from_page`
 picks the *longest* qualifying word while `adjudicate` needs **one** recognised span to hold the
@@ -3398,9 +3398,9 @@ falling outside the band produces exactly this verdict and is indistinguishable 
 not reading it. Testing that needs the engine's items at the moment of refusal, which no caller
 has --- `adjudicate` returns a `Legibility`, and `NotVerified` carries a sentence and no evidence.
 So the increment is to give it some, and the measurement follows from that rather than preceding
-it.~~ **Answered 2026-08-30 --- and the answer is no.** See below.
+it.~~ **Answered 2026-08-28 --- and the answer is no.** See below.
 
-#### It was not the band, and it was not the scale either --- measured 2026-08-30
+#### It was not the band, and it was not the scale either --- measured 2026-08-28
 
 The instrument the paragraph above asked for, built and run. `ocr::Unread` rides on
 `Legibility::NotVerified` and carries three numbers taken at the moment of the refusal: how many
@@ -3452,7 +3452,7 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
-#### The one bucket that never moved, and the remedy that was arithmetic --- 2026-08-30
+#### The one bucket that never moved, and the remedy that was arithmetic --- 2026-08-28
 
 Across every reading in the sections below --- shape, points, the crossing, and before and after
 an intervention --- one bucket never moved: **a control under 2 pt is unread, 24 of 24 and 40 of
@@ -3502,7 +3502,7 @@ Neither has a remedy that measurement supports, and the next one to try --- a di
 or a control chosen for legibility rather than for size --- is a larger piece of work than a
 session. `docs/PLAN.md` §6's other open items are better value.
 
-#### Padding was built, measured and reverted --- 2026-08-30
+#### Padding was built, measured and reverted --- 2026-08-28
 
 The section below ranked padding with a falsifiable prediction: bring every probe image into the
 8:1--16:1 band and the regions silent beyond 16:1 should become silent-free, matching the zero that
@@ -3553,7 +3553,7 @@ legibly and say so, which turns 24 wrong-looking refusals into 24 honest ones wi
 region provable. The second is not a fix, and the gate saying *not verified* for a stated reason is
 worth more than saying it for none.
 
-#### The control's size in points, and a correction to the section below --- measured 2026-08-30
+#### The control's size in points, and a correction to the section below --- measured 2026-08-28
 
 `redact-reach-probe` now buckets by the control's height **in points**, crosses it with the probe
 image's shape, and attributes every sub-floor control to one of the two clamps in
@@ -3615,7 +3615,7 @@ size. The controls are unchanged: the middle-band regions must not move, and the
 bucket inside the band, which is 0 of 12 silent but 12 of 12 unread --- those need `scale_for` or
 `control_from_page`, and they are the next thing after.
 
-#### The aspect was never the cause --- measured 2026-08-30
+#### The aspect was never the cause --- measured 2026-08-28
 
 `testdata/text-wide.pdf` was written to reach the band the corpus goes silent in, and it does.
 A 1684 pt sheet with **ordinary 14 pt text** builds an 18.1:1 probe image and sweeps to 28.1:1,
@@ -3673,7 +3673,7 @@ existing four. `redact-reach-probe` already has the value --- `control_shape` co
 denominator, not a new instrument. If the silence tracks control points rather than aspect, the
 repair is in `scale_for` or in `control_from_page`, and neither is padding.
 
-#### Padding was called a candidate on a confounded measurement --- corrected 2026-08-30
+#### Padding was called a candidate on a confounded measurement --- corrected 2026-08-28
 
 The item ranked below was a repair aimed at the wide tail, and it carried one caveat: on
 `outline-simple` the earlier shape sweep had shown padding losing the control token while the
@@ -3729,7 +3729,7 @@ above.** The fixture reaches 28:1 and nothing goes silent, so the origin shape i
 The two corpus controls stand for whatever replaces it: the 294 middle-band regions must not move,
 and the 12 sub-floor middle-band regions must stay silent-free.
 
-#### The two twelves are different regions --- measured 2026-08-30
+#### The two twelves are different regions --- measured 2026-08-28
 
 The section below left one thing explicitly unmeasured, and named it as the reason: 12 of the 36
 silent refusals had rendered their control under 8 px, and 12 sat in a probe image at 8:1 or
@@ -3789,7 +3789,7 @@ the experiment has to read the token back.~~ **The caveat was a confound --- see
 above.** Two controls are ready-made and still stand: the 294 middle-band regions must not move,
 and the 12 sub-floor middle-band regions must stay silent-free.
 
-#### The silence lives at the extremes of the probe image's shape --- measured 2026-08-30
+#### The silence lives at the extremes of the probe image's shape --- measured 2026-08-28
 
 The step below was ranked and taken the same day. It did not go where it expected to, and
 both halves are worth recording.
@@ -11710,6 +11710,91 @@ Two things to do, and they are separable:
    all still parse in the coordinator, for the output-channel reason risk 18
    gives. And `save::Here` is still reachable --- it is what a platform with no
    sandbox gets, marked rather than refused.
+
+   ⚠ **The rewriting save moved on 2026-08-28** --- see the section directly
+   below, which built the output channel this paragraph names as the obstacle.
+   The sentence is left as it was written because it is the record of what was
+   true then, and because it is the paragraph that says what the next increment
+   had to do. Save a copy, Extract, Split, Merge and Print are still here.
+
+#### The rewriting save moved too, and the output channel is what it needed --- done 2026-08-28
+
+The paragraph above named the obstacle correctly and left it there: an append's
+answer is kilobytes and fits in a reply, a rewrite's answer is the whole
+document, and `MAX_REPLY_BYTES` is 32 MB against files ten times that. So the
+work was never a second worker. It was somewhere for the bytes to go.
+
+**The channel is the staging file's own descriptor.** `save::stage_in_place`
+creates the temporary file it was already creating, opens the source, and hands
+both **handles** to a `save::Rewriter`. `save::InWorker` maps the source
+read-only, spawns a child with the staging file installed on `worker::OUT_FD`,
+sends `Request::Rewrite` and drops it. The coordinator holds neither the
+document's bytes nor the new file's.
+
+**That it survives the sandbox had to be measured, and the obvious reading of the
+policy is wrong.** `worker::SANDBOX_PROFILE` contains `(deny file-write*)`, which
+reads as *a worker cannot write*. Measured with the profile verbatim before any of
+this was designed, with the control that matters: the write through the inherited
+descriptor succeeds and `File::create` on a path is refused with `EPERM`, so the
+policy was demonstrably in force. What that establishes is the pair of outcomes ---
+the policy stops a worker *opening* a path for writing and does not stop a write
+through a descriptor the parent opened --- which is the same asymmetry `DOC_FD`
+already rests on in the other direction. The usual account, that the check happens
+at `open`, is not what was measured and is not what the rule rests on.
+`docs/TRAPS.md` has the entry.
+
+**The split is the one the append already had.** `save::rewrite_ready` asks the
+coordinator's questions about a path --- is this still the file the edits were
+made against --- and `save::rewrite_update` asks none: it is a pure function of
+the document's bytes and the plan. `save::Outside` names the pair
+`Reread + Rewriter`, so the rule *ask `render::Backend`, take a worker where
+there is one, mark the run where there is not* is stated once and read by three
+call sites.
+
+**It costs one spawn, and the number is measured rather than argued.** 2.4 ms in
+the coordinator against 11.4 ms in a worker on `comments.pdf`, +9.0 ms, best of
+five interleaved. That is the process start and PDFium's initialisation, so it is
+fixed rather than proportional --- on a document whose parse is hundreds of
+milliseconds it is noise, and a 4-page fixture is close to the worst case for it.
+
+**One thing crosses back and one thing is checked.** The reply is a length; the
+coordinator compares it against the staged file's own size. Neither number is
+derived from the other, which is what makes it a check --- and it is the only one
+available, because the bytes never arrive here to be looked at.
+
+**A refusal needed a bit as well as a sentence.** `save::Refusal` carries
+`changed`, which decides whether the window offers Reload; the refusals that set
+it now happen in the worker. A `String` across the pipe would have dropped it
+silently, leaving a correct sentence with no action attached, so `Response`
+carries the flag beside `locked` and `abandoned` --- two earlier instances of the
+same shape.
+
+**Evidence.** Five checks in `worker-probe`, taking it to 28/28 on macOS: the two
+processes write **byte-identical** documents (222,667 bytes on
+`testdata/comments.pdf` under a plan that turns every page --- a rewrite is
+deterministic, so a page-count comparison would have passed for a worker that
+dropped the turns); both refuse a mismatched baseline and the worker's refusal
+names the page counts, so it really parsed; the worker path fails where the
+coordinator path answers when pointed at a directory with no PDFium; and a worker
+spawned **without** an output file refuses in words. Five unit tests, seven
+mutations. `the_coordinator_does_not_parse_the_document_it_rewrites` hands the
+save a source that is not a PDF and requires it to succeed --- red on the code
+this replaced.
+
+**Seven existing mutations were orphaned by the refactor**, which is the anchor
+gate doing the job it was written for. Six were re-aimed; one --- *put a save in
+place during the staging* --- was replaced rather than moved, because the shape it
+edited no longer exists and the defect it stood for is now expressed as handing
+the source back as the staged file.
+
+**What is left, and it is wiring rather than design.** Save a copy, Extract,
+Split, Merge and Print still parse here. The first four could take the same seam;
+a copy's destination is chosen by the reader in a file dialog, so handing a worker
+a descriptor to a file it did not create is a decision that has not been made.
+Printing cannot use it at all --- its answer has to come back into this process to
+reach `NSPrintOperation`. And **Windows is wired and unmeasured**: the handle is
+duplicated into the child rather than `dup2`'d before `exec`, which is expected to
+work and has not been run.
 
 #### Back and Forward grey when there is nowhere to go --- done 2026-08-23
 

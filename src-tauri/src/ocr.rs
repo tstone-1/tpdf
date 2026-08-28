@@ -682,7 +682,7 @@ fn longest_run(text: &str) -> &str {
 /// carried whole --- three numbers a probe can bucket, and no engine text, which
 /// is page content and has no business travelling with a verdict.
 ///
-/// **Measured 2026-08-30, and the band is refused**: over 197 refusals at three
+/// **Measured 2026-08-28, and the band is refused**: over 197 refusals at three
 /// sampling densities, not one span held the token and fell outside its band.
 /// What is left is the first shape --- the engine answering and returning
 /// nothing at all --- which is a statement about the image. The third field stays
@@ -804,7 +804,7 @@ pub enum NotVerifiedCause {
     /// [`crate::ocr_gate::MIN_CONTROL_PX`], because the control is smaller than
     /// `MIN_CONTROL_PX / MAX_SCALE`. Page-wide.
     ///
-    /// **Split from [`Self::ScaleRefused`] on 2026-08-30 because they are
+    /// **Split from [`Self::ScaleRefused`] on 2026-08-28 because they are
     /// different failures with different remedies**, and until then this one
     /// did not report as a refusal at all: the image renders fine, the control
     /// is simply too small to be read in it, and every such region came back

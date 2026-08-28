@@ -90,7 +90,7 @@ use crate::worker_shm::duplicate_into;
 // every example name them through `worker::`, and a split that renamed a path
 // would be a split that had to edit its consumers to prove it changed nothing.
 #[cfg(windows)]
-pub use crate::worker_argv::{doc_handle_arg, tile_handle_arg};
+pub use crate::worker_argv::{doc_handle_arg, out_handle_arg, tile_handle_arg};
 pub use crate::worker_argv::{doc_len_arg, library_dir_arg};
 #[cfg(target_os = "macos")]
 pub use crate::worker_handover::recv_document;
@@ -133,6 +133,42 @@ pub const TILE_FD: i32 = 4;
 /// child cannot read `/etc/hosts` at the time, since the transfer works equally
 /// well on a process that never sandboxed itself.
 pub const SOCK_FD: i32 = 5;
+
+/// Descriptor a worker writes a rewritten document out on.
+///
+/// **The output channel**, and the only descriptor a worker may write to that is
+/// not a mapping. `docs/THREAT-MODEL.md` residual risk 18 asked for exactly
+/// this: an append's answer fits in a reply and a rewrite's is the whole
+/// document, so the rewrite could not move into a worker until there was
+/// somewhere for the bytes to go.
+///
+/// **A descriptor, never a path**, for [`DOC_FD`]'s reason turned around. A path
+/// would be authority --- a name the worker could be made to write somewhere
+/// else --- and a descriptor to a file the parent created is one file with no
+/// name attached. It also survives the sandbox, which is the part that had to be
+/// measured rather than assumed: under [`SANDBOX_PROFILE`] a write through an
+/// inherited descriptor succeeds while `File::create` on any path is refused
+/// with `EPERM`, so the channel exists and the authority does not.
+///
+/// Handed over only to a worker spawned to write; every other worker is started
+/// without one and answers [`crate::worker_proto::Request::Rewrite`] by saying
+/// so.
+pub const OUT_FD: i32 = 6;
+
+/// The argv marker saying a worker was handed an output file on [`OUT_FD`].
+///
+/// Present or absent rather than carrying a value, because the number is fixed.
+/// It exists because the child cannot tell an unused descriptor from one it was
+/// given: `File::from_raw_fd(6)` on a worker that got none is a file handle to
+/// whatever happens to be there, which is the shape of mistake that writes a
+/// document into a pipe.
+#[cfg(unix)]
+pub const OUT_ARGV: &str = "--out";
+
+/// The flag the output file's handle arrives on, on Windows. See [`OUT_FD`] and
+/// [`DOC_HANDLE_ARGV`].
+#[cfg(windows)]
+pub const OUT_HANDLE_ARGV: &str = "--out-handle";
 
 /// The flag the document section's handle arrives on, on Windows.
 ///
@@ -727,7 +763,30 @@ impl Worker {
     /// sandbox, always --- see the module note.
     pub fn spawn_shared(doc: Arc<Shm>, library_dir: &Path) -> Result<Self, String> {
         let tile = Shm::create(TILE_CAPACITY)?;
-        Self::spawn_mapped(doc, tile, library_dir)
+        Self::spawn_mapped(doc, tile, library_dir, None)
+    }
+
+    /// Spawns a worker that can write one file: the one `out` is open on.
+    ///
+    /// The only entry point that hands a worker anything writable other than a
+    /// mapping, and it exists for `crate::worker_proto::Request::Rewrite`. See
+    /// [`OUT_FD`] for why the channel is a descriptor rather than a path, and
+    /// what was measured about it crossing the sandbox.
+    ///
+    /// `out` stays the caller's: this borrows it for the spawn and the child
+    /// gets a duplicate, so closing it here is still what puts the file's
+    /// contents on the platter.
+    ///
+    /// # Errors
+    ///
+    /// As [`Worker::spawn_shared`].
+    pub fn spawn_writing(
+        doc: Arc<Shm>,
+        out: &std::fs::File,
+        library_dir: &Path,
+    ) -> Result<Self, String> {
+        let tile = Shm::create(TILE_CAPACITY)?;
+        Self::spawn_mapped(doc, tile, library_dir, Some(out))
     }
 
     /// Spawns a worker over mappings the caller already made.
@@ -736,7 +795,12 @@ impl Worker {
     ///
     /// As [`Worker::spawn`].
     #[cfg(not(any(target_os = "macos", windows)))]
-    pub fn spawn_mapped(_doc: Arc<Shm>, _tile: Shm, _library_dir: &Path) -> Result<Self, String> {
+    pub fn spawn_mapped(
+        _doc: Arc<Shm>,
+        _tile: Shm,
+        _library_dir: &Path,
+        _out: Option<&std::fs::File>,
+    ) -> Result<Self, String> {
         // Not a silent fallback to running unsandboxed. Every containment claim
         // in docs/THREAT-MODEL.md is a named boundary --- `sandbox_init` SBPL on
         // macOS, a low-integrity token inside a job object on Windows --- so a
@@ -768,29 +832,53 @@ impl Worker {
     ///
     /// Creating the pipes, containing or spawning the child, or resuming it.
     #[cfg(windows)]
-    pub fn spawn_mapped(doc: Arc<Shm>, tile: Shm, library_dir: &Path) -> Result<Self, String> {
+    pub fn spawn_mapped(
+        doc: Arc<Shm>,
+        tile: Shm,
+        library_dir: &Path,
+        out: Option<&std::fs::File>,
+    ) -> Result<Self, String> {
+        use std::os::windows::io::AsRawHandle;
+
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-        let handles = [
+        // Bound rather than written inline, because the argv slice borrows them
+        // and the output pair is conditional --- a temporary inside a `push`
+        // would not outlive the statement that made it.
+        let exe = exe.to_string_lossy().into_owned();
+        let doc_len = doc.len().to_string();
+        let library = library_dir.to_string_lossy().into_owned();
+        let doc_handle = doc.raw_handle().to_string();
+        let tile_handle = tile.raw_handle().to_string();
+        let out_handle = out.map(|file| file.as_raw_handle() as usize);
+        let out_text = out_handle.map(|handle| handle.to_string());
+
+        let mut handles: Vec<windows_sys::Win32::Foundation::HANDLE> = vec![
             doc.raw_handle() as windows_sys::Win32::Foundation::HANDLE,
             tile.raw_handle() as windows_sys::Win32::Foundation::HANDLE,
         ];
-        Self::spawn_contained_worker(
-            &[
-                &exe.to_string_lossy(),
-                WORKER_ARGV,
-                "--doc-len",
-                &doc.len().to_string(),
-                "--lib",
-                &library_dir.to_string_lossy(),
-                DOC_HANDLE_ARGV,
-                &doc.raw_handle().to_string(),
-                TILE_HANDLE_ARGV,
-                &tile.raw_handle().to_string(),
-            ],
-            &handles,
-            tile,
-            Some(doc),
-        )
+        let mut args: Vec<&str> = vec![
+            &exe,
+            WORKER_ARGV,
+            "--doc-len",
+            &doc_len,
+            "--lib",
+            &library,
+            DOC_HANDLE_ARGV,
+            &doc_handle,
+            TILE_HANDLE_ARGV,
+            &tile_handle,
+        ];
+        // **Named in the inherit list as well as in argv, and both are needed.**
+        // The value in argv is what the child looks it up by; the list is what
+        // makes that value mean anything there --- an un-inherited handle number
+        // in another process is a number. The document's handle travels the same
+        // way, and this is the one write among them.
+        if let (Some(file), Some(text)) = (out, &out_text) {
+            handles.push(file.as_raw_handle().cast());
+            args.push(OUT_HANDLE_ARGV);
+            args.push(text);
+        }
+        Self::spawn_contained_worker(&args, &handles, tile, Some(doc))
     }
 
     /// Spawns a contained child and wraps it as a worker.
@@ -869,7 +957,13 @@ impl Worker {
     ///
     /// As [`Worker::spawn`].
     #[cfg(target_os = "macos")]
-    pub fn spawn_mapped(doc: Arc<Shm>, tile: Shm, library_dir: &Path) -> Result<Self, String> {
+    pub fn spawn_mapped(
+        doc: Arc<Shm>,
+        tile: Shm,
+        library_dir: &Path,
+        out: Option<&std::fs::File>,
+    ) -> Result<Self, String> {
+        use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
 
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
@@ -885,9 +979,16 @@ impl Worker {
             // Inherited, so a sandbox denial or a fatal signal is visible.
             // A worker that dies silently is the hardest thing here to diagnose.
             .stderr(Stdio::inherit());
+        // Said in argv as well as installed on [`OUT_FD`], because the child
+        // cannot tell a descriptor it was handed from one that happens to be
+        // open at that number. See [`OUT_ARGV`].
+        if out.is_some() {
+            command.arg(OUT_ARGV);
+        }
 
         let doc_fd = doc.raw_fd();
         let tile_fd = tile.raw_fd();
+        let out_fd = out.map(AsRawFd::as_raw_fd);
         // SAFETY: only dup/dup2/close run between fork and exec, all of which
         // are async-signal-safe. Both sources are dup'd to fresh descriptors
         // first, because either may already occupy the target number --- the
@@ -905,14 +1006,32 @@ impl Worker {
                 // land on exactly fd 3 and 4, which is what makes a temporary
                 // landing on the *other* target a layout to expect rather than
                 // a curiosity --- see [`is_scratch`].
-                let shuffle = [(d, DOC_FD), (t, TILE_FD)];
-                for (temp, target) in shuffle {
+                //
+                // **A fixed array sliced to length, never a `Vec`.** Only
+                // async-signal-safe calls may run between `fork` and `exec`,
+                // and allocating is not one of them --- a `push` here would be a
+                // deadlock on the allocator's lock in whatever state the fork
+                // froze it, which reproduces about never.
+                let mut installs = [(d, DOC_FD), (t, TILE_FD), (-1, OUT_FD)];
+                let installs: &mut [(i32, i32)] = match out_fd {
+                    Some(fd) => {
+                        let o = libc::dup(fd);
+                        if o < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        installs[2].0 = o;
+                        &mut installs[..3]
+                    }
+                    None => &mut installs[..2],
+                };
+                let shuffle = &*installs;
+                for &(temp, target) in shuffle {
                     if libc::dup2(temp, target) < 0 {
                         return Err(std::io::Error::last_os_error());
                     }
                 }
-                for (temp, _) in shuffle {
-                    if is_scratch(temp, &shuffle) {
+                for &(temp, _) in shuffle {
+                    if is_scratch(temp, shuffle) {
                         libc::close(temp);
                     }
                 }

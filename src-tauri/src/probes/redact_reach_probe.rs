@@ -180,14 +180,14 @@ struct Tally {
     ///
     /// **The third candidate, and the one the first two made necessary.** Neither
     /// the control's rendered height nor its length accounts for the bucket: after
-    /// the 2026-08-29 scale fix the failure rate is flat at 19--33% across every
+    /// the 2026-08-28 scale fix the failure rate is flat at 19--33% across every
     /// token length of five or more, which is the signature of a property of the
     /// page or the image rather than of the control the chooser picked. The
     /// hypothesis it was built to test is the band: [`tpdf_lib::ocr::adjudicate`]
     /// partitions the engine's spans by centre, and a span that *holds* the token
     /// while falling outside produces this exact verdict.
     ///
-    /// **Measured 2026-08-30, and the band is refused: `outside` is zero over 197
+    /// **Measured 2026-08-28, and the band is refused: `outside` is zero over 197
     /// refusals at three densities.** The rows are kept, and `outside` most of
     /// all --- a row that has only ever been zero is the one whose absence would
     /// go unnoticed, and it is the row that would move if `stack` or the centre
@@ -222,7 +222,7 @@ struct Tally {
     /// The shape and the rendered height of the same region, together.
     ///
     /// **Two marginals cannot answer the question the two of them raise.** At
-    /// `--regions 40` on 2026-08-30, 80 of 96 unread controls had the engine
+    /// `--regions 40` on 2026-08-28, 80 of 96 unread controls had the engine
     /// return nothing at all and 40 had rendered under 8 px --- which bounds the
     /// overlap and does not measure it: anywhere from 40 to 80 of the silent
     /// ones were shown a control the scale rule believed was legible. The
@@ -258,7 +258,7 @@ struct Tally {
     ///
     /// **The two rows above are marginals of one population, and marginals
     /// bound an overlap rather than measuring it.** `--regions 12` on
-    /// 2026-08-30 put 12 of the 36 silent refusals under the height floor and
+    /// 2026-08-28 put 12 of the 36 silent refusals under the height floor and
     /// 12 in an image at 8:1 or squarer, which says only that between 0 and 12
     /// of them are the same regions --- and the two ends mean opposite things:
     /// the low end says the two tails are separate defects, the high end says
@@ -278,7 +278,7 @@ struct Tally {
     /// The population under the same crossing, so every cell has a denominator.
     ///
     /// A cell is a small number over a small number here --- at `--regions 12`
-    /// on 2026-08-30 the crossing divided 366 regions into six populated cells
+    /// on 2026-08-28 the crossing divided 366 regions into six populated cells
     /// of twelve --- so read which cells are *populated* before reading any one
     /// cell's rate. An unpopulated cell is not a zero rate, and the report
     /// leaves it out rather than printing it as one.
@@ -286,7 +286,7 @@ struct Tally {
     /// The control's height in **points**, which is what the aspect axis turned
     /// out to be standing in for.
     ///
-    /// Added 2026-08-30 after `testdata/text-wide.pdf` showed a 28:1 probe image
+    /// Added 2026-08-28 after `testdata/text-wide.pdf` showed a 28:1 probe image
     /// reading back perfectly with an ordinary control. The aspect is
     /// `width_pt / (tallest + pt + 24)`, so on a page of ordinary width a wide
     /// image *requires* a small `pt` --- the two are one variable in a corpus of
@@ -696,7 +696,7 @@ fn control_shape(page: &GatePage) -> Option<Shape> {
 /// Everything about the control the gate chose for a page that a failure can be
 /// bucketed by.
 ///
-/// A struct rather than a tuple since 2026-08-30, when it reached five fields:
+/// A struct rather than a tuple since 2026-08-28, when it reached five fields:
 /// the two call sites destructure it positionally and a five-tuple is where that
 /// stops being readable. Every field is one call into the gate's own code, taken
 /// once per page and shared by every region on it.
@@ -707,7 +707,7 @@ struct Shape {
     px: f32,
     /// The same height in points, which is the axis `px` was standing in for.
     ///
-    /// **These are not two readings of one quantity, and 2026-08-30 is when that
+    /// **These are not two readings of one quantity, and 2026-08-28 is when that
     /// stopped being obvious.** `px` is `pt * scale` and the scale is chosen, so
     /// two controls of equal point size land at different pixel heights when one
     /// of them sat in an image large enough to be halved. The corpus reading that
@@ -850,7 +850,7 @@ const SHAPE_OUTSIDE: &str = "read it, outside its band";
 /// The buckets the probe image's width-to-height ratio is reported in.
 ///
 /// Split at 8:1 because `ocr-probe` swept four fixtures from **7.0:1** to 0.9:1
-/// on 2026-08-30 and Vision returned a span at every one of them --- so 7:1 is
+/// on 2026-08-28 and Vision returned a span at every one of them --- so 7:1 is
 /// measured non-silent, and anything past it is untested rather than merely
 /// suspected. The coarse top bucket is deliberate: the question is whether the
 /// silent refusals live beyond where a fixture has ever been taken, not where

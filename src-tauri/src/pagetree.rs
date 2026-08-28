@@ -793,8 +793,194 @@ fn forget_in_dictionary(
     Ok(())
 }
 
+/// Applies a plan's **page selection** to a document: what goes, and in what order.
+///
+/// **The two steps every writer here performs before it does anything of its
+/// own, in the one order that is correct.** `save::rewrite` and `print::build`
+/// both did this inline, spelled slightly differently, and `docs/TRAPS.md`
+/// records two shipped defects from that split --- *"Two writers for one
+/// document, and the printer got the older one"* and *"The same silent
+/// decryption, on the path whose output a reader keeps"*. The primitives were
+/// already shared; the *sequence* was not, so the next rule added to one of them
+/// had nothing forcing it into the other.
+///
+/// Two orderings are load-bearing rather than tidy:
+///
+///   - **Drop before reorder.** `reorder_pages` flattens the tree, and doing
+///     that to pages about to be deleted rewrites ancestry for nothing.
+///   - **The outline is dropped for a deletion and kept for a move.** A
+///     deletion leaves destinations naming pages that are not in the file; a
+///     move does not, because a destination names a page *object* and the
+///     object is still there --- a bookmark follows its page to wherever the
+///     reader put it, which is what somebody who rearranged a document means.
+///     Dropped whole rather than repaired: [`drop_outline`] carries what
+///     repairing it would take, and it is its own piece of work.
+///
+/// `reorder_to` is `None` when the reader's order is the file's, and the caller
+/// decides that: `save` carries it as a flag from the model, `print` compares
+/// the numbers it resolved. Those are genuinely different questions, so the
+/// predicate stays at the call site and only the action is shared.
+///
+/// **Turning pages is deliberately not here.** `print` turns immediately after
+/// this; `save` cannot, because a mark was made against the rotation the file
+/// had when it was opened and the mapping that places it reads the rotation the
+/// file has *now* --- so `save` maps its marks first and turns afterwards. A
+/// third step in this function would force the order that defect comes from.
+///
+/// # Errors
+///
+/// Whatever [`drop_pages`], [`drop_outline`] and [`reorder_pages`] refuse.
+pub fn materialise(
+    doc: &mut Document,
+    dropped: &[u32],
+    reorder_to: Option<&[ObjectId]>,
+) -> Result<(), String> {
+    if !dropped.is_empty() {
+        drop_pages(doc, dropped)?;
+        drop_outline(doc)?;
+    }
+    if let Some(order) = reorder_to {
+        reorder_pages(doc, order)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// A three-page document with an outline, for [`materialise`].
+    ///
+    /// The outline is the discriminating part: a deletion must drop it and a
+    /// move must not, and a fixture without one cannot tell those apart.
+    fn three_pages_with_outline() -> (Document, Vec<ObjectId>) {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let kids: Vec<ObjectId> = (0..3)
+            .map(|_| doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id }))
+            .collect();
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => kids.iter().map(|id| (*id).into()).collect::<Vec<Object>>(),
+                "Count" => 3,
+            }),
+        );
+        let outline = doc.add_object(dictionary! { "Type" => "Outlines", "Count" => 0 });
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "Outlines" => outline,
+        });
+        doc.trailer.set("Root", catalog);
+        (doc, kids)
+    }
+
+    fn has_outline(doc: &Document) -> bool {
+        doc.catalog().expect("a catalog").get(b"Outlines").is_ok()
+    }
+
+    /// A deletion takes the outline with it.
+    ///
+    /// Its destinations name pages that are no longer in the file, and a
+    /// bookmark that goes nowhere is worse than no bookmark.
+    #[test]
+    fn materialising_a_deletion_drops_the_outline() {
+        let (mut doc, _) = three_pages_with_outline();
+        assert!(has_outline(&doc), "the fixture has one to lose");
+        materialise(&mut doc, &[2], None).expect("materialise");
+        assert_eq!(doc.get_pages().len(), 2, "the page went");
+        assert!(!has_outline(&doc), "and the outline went with it");
+    }
+
+    /// A move keeps it, and this is the assertion that makes the one above mean
+    /// something.
+    ///
+    /// A destination names a page *object*, and a move does not remove any --- so
+    /// a bookmark follows its page to wherever the reader put it. Without this
+    /// test, dropping the outline unconditionally passes.
+    #[test]
+    fn materialising_a_move_keeps_the_outline() {
+        let (mut doc, kids) = three_pages_with_outline();
+        let order = vec![kids[2], kids[0], kids[1]];
+        materialise(&mut doc, &[], Some(&order)).expect("materialise");
+        assert_eq!(doc.get_pages().len(), 3, "nothing was dropped");
+        assert!(
+            has_outline(&doc),
+            "a move removes no page object, so every destination still names one"
+        );
+    }
+
+    /// Neither step runs when there is nothing to do.
+    ///
+    /// The emptiness control. `reorder_pages` **flattens** the page tree, so
+    /// calling it for a job that changed nothing rewrites the ancestry of every
+    /// page for no reason --- and `docs/TRAPS.md` records what that costs: a page
+    /// loses whatever it inherited from the node it hung under.
+    ///
+    /// **The tree has to be nested or this cannot fail.** Flattening a tree that
+    /// is already flat is unobservable, and a `materialise` that reordered
+    /// unconditionally passed this test while the fixture was one `/Pages` node
+    /// with three kids. The intermediate node is the discriminating property.
+    #[test]
+    fn materialising_nothing_leaves_the_tree_alone() {
+        let mut doc = Document::with_version("1.7");
+        let root_id = doc.new_object_id();
+        let branch_id = doc.new_object_id();
+        let under_branch: Vec<ObjectId> = (0..2)
+            .map(|_| doc.add_object(dictionary! { "Type" => "Page", "Parent" => branch_id }))
+            .collect();
+        // The inheritance the flattening would have to carry, on the node that
+        // would disappear.
+        doc.objects.insert(
+            branch_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => under_branch.iter().map(|id| (*id).into()).collect::<Vec<Object>>(),
+                "Count" => 2,
+                "Rotate" => 90,
+            }),
+        );
+        let loose = doc.add_object(dictionary! { "Type" => "Page", "Parent" => root_id });
+        doc.objects.insert(
+            root_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![branch_id.into(), loose.into()],
+                "Count" => 3,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => root_id });
+        doc.trailer.set("Root", catalog);
+        let order: Vec<ObjectId> = doc.get_pages().into_values().collect();
+
+        materialise(&mut doc, &[], None).expect("materialise");
+
+        assert_eq!(doc.get_pages().len(), 3, "every page is still there");
+        assert_eq!(
+            doc.get_pages().into_values().collect::<Vec<_>>(),
+            order,
+            "and in the same order"
+        );
+        let kids = doc
+            .get_object(root_id)
+            .and_then(Object::as_dict)
+            .and_then(|d| d.get(b"Kids"))
+            .and_then(Object::as_array)
+            .expect("the root's kids");
+        assert_eq!(
+            kids.len(),
+            2,
+            "the tree must not have been flattened: the root still has a branch and a page, \
+             not three pages"
+        );
+        assert!(
+            doc.get_object(branch_id).is_ok(),
+            "the intermediate node, and the /Rotate every page under it inherits, survive"
+        );
+    }
+
     use super::*;
     use lopdf::dictionary;
 

@@ -4907,6 +4907,16 @@ UNMUTATED = {
     "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
     "src/lib/session.test.ts": "no mutation aims at src/lib/session.ts",
     "src/lib/tiles.test.ts": "no mutation aims at src/lib/tiles.ts",
+    # A different shape from the ten above, and the reason is worth stating
+    # rather than borrowing theirs. This suite has no production module at all:
+    # it asserts that every panel keeping a focus mirror has a sibling test that
+    # dispatches an arrow key --- the enforcement `docs/TRAPS.md` chose when it
+    # declined to extract that widget. No mutation of any `.ts` file can redden
+    # it, because what it reads is the shape of the *test tree*. It was proved
+    # falsifiable by hand instead, three ways: renaming `ArrowDown` in one
+    # panel's suite, widening its discriminator until the palette matched, and
+    # narrowing it until nothing did.
+    "src/lib/rovinglists.test.ts": "asserts the shape of the test tree, which no source mutation changes",
 }
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

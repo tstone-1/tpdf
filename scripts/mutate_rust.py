@@ -210,7 +210,7 @@ class Mutation:
 MUTATIONS = [
     Mutation(
         # Show the engine a control no scale can render, as the gate did until
-        # 2026-08-30. The region comes back `ControlUnread` -- true, and it
+        # 2026-08-28. The region comes back `ControlUnread` -- true, and it
         # points at the engine, which is not where the problem is.
         "gate: render a control no scale can bring to the floor",
         "src/ocr_gate.rs",
@@ -373,8 +373,8 @@ MUTATIONS = [
         # asymmetry is the whole design and a single word carries it.
         "save: let a save in place tolerate a changed file, as a copy does",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;",
-        "    let planned = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;",
+        "    let ready = rewrite_ready(source, plan, OnChange::Refuse)?;",
+        "    let ready = rewrite_ready(source, plan, OnChange::Proceed)?;",
         "a_save_in_place_is_refused_when_the_file_changed_under_it",
     ),
     Mutation(
@@ -959,16 +959,16 @@ MUTATIONS = [
         # order it was asked for.
         "print: hand the printer the pages in the file's order rather than the job's",
         "src/print.rs",
-        "    if wanted.windows(2).any(|two| two[0].number >= two[1].number) {",
-        "    if false {",
+        "    let moved = wanted.windows(2).any(|two| two[0].number >= two[1].number);",
+        "    let moved = false;",
         "a_job_prints_its_pages_in_the_order_it_lists_them",
     ),
     Mutation(
         # And its over-application, which no page a reader sees can distinguish.
         "print: rebuild the page tree for a job whose pages never moved",
         "src/print.rs",
-        "    if wanted.windows(2).any(|two| two[0].number >= two[1].number) {",
-        "    if true {",
+        "    let moved = wanted.windows(2).any(|two| two[0].number >= two[1].number);",
+        "    let moved = true;",
         "a_job_in_document_order_keeps_the_page_tree_the_file_had",
     ),
     Mutation(
@@ -1688,14 +1688,18 @@ MUTATIONS = [
         "a_copy_that_drops_nothing_keeps_the_orphans_it_was_given",
     ),
     Mutation(
-        # Keep the outline after pages have gone. Its destinations name objects
-        # that are not there, and `drop_pages` has already emptied the arrays
-        # they lived in --- so what survives is a malformed destination rather
-        # than a dead one.
-        "save: keep the outline of a document that lost pages",
+        # **Re-aimed on 2026-08-28, when the sequence moved to
+        # `pagetree::materialise`.** The rule it used to mutate --- drop the
+        # outline when pages go --- now lives in one place and has its own
+        # mutation there, aimed at `pagetree`'s own test. Two mutations on one
+        # line would make the anchor ambiguous, and an ambiguous anchor is
+        # refused, so this one is aimed at what is still *this* caller's: whether
+        # `save` tells the shared function anything was dropped at all. The rule
+        # is covered once; each caller's wiring to it is covered where it is.
+        "save: tell the page-tree writer that nothing was dropped",
         "src/save.rs",
-        "        drop_outline(&mut doc)?;",
-        "        let _ = &mut doc;",
+        "    crate::pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;",
+        "    crate::pagetree::materialise(&mut doc, &[], moved.then_some(order.as_slice()))?;",
         "deleting_a_page_drops_the_outline_and_keeping_them_all_does_not",
     ),
     Mutation(
@@ -1749,7 +1753,7 @@ MUTATIONS = [
     ),
     Mutation(
         # Write a document `lopdf` decrypted on the way in back in the clear.
-        # **Re-aimed rather than deleted on 2026-08-29**: the guard this used to
+        # **Re-aimed rather than deleted on 2026-08-28**: the guard this used to
         # mutate -- a refusal keyed on `was_encrypted` -- is gone, because a
         # rewrite now re-encrypts instead of refusing. The class of defect did
         # not go with it. Dropping a document's encryption on save is still one
@@ -1761,8 +1765,8 @@ MUTATIONS = [
         # mutations, because one fixture cannot reach both.
         "save: write a decrypted document back in the clear",
         "src/save.rs",
-        "    if let Some(state) = &encryption {",
-        "    if let Some(state) = &encryption.filter(|_| false) {",
+        "    if let Some(state) = &encryption {\n        doc.encrypt(state)",
+        "    if let Some(state) = &encryption.filter(|_| false) {\n        doc.encrypt(state)",
         "a_really_encrypted_document_keeps_its_encryption_or_names_its_lock",
     ),
     Mutation(
@@ -1783,8 +1787,8 @@ MUTATIONS = [
         # own spike report three passes over a document with nothing in it.
         "save: ignore the password the reader supplied",
         "src/save.rs",
-        "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse {source:?}: {e}\"))?;",
-        "            password: None,\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse {source:?}: {e}\"))?;",
+        "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse the document: {e}\"))?;",
+        "            password: None,\n            ..Default::default()\n        },\n    )\n    .map_err(|e| format!(\"could not parse the document: {e}\"))?;",
         "a_rewrite_of_an_encrypted_document_stays_encrypted",
     ),
     Mutation(
@@ -1837,13 +1841,20 @@ MUTATIONS = [
     ),
     Mutation(
         # Put the save in place during the staging, which is the shape the write
-        # had before it was split. The document is then replaced while a worker
-        # still has it mapped --- which succeeds, and leaves that worker serving
+        # had before it was split. The document is replaced while a worker still
+        # has it mapped -- which succeeds on macOS, and leaves that worker serving
         # the file that used to be there.
+        #
+        # Written as a copy-and-remove rather than as an edit to the `stage` call
+        # because the staging is a closure now: this reproduces both halves of the
+        # old defect -- the source changes, and the path handed back is gone.
+        # An earlier attempt handed the source back as the staged path and was
+        # NOT caught: `resolved()` canonicalizes, so `/private/var/...` and
+        # `/var/...` are unequal `PathBuf`s and the test's `assert_ne!` passed.
         "save: put a save in place during the staging rather than after the close",
         "src/save.rs",
-        "    let path = stage(source, &planned.bytes)?;",
-        "    let path = write_atomically(source, &planned.bytes)\n        .map(|()| source.with_extension(PARTIAL))?;",
+        "    Ok(Staged { path, verified })",
+        "    std::fs::copy(&path, &target).map_err(|e| e.to_string())?;\n    let _ = std::fs::remove_file(&path);\n    Ok(Staged { path, verified })",
         "staging_a_save_in_place_writes_beside_the_source_and_leaves_it_alone",
     ),
     Mutation(
@@ -1852,7 +1863,7 @@ MUTATIONS = [
         # the staged copy of their work sits beside it under a name nothing reads.
         "save: report a commit that never renamed anything",
         "src/save.rs",
-        "    commit(staged, source)\n}",
+        "    commit(staged, &resolved(source))\n}",
         "    let _ = (staged, source);\n    Ok(())\n}",
         "committing_a_staged_save_puts_the_edits_in_the_file_the_reader_opened",
     ),
@@ -1862,8 +1873,8 @@ MUTATIONS = [
         # file next to the reader's document under a name they never chose.
         "save: stage a save in place before its guards have run",
         "src/save.rs",
-        "    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;",
-        "    let early = stage(source, b\"\")?;\n    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;\n    let _ = early;",
+        "    if plan.opened_as.is_none() {",
+        "    let early = stage(source, |_: &mut std::fs::File| Ok(()))?;\n    let _ = early;\n    if plan.opened_as.is_none() {",
         "a_refused_save_in_place_stages_nothing",
     ),
     Mutation(
@@ -1880,8 +1891,8 @@ MUTATIONS = [
         # leaves a truncated PDF where the reader's file was.
         "save: write straight to the destination rather than renaming into it",
         "src/save.rs",
-        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    let staged = stage(out, bytes)?;\n    commit(&staged, out)",
-        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    std::fs::write(out, bytes).map_err(|e| e.to_string())",
+        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    let staged = stage(out, |file| {",
+        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    return std::fs::write(out, bytes).map_err(|e| e.to_string());\n    #[allow(unreachable_code)]\n    let staged = stage(out, |file| {",
         "the_destination_is_replaced_whole_rather_than_written_through",
     ),
     Mutation(
@@ -3608,6 +3619,67 @@ MUTATIONS = [
         "        let inner_w = seen.width - STAMP_INSET * 2.0;\n        let inner_h = seen.height - STAMP_INSET * 2.0;",
         "        let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;\n        let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;",
         "a_stamps_word_is_sized_by_the_box_the_reader_dragged",
+    ),
+    Mutation(
+        # Rewrite in the coordinator, which is the code this replaced. Every
+        # number a caller can see is identical on a good document -- the two
+        # processes produce the same bytes -- so the only thing that can notice
+        # is a test whose source does not parse here.
+        "save: rewrite in the coordinator instead of the worker",
+        "src/save.rs",
+        "        let wrote = rewriter.write(&mut file, len, out, plan, password)?;",
+        "        let wrote = Here.write(&mut file, len, out, plan, password)?;",
+        "the_coordinator_does_not_parse_the_document_it_rewrites",
+    ),
+    Mutation(
+        # Trust the length the writer reported. The bytes never reach this
+        # process, so this comparison is the whole of what stands between a
+        # short write in another process and a rename over the reader's only
+        # copy.
+        "save: trust the rewrite's own byte count",
+        "src/save.rs",
+        "        if landed != wrote as u64 {",
+        "        if false {",
+        "a_rewriter_that_overstates_what_it_wrote_is_refused",
+    ),
+    Mutation(
+        # Ask the writer about the staged file rather than the source. Under
+        # `Here` the number is a capacity hint that changes no answer; a worker
+        # maps exactly this many bytes of the document it is rewriting.
+        "save: ask the rewrite about the wrong file's length",
+        "src/save.rs",
+        "        let wrote = rewriter.write(&mut file, len, out, plan, password)?;",
+        "        let wrote = rewriter.write(&mut file, 0, out, plan, password)?;",
+        "the_rewrite_is_asked_for_the_length_and_the_password",
+    ),
+    Mutation(
+        # Drop the password on the way to the rewrite. `lopdf` parses no objects
+        # at all for a document it cannot authenticate, so an encrypted save
+        # would rewrite to an empty document rather than refusing.
+        "save: rewrite without the reader's password",
+        "src/save.rs",
+        "        let wrote = rewriter.write(&mut file, len, out, plan, password)?;",
+        "        let wrote = rewriter.write(&mut file, len, out, plan, None)?;",
+        "the_rewrite_is_asked_for_the_length_and_the_password",
+    ),
+    Mutation(
+        # Keep the partial file when the write refuses. It is a copy of the
+        # reader's document, possibly a truncated one, left in their directory
+        # under a name they did not choose.
+        "save: leave the staging file behind on a refusal",
+        "src/save.rs",
+        "            let _ = std::fs::remove_file(&partial);\n            return Err(why);",
+        "            return Err(why);",
+        "a_rewriter_that_refuses_says_so_without_a_disk_error_in_front_of_it",
+    ),
+    Mutation(
+        # Flatten the refusal to "this cannot be reloaded". The sentence still
+        # reaches the reader and the one action that answers it does not.
+        "proto: drop whether a refusal is answerable by reloading",
+        "src/worker_proto.rs",
+        "            changed: why.changed,",
+        "            changed: false,",
+        "a_refusal_carries_whether_reloading_would_answer_it",
     ),
     Mutation(
         # Parse the written file in the coordinator again, which is the code
@@ -5780,7 +5852,7 @@ MUTATIONS += [
     Mutation(
         # Leave out what `stack` adds. The image is then reported shorter than
         # it is and every aspect comes out wider, which biases the one axis the
-        # 2026-08-30 measurement rests on toward its own conclusion.
+        # 2026-08-28 measurement rests on toward its own conclusion.
         "geometry: report the probe image without the margins and the gap",
         "src/ocr_gate.rs",
         "    let height_pt = tallest + control_pt + padding;",
@@ -6118,7 +6190,7 @@ MUTATIONS += [
         # unreadable or too big to hand over.
         "gate: render at whatever scale the control asks for",
         "src/ocr_gate.rs",
-        # Re-aimed 2026-08-30: the unclamped half of this rule became
+        # Re-aimed 2026-08-28: the unclamped half of this rule became
         # `scale_wanted`, so a measurement could ask what a control would have
         # needed. The defect is the same one -- drop the clamp.
         "    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE);",
@@ -6190,14 +6262,14 @@ MUTATIONS += [
     Mutation(
         # Choose the render scale from the smallest box a region covered rather
         # than from the control word the engine is actually shown. This is the
-        # code as it stood until 2026-08-29, and it is invisible from every
+        # code as it stood until 2026-08-28, and it is invisible from every
         # verdict: the gate still runs, still refuses, and still gives its
         # reason. What changes is that 34 of 38 unverifiable regions in a
         # 40-document corpus were shown a control below `MIN_CONTROL_PX` -- the
         # floor this very call exists to clear.
         "gate: scale the probe image from the covered box, not the control",
         "src/ocr_gate.rs",
-        # Re-aimed 2026-08-30 when this call gained a `map_err` to carry its
+        # Re-aimed 2026-08-28 when this call gained a `map_err` to carry its
         # own cause. The defect is unchanged -- size the render from the box
         # rather than from the control the engine is shown.
         "let scale = scale_for(control_pt, page.width_pt, height_pt, capacity)",
@@ -6211,7 +6283,7 @@ MUTATIONS += [
         # tell a fix from a blanket magnification.
         "gate: reach the floor by raising every scale rather than the right one",
         "src/ocr_gate.rs",
-        # Re-aimed 2026-08-30, same split as above.
+        # Re-aimed 2026-08-28, same split as above.
         "    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE);",
         "    let mut scale = scale_wanted(size_pt).clamp(MIN_SCALE, MAX_SCALE) * 2.0;",
         "a_control_no_smaller_than_its_box_is_scaled_the_same_as_before",
@@ -6324,6 +6396,204 @@ MUTATIONS += [
         "    if len > mapping.len() {",
         "    if len >= mapping.len() {",
         "a_frame_exactly_as_large_as_the_mapping_fits",
+    ),
+]
+
+# The guards added on 2026-08-28, when an outside review found that the increment
+# which taught the rewrite to preserve encryption had not been carried to four of
+# its neighbours. Each of these was run before it was written down; none is here
+# on the strength of an argument.
+MUTATIONS += [
+    Mutation(
+        # Take the password off the reload of the merge's own base. `lopdf`
+        # answers `Ok` with nothing parsed for a document it cannot authenticate,
+        # so the merge fails at the catalog and blames this module's writer.
+        "save: reload the merge base without the key that opened it",
+        "src/save.rs",
+        "            password: password.map(str::to_string),\n            ..Default::default()\n        },\n    )\n    // Not a refusal a reader can act on",
+        "            ..Default::default()\n        },\n    )\n    // Not a refusal a reader can act on",
+        "a_merge_whose_base_is_password_protected_keeps_its_encryption",
+    ),
+    Mutation(
+        # Leave the merged document in the clear. Same class as the rewrite's own
+        # encryption mutation and a different site: the incoming-file refusal
+        # exists to stop exactly this, and the base can do it too.
+        "save: write a merge of an encrypted base in the clear",
+        "src/save.rs",
+        "    if let Some(state) = &encryption {\n        merged.encrypt(state)",
+        "    if let Some(state) = &encryption.filter(|_| false) {\n        merged.encrypt(state)",
+        "a_merge_whose_base_is_password_protected_keeps_its_encryption",
+    ),
+    Mutation(
+        # Print without the reader's key. The parse in front of the encryption
+        # refusal then fails first, and the reader is told to open the document
+        # with the password it is already open with.
+        "save: check a print job without the password that opened the document",
+        "src/save.rs",
+        "    let checked = checked(&original, plan, view, password)?;",
+        "    let checked = checked(&original, plan, view, None)?;",
+        "a_print_job_from_a_locked_document_names_the_escape_that_exists",
+    ),
+    Mutation(
+        # Let the verifier call a file clean when it decoded none of it. The
+        # needle is compared against an empty graph, `found` stays empty, and the
+        # verdict is `Verified` about bytes nothing read.
+        "verify: verify a file whose encryption was never opened",
+        "src/verify.rs",
+        "            if doc.is_encrypted() {",
+        "            if false {",
+        "a_scan_that_decoded_no_object_is_not_verified",
+    ),
+    Mutation(
+        # The same claim for the other subject: a document that parses cleanly
+        # and holds nothing. Two rules, two fixtures --- the encrypted one leaves
+        # ONE object behind, so it never reaches this arm.
+        "verify: verify a file that parsed to no objects at all",
+        "src/verify.rs",
+        "            } else if doc.objects.is_empty() {",
+        "            } else if false {",
+        "a_scan_that_decoded_no_object_is_not_verified",
+    ),
+    Mutation(
+        # Stage beside the name rather than beside the document. On a link whose
+        # target is in another directory the temporary file lands on a filesystem
+        # the rename may not be able to cross.
+        "save: stage a rewrite beside the link rather than the document",
+        "src/save.rs",
+        "    let target = resolved(source);",
+        "    let target = source.to_path_buf();",
+        "saving_in_place_through_a_symlink_edits_the_document_the_link_names",
+    ),
+    Mutation(
+        # Rename onto the link. It becomes an ordinary file holding the new
+        # bytes, and the document it named keeps the old ones --- so a page turn
+        # and a highlight, on one file, end up in two different places.
+        "save: commit a rewrite onto the link rather than the document",
+        "src/save.rs",
+        "    commit(staged, &resolved(source))",
+        "    commit(staged, source)",
+        "saving_in_place_through_a_symlink_edits_the_document_the_link_names",
+    ),
+    Mutation(
+        # Let the replacement take the umask's mode. A document kept at 0600 in a
+        # shared directory comes back readable by everyone, with correct bytes and
+        # the right page count.
+        "save: give the replacement the umask's mode rather than the document's",
+        "src/save.rs",
+        "        #[cfg(unix)]\n        if let Ok(existing) = std::fs::metadata(out) {\n            let _ = file.set_permissions(existing.permissions());\n        }\n",
+        "",
+        "a_rewrite_keeps_the_documents_mode",
+    ),
+    Mutation(
+        # Time the read-back out without ending the worker. The refusal is still
+        # correct; the process and the thread blocked on its pipe are leaked.
+        "save: let a timed-out read-back leave its worker running",
+        "src/save.rs",
+        "            crate::workers::kill_pid(pid);\n",
+        "",
+        "a_read_back_that_never_answers_ends_the_worker",
+    ),
+    Mutation(
+        # Make the bound a thousand times longer, which is what having no bound
+        # looks like from inside a test. Killed by the *upper* assertion only ---
+        # a lower bound is satisfied by any longer wait, and this survived until
+        # that assertion existed.
+        "save: bound the read-back at a thousand times the deadline",
+        "src/save.rs",
+        "    match rx.recv_timeout(within) {",
+        "    match rx.recv_timeout(within * 1000) {",
+        "a_read_back_that_never_answers_ends_the_worker",
+    ),
+]
+
+# `redact::aggregate`, extracted from the Tauri command layer on 2026-08-28. The
+# arithmetic did not change; what changed is that a test can reach it. Every one
+# of these five was unreachable by any mutation while the code was a loop body
+# inside a `#[tauri::command]`'s private helper.
+MUTATIONS += [
+    Mutation(
+        # Stop merging the operators two overlapping regions both name. The
+        # reader is then told a page has more removals in it than it has.
+        "redact: count one show operator once per region that names it",
+        "src/redact.rs",
+        "    shows.sort_unstable();\n    shows.dedup();\n    let mut total",
+        "    shows.sort_unstable();\n    let mut total",
+        "two_regions_over_one_line_are_one_removal",
+    ),
+    Mutation(
+        # The same, one level down, inside a form. Its own mutation because it is
+        # its own statement -- a fixture exercising both at once could not say
+        # which of them a survivor had broken.
+        "redact: count a form's show operator once per region that names it",
+        "src/redact.rs",
+        "    form_shows.sort_unstable();\n    form_shows.dedup();\n    total",
+        "    form_shows.sort_unstable();\n    total",
+        "text_inside_a_form_is_merged_and_counted_too",
+    ),
+    Mutation(
+        # Report the model's page number rather than the reader's, which sends
+        # somebody to look at the wrong sheet for an object that could not go.
+        "redact: name a concern's page zero-based",
+        "src/redact.rs",
+        'format!("page {}: {}", page + 1, object.sentence())',
+        'format!("page {}: {}", page, object.sentence())',
+        "an_object_that_cannot_be_removed_names_the_readers_page_number",
+    ),
+    Mutation(
+        # Let a region that takes no text contribute an empty needle. An empty
+        # string is present in every file ever written, so the verification then
+        # reports a leak on a redaction that is perfectly clean.
+        "redact: take an empty string as something to verify",
+        "src/redact.rs",
+        "        if !taking.is_empty() {",
+        "        if true {",
+        "a_region_that_takes_no_text_adds_no_needle",
+    ),
+    Mutation(
+        # Hand the OCR gate the plan's rectangles, which are in the page's own
+        # space, instead of the reader's, which are in display space. Every
+        # control then gets looked for somewhere else on the page.
+        "redact: give the gate the page-space regions rather than the display ones",
+        "src/redact.rs",
+        "        regions: displayed,",
+        "        regions: areas.clone(),",
+        "the_gate_gets_the_display_space_regions_rather_than_the_plans",
+    ),
+]
+
+# `pagetree::materialise`, the one page-selection sequence both writers use,
+# extracted on 2026-08-28. `save::rewrite` and `print::build` each had their own
+# copy, spelled differently, and `docs/TRAPS.md` records two shipped defects that
+# came from the pair drifting.
+MUTATIONS += [
+    Mutation(
+        # Leave the outline in place after a deletion. Its destinations then name
+        # pages that are not in the file.
+        "pagetree: keep the outline after deleting the pages it points at",
+        "src/pagetree.rs",
+        "    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n        drop_outline(doc)?;\n    }",
+        "    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n    }",
+        "materialising_a_deletion_drops_the_outline",
+    ),
+    Mutation(
+        # Drop the outline unconditionally, which takes every bookmark out of a
+        # document whose pages were merely rearranged --- and they would all still
+        # have pointed at a page.
+        "pagetree: drop the outline for a move as well as a deletion",
+        "src/pagetree.rs",
+        "    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n        drop_outline(doc)?;\n    }",
+        "    drop_outline(doc)?;\n    if !dropped.is_empty() {\n        drop_pages(doc, dropped)?;\n    }",
+        "materialising_a_move_keeps_the_outline",
+    ),
+    Mutation(
+        # Reorder even when nothing moved. `reorder_pages` flattens the tree, so
+        # every page loses what it inherited from the node it hung under --- for a
+        # job that changed nothing.
+        "pagetree: flatten the page tree for a plan that moved nothing",
+        "src/pagetree.rs",
+        "    if let Some(order) = reorder_to {\n        reorder_pages(doc, order)?;\n    }",
+        "    reorder_pages(doc, reorder_to.unwrap_or(&doc.get_pages().into_values().collect::<Vec<_>>()))?;",
+        "materialising_nothing_leaves_the_tree_alone",
     ),
 ]
 

@@ -994,6 +994,20 @@ impl RenderService {
         }
     }
 
+    /// Closes every open document, on a service thread.
+    ///
+    /// **For a webview that has just started.** Nothing else may call it: a
+    /// running page holds document ids, and this invalidates all of them.
+    ///
+    /// The reply is a count rather than `()` because a caller cannot see the
+    /// table --- without it, *nothing was open* and *everything was released*
+    /// arrive as the same answer, and one of those is the interesting one.
+    pub fn release_all(&self, reply: Reply<usize>) {
+        if self.tx.send(Job::ReleaseAll { reply }).is_err() {
+            // Render thread is gone; every document went with it.
+        }
+    }
+
     /// Releases a document and everything holding it open.
     ///
     /// In worker mode that is a process, which is why this exists at all: before
@@ -1011,20 +1025,6 @@ impl RenderService {
     /// drain. Anything arriving after the close is answered "has been closed"
     /// rather than from another document, because the id leaves a hole rather
     /// than being removed.
-    /// Closes every open document, on a service thread.
-    ///
-    /// **For a webview that has just started.** Nothing else may call it: a
-    /// running page holds document ids, and this invalidates all of them.
-    ///
-    /// The reply is a count rather than `()` because a caller cannot see the
-    /// table --- without it, *nothing was open* and *everything was released*
-    /// arrive as the same answer, and one of those is the interesting one.
-    pub fn release_all(&self, reply: Reply<usize>) {
-        if self.tx.send(Job::ReleaseAll { reply }).is_err() {
-            // Render thread is gone; every document went with it.
-        }
-    }
-
     pub fn close(&self, doc: u32, reply: Reply<()>) {
         if self.tx.send(Job::Close { doc, reply }).is_err() {
             // Render thread is gone; nothing left to reply with, and every
@@ -1834,6 +1834,19 @@ pub(crate) fn run_append(
     plan: &crate::edits::Plan,
 ) -> Result<crate::save::Update, String> {
     document.graph().append(plan)
+}
+
+/// Rewrites the mapped document under a plan, on the render thread.
+///
+/// The whole-document counterpart of [`run_append`]. What comes back is the
+/// serialised file, which the caller writes down the worker's output channel
+/// rather than into a reply --- see `worker_proto::Request::Rewrite`.
+pub(crate) fn run_rewrite(
+    document: &OpenDocument,
+    plan: &crate::edits::Plan,
+    view: u8,
+) -> Result<Vec<u8>, crate::save::Refusal> {
+    document.graph().rewrite(plan, view)
 }
 
 /// Re-reads the mapped document with `lopdf` and counts its pages.

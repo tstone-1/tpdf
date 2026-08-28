@@ -2245,8 +2245,299 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
     Ok(doomed.len())
 }
 
+/// One page's worth of redaction bookkeeping, aggregated from its region plans.
+///
+/// [`aggregate`]'s answer. Five things come out of one walk over the plans, and
+/// they are returned together because building them separately would be four
+/// more walks that could disagree with each other.
+#[derive(Debug)]
+pub struct PageAggregate {
+    /// What the writer is asked to remove from this page.
+    pub planned: crate::edits::PlannedRedaction,
+    /// What the OCR gate is asked to look at afterwards.
+    pub gate: crate::ocr_gate::GatePage,
+    /// Objects the removal cannot take, one sentence each, page number included.
+    pub concerns: Vec<String>,
+    /// The strings the removal takes, for the whole-file verification.
+    pub needles: Vec<String>,
+    /// How many distinct show operations this page contributes, page text and
+    /// form text together --- the number a reader is shown before committing.
+    pub shows: usize,
+}
+
+/// Turns one page's region plans into what the writer, the gate and the reader need.
+///
+/// **Pure, and that is the point of it living here.** It performs no I/O, holds
+/// no handle and asks nothing: every input is already in hand by the time it is
+/// called. It used to be the body of a loop inside the Tauri command layer,
+/// interleaved with the two service round-trips that fetch its arguments --- so
+/// none of this arithmetic could be reached by a test, and the mutation harness
+/// could not aim at it at all.
+///
+/// `displayed` is the reader's regions in **display** space, which is the space
+/// they arrived in; `plans` has already converted them to the page's own. The
+/// gate works in the first and the writer in the second, which is why both are
+/// carried rather than one being derived.
+///
+/// `text` is the page's text before the removal, or `None` when it could not be
+/// read --- which is not a refusal: the gate reports *not verified* for those
+/// regions, and that is the honest answer either way.
+#[must_use]
+pub fn aggregate(
+    page: u32,
+    displayed: Vec<[f32; 4]>,
+    plans: Vec<RegionPlan>,
+    text: Option<&crate::text::PageText>,
+) -> PageAggregate {
+    let mut concerns: Vec<String> = Vec::new();
+    let mut needles: Vec<String> = Vec::new();
+    let mut shows: Vec<usize> = Vec::new();
+    // Every plan on a page reports the same count, because it is a fact about
+    // the page rather than about the region. Taken from the last rather than
+    // asserted equal across them: they come from one walk of one page in one
+    // reply, so a disagreement would be a defect in the worker and not something
+    // a caller can do anything about.
+    let mut text_objects = 0usize;
+    // One per region, kept rather than merged: they are rectangles and two of
+    // them do not combine into one. The writer asks each annotation whether it
+    // is over *any* of them.
+    let mut areas: Vec<[f32; 4]> = Vec::new();
+    // The same strings as `needles`, kept per page as well as flat. The flat
+    // list verifies the written file and the per-page one reaches the writer,
+    // which needs to know what a removal took in order to ask whether an outline
+    // entry names it. One source, two readers --- built in the same loop so they
+    // cannot come to disagree.
+    let mut taken: Vec<String> = Vec::new();
+    // The same two facts one level down: which text inside a form goes, and how
+    // many text objects each form on the page holds. `form_text_objects` is a
+    // property of the page like `text_objects` and is taken from the last plan
+    // for the same reason.
+    let mut form_shows: Vec<(usize, usize)> = Vec::new();
+    let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
+    // And the pictures. `image_objects` is a property of the page like
+    // `text_objects` and is taken from the last plan for the same reason.
+    let mut images: Vec<usize> = Vec::new();
+    let mut image_objects = 0usize;
+
+    for plan in plans {
+        text_objects = plan.text_objects;
+        image_objects = plan.image_objects;
+        images.extend(plan.images.iter().copied());
+        form_text_objects = plan.form_text_objects.clone();
+        for object in &plan.unhandled {
+            concerns.push(format!("page {}: {}", page + 1, object.sentence()));
+        }
+        shows.extend(plan.shows.iter().copied());
+        form_shows.extend(plan.form_shows.iter().copied());
+        areas.push(plan.area);
+        let taking = plan.taking.trim();
+        if !taking.is_empty() {
+            needles.push(taking.to_string());
+            taken.push(taking.to_string());
+        }
+    }
+
+    // Merged: two regions over one line name the same operator, and removing it
+    // twice is removing it once. Sorted because `remove_shows` walks them
+    // backwards and says so.
+    shows.sort_unstable();
+    shows.dedup();
+    let mut total = shows.len();
+    // Merged the same way, and it matters as much: two regions over one line
+    // inside a form name the same operator there too.
+    form_shows.sort_unstable();
+    form_shows.dedup();
+    total += form_shows.len();
+    // Two regions over one picture name the same `Do`, and removing it twice is
+    // removing it once.
+    images.sort_unstable();
+    images.dedup();
+
+    let (words, width_pt, height_pt) = match text {
+        Some(text) => (
+            crate::ocr_gate::words_from(text),
+            text.width_pt,
+            text.height_pt,
+        ),
+        None => (Vec::new(), 0.0, 0.0),
+    };
+    let gate = crate::ocr_gate::GatePage {
+        page,
+        regions: displayed,
+        words,
+        taking: taken.join(" "),
+        width_pt,
+        height_pt,
+    };
+    let planned = crate::edits::PlannedRedaction {
+        source: page,
+        shows,
+        text_objects,
+        areas,
+        taking: taken,
+        form_shows,
+        form_text_objects,
+        images,
+        image_objects,
+    };
+    PageAggregate {
+        planned,
+        gate,
+        concerns,
+        needles,
+        shows: total,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// `aggregate`'s fixtures: one plan, with everything empty but what a test sets.
+    fn plan_of(shows: &[usize], taking: &str) -> super::RegionPlan {
+        super::RegionPlan {
+            shows: shows.to_vec(),
+            text_objects: 9,
+            images: Vec::new(),
+            image_objects: 0,
+            form_shows: Vec::new(),
+            form_text_objects: Vec::new(),
+            area: [1.0, 2.0, 3.0, 4.0],
+            taking: taking.to_string(),
+            unhandled: Vec::new(),
+        }
+    }
+
+    /// Two regions over one line name one operator, and it is counted once.
+    ///
+    /// **The number a reader is shown before committing.** Removing an operator
+    /// twice is removing it once, so a page with two overlapping regions must
+    /// not report two --- and the count is what tells somebody how much of their
+    /// document is about to change.
+    #[test]
+    fn two_regions_over_one_line_are_one_removal() {
+        let one = super::aggregate(
+            0,
+            vec![[0.0; 4], [0.0; 4]],
+            vec![plan_of(&[4, 7], "alpha"), plan_of(&[7, 9], "beta")],
+            None,
+        );
+        assert_eq!(
+            one.planned.shows,
+            vec![4, 7, 9],
+            "the operators are merged and sorted --- `remove_shows` walks them backwards"
+        );
+        assert_eq!(one.shows, 3, "and counted once each");
+    }
+
+    /// Form text is merged the same way, and adds to the same total.
+    ///
+    /// Its own test rather than another assertion in the one above: the two
+    /// deduplications are separate statements, and a fixture that exercised both
+    /// at once could not say which of them a surviving mutation had broken.
+    #[test]
+    fn text_inside_a_form_is_merged_and_counted_too() {
+        let mut first = plan_of(&[], "");
+        first.form_shows = vec![(2, 5), (2, 6)];
+        let mut second = plan_of(&[], "");
+        second.form_shows = vec![(2, 6)];
+        let one = super::aggregate(0, vec![[0.0; 4]], vec![first, second], None);
+        assert_eq!(one.planned.form_shows, vec![(2, 5), (2, 6)]);
+        assert_eq!(
+            one.shows, 2,
+            "page text and form text land in one number, because a reader is being told how \
+             many removals there are rather than where they live"
+        );
+    }
+
+    /// What the removal takes reaches two readers, and they cannot disagree.
+    ///
+    /// The flat `needles` list verifies the written file; the gate's `taking`
+    /// string is what the OCR control is chosen from. Built from one walk, so a
+    /// page cannot verify one thing and check another.
+    #[test]
+    fn what_is_taken_reaches_both_the_verifier_and_the_gate() {
+        let one = super::aggregate(
+            0,
+            vec![[0.0; 4]],
+            vec![plan_of(&[1], "alpha"), plan_of(&[2], "  beta  ")],
+            None,
+        );
+        assert_eq!(one.needles, vec!["alpha", "beta"], "trimmed, and in order");
+        assert_eq!(one.planned.taking, vec!["alpha", "beta"]);
+        assert_eq!(one.gate.taking, "alpha beta");
+    }
+
+    /// A plan that takes nothing contributes no needle.
+    ///
+    /// The control for the test above. An empty string in `needles` would be
+    /// found in every file ever written, so the verification would report a leak
+    /// on a perfectly clean redaction.
+    #[test]
+    fn a_region_that_takes_no_text_adds_no_needle() {
+        let one = super::aggregate(0, vec![[0.0; 4]], vec![plan_of(&[1], "   ")], None);
+        assert!(one.needles.is_empty(), "{:?}", one.needles);
+        assert!(one.planned.taking.is_empty());
+        assert_eq!(one.gate.taking, "");
+    }
+
+    /// An object the removal cannot take is reported with the page a reader sees.
+    ///
+    /// One-based, because the reader's page 1 is the model's page 0 and a
+    /// concern naming the wrong page sends somebody to look at the wrong sheet.
+    #[test]
+    fn an_object_that_cannot_be_removed_names_the_readers_page_number() {
+        let mut plan = plan_of(&[1], "alpha");
+        plan.unhandled = vec![super::Unhandled {
+            at: 3,
+            kind: "image".to_string(),
+        }];
+        let one = super::aggregate(6, vec![[0.0; 4]], vec![plan], None);
+        assert_eq!(one.concerns.len(), 1);
+        assert!(
+            one.concerns[0].starts_with("page 7: "),
+            "the reader's number, not the model's: {}",
+            one.concerns[0]
+        );
+    }
+
+    /// A page whose text could not be read is not a refusal.
+    ///
+    /// The gate reports *not verified* for its regions, which is the honest
+    /// answer; what must not happen is the aggregation failing and taking the
+    /// whole redaction with it.
+    #[test]
+    fn a_page_whose_text_is_unreadable_still_produces_a_gate_page() {
+        let one = super::aggregate(
+            2,
+            vec![[1.0, 2.0, 3.0, 4.0]],
+            vec![plan_of(&[1], "x")],
+            None,
+        );
+        assert_eq!(one.gate.page, 2);
+        assert_eq!(one.gate.regions, vec![[1.0, 2.0, 3.0, 4.0]]);
+        assert!(one.gate.words.is_empty());
+        assert_eq!(one.gate.width_pt, 0.0);
+        assert_eq!(one.gate.height_pt, 0.0);
+    }
+
+    /// The regions the gate is given are the reader's, in display space.
+    ///
+    /// `plans` has already converted them to the page's own space, so handing
+    /// the gate the plan's rectangles would put every control somewhere else on
+    /// the page. Two spaces, and only one of them is the one the marks are in.
+    #[test]
+    fn the_gate_gets_the_display_space_regions_rather_than_the_plans() {
+        let mut plan = plan_of(&[1], "x");
+        plan.area = [90.0, 91.0, 92.0, 93.0];
+        let one = super::aggregate(0, vec![[5.0, 6.0, 7.0, 8.0]], vec![plan], None);
+        assert_eq!(one.gate.regions, vec![[5.0, 6.0, 7.0, 8.0]]);
+        assert_eq!(
+            one.planned.areas,
+            vec![[90.0, 91.0, 92.0, 93.0]],
+            "and the writer gets the page's own"
+        );
+    }
+
     use super::{
         covered, covered_annots, is_show, overlaps, remove_form_shows, remove_images, remove_shows,
         FormObject, FormOther, FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,

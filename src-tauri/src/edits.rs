@@ -333,6 +333,35 @@ pub struct Edits {
     docs: Mutex<HashMap<u32, Open>>,
 }
 
+/// Runs the fingerprint, and answers `None` rather than unwinding.
+///
+/// **The cell has exactly one writer, so a panic before it writes is a hang.**
+/// `opened_as` is `OnceLock::wait`, and the waiter is every later `plan()` and
+/// every save for that document --- so a panic anywhere in the hashing thread
+/// does not lose a fingerprint, it blocks the reader's next save for the life of
+/// the session, with no message and nothing to see. `Fingerprint::of` handles
+/// its own errors and is not expected to panic; the point is that "not expected
+/// to" is the whole guarantee, and the cost of not relying on it is one call.
+///
+/// `None` is the same answer a fingerprint that could not be taken produces, and
+/// callers already treat it as a refusal --- *"could not look"*, never *"looked,
+/// and it was fine"*. So the failure stays fail-closed rather than becoming a
+/// wait.
+///
+/// Its own function so a test can hand it a closure that panics. Inside the
+/// thread there is nothing a test could make go wrong.
+fn answered(take: impl FnOnce() -> Option<Fingerprint>) -> Option<Fingerprint> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(take)) {
+        Ok(taken) => taken,
+        Err(_) => {
+            crate::diag::note(
+                "[WARN] fingerprinting a document panicked, so Save is refused for it",
+            );
+            None
+        }
+    }
+}
+
 impl Edits {
     /// Starts a model for a freshly opened document.
     ///
@@ -350,7 +379,7 @@ impl Edits {
                 // have to be stored, kept alive across a close, and reasoned
                 // about when a document is dropped mid-hash.
                 std::thread::spawn(move || {
-                    let taken = match Fingerprint::of(&path) {
+                    let taken = answered(|| match Fingerprint::of(&path) {
                         Ok(print) => Some(print),
                         Err(why) => {
                             // Through `diag` rather than `eprintln!`, which is
@@ -368,7 +397,7 @@ impl Edits {
                             ));
                             None
                         }
-                    };
+                    });
                     // A failed `set` means the document was closed and reopened
                     // under the same handle while this ran. The new open has its
                     // own cell, so there is nothing to correct.
@@ -1561,6 +1590,39 @@ fn snapshot(model: &Doc) -> EditState {
 
 #[cfg(test)]
 mod tests {
+
+    /// A panic while fingerprinting must refuse the save, not block it.
+    ///
+    /// `opened_as` is a `OnceLock` with exactly one writer, and its reader is
+    /// `OnceLock::wait` --- so a hashing thread that unwinds before it writes
+    /// does not lose a fingerprint, it parks every later `plan()` and every save
+    /// for that document until the process ends, with nothing printed and
+    /// nothing to see. `None` is the answer an unreadable file already produces
+    /// and every caller already treats as a refusal.
+    #[test]
+    fn a_fingerprint_that_panics_answers_none_rather_than_unwinding() {
+        // The panic message would otherwise go to stderr and read as a failing
+        // test in a passing run.
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let taken = super::answered(|| panic!("the hash gave up"));
+        std::panic::set_hook(previous);
+        assert!(taken.is_none(), "a panic has to become a refusal");
+    }
+
+    /// The control: an answer that arrives is passed through untouched.
+    ///
+    /// Without it, an `answered` that returned `None` unconditionally would pass
+    /// the test above and refuse every save in the application.
+    #[test]
+    fn a_fingerprint_that_succeeds_is_passed_through() {
+        let file = std::env::temp_dir().join(format!("tpdf-answered-{}", std::process::id()));
+        std::fs::write(&file, b"some bytes").expect("write");
+        let real = Fingerprint::of(&file).expect("fingerprint");
+        let taken = super::answered(|| Some(real.clone()));
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(taken, Some(real), "a successful hash must reach the cell");
+    }
 
     /// A plan waits for the fingerprint the open started, rather than racing it.
     ///

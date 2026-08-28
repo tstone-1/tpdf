@@ -26,7 +26,10 @@ project conventions.
 
 - Every document is parsed and rendered in **sandboxed worker processes** with no
   filesystem or network authority --- a pool per document, and a worker that dies is
-  replaced and its request retried.
+  replaced and its request retried. Saving over a document is prepared and written
+  there too. Save a copy, Extract, Split, Merge and Print still read the file in the
+  app process; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in one place
+  rather than leaving the first sentence to be read as covering them.
 - Tiled rendering behind a virtual scroller; zoom --- in, out, actual size, fit-width,
   fit-page, or a figure you type; view rotation; and page inversion for reading on a dark
   screen.
@@ -223,11 +226,19 @@ measured the Windows render constants come out 1.5–1.8x worse.
   to reach the disk, then writes the trailer that makes it the current revision, and cuts
   the file back to what it was if anything goes wrong.
 
-  **That split is what an encrypted document can and cannot have.** Marks are appended, and
-  each appended object is encrypted with the key the document was opened under, so the file
-  stays locked and the same password still opens it. A rewrite is refused outright rather
-  than written out in the clear --- so on an encrypted document you can add marks and save,
-  and a deletion, a move, a turn or a crop is declined and says so.
+  **An encrypted document keeps its encryption, whichever of the two it gets.** Marks are
+  appended, and each appended object is encrypted with the key the document was opened
+  under. A rewrite --- a deletion, a move, a turn, a crop --- puts the file's own encryption
+  back before writing: the same algorithm, the same permission bits, both passwords, taken
+  from the file rather than rebuilt. So the same password opens the result either way, and
+  nothing comes out in the clear.
+
+  Two things are still refused, and both say why. A document nobody has unlocked cannot be
+  rewritten at all, because there is no key to put back. And **printing** part of an
+  encrypted document is declined rather than rewritten: re-encrypting would hand the
+  printer a file it cannot read, and not re-encrypting would hand it a decrypted copy of a
+  document somebody encrypted on purpose. Print the whole document instead --- that is
+  handed over unchanged.
 
 ## Not built yet
 

@@ -25,7 +25,6 @@ pub mod invert;
 pub mod keylayout;
 pub mod launch;
 pub mod links;
-#[cfg(target_os = "macos")]
 pub mod menu;
 pub mod merge;
 pub mod objects;
@@ -335,11 +334,25 @@ pub const PDFIUM_LOADABLE: &str = if cfg!(windows) {
 /// right there. `scripts/fetch_pdfium.py` encodes the same split and its
 /// docstring names this function as the one that had it wrong.
 fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
-    let (subdir, loadable) = (PDFIUM_SUBDIR, PDFIUM_LOADABLE);
+    let loadable = PDFIUM_LOADABLE;
 
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|root| root.join("vendor/pdfium").join(subdir));
+    // **Debug builds only, and that is a load-path decision rather than tidiness.**
+    // `CARGO_MANIFEST_DIR` is baked in at compile time, so a release built by CI
+    // carries the *runner's* checkout path --- and this candidate is tried first,
+    // ahead of anything inside the bundle. On a machine where that path can be
+    // created by an unprivileged account, planting a library there would have
+    // every installed copy of tpdf load it into its workers. The worker is
+    // contained, so the planted code cannot reach the filesystem or the app
+    // process; what it can do is parse every document the reader opens and lie
+    // about all of it, which `docs/THREAT-MODEL.md`'s residual 8 does not cover
+    // --- that one assumes a worker compromised *by* a document, not one that was
+    // never ours.
+    //
+    // Nothing is lost in a development tree, where `debug_assertions` is on and
+    // this is the candidate that hits. `BUILD.md`'s release step of hiding
+    // `vendor/pdfium` stays worth doing: it is what proves the bundled branch is
+    // reachable, and after this it proves it for the debug build too.
+    let dev = dev_library_dir();
     let resources = app.path().resource_dir().ok();
 
     // The *library*, not the directory that should contain it. Those are the
@@ -360,6 +373,64 @@ fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
     // Nothing found. Answer with the resource directory rather than `.`, so the
     // bind error names where a bundled app was actually looking.
     resources.unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Where a parse of the reader's own document should happen.
+///
+/// **One statement of the rule, read by three call sites** --- the rewriting
+/// save, the redaction's rewrite, and the append's read-back. All three are
+/// parses of attacker-controlled bytes: the document the reader opened, or the
+/// previous revision of the file just written, which is the same bytes verbatim.
+/// So all three belong in a sandboxed child wherever there can be one, and the
+/// question of whether there can be is `render::Backend`'s.
+///
+/// A platform with no sandbox still saves. Refusing would make it useless rather
+/// than uncontained, which is the rule `Backend::default_here` already follows,
+/// and it is not silent: `render::UNSANDBOXED_MARK` is what keeps the two runs
+/// distinguishable.
+///
+/// Built here rather than inside the functions that take it, because choosing it
+/// needs the app handle and they are reachable from `cargo test`, where there is
+/// none. See `save::Outside`.
+fn outside_of(app: &tauri::AppHandle, backend: render::Backend) -> Box<dyn save::Outside> {
+    match backend {
+        render::Backend::Worker => Box::new(save::InWorker::at(pdfium_library_dir(app))),
+        render::Backend::InProcess => Box::new(save::Here),
+    }
+}
+
+/// The vendored library in a development checkout, and `None` in a release build.
+///
+/// **Debug builds only, and that is a load-path decision rather than tidiness.**
+/// `CARGO_MANIFEST_DIR` is baked in at compile time, so a release built by CI
+/// carries the *runner's* checkout path --- and [`pdfium_library_dir`] tries this
+/// candidate first, ahead of anything inside the bundle. On a machine where that
+/// path can be created by an unprivileged account, planting a library there would
+/// have every installed copy of tpdf load it into its workers. The worker is
+/// contained, so the planted code cannot reach the filesystem or the app process;
+/// what it can do is parse every document the reader opens and lie about all of
+/// it --- which `docs/THREAT-MODEL.md`'s residual 8 does not cover, because that
+/// one assumes a worker compromised *by* a document rather than one that was
+/// never ours.
+///
+/// Nothing is lost in a development tree, where `debug_assertions` is on and this
+/// is the candidate that hits. `BUILD.md`'s release step of hiding
+/// `vendor/pdfium` stays worth doing: it is what proves the bundled branch is
+/// reachable, and it now proves it for the debug build too.
+///
+/// Its own function so the decision is reachable from a test under either
+/// profile --- a `#[cfg]` inside the lookup would be a claim nothing could check.
+fn dev_library_dir() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|root| root.join("vendor/pdfium").join(PDFIUM_SUBDIR))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
 }
 
 /// Where one command's reply from the render service arrives.
@@ -394,13 +465,6 @@ fn reply_channel<T: Send + 'static, E: Send + 'static>() -> (render::ReplyTo<T, 
     )
 }
 
-/// Waits for the render service's answer to `command`.
-///
-/// `command` is a parameter because the failure is otherwise
-/// indistinguishable across every caller: all of them see the render thread
-/// gone, and a persisted `render thread stopped` (see `diag.rs`) then says a
-/// thread died without saying what was being asked of it. The name is the one
-/// piece a reader sending the log back cannot supply.
 /// The password that opened `doc`, or `None`.
 ///
 /// **A key to bytes this process already holds, not a new authority.** The
@@ -425,6 +489,21 @@ async fn password_for(service: &RenderService, doc: u32, command: &str) -> Optio
     await_reply(command, rx).await.unwrap_or(None)
 }
 
+/// Waits for the render service's answer to `command`.
+///
+/// `command` is a parameter because the failure is otherwise indistinguishable
+/// across every caller: all of them see the render thread gone, and a persisted
+/// `render thread stopped` (see `diag.rs`) then says a thread died without
+/// saying what was being asked of it. The name is the one piece a reader sending
+/// the log back cannot supply.
+///
+/// (This paragraph spent three weeks attached to [`password_for`]. Two `///`
+/// runs with no blank line between them are **one** comment in Rust, so it
+/// documented the function below it and left this one with nothing --- and
+/// nothing goes red, because both halves still compile and rustdoc renders a
+/// perfectly good page about the wrong item. The `docs` gate's Rust exemption
+/// argued that Rust cannot lose a doc comment this way, which is true and is not
+/// the failure: it misattributes one.)
 async fn await_reply<T, E>(command: &str, mut rx: ReplyRx<T, E>) -> Result<T, E>
 where
     E: From<String>,
@@ -826,65 +905,7 @@ async fn ask_redactions(
         let (reply, rx) = reply_channel();
         service.redaction_plans(doc, page, target.regions, reply);
         let plans = await_reply("redaction_plans", rx).await?;
-        let mut shows: Vec<usize> = Vec::new();
-        // Every plan on a page reports the same count, because it is a fact
-        // about the page rather than about the region. Taken from the last
-        // rather than asserted equal across them: they come from one walk of one
-        // page in one reply, so a disagreement would be a defect in the worker
-        // and not something a caller can do anything about.
-        let mut text_objects = 0usize;
-        // One per region, kept rather than merged: they are rectangles and two
-        // of them do not combine into one. The writer asks each annotation
-        // whether it is over *any* of them.
-        let mut areas: Vec<[f32; 4]> = Vec::new();
-        // The same strings as `needles`, kept per page as well as flat. The
-        // flat list verifies the written file and the per-page one reaches the
-        // writer, which needs to know what a removal took in order to ask
-        // whether an outline entry names it. One source, two readers --- built
-        // in the same loop so they cannot come to disagree.
-        let mut taken: Vec<String> = Vec::new();
-        // The same two facts one level down: which text inside a form goes, and
-        // how many text objects each form on the page holds. `form_text_objects`
-        // is a property of the page like `text_objects` and is taken from the
-        // last plan for the same reason.
-        let mut form_shows: Vec<(usize, usize)> = Vec::new();
-        let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
-        // And the pictures. `image_objects` is a property of the page like
-        // `text_objects` and is taken from the last plan for the same reason.
-        let mut images: Vec<usize> = Vec::new();
-        let mut image_objects = 0usize;
-        for plan in plans {
-            text_objects = plan.text_objects;
-            image_objects = plan.image_objects;
-            images.extend(plan.images.iter().copied());
-            form_text_objects = plan.form_text_objects.clone();
-            for object in &plan.unhandled {
-                concerns.push(format!("page {}: {}", page + 1, object.sentence()));
-            }
-            shows.extend(plan.shows.iter().copied());
-            form_shows.extend(plan.form_shows.iter().copied());
-            areas.push(plan.area);
-            let taking = plan.taking.trim();
-            if !taking.is_empty() {
-                needles.push(taking.to_string());
-                taken.push(taking.to_string());
-            }
-        }
-        // Merged: two regions over one line name the same operator, and removing
-        // it twice is removing it once. Sorted because `remove_shows` walks them
-        // backwards and says so.
-        shows.sort_unstable();
-        shows.dedup();
-        shows_total += shows.len();
-        // Merged the same way, and it matters as much: two regions over one line
-        // inside a form name the same operator there too.
-        form_shows.sort_unstable();
-        form_shows.dedup();
-        shows_total += form_shows.len();
-        // Two regions over one picture name the same `Do`, and removing it
-        // twice is removing it once.
-        images.sort_unstable();
-        images.dedup();
+
         // One text extraction per page, on the document as the reader has it.
         // `None` for the crop because `redaction_plans` uses the file's own, and
         // a word list measured from a different corner than the regions were
@@ -894,29 +915,20 @@ async fn ask_redactions(
         // *not verified* for its regions, which is the answer either way.
         let (reply, rx) = reply_channel();
         service.text(doc, page, None, reply);
-        let (words, width_pt, height_pt) = match await_reply("redaction text", rx).await {
-            Ok(text) => (ocr_gate::words_from(&text), text.width_pt, text.height_pt),
-            Err(_) => (Vec::new(), 0.0, 0.0),
-        };
-        gate.push(ocr_gate::GatePage {
-            page,
-            regions: displayed,
-            words,
-            taking: taken.join(" "),
-            width_pt,
-            height_pt,
-        });
-        planned.push(edits::PlannedRedaction {
-            source: page,
-            shows,
-            text_objects,
-            areas,
-            taking: taken,
-            form_shows,
-            form_text_objects,
-            images,
-            image_objects,
-        });
+        let text = await_reply("redaction text", rx).await.ok();
+
+        // **The arithmetic lives in `redact.rs`, and this loop is the two
+        // questions it needs answered.** Everything between the replies used to
+        // be written out here --- a hundred lines of merging, deduplication and
+        // sentence-building inside a `#[tauri::command]`'s private helper, which
+        // no test could construct and no mutation could aim at. See
+        // [`redact::aggregate`].
+        let one = redact::aggregate(page, displayed, plans, text.as_ref());
+        concerns.extend(one.concerns);
+        needles.extend(one.needles);
+        shows_total += one.shows;
+        gate.push(one.gate);
+        planned.push(one.planned);
     }
 
     let mut plan = edits.plan(doc)?;
@@ -945,6 +957,7 @@ async fn gate_written_file(
     app: &tauri::AppHandle,
     path: String,
     pages: Vec<ocr_gate::GatePage>,
+    password: Option<String>,
 ) -> Vec<String> {
     if pages.is_empty() {
         return Vec::new();
@@ -952,7 +965,7 @@ async fn gate_written_file(
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let service = handle.state::<RenderService>();
-        ocr_gate::run(&service, &path, None, &pages)
+        ocr_gate::run(&service, &path, password, &pages)
     })
     .await
     .unwrap_or_else(|e| {
@@ -1023,6 +1036,13 @@ async fn redact_copy(
     let written = out.clone();
     let out_path = out.to_string_lossy().into_owned();
     let password = password_for(&service, doc, "redact_copy").await;
+    // **Kept for the two readers after the write, which need the same key.**
+    // The file about to be written is re-encrypted whenever the source was, so
+    // a verifier arriving without the password parses no objects at all and
+    // reports having found nothing --- which is what a clean file looks like.
+    // `verify::scan` refuses to call that verified, and this is what lets it
+    // answer the question instead of declining it.
+    let key = password.clone();
     let copied = tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(&from, &plan, &out, password.as_deref())
     })
@@ -1033,10 +1053,21 @@ async fn redact_copy(
     // Read back rather than verified from what was written, which is the same
     // rule the append's own verification follows: what matters is the file on
     // disk, and the buffer that produced it agrees with itself.
+    //
+    // **By path, and that is a window rather than a guarantee.** `write_copy`
+    // has already renamed and closed, so there is no handle left to read
+    // through; anything that replaces the file between the rename and this read
+    // is what gets verified, and the report would be about somebody else's
+    // bytes. Closing it means `write_copy` returning its open file, which is a
+    // change to every copy path in `save.rs` --- and the destination is a name
+    // the reader has just chosen in a dialog, so the race needs a writer aiming
+    // at it in the same second. Disclosed rather than claimed shut: the append,
+    // whose destination is the reader's own open document, does hold its handle.
+    let verifying = key.clone();
     let report = tauri::async_runtime::spawn_blocking(move || {
         std::fs::read(&written)
             .map_err(|why| format!("the redacted file could not be read back: {why}"))
-            .map(|bytes| verify::scan(&bytes, &needles, None))
+            .map(|bytes| verify::scan(&bytes, &needles, verifying.as_deref()))
     })
     .await
     .map_err(|e| format!("the verification did not run: {e}"))??;
@@ -1052,7 +1083,7 @@ async fn redact_copy(
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
-    why.extend(gate_written_file(&app, out_path, asked.gate).await);
+    why.extend(gate_written_file(&app, out_path, asked.gate, key).await);
     Ok(redact::Applied {
         regions,
         shows: shows_total,
@@ -1122,8 +1153,14 @@ async fn redact_document(
     let staging = source.clone();
     let plan = asked.plan.clone();
     let password = password_for(&service, doc, "redact_document").await;
+    // Kept past the close for the two readers after the write --- `redact_copy`
+    // says why, and here it is also the only copy of the document left. Taken
+    // now rather than later because the service is closed a few lines below and
+    // there is nothing to ask by then.
+    let key = password.clone();
+    let writing = outside_of(&app, service.backend());
     let staged = tauri::async_runtime::spawn_blocking(move || {
-        save::stage_in_place(Path::new(&staging), &plan, password.as_deref())
+        save::stage_in_place(Path::new(&staging), &plan, password.as_deref(), &*writing)
     })
     .await
     .map_err(|e| SaveFailure::refused(format!("the redaction did not run: {e}")))?
@@ -1143,6 +1180,7 @@ async fn redact_document(
 
     let committing = source.clone();
     let needles = asked.needles.clone();
+    let verifying = key.clone();
     let landed = tauri::async_runtime::spawn_blocking(move || {
         let at = Path::new(&committing);
         // One more look before the rename, closing the window staging opens.
@@ -1157,7 +1195,7 @@ async fn redact_document(
                     "the file was written but could not be read back to check it: {why}"
                 ))
             })
-            .map(|bytes| verify::scan(&bytes, &needles, None))
+            .map(|bytes| verify::scan(&bytes, &needles, verifying.as_deref()))
     })
     .await
     .map_err(|e| SaveFailure::after_close(format!("the redaction did not finish: {e}")))?;
@@ -1173,7 +1211,7 @@ async fn redact_document(
     }
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
-    why.extend(gate_written_file(&app, source, asked.gate).await);
+    why.extend(gate_written_file(&app, source, asked.gate, key).await);
     Ok(redact::Applied {
         regions: asked.regions,
         shows: asked.shows,
@@ -1557,7 +1595,7 @@ async fn save_document(
     // **Before the match, because both arms need it now.** It used to be asked
     // after, for the append alone --- the rewrite arm read `Prepared::Rewrite(_)
     // => None` and did not need a key, because it refused every encrypted
-    // document outright. Since 2026-08-29 a rewrite re-encrypts what it writes,
+    // document outright. Since 2026-08-28 a rewrite re-encrypts what it writes,
     // so the key is what makes it possible rather than what it would have
     // leaked. The rewrite also needs it *earlier* than the append does: the
     // append's parse happens in the worker below, while the rewrite parses on
@@ -1600,8 +1638,17 @@ async fn save_document(
         save::Mode::Rewrite => {
             let staging = source.clone();
             let key = password.clone();
+            // **The rewrite's parse happens in the worker too, since
+            // 2026-08-28**, and it is the same argument the append arm above
+            // makes: `save::rewrite_update` is a pure function of the document's
+            // bytes and the plan, and those bytes are the attacker's. What took
+            // longer is where the answer goes --- an append's is kilobytes and
+            // fits in a reply, a rewrite's is the whole document --- so the
+            // worker is handed the staging file's own descriptor and writes down
+            // it. `docs/THREAT-MODEL.md` residual risk 18.
+            let writing = outside_of(&app, service.backend());
             tauri::async_runtime::spawn_blocking(move || {
-                save::stage_in_place(Path::new(&staging), &plan, key.as_deref())
+                save::stage_in_place(Path::new(&staging), &plan, key.as_deref(), &*writing)
             })
             .await
             .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
@@ -1667,10 +1714,7 @@ async fn save_document(
     // Built here rather than inside `save::append_in_place`, because choosing it
     // needs the app handle and that function is reachable from `cargo test`,
     // where there is none.
-    let reread: Box<dyn save::Reread> = match service.backend() {
-        render::Backend::Worker => Box::new(save::InWorker::at(pdfium_library_dir(&app))),
-        render::Backend::InProcess => Box::new(save::Here),
-    };
+    let reread = outside_of(&app, service.backend());
 
     // `prepared` is consumed rather than borrowed, which is what lets it cross
     // into the closure, and nothing after this line reads it.
@@ -2002,25 +2046,20 @@ async fn keyboard_positions() -> Result<std::collections::HashMap<String, String
 /// that was never installed.
 ///
 /// The spec is built from the command registry; see `src/lib/menubar.ts`.
-#[cfg(target_os = "macos")]
+/// **One arm, with the platform question inside `menu.rs`.** There were two
+/// until 2026-08-28, and the pair cost more than the duplication: the non-macOS
+/// one took the payload as an unread `serde_json::Value`, because
+/// `menu::SectionSpec` did not exist there --- so the contract between
+/// `menubar.ts` and this command was type-checked on exactly one of the two
+/// platforms tpdf ships. `menu::INSTALLS` carries the decision now, and the spec
+/// is parsed into the same shape everywhere.
 #[tauri::command]
 async fn set_menu(
     app: tauri::AppHandle,
     sections: Vec<menu::SectionSpec>,
 ) -> Result<Option<&'static str>, String> {
     menu::install(&app, sections).await?;
-    Ok(Some(menu::RUN_EVENT))
-}
-
-/// The non-macOS answer: no menu, and nothing wrong. See the macOS arm above.
-///
-/// Takes the payload as an unread `Value` rather than the typed shape, because
-/// `menu::SectionSpec` does not exist here --- and takes it at all so that the
-/// frontend has one call site rather than a platform test of its own.
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-async fn set_menu(_sections: serde_json::Value) -> Result<Option<&'static str>, String> {
-    Ok(None)
+    Ok(menu::INSTALLS.then_some(menu::RUN_EVENT))
 }
 
 /// Enables or disables menu items to match the commands' own guards.
@@ -2028,20 +2067,13 @@ async fn set_menu(_sections: serde_json::Value) -> Result<Option<&'static str>, 
 /// Separate from [`set_menu`] because a rebuild per edit would rebuild the whole
 /// bar several times a second while a reader works --- every rotation changes
 /// whether Undo is live.
-#[cfg(target_os = "macos")]
+/// One arm, for [`set_menu`]'s reason.
 #[tauri::command]
 async fn set_menu_enabled(
     app: tauri::AppHandle,
     state: std::collections::HashMap<String, bool>,
 ) -> Result<(), String> {
     menu::set_enabled(&app, state).await
-}
-
-/// The non-macOS answer. See the macOS arm above.
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-async fn set_menu_enabled(_state: std::collections::HashMap<String, bool>) -> Result<(), String> {
-    Ok(())
 }
 
 /// Extracts one page's characters and their positions.
@@ -2222,7 +2254,12 @@ fn with_session<F: FnOnce(&mut session::Session)>(path: &Path, edit: F) -> Resul
     let _guard = SESSION_WRITE.lock();
     let mut session = session::Session::load(path);
     edit(&mut session);
-    session.save(path).map_err(|e| e.to_string())
+    // Named, because this string crosses the IPC boundary and is the only thing
+    // the reader is shown. `io::Error`'s own text is "permission denied" with no
+    // subject, which is true of every path in the process.
+    session
+        .save(path)
+        .map_err(|e| format!("could not write the session file {}: {e}", path.display()))
 }
 
 /// Records where a document was left.
@@ -2312,6 +2349,7 @@ async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Result
 async fn print_document(
     app: tauri::AppHandle,
     edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
     path: String,
     doc: Option<u32>,
     pages: Option<Vec<u32>>,
@@ -2354,6 +2392,16 @@ async fn print_document(
     //
     // A panicking build would otherwise surface as a command that returned
     // nothing, which is indistinguishable from a panel the reader dismissed.
+    // **For a refusal, not for a print job.** `save::print_bytes` refuses an
+    // encrypted document either way --- neither re-encrypting nor decrypting is
+    // right for a printer --- but without the key the parse in front of that
+    // refusal fails first and tells the reader to open the document with the
+    // password it is already open with. See `print_bytes`, which carries the
+    // reasoning. `None` for the passthrough and the range, which do not rewrite.
+    let password = match doc {
+        Some(doc) => password_for(&service, doc, "print_document").await,
+        None => None,
+    };
     let build = move || -> Result<Vec<u8>, String> {
         match route {
             print::Route::Passthrough => {
@@ -2361,7 +2409,8 @@ async fn print_document(
             }
             print::Route::Working => {
                 let plan = plan.ok_or("the working document has no plan to print")?;
-                save::print_bytes(&source, &plan, turns).map_err(|refused| refused.message)
+                save::print_bytes(&source, &plan, turns, password.as_deref())
+                    .map_err(|refused| refused.message)
             }
             print::Route::Range(job) => print::build(&source, &job),
         }
@@ -2398,7 +2447,10 @@ fn present_job(
             diag::note(&format!("[print] {e}"));
         }
     })
-    .map_err(|e| e.to_string())
+    // The same rule: what failed was the hop to the main thread, and without
+    // saying so the reader gets a bare runtime message for a print that silently
+    // did not happen.
+    .map_err(|e| format!("the print panel could not be shown on the main thread: {e}"))
 }
 
 /// Hands built bytes to Windows, having first read them back.
@@ -3213,6 +3265,34 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+
+    /// The compile-time development path must not be a candidate in a release.
+    ///
+    /// **Both arms are real, and the release one is why this exists.**
+    /// `CARGO_MANIFEST_DIR` is the *build* machine's checkout, so a release built
+    /// by CI would otherwise look inside the runner's tree first, on every
+    /// launch, on every machine that installed it. Under `cargo test` the debug
+    /// arm runs and is the control --- it proves the path is still found where
+    /// developers need it, so the release arm is a decision rather than the
+    /// function having quietly stopped working.
+    ///
+    /// Run the other arm with `cargo test --release`.
+    #[test]
+    fn the_development_library_path_is_a_debug_only_candidate() {
+        let dev = super::dev_library_dir();
+        if cfg!(debug_assertions) {
+            let dev = dev.expect("a debug build must still find the vendored library");
+            assert!(
+                dev.ends_with(std::path::Path::new("vendor/pdfium").join(super::PDFIUM_SUBDIR)),
+                "the debug candidate is the vendored tree: {dev:?}"
+            );
+        } else {
+            assert_eq!(
+                dev, None,
+                "a release build must not consult the build machine's checkout"
+            );
+        }
+    }
 
     /// Only the two macOS-only spikes may hardcode `vendor/pdfium/lib`.
     ///
