@@ -3452,6 +3452,63 @@ or above the floor, so below the floor the engine does not read *less*, it reads
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
+#### The control's size in points, and a correction to the section below --- measured 2026-08-30
+
+`redact-reach-probe` now buckets by the control's height **in points**, crosses it with the probe
+image's shape, and attributes every sub-floor control to one of the two clamps in
+`ocr_gate::scale_for`. Three things came out, and the second contradicts what the section below
+concluded.
+
+**Points is the sharper single axis, and one bucket is absolute.** `--regions 12` over 40
+documents, with `--regions 40` in brackets:
+
+| the control measured | unread / all | rate | of those, silent |
+|---|---|---|---|
+| under 2 pt (unreachable) | 24 / 24 [40 / 40] | **100.0%** | 12 [40] |
+| 2 to 6 pt | 31 / 193 [56 / 464] | 16.1% [12.1%] | 24 [40] |
+| 6 to 12 pt | 11 / 149 [0 / 75] | 7.4% [0.0%] | **0** [0] |
+| 12 pt and over | 0 / 0 | --- | 0 |
+
+**Every control under 2 pt failed, at both densities.** That bucket's boundary is not chosen for
+reading: 2 pt is `MIN_CONTROL_PX / MAX_SCALE`, the size below which no scale the rule may pick
+reaches the floor. A control the scale rule structurally cannot serve is one the gate cannot
+certify against, and there are 24 of them in a 366-region sample.
+
+**The section below is wrong that the aspect is innocent, and the crossing is what says so.** Hold
+the control's size fixed in the 2 to 6 pt band and change only the shape:
+
+| control 2 to 6 pt | silent / all | rate |
+|---|---|---|
+| 8:1 to 16:1 | 0 / 133 [0 / 384] | **0.0%** |
+| wider than 16:1 | 12 / 24 [40 / 80] | **50.0%** |
+
+Same control band, 517 regions against 104, and the silent rate goes from zero to half. The
+sparser run adds the same comparison at the other control size --- under 2 pt is 0 of 12 silent
+inside the band and 12 of 12 outside it --- though that one rests on a single 12-region cell and
+the denser run has no population there at all.
+
+**So silence needs a wide image *and* a small control, and neither alone.** The fixture in the
+section below is still correct and was over-read: it showed a 28:1 image with a **34.5 pt** control
+reading back perfectly, and 34.5 pt is a control size this corpus never contains --- the *12 pt and
+over* row is empty at both densities. What it established is that the shape's effect is conditional
+on a small control, not that the shape does not matter. Writing *"the aspect was never the cause"*
+generalised one combination to a variable.
+
+**The clamp question is answered, and `ocr_gate.rs` said it was open.** That file's doc comment on
+`ProbeGeometry::control_px` read *"which of the two produced a given reading is not recorded, and
+no measurement has separated them"*. It is recorded now: **24 and 40 attributed to the `MAX_SCALE`
+ceiling, 0 to the buffer halving, 0 short for neither reason.** The `MIN_SCALE` clamp has never
+fired on real input. The doc comment is corrected rather than left standing.
+
+**Ranked next, and padding is back on with a prediction rather than a hope**: bound the probe
+image's aspect into the 8:1--16:1 band by padding, one term in `stack`'s `total`. The prediction is
+now specific and falsifiable --- the 24 regions at `--regions 12` that are silent beyond 16:1 should
+become silent-free, matching the 0 of 133 and 0 of 149 the band already produces at every control
+size. The controls are unchanged: the middle-band regions must not move, and the sweep on
+`text-wide.pdf` must still read back at every shape. What padding cannot fix is the *under 2 pt*
+bucket inside the band, which is 0 of 12 silent but 12 of 12 unread --- those need `scale_for` or
+`control_from_page`, and they are the next thing after.
+
 #### The aspect was never the cause --- measured 2026-08-30
 
 `testdata/text-wide.pdf` was written to reach the band the corpus goes silent in, and it does.
@@ -3476,8 +3533,13 @@ span and reads the token back at every one:
 | 2.0:1 | 1 | **no** |
 
 So a probe image four times wider than anything the corpus calls silent reads perfectly, with a
-control of ordinary size. **The aspect is not the cause, and the padding repair is dead** --- it
-would have moved regions from a shape that is innocent to a shape that is innocent.
+control of ordinary size.
+
+⚠ **This paragraph read "the aspect is not the cause, and the padding repair is dead" and that was
+too strong --- corrected the same day, see the section above.** A 34.5 pt control is a size this
+corpus never contains, so the run establishes that a wide image with an *ordinary* control is fine,
+which is one combination rather than a verdict on the variable. Holding the control at 2 to 6 pt
+and changing only the shape takes the silent rate from 0 of 517 to 52 of 104. Silence needs both.
 
 **What the aspect was, is a proxy.** On a page of ordinary width the only way to reach 16:1 is for
 `tallest + control_pt` to come to under about 13 pt, because `padding` is a fixed 24. So on A4 a

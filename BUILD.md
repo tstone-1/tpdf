@@ -2408,6 +2408,22 @@ four fifths of the population.
 was written. The `bad / all` form is what makes it visible; a bare percentage would have read as a
 finding.
 
+**A sixth and seventh axis, added 2026-08-30: the control's height in points, and which clamp
+left it short.** Points is what the aspect turned out to be standing in for, and it is the sharper
+single reading: **every control under 2 pt failed**, 24 of 24 and 40 of 40 at the two densities,
+against 16.1% for 2 to 6 pt and 7.4% for 6 to 12 pt. That boundary is `MIN_CONTROL_PX /
+MAX_SCALE` written as the division rather than as `2.0`, so raising either constant moves the
+bucket with it. Crossed with the shape it gives the comparison neither axis could make alone: at a
+control of 2 to 6 pt, 517 regions inside 8:1--16:1 are 0% silent and 104 beyond 16:1 are 50%
+silent, so the shape matters at a fixed control size.
+
+The clamp row answers a question `ocr_gate.rs` recorded as open --- *"no measurement has separated
+them"*. A sub-floor control comes from the `MAX_SCALE` ceiling being unable to reach 16 px, or
+from the image being halved to fit the buffer, and the two can hold together, so *both* is its own
+row rather than an arm of an ordered chain. Measured: **24 and 40 from the ceiling, 0 from the
+halving, 0 short for neither reason.** The `MIN_SCALE` clamp has never fired on real input; re-run
+this if `capacity` or the region sampling changes.
+
 **A fifth axis, added 2026-08-30: the two above, crossed.** The height row and the shape row are
 marginals of one population, so equal counts on them are not evidence of one set of regions. The
 crossing prints `silent / all` per cell, and populated cells only --- an unpopulated cell is not a
@@ -2416,15 +2432,17 @@ question the marginals could not: at `--regions 12` both rows report a **12**, a
 carrying both properties has **no population at all**, so the overlap is 0 and the two tails are
 separate defects. `docs/PLAN.md` §6 has the table.
 
-Four `[WARN]`s guard all of this. The three shapes plus the no-evidence count must equal the
+Every row above is guarded, and the guards print nothing when they agree --- deliberately not counted here, because a total in prose has nothing asserting it and the two loops each fire per bucket. The three shapes plus the no-evidence count must equal the
 cause's own total; the cross-tabulated total must equal the height-bucket total, since both count
 the regions that had a measurable control; and the crossing must reproduce **each** of the two
 rows it was derived from, checked per axis rather than over the total. The per-axis split is what
 makes a failure readable --- keying the crossing on a constant aspect fires the shape control and
 leaves the height control silent, and a constant height does the mirror, so the `[WARN]` names
-which axis drifted. A single check over the total goes red for both and names neither. A non-zero
-*carried no evidence* is a defect in `ocr::adjudicate` rather than a finding about the gate: the
-type says that arm always records one.
+which axis drifted. A single check over the total goes red for both and names neither. The points
+crossing gets the same treatment --- one loop per axis against that axis's own row --- and the clamp
+rows have to come to the same total as the height rows, since they partition the same regions. A
+non-zero *carried no evidence* is a defect in `ocr::adjudicate` rather than a finding about the
+gate: the type says that arm always records one.
 
 ⚠ **`--regions N` is not only the sample size; it changes what the gate can do, so every
 percentage from this harness has to be quoted with its density.** The regions set `size_pt`

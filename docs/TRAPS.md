@@ -5443,18 +5443,36 @@ bucket, rate and cross-tabulation taken over that corpus was reading one variabl
 it to the other, and no amount of further slicing could have said so, because the corpus contains
 no counter-example to slice.
 
-**A fixture is what separates them, by moving the term the corpus holds still.** `text-wide.pdf`
-reaches the same shapes from the other direction: a 1684 pt sheet with ordinary 14 pt text builds
-an 18.1:1 image and sweeps to 28.1:1 with the control strip left at 34.5 pt, against A4's 30.5. At
-28:1, 24:1, 20:1 and 18:1 the engine returns a span and reads the token back every time. The
-aspect is innocent; it was standing in for the control's size in points.
+**A fixture reaches the missing combination, by moving the term the corpus holds still.**
+`text-wide.pdf` gets to the same shapes from the other direction: a 1684 pt sheet with ordinary
+14 pt text builds an 18.1:1 image and sweeps to 28.1:1 with the control strip left at 34.5 pt,
+against A4's 30.5. At 28:1, 24:1, 20:1 and 18:1 the engine returns a span and reads the token back
+every time. What that shows is narrower than it first reads --- see the correction below.
 
 **The generalisable question is not "do these correlate" but "can this population contain a
 counter-example".** Where a quantity is a fixed function of the others --- here `aspect =
-width / (a + b + const)` --- holding one input constant across the whole corpus makes two of the
-remaining terms indistinguishable by construction. Write the identity down before bucketing, and
-ask which of its inputs the corpus actually varies. Page width was the answer here and it took
-three increments to look at it, because it never appeared in any table.
+width / (a + b + const)` --- ask which of its inputs the corpus actually varies. Page width was
+the one nobody looked at, and it took three increments, because it never appeared in any table.
+
+⚠ **The next paragraph of this entry said the corpus "contains no counter-example to slice", and
+that was wrong in both directions --- corrected the same day.** The identity puts a *ceiling* on
+the control given a wide image; it does not pin it, and a bucket 2 pt wide holds plenty of shape
+variation. Crossing the control's height in points against the aspect --- more slicing of the same
+corpus --- found exactly the counter-examples the paragraph said could not exist: within the 2 to
+6 pt band, 517 regions inside 8:1--16:1 are **0%** silent and 104 beyond 16:1 are **50%** silent.
+So the shape does matter, at a fixed control size, measured on the corpus that was supposed to be
+unable to say. **An arithmetic constraint between two variables bounds their joint range; it
+rarely collapses it to a line.** Before concluding a population cannot answer, cross the two axes
+and look at the off-diagonal cells --- which costs one map, and is the fix the entry above already
+prescribes for a different reason.
+
+**And the fixture that separated them supplied one cell, not a verdict on the variable.**
+`text-wide.pdf` reads back at 28:1 with a 34.5 pt control, and *12 pt and over* is an empty row in
+the corpus at both sampling densities --- so the fixture establishes that a wide image with an
+**ordinary** control is fine, which is a combination rather than a property of the aspect. It was
+written up as "the aspect was never the cause" and had to be corrected within the hour. A fixture
+built to fill a gap in a population tests the point it occupies; generalising from it is the same
+over-reach as generalising from the population that lacked it.
 
 **The control fired again, on a second cause, and that is what stopped a wrong reading.** The
 sweep's second check --- the token must read back at the shape the gate itself builds --- failed on
