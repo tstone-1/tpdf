@@ -64,7 +64,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
-use tpdf_lib::ocr::Legibility;
+use tpdf_lib::ocr::{Legibility, NotVerifiedCause};
 use tpdf_lib::ocr_gate::{self, GatePage, Judged, PageOutcome};
 use tpdf_lib::render::{Backend, RenderService};
 use tpdf_lib::{save, worker, worker_child};
@@ -114,11 +114,35 @@ struct Tally {
     caught_inside: usize,
     /// The gate could not answer.
     unanswered: usize,
-    /// Of those, the ones where the **control** was not read back --- the engine
-    /// ran and could not read text of that size on that image, so its finding
-    /// nothing else says nothing. Counted apart because it is the cost of
-    /// masking: a mostly-blank probe image is a different image to recognise.
-    no_control: usize,
+    /// Of those, which step could not be completed --- one counter per
+    /// [`NotVerifiedCause`], plus [`Tally::gate_refused`] for a run-wide refusal
+    /// that has no per-region cause at all.
+    ///
+    /// **This is the increment.** `docs/PLAN.md` §6 asked where the regions that
+    /// come back *not verified* actually go, and until 2026-08-28 this could
+    /// answer for exactly one of them: it matched `why.contains("control token")`
+    /// against a sentence written for a human, and threw away the verdict of
+    /// every page-wide refusal and every run-wide one without reading it. So a
+    /// step that never failed and a step whose sentence had been reworded
+    /// produced the same number, and the page-wide steps could not be reported
+    /// at all.
+    ///
+    /// No count of the causes is written here, for the reason `AGENTS.md` gives
+    /// about the trap count: the authority is [`NotVerifiedCause::ALL`], and this
+    /// sentence said *eight* for the half hour between writing the type and
+    /// splitting its commonest variant into five.
+    causes: BTreeMap<&'static str, usize>,
+    /// Regions under a [`Judged::Refused`]: the engine would not spawn, or the
+    /// written file would not reopen. Not a [`NotVerifiedCause`], because it is
+    /// about the machine or the file rather than about any region --- and it is
+    /// counted rather than folded in, since one of these accounts for every
+    /// region in the run at once.
+    ///
+    /// `gate_` because [`Tally::refused`] above is already a count of *documents
+    /// the render service would not open*, which is a different refusal at a
+    /// different layer. The compiler caught the collision; a reader would not
+    /// have.
+    gate_refused: usize,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -471,19 +495,30 @@ fn run_gate(
     // rows -- which was the whole reason this half's numbers could not be
     // reported as a leak rate before `ocr_gate::mask_columns` existed.
     match ocr_gate::judge_all(service, &out.to_string_lossy(), None, &pages) {
-        Judged::Refused(_) => tally.unanswered += asked.len(),
+        // Not a per-region cause: the engine would not spawn, or the file would
+        // not reopen. Counted as itself rather than spread over the regions,
+        // because one of these is a statement about the run.
+        Judged::Refused(_) => {
+            tally.unanswered += asked.len();
+            tally.gate_refused += asked.len();
+        }
         Judged::Pages(judged) => {
             let mut at = 0usize;
             for page in &judged {
                 match &page.outcome {
                     // One answer for the page, so every region on it is
-                    // unanswered rather than one of them being.
-                    PageOutcome::Whole(_) => {
+                    // unanswered rather than one of them being -- and every one
+                    // of them is unanswered *for the page's reason*, which the
+                    // version that wrote `Whole(_)` here could not say.
+                    PageOutcome::Whole(verdict) => {
                         let here = pages
                             .iter()
                             .find(|p| p.page == page.page)
                             .map_or(0, |p| p.regions.len());
                         tally.unanswered += here;
+                        if let Legibility::NotVerified { cause, .. } = verdict {
+                            *tally.causes.entry(cause.label()).or_default() += here;
+                        }
                         at += here;
                     }
                     PageOutcome::Regions(verdicts) => {
@@ -492,11 +527,9 @@ fn run_gate(
                             at += 1;
                             match verdict {
                                 Legibility::Illegible { .. } => tally.proved += 1,
-                                Legibility::NotVerified { why } => {
+                                Legibility::NotVerified { cause, .. } => {
                                     tally.unanswered += 1;
-                                    if why.contains("control token") {
-                                        tally.no_control += 1;
-                                    }
+                                    *tally.causes.entry(cause.label()).or_default() += 1;
                                 }
                                 Legibility::Legible { found } => {
                                     tally.caught += 1;
@@ -572,10 +605,29 @@ fn report(t: &Tally, seconds: f32) {
             t.unanswered,
             pct(t.unanswered, t.gate_regions)
         );
-        println!(
-            "      of those, the control was not read back: {}",
-            t.no_control
-        );
+        // Every cause, including the ones that never fired: a row printed as
+        // zero says the step was watched, and an absent row says nothing at
+        // all. `refused` is listed beside them and is not one of them.
+        for cause in NotVerifiedCause::ALL {
+            let label = cause.label();
+            println!(
+                "      {label:<32} {:>6}",
+                t.causes.get(label).copied().unwrap_or(0)
+            );
+        }
+        println!("      {:<32} {:>6}", "the run was refused", t.gate_refused);
+        // The buckets have to account for the unanswered exactly. A region can
+        // reach `unanswered` by a route that carries no cause -- which is what
+        // `Whole(_)` and `Refused(_)` were before this -- and the shortfall is
+        // invisible unless it is subtracted.
+        let attributed: usize = t.causes.values().sum::<usize>() + t.gate_refused;
+        if attributed != t.unanswered {
+            println!(
+                "[WARN] {attributed} attributed of {} unanswered --- {} region(s) have no cause",
+                t.unanswered,
+                t.unanswered.saturating_sub(attributed)
+            );
+        }
         println!(
             "  shown unreadable                  {:>6}  ({:.2}%)",
             t.proved,

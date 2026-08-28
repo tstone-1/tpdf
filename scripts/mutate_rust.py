@@ -6022,8 +6022,8 @@ MUTATIONS += [
         # then reported to the reader as a clean redaction.
         "gate: stay silent about a region that could not be checked",
         "src/ocr_gate.rs",
-        "        Legibility::NotVerified { why } => Some(format!(",
-        "        Legibility::NotVerified { why } => (false).then(|| format!(",
+        "        Legibility::NotVerified { why, .. } => Some(format!(",
+        "        Legibility::NotVerified { why, .. } => (false).then(|| format!(",
         "a_not_verified_verdict_carries_its_own_reason_through",
     ),
     Mutation(
@@ -6033,9 +6033,42 @@ MUTATIONS += [
         # rule 1 and must not become a second copy of it.
         "gate: let the engine-failure reason drift from adjudicate's",
         "src/ocr_gate.rs",
-        "    Legibility::NotVerified {\n        why: format!(\"{e}\"),\n    }\n}",
-        "    Legibility::NotVerified {\n        why: format!(\"the engine failed: {e}\"),\n    }\n}",
+        "    Legibility::NotVerified {\n        why: format!(\"{e}\"),\n        cause: NotVerifiedCause::EngineError,\n    }\n}",
+        "    Legibility::NotVerified {\n        why: format!(\"the engine failed: {e}\"),\n        cause: NotVerifiedCause::EngineError,\n    }\n}",
         "the_error_path_says_what_adjudicate_would",
+    ),
+    Mutation(
+        # Report every way of failing to choose a control as the same cause. The
+        # sentence a reader sees is unchanged, so nothing in the application
+        # differs -- and the measurement that decides the next increment loses
+        # the split it was built to make: 90% of the gate's refusals are this
+        # one refusal, and which of its four reasons fired is the whole question.
+        "ocr: collapse the four control refusals onto one cause",
+        "src/ocr.rs",
+        "            NotVerifiedCause::ControlAllLarger,",
+        "            NotVerifiedCause::ControlTooShort,",
+        "a_word_one_point_taller_than_what_went_does_not",
+    ),
+    Mutation(
+        # Give two causes the same label. A report keyed by it then shows one row
+        # where there were two, its total still adds up, and the step that
+        # stopped being reported reads exactly like a step that stopped failing.
+        "ocr: label two causes the same",
+        "src/ocr.rs",
+        "            Self::Stack => \"strips would not stack\",",
+        "            Self::Stack => \"region is not on the page\",",
+        "every_cause_has_its_own_label",
+    ),
+    Mutation(
+        # The copy-paste a hand-written list invites: one cause listed twice and
+        # another not at all. The array is fixed-length, so the count still
+        # compiles -- and the missing cause's row is never printed, which is not
+        # the same as being printed as a zero.
+        "ocr: list one cause twice in ALL and drop another",
+        "src/ocr.rs",
+        "        Self::Stack,\n        Self::EngineError,",
+        "        Self::Stack,\n        Self::Stack,",
+        "all_lists_every_cause_once",
     ),
     Mutation(
         # Return a row range for a rectangle that is off the page. It is empty, so

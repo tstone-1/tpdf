@@ -42,7 +42,7 @@
 //! because OCR over the pre-redaction image reinstates the secret as a text
 //! layer, which is one of the carriers §6 exists to defeat.
 
-use crate::ocr::{ControlWord, Legibility};
+use crate::ocr::{ControlWord, Legibility, NotVerifiedCause};
 use crate::text::PageText;
 
 /// How tall the control word has to render before the gate will trust a reading.
@@ -444,7 +444,7 @@ pub fn reason(page: u32, verdict: &Legibility) -> Option<String> {
                 sample(&read)
             ))
         }
-        Legibility::NotVerified { why } => Some(format!(
+        Legibility::NotVerified { why, .. } => Some(format!(
             "page {}: the removed area could not be shown unreadable. {why}",
             page + 1
         )),
@@ -625,9 +625,14 @@ fn gate_one_page(
     let choice = match crate::ocr::control_from_page(&survivors, &page.regions) {
         Ok(choice) => choice,
         Err(too_easy) => {
+            // The cause comes off the refusal rather than being decided here.
+            // One bucket for all four of its reasons is what the 2026-08-28
+            // measurement found holding 90% of the answer, and a caller
+            // re-deciding it would be a second copy of the rule.
             return PageOutcome::Whole(Legibility::NotVerified {
+                cause: too_easy.cause(),
                 why: format!("{too_easy}"),
-            })
+            });
         }
     };
 
@@ -649,7 +654,12 @@ fn gate_one_page(
         capacity,
     ) {
         Ok(scale) => scale,
-        Err(why) => return PageOutcome::Whole(Legibility::NotVerified { why }),
+        Err(why) => {
+            return PageOutcome::Whole(Legibility::NotVerified {
+                why,
+                cause: NotVerifiedCause::ScaleRefused,
+            })
+        }
     };
     let width_px = (page.width_pt * scale).ceil() as u32;
     let height_px = (page.height_pt * scale).ceil() as u32;
@@ -665,7 +675,12 @@ fn gate_one_page(
         scale,
     ) {
         Ok(rows) => rows,
-        Err(why) => return PageOutcome::Whole(Legibility::NotVerified { why }),
+        Err(why) => {
+            return PageOutcome::Whole(Legibility::NotVerified {
+                why,
+                cause: NotVerifiedCause::ControlStrip,
+            })
+        }
     };
 
     PageOutcome::Regions(
@@ -697,17 +712,30 @@ fn judge(
 ) -> crate::ocr::Legibility {
     let mut under = match strip(service, doc, page.page, region, width_px, height_px, scale) {
         Ok(rows) => rows,
-        Err(why) => return crate::ocr::Legibility::NotVerified { why },
+        Err(why) => {
+            return crate::ocr::Legibility::NotVerified {
+                why,
+                cause: NotVerifiedCause::RegionStrip,
+            }
+        }
     };
     // The strip is the page's full width and the region usually is not, so
     // everything beside it on those rows would otherwise be read back as though
     // the removal had left it. It did, and it was right to.
     if let Err(why) = mask_columns(&mut under, width_px, region, scale) {
-        return crate::ocr::Legibility::NotVerified { why };
+        return crate::ocr::Legibility::NotVerified {
+            why,
+            cause: NotVerifiedCause::Mask,
+        };
     }
     let (pixels, height, band) = match stack(&under, control, width_px, scale) {
         Ok(built) => built,
-        Err(why) => return crate::ocr::Legibility::NotVerified { why },
+        Err(why) => {
+            return crate::ocr::Legibility::NotVerified {
+                why,
+                cause: NotVerifiedCause::Stack,
+            }
+        }
     };
     let placed = choice.placed(band);
     let image = crate::ocr::Pixels {
@@ -745,6 +773,7 @@ fn judge(
 pub fn unanswered(e: &crate::ocr::RecogniseError) -> Legibility {
     Legibility::NotVerified {
         why: format!("{e}"),
+        cause: NotVerifiedCause::EngineError,
     }
 }
 
@@ -1246,6 +1275,7 @@ mod tests {
             2,
             &Legibility::NotVerified {
                 why: "the engine died".into(),
+                cause: NotVerifiedCause::EngineError,
             },
         )
         .unwrap();

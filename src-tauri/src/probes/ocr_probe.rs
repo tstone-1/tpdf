@@ -341,7 +341,7 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
                 found.len(),
                 found.first().map(|f| f.text.as_str()).unwrap_or_default()
             ),
-            Legibility::NotVerified { why } => {
+            Legibility::NotVerified { why, .. } => {
                 let seen = engine
                     .recognise(px, &opts)
                     .map(|v| {

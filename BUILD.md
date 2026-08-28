@@ -2297,6 +2297,34 @@ The gate half reads `ocr_gate::judge_all` rather than `run`, so it has the engin
 rectangles and reports how many surviving reads were inside the region's own columns. Since
 `ocr_gate::mask_columns` that has been all of them, on 104 regions and again on 448.
 
+**Every *not verified* region is attributed to a step, and the buckets have to close.** Each
+prints as its own row --- twelve of them, including the ones that never fired, because an
+absent row and a zero are different readings. `NotVerifiedCause` is a type rather than a
+substring of the sentence: the version before 2026-08-28 bucketed by
+`why.contains("control token")` and discarded the verdict of every page-wide refusal, so it
+could attribute one cause of twelve. The `[WARN]` beneath them is the check --- buckets plus
+run-refusals must equal the unanswered total, so a region that reached it by a route carrying
+no cause is subtracted and named rather than absorbed.
+
+⚠ **`--regions N` is not only the sample size; it changes what the gate can do, so every
+percentage from this harness has to be quoted with its density.** The regions set `size_pt`
+--- the height of the smallest box any of them covers --- and they consume the pool of
+surviving words a control may come from, so sampling more of them makes `control_from_page`
+harder to satisfy. Measured over the same 40 documents and the same three pages each:
+
+| `--regions` | gate regions | shown unreadable | not verified | control not read back | control-selection causes |
+|---|---|---|---|---|---|
+| 1 | 43 | 65.1% | 30.2% | 12 | 1 |
+| 4 | 156 | 64.1% | 29.5% | 38 | 8 |
+| 12 | 448 | 55.8% | 38.8% | 68 | 106 |
+| 40 | 1,389 | 26.4% | 67.9% | 93 | 850 |
+
+A reader marks a name or a line. **Use `--regions 4` for a figure about the gate and
+`--regions 40` for a stress of the control rule**, and say which in the sentence that quotes
+it. The `--regions 12` row reproduces `docs/PLAN.md` §6's documented run to the digit, which
+is what makes it the control for a change to this harness. The *still reads as text* rate is
+5.4--6.4% at every density and is the one figure here that does travel.
+
 ### `redact-gate-probe`: does the redaction gate certify a clean file and refuse a dirty one
 
 `docs/PLAN.md` §6 step 4 is wired into `redact_copy` and `redact_document`, and neither is
