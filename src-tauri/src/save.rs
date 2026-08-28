@@ -266,7 +266,35 @@ const NO_VIEW_TURN: u8 = 0;
 /// printing reaches only when the reader has edited it, since an untouched one
 /// is handed over byte for byte and never parsed here.
 pub fn print_bytes(source: &Path, plan: &Plan, view: u8) -> Result<Vec<u8>, Refusal> {
-    Ok(planned_bytes(source, plan, OnChange::Proceed, view)?.bytes)
+    // **Its own refusal, between the two phases, and it is not a second copy of
+    // `print::build`'s.** Until 2026-08-29 `checked` refused every document
+    // `lopdf` had decrypted, and that refusal was what stopped this function
+    // handing a print job something it should not have. Making the rewrite
+    // preserve encryption removed it --- for the save paths deliberately, and for
+    // this one by accident: `print::route`'s `Working` arm calls here
+    // *directly*, so `print::build`'s guard never sees it. Removing a guard
+    // removes it for every caller, including the ones the change was not about.
+    //
+    // Neither answer a rewrite can give is right for a print job. Re-encrypting
+    // hands `NSPrintOperation` or `Windows.Data.Pdf` a document they cannot
+    // read; not re-encrypting hands the platform a decrypted copy of a document
+    // whose author encrypted it, which is a different decision from *let the
+    // rewrite work* and has not been measured. So it is refused, and the
+    // reader is told which operation is the one that works.
+    //
+    // Between the phases rather than before them, because `Checked` is where the
+    // answer is: `checked` holds the state it took off the document, and asking
+    // the file again here would be a second parse deciding the same fact.
+    let checked = checked(source, plan, OnChange::Proceed, view, None)?;
+    if checked.encryption.is_some() {
+        return Err(
+            "This document is encrypted, and printing part of it would have to write a copy \
+             the printer could not read. Print the whole document instead --- that is handed \
+             over unchanged."
+                .into(),
+        );
+    }
+    Ok(rewrite(plan, checked)?.bytes)
 }
 
 /// Writes the pages `plan` keeps, each with its own turn, from `source` to `out`.
@@ -275,7 +303,12 @@ pub fn print_bytes(source: &Path, plan: &Plan, view: u8) -> Result<Vec<u8>, Refu
 ///
 /// Everything [`planned_bytes`] refuses; `out` is the source; or the write
 /// fails. The temporary file is removed on every failing path that created one.
-pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<Copied, Refusal> {
+pub fn write_copy(
+    source: &Path,
+    plan: &Plan,
+    out: &Path,
+    password: Option<&str>,
+) -> Result<Copied, Refusal> {
     if same_file(source, out) {
         return Err(
             "tpdf cannot save over the document it is reading --- choose another name".into(),
@@ -286,7 +319,7 @@ pub fn write_copy(source: &Path, plan: &Plan, out: &Path) -> Result<Copied, Refu
     // anchor ambiguous the moment this line gained a binding --- and an ambiguous
     // anchor is refused, so the mutation stops being able to fail. Distinct names
     // are the fix; a longer anchor is only the workaround.
-    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;
+    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;
     write_atomically(out, &copy.bytes)?;
     Ok(Copied {
         changed: copy.changed,
@@ -365,7 +398,12 @@ pub fn split_paths(out: &Path, count: usize) -> Vec<PathBuf> {
 /// A failure part-way through leaves the files already written, and the message
 /// says which one failed and how many stand --- deleting them would be a second
 /// destructive act on a reader who has just been told something went wrong.
-pub fn write_split(source: &Path, plans: &[Plan], out: &Path) -> Result<Split, Refusal> {
+pub fn write_split(
+    source: &Path,
+    plans: &[Plan],
+    out: &Path,
+    password: Option<&str>,
+) -> Result<Split, Refusal> {
     if plans.len() < 2 {
         return Err("a split writes at least two files".into());
     }
@@ -388,8 +426,8 @@ pub fn write_split(source: &Path, plans: &[Plan], out: &Path) -> Result<Split, R
     let mut changed = false;
     let mut written: Vec<String> = Vec::new();
     for (plan, target) in plans.iter().zip(&targets) {
-        let part = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN).map_err(|why| {
-            Refusal {
+        let part = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password).map_err(
+            |why| Refusal {
                 message: format!(
                     "{} ({} of {} written)",
                     why.message,
@@ -397,8 +435,8 @@ pub fn write_split(source: &Path, plans: &[Plan], out: &Path) -> Result<Split, R
                     plans.len()
                 ),
                 changed: why.changed,
-            }
-        })?;
+            },
+        )?;
         changed |= part.changed;
         write_atomically(target, &part.bytes).map_err(|why| {
             Refusal::from(format!(
@@ -469,6 +507,7 @@ pub fn write_merged(
     plan: &Plan,
     others: &[PathBuf],
     out: &Path,
+    password: Option<&str>,
 ) -> Result<Merged, Refusal> {
     if others.is_empty() {
         return Err("choose at least one document to merge in".into());
@@ -508,7 +547,13 @@ pub fn write_merged(
         });
     }
 
-    let base = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN)?;
+    // **The base takes the reader's password and the incoming files do not, and
+    // that asymmetry is the rule rather than an oversight.** `source` is the
+    // document on screen, so a rewrite of it can keep its own encryption. An
+    // incoming file is refused a few lines below because there is no way to
+    // write one file that preserves *two* documents' encryption --- and tpdf
+    // holds no key for those anyway, having never opened them.
+    let base = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;
     let mut merged = Document::load_mem_with_options(
         &base.bytes,
         lopdf::LoadOptions {
@@ -591,7 +636,11 @@ fn name_of(path: &Path) -> String {
 ///
 /// Everything [`planned_bytes`] refuses, and a temporary file that cannot be
 /// written. The temporary file is removed on the failing path that created one.
-pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, Refusal> {
+pub fn stage_in_place(
+    source: &Path,
+    plan: &Plan,
+    password: Option<&str>,
+) -> Result<Staged, Refusal> {
     // Refused here and tolerated by `write_copy`, which is the one place the two
     // paths differ on purpose. A fingerprint that could not be taken means tpdf
     // cannot tell whether this file is still the file -- and the two operations
@@ -605,7 +654,7 @@ pub fn stage_in_place(source: &Path, plan: &Plan) -> Result<Staged, Refusal> {
                 .into(),
         );
     }
-    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN)?;
+    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;
     // Refused rather than unwrapped. It cannot fire --- `planned_bytes` derives
     // this from the same `plan.opened_as` the guard above just proved present ---
     // but the two are eight lines and one function call apart, and the failure a
@@ -1685,6 +1734,19 @@ struct Checked {
     verified: Option<Fingerprint>,
     /// The source had changed and [`OnChange::Proceed`] let it through.
     changed: bool,
+    /// The encryption the source had, when a password opened it, so [`rewrite`]
+    /// can put it back.
+    ///
+    /// **It travels in this struct rather than beside it**, because the document
+    /// and the key to it are one fact: a `Checked` whose `doc` was decrypted and
+    /// whose state went missing serialises perfectly and writes the reader's
+    /// document in the clear. Two values a caller must remember to keep together
+    /// is the shape `docs/TRAPS.md` records as *two copies of a distinction
+    /// drift*, and here the drift is a silent loss of encryption.
+    ///
+    /// `None` for a document that never had any --- and also for one still
+    /// locked, which never reaches [`rewrite`] because `checked` refuses it.
+    encryption: Option<lopdf::EncryptionState>,
 }
 
 /// Proof that everything expressed in the document's *opened* geometry has been
@@ -1733,8 +1795,9 @@ fn planned_bytes(
     plan: &Plan,
     on_change: OnChange,
     view: u8,
+    password: Option<&str>,
 ) -> Result<Planned, Refusal> {
-    rewrite(plan, checked(source, plan, on_change, view)?)
+    rewrite(plan, checked(source, plan, on_change, view, password)?)
 }
 
 /// Checks a plan against the document on disk, writing nothing.
@@ -1745,7 +1808,13 @@ fn planned_bytes(
 /// # Errors
 ///
 /// As [`planned_bytes`], minus the serialisation.
-fn checked(source: &Path, plan: &Plan, on_change: OnChange, view: u8) -> Result<Checked, Refusal> {
+fn checked(
+    source: &Path,
+    plan: &Plan,
+    on_change: OnChange,
+    view: u8,
+    password: Option<&str>,
+) -> Result<Checked, Refusal> {
     if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
@@ -1783,10 +1852,11 @@ fn checked(source: &Path, plan: &Plan, on_change: OnChange, view: u8) -> Result<
     // every refusal below reads the document and none of them writes to it, so
     // the compiler now says what the comments used to. It went `mut` the moment
     // the two halves were one function.
-    let doc = Document::load_with_options(
+    let mut doc = Document::load_with_options(
         source,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
@@ -1813,24 +1883,30 @@ fn checked(source: &Path, plan: &Plan, on_change: OnChange, view: u8) -> Result<
     // encryption and we do not", where the document is empty as well as locked.
     // Both refuse here; only the first is appendable, which `append_update`
     // says.
-    if doc.was_encrypted() {
-        // **Says nothing about "a copy", because three callers reach this
-        // line**: `write_copy`, `stage_in_place` and `print_bytes`. Naming one
-        // of them told a reader who pressed Save that a copy had been refused,
-        // and that was invisible while the guard only fired for documents
-        // nothing could open --- which nobody was saving in place either.
-        //
-        // The second sentence is what a reader can act on: an append preserves
-        // the encryption and a rewrite cannot, so the difference between what
-        // is refused and what works is the difference between changing the
-        // pages and adding to them.
-        return Err(
-            "This document is encrypted, and rewriting it would silently remove that. \
-             A comment or a highlight can still be saved onto it, because that is added \
-             to the end of the file rather than rewritten."
-                .into(),
-        );
-    }
+    // **Taken here, put back in `rewrite`, and it must be taken before anything
+    // else reads the document.** `lopdf`'s full serialiser writes every object
+    // in the clear and drops the `/Encrypt` dictionary with it, which is why
+    // this used to be a refusal. The repair is not a different serialiser: it is
+    // `Document::encrypt`, which re-encrypts every object with a state and
+    // writes a fresh dictionary. Measured 2026-08-29 on
+    // `testdata/incr-encrypted-pw.pdf` --- delete a page, re-encrypt, and
+    // `qpdf --show-encryption` on the source and the output diff to nothing:
+    // `R = 6`, `P = -4`, AESv3 for streams, strings and file, both passwords
+    // unchanged.
+    //
+    // **The `take` is not a tidy-up, it is required.** `Document::encrypt`
+    // begins `if self.is_encrypted() { return Err(AlreadyEncrypted) }`, and a
+    // password load leaves `encryption_state` set --- so a document that was
+    // decrypted refuses to be re-encrypted until the state is off it. That is
+    // not guessable from the two method names, and it is the whole trick.
+    let encryption = doc.encryption_state.take();
+
+    // What is still refused: a document nobody unlocked. `lopdf` parsed no
+    // objects at all, so the page walk below would see an empty document and
+    // every check after it would agree about nothing --- which is exactly what
+    // the first two runs of the spike that measured the repair above did, and
+    // called a pass. `is_encrypted` reads the trailer's `/Encrypt`, which a
+    // successful authentication removes, so it is true only for the locked case.
     if doc.is_encrypted() {
         return Err(
             "This document is encrypted and tpdf could not unlock it, so it cannot be \
@@ -1920,6 +1996,7 @@ fn checked(source: &Path, plan: &Plan, on_change: OnChange, view: u8) -> Result<
         moved,
         verified,
         changed,
+        encryption,
     })
 }
 
@@ -1946,6 +2023,7 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         moved,
         verified,
         changed,
+        encryption,
     } = checked;
 
     if !dropped.is_empty() {
@@ -2059,6 +2137,28 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         || redacted.images > 0
     {
         crate::sweep::collect(&mut doc)?;
+    }
+
+    // **Last, and after the sweep.** `Document::encrypt` walks every object in
+    // the map and encrypts its strings and streams, so anything added after it
+    // would be written in the clear beside objects that are not --- a file no
+    // reader can open. The sweep above removes objects, which is safe in either
+    // order; everything that *adds* one is above this line, and that is the
+    // constraint rather than a preference.
+    //
+    // A document that never had encryption has no state and nothing happens
+    // here. One that had it and was unlocked gets exactly what it arrived with:
+    // the state is the file's own, parsed from its `/Encrypt` and never
+    // rebuilt, so the algorithm, the permission bits and both passwords come
+    // back unchanged. `examples/encrypted_rewrite_probe.rs` is the evidence,
+    // through `qpdf` rather than through the writer that produced them.
+    if let Some(state) = &encryption {
+        doc.encrypt(state).map_err(|e| {
+            // Not a sentence about the reader's document: the state came out of
+            // this same file a moment ago, so a failure here is tpdf's. Said
+            // plainly rather than dressed up as something to act on.
+            format!("tpdf could not restore this document's encryption: {e}")
+        })?;
     }
 
     let bytes = serialise(&mut doc, "the document")?;
@@ -4293,6 +4393,121 @@ mod tests {
         Document::load(path).expect("load").get_pages().len()
     }
 
+    /// How many pages `lopdf` finds **with the password**.
+    ///
+    /// Deliberately not [`page_count`], which loads without one: on an encrypted
+    /// document that parses no objects at all and answers **0** on a perfectly
+    /// good file. A test using it here would read a correct rewrite as an empty
+    /// one, and --- worse in the other direction --- would read a rewrite that
+    /// dropped the encryption as *more* correct, because the plaintext output
+    /// would suddenly count.
+    fn page_count_with(path: &Path, password: &str) -> usize {
+        Document::load_with_options(
+            path,
+            lopdf::LoadOptions {
+                password: Some(password.to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("load")
+        .get_pages()
+        .len()
+    }
+
+    #[test]
+    fn a_rewrite_of_an_encrypted_document_stays_encrypted() {
+        // The whole increment, at the layer a mutation can aim at.
+        // `examples/encrypted_rewrite_probe.rs` is the same claim checked by
+        // `qpdf`, which is a reader sharing no code with the writer; this is
+        // here so the mutation harness has something that goes red.
+        let Some(source) = fixture("incr-encrypted-pw.pdf") else {
+            println!("[SKIP] a_rewrite_of_an_encrypted_document_stays_encrypted: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let scratch = Scratch::new("enc-rewrite");
+        let out = scratch.0.join("out.pdf");
+
+        let before = page_count_with(&source, "swordfish");
+        assert_eq!(before, 2, "the fixture is two pages");
+
+        write_copy(&source, &keeping(2, &[(0, 0)]), &out, Some("swordfish")).expect("rewrite");
+
+        // **Two assertions, and neither is redundant.** The page count says the
+        // rewrite happened; the byte scan says the encryption came back. A
+        // rewrite that silently dropped the encryption passes the first and
+        // fails the second, which is exactly the defect that made this a
+        // refusal for months.
+        assert_eq!(
+            page_count_with(&out, "swordfish"),
+            1,
+            "the rewrite should have dropped a page"
+        );
+        let raw = std::fs::read(&out).expect("read back");
+        assert!(
+            raw.windows(8).any(|w| w == b"/Encrypt"),
+            "the rewritten document has no /Encrypt dictionary, so it was written in the clear"
+        );
+    }
+
+    #[test]
+    fn a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do() {
+        // **Written because the whole suite stayed green while this was broken.**
+        // Making the rewrite preserve encryption removed `checked`'s blanket
+        // refusal, and `print::route`'s `Working` arm calls `print_bytes`
+        // *directly* -- so it never reaches `print::build`'s own guard, and the
+        // refusal it had been relying on was one this increment took away.
+        // `print::tests::an_encrypted_document_is_printed_whole_or_refused`
+        // passed throughout, because every path it exercises goes through
+        // `print::build`.
+        //
+        // The fixture is the empty-password one on purpose: it is the case
+        // `lopdf` unlocks unprompted, so it is the one that stopped being
+        // refused. The other is still refused by the locked guard and would pass
+        // this test with the defect present.
+        let Some(source) = fixture("incr-encrypted-open.pdf") else {
+            println!("[SKIP] a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let why = print_bytes(&source, &keeping(2, &[(0, 0)]), NO_VIEW_TURN)
+            .expect_err("a print job from an encrypted document must be refused");
+        assert!(
+            why.message.contains("encrypted"),
+            "the refusal names the reason: {}",
+            why.message
+        );
+        // And the same document IS rewritable, which is what makes the refusal
+        // above a decision about printing rather than about the document.
+        let scratch = Scratch::new("print-enc");
+        write_copy(
+            &source,
+            &keeping(2, &[(0, 0)]),
+            &scratch.0.join("out.pdf"),
+            None,
+        )
+        .expect("the same document rewrites");
+    }
+
+    #[test]
+    fn a_rewrite_without_the_password_is_refused_and_says_so() {
+        // The control for the test above. Without it, deleting the whole
+        // encryption branch leaves a probe that writes plaintext and a test
+        // that never asked -- and a refusal is what a reader who has not
+        // unlocked the document must still get.
+        let Some(source) = fixture("incr-encrypted-pw.pdf") else {
+            println!("[SKIP] a_rewrite_without_the_password_is_refused_and_says_so: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let scratch = Scratch::new("enc-locked");
+        let out = scratch.0.join("out.pdf");
+        let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out, None)
+            .expect_err("a locked document cannot be rewritten");
+        assert!(
+            why.message.contains("could not unlock"),
+            "the refusal has to name the lock, not something the reader cannot act on: {}",
+            why.message
+        );
+    }
+
     /// A rotation applied here has to be visible to a parser that shares no code
     /// with the one that wrote it.
     ///
@@ -4328,7 +4543,8 @@ mod tests {
             turns[1] = 1;
 
             let out = scratch.join(&format!("{name}.out.pdf"));
-            write_copy(&path, &plan_of(&turns), &out).unwrap_or_else(|e| panic!("{name}: {e}"));
+            write_copy(&path, &plan_of(&turns), &out, None)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
 
             let written = std::fs::read(&out).expect("read written");
             let after = os_pdf::read(&written)
@@ -4383,7 +4599,7 @@ mod tests {
         let mine = page_count(&source);
         let theirs = page_count(&other);
         let merged =
-            write_merged(&source, &plan_of(&vec![0u8; mine]), &[other], &out).expect("merge");
+            write_merged(&source, &plan_of(&vec![0u8; mine]), &[other], &out, None).expect("merge");
         // **The independent reader answers first, and the order is the point.**
         // Every other assertion here is `lopdf` reading back what `lopdf` wrote,
         // which agrees with itself about a page tree no shipping reader would
@@ -4442,7 +4658,7 @@ mod tests {
         // so a merge that dropped the plan and read the file would come out
         // `whole` pages rather than two.
         let plan = keeping(whole as u32, &[(0, 0), (1, 1)]);
-        write_merged(&source, &plan, std::slice::from_ref(&other), &out).expect("merge");
+        write_merged(&source, &plan, std::slice::from_ref(&other), &out, None).expect("merge");
         assert_eq!(
             page_count(&out),
             2 + page_count(&other),
@@ -4476,7 +4692,7 @@ mod tests {
         };
         let scratch = Scratch::new("merge-empty");
         let out = scratch.join("merged.pdf");
-        let why = write_merged(&source, &plan_of(&[0, 0, 0, 0]), &[], &out)
+        let why = write_merged(&source, &plan_of(&[0, 0, 0, 0]), &[], &out, None)
             .expect_err("nothing to merge");
         assert!(why.message.contains("at least one"), "{why}");
         assert!(!out.exists(), "and nothing was written");
@@ -4516,10 +4732,10 @@ mod tests {
             copy
         };
         let plan = plan_of(&vec![0u8; page_count(&source)]);
-        let over_source = write_merged(&source, &plan, std::slice::from_ref(&other), &source)
+        let over_source = write_merged(&source, &plan, std::slice::from_ref(&other), &source, None)
             .expect_err("over the open document");
         assert!(over_source.message.contains("reading"), "{over_source}");
-        let over_input = write_merged(&source, &plan, std::slice::from_ref(&other), &other)
+        let over_input = write_merged(&source, &plan, std::slice::from_ref(&other), &other, None)
             .expect_err("over a document going in");
         assert!(over_input.message.contains("going into it"), "{over_input}");
         // Neither file moved. Without this the two refusals above are the only
@@ -4539,7 +4755,7 @@ mod tests {
         // written. Without it both assertions above are satisfied by a function
         // that refuses everything.
         let out = scratch.join("merged.pdf");
-        write_merged(&source, &plan, &[other], &out).expect("somewhere else is fine");
+        write_merged(&source, &plan, &[other], &out, None).expect("somewhere else is fine");
     }
 
     /// An encrypted document cannot be merged in, and is named.
@@ -4605,7 +4821,7 @@ mod tests {
             keeping(total, &[(0, 0), (1, 0)]),
             keeping(total, &[(2, 0), (3, 0)]),
         ];
-        let done = write_split(&source, &plans, &out).expect("split");
+        let done = write_split(&source, &plans, &out, None).expect("split");
         assert_eq!(done.paths.len(), 2);
 
         let mut seen: Vec<i64> = Vec::new();
@@ -4654,7 +4870,7 @@ mod tests {
         let taken = scratch.join("part-2.pdf");
         std::fs::write(&taken, b"not a pdf, and not to be destroyed").expect("plant");
 
-        let why = write_split(&source, &plans, &out).expect_err("refused");
+        let why = write_split(&source, &plans, &out, None).expect_err("refused");
         assert!(why.message.contains("already exists"), "{why}");
         assert!(
             why.message.contains("part-2.pdf"),
@@ -4674,7 +4890,7 @@ mod tests {
         // that refuses everything, and this whole test would pass against a
         // function whose body is one `Err`.
         std::fs::remove_file(&taken).expect("unplant");
-        write_split(&source, &plans, &out).expect("the same call, with nothing in the way");
+        write_split(&source, &plans, &out, None).expect("the same call, with nothing in the way");
         assert!(scratch.join("part-1.pdf").exists() && scratch.join("part-2.pdf").exists());
     }
 
@@ -4686,7 +4902,8 @@ mod tests {
         };
         let scratch = Scratch::new("split-one");
         let plans = [keeping(page_count(&source) as u32, &[(0, 0)])];
-        let why = write_split(&source, &plans, &scratch.join("part.pdf")).expect_err("refused");
+        let why =
+            write_split(&source, &plans, &scratch.join("part.pdf"), None).expect_err("refused");
         assert!(why.message.contains("at least two files"), "{why}");
     }
 
@@ -4708,7 +4925,7 @@ mod tests {
         let scratch = Scratch::new("merge-encrypted");
         let out = scratch.join("merged.pdf");
         let plan = plan_of(&vec![0u8; page_count(&source)]);
-        let why = write_merged(&source, &plan, std::slice::from_ref(&locked), &out)
+        let why = write_merged(&source, &plan, std::slice::from_ref(&locked), &out, None)
             .expect_err("encrypted");
         assert!(why.message.contains("encrypted"), "{why}");
         assert!(
@@ -4752,7 +4969,7 @@ mod tests {
         assert!(count > 1, "this needs a second page to be the control");
         let out = scratch.join("cropped.pdf");
         let want = [72.0, 100.0, 400.0, 600.0];
-        write_copy(&path, &plan_cropping(count, 0, want), &out).expect("write");
+        write_copy(&path, &plan_cropping(count, 0, want), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -4815,7 +5032,7 @@ mod tests {
         // everywhere and this is the fixture where those differ.
         let turns = vec![2u8; count];
         let out = scratch.join("composed.pdf");
-        write_copy(&path, &plan_of(&turns), &out).expect("write");
+        write_copy(&path, &plan_of(&turns), &out, None).expect("write");
 
         let before = Document::load(&path).expect("load source");
         let after = Document::load(&out).expect("load written");
@@ -4843,7 +5060,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         // Turn the second page only. The first inherits 90 from the tree and is
         // left alone.
-        write_copy(&source, &plan_of(&[0, 1]), &out).expect("write");
+        write_copy(&source, &plan_of(&[0, 1]), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -5003,7 +5220,7 @@ mod tests {
 
         // One quarter-turn asked for on each page number. They are one page, so
         // the answer is one quarter-turn, not two.
-        write_copy(&source, &plan_of(&[1, 1]), &out).expect("agreeing turns are honoured");
+        write_copy(&source, &plan_of(&[1, 1]), &out, None).expect("agreeing turns are honoured");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -5022,7 +5239,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &plan_of(&[1, 2]), &out).expect_err("must refuse");
+        let why = write_copy(&source, &plan_of(&[1, 2]), &out, None).expect_err("must refuse");
         assert!(
             why.message.contains("same page"),
             "the message says why rather than naming an internal id: {why}"
@@ -5049,7 +5266,8 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        write_copy(&source, &plan_of(&[0, 0]), &out).expect("an unedited document still saves");
+        write_copy(&source, &plan_of(&[0, 0]), &out, None)
+            .expect("an unedited document still saves");
         assert!(out.exists());
     }
 
@@ -5096,7 +5314,7 @@ mod tests {
         let scratch = Scratch::new("delete");
         let out = scratch.join("kept.pdf");
         // Page 2 removed; the other three keep their own rotations.
-        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 0)]), &out).expect("write");
+        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 0)]), &out, None).expect("write");
 
         let written = std::fs::read(&out).expect("read written");
         let after = os_pdf::read(&written).expect("the OS parser reads the saved copy");
@@ -5134,7 +5352,7 @@ mod tests {
         let before = Document::load(&path).expect("load source");
         let source_ids = ordered_pages(&before);
         // Drop page 2, and turn what was page 4 by a quarter.
-        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 1)]), &out).expect("write");
+        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 1)]), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -5172,7 +5390,7 @@ mod tests {
 
         let kept: Vec<(u32, u8)> = (1..count as u32).map(|source| (source, 0)).collect();
         let trimmed = scratch.join("trimmed.pdf");
-        write_copy(&path, &keeping(count as u32, &kept), &trimmed).expect("write");
+        write_copy(&path, &keeping(count as u32, &kept), &trimmed, None).expect("write");
         assert!(
             !has_outline(&Document::load(&trimmed).expect("load written")),
             "a page was dropped, so its destinations are gone"
@@ -5181,7 +5399,7 @@ mod tests {
         // The control. Without it this check passes for a save that drops every
         // outline it ever sees, which is a different and much worse rule.
         let whole = scratch.join("whole.pdf");
-        write_copy(&path, &plan_of(&vec![0u8; count]), &whole).expect("write");
+        write_copy(&path, &plan_of(&vec![0u8; count]), &whole, None).expect("write");
         assert!(
             has_outline(&Document::load(&whole).expect("load written")),
             "nothing was dropped, so the bookmarks survive"
@@ -5255,7 +5473,7 @@ mod tests {
         let (kept_number, kept_stream) = streams[0];
 
         let out = scratch.join("one.pdf");
-        write_copy(&path, &keeping(count, &[(0, 0)]), &out).expect("write");
+        write_copy(&path, &keeping(count, &[(0, 0)]), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
         assert_eq!(after.get_pages().len(), 1, "one page was asked for");
 
@@ -5296,7 +5514,7 @@ mod tests {
             .map(|s| (s, 0))
             .collect();
         let out = scratch.join("rest.pdf");
-        write_copy(&path, &keeping(count, &kept), &out).expect("write");
+        write_copy(&path, &keeping(count, &kept), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
 
         assert!(
@@ -5350,7 +5568,7 @@ mod tests {
 
         let count = before.get_pages().len();
         let out = scratch.join("copy.pdf");
-        write_copy(&path, &plan_of(&vec![0u8; count]), &out).expect("write");
+        write_copy(&path, &plan_of(&vec![0u8; count]), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
         for orphan in &orphans {
             assert!(
@@ -5426,7 +5644,7 @@ mod tests {
             } else {
                 plan_of(&vec![0u8; count])
             };
-            if write_copy(&path, &plan, &out).is_err() {
+            if write_copy(&path, &plan, &out, None).is_err() {
                 // Encrypted, signed, or a shape the writer refuses. Its refusal
                 // is another test's subject; what matters here is that a file it
                 // *did* write is sound.
@@ -5510,7 +5728,7 @@ mod tests {
         let scratch = Scratch::new("size-floor");
         let out = scratch.join("out.pdf");
         let kept: Vec<(u32, u8)> = (0..count as u32 - 1).map(|source| (source, 0)).collect();
-        write_copy(&path, &keeping(count as u32, &kept), &out).expect("write");
+        write_copy(&path, &keeping(count as u32, &kept), &out, None).expect("write");
 
         let back = Document::load(&out).expect("reload");
         let size = back
@@ -5547,7 +5765,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out).expect_err("must refuse");
+        let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out, None).expect_err("must refuse");
         assert!(
             why.message.contains("same page") && why.message.contains("on its own"),
             "the message says what cannot be done and what can: {why}"
@@ -5568,7 +5786,7 @@ mod tests {
         let out = scratch.join("out.pdf");
 
         // Pages 1 and 2 are one object; page 3 is its own. Keep only page 3.
-        write_copy(&source, &keeping(3, &[(2, 0)]), &out).expect("write");
+        write_copy(&source, &keeping(3, &[(2, 0)]), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
         assert_eq!(
             ordered_pages(&after).len(),
@@ -5654,7 +5872,13 @@ mod tests {
 
         let scratch = Scratch::new("reordered");
         let out = scratch.join("out.pdf");
-        write_copy(&path, &keeping(4, &[(2, 0), (0, 0), (3, 0), (1, 0)]), &out).expect("write");
+        write_copy(
+            &path,
+            &keeping(4, &[(2, 0), (0, 0), (3, 0), (1, 0)]),
+            &out,
+            None,
+        )
+        .expect("write");
 
         let written = std::fs::read(&out).expect("read written");
         let after = os_pdf::read(&written).expect("the OS parser reads the saved copy");
@@ -5676,6 +5900,7 @@ mod tests {
             &path,
             &keeping(4, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
             &untouched,
+            None,
         )
         .expect("in order");
         let read_back = std::fs::read(&untouched).expect("read");
@@ -5708,7 +5933,7 @@ mod tests {
         let before = Document::load(&path).expect("load source");
         let source_ids = ordered_pages(&before);
         // Page 2 dropped; the old page 4 moved to the front and turned a quarter.
-        write_copy(&path, &keeping(4, &[(3, 1), (0, 0), (2, 0)]), &out).expect("write");
+        write_copy(&path, &keeping(4, &[(3, 1), (0, 0), (2, 0)]), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -5765,6 +5990,7 @@ mod tests {
             &source,
             &keeping(4, &[(3, 0), (0, 0), (1, 0), (2, 0)]),
             &out,
+            None,
         )
         .expect("write");
 
@@ -5805,6 +6031,7 @@ mod tests {
             &source,
             &keeping(4, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
             &out,
+            None,
         )
         .expect("write");
         assert_eq!(
@@ -5821,6 +6048,7 @@ mod tests {
             &source,
             &keeping(4, &[(3, 0), (0, 0), (1, 0), (2, 0)]),
             &moved,
+            None,
         )
         .expect("write");
         assert_eq!(
@@ -5948,7 +6176,7 @@ mod tests {
         let mut kept: Vec<(u32, u8)> = (0..count as u32).map(|source| (source, 0)).collect();
         kept.swap(0, 1);
         let out = scratch.join("swapped.pdf");
-        write_copy(&path, &keeping(count as u32, &kept), &out).expect("write");
+        write_copy(&path, &keeping(count as u32, &kept), &out, None).expect("write");
 
         assert!(
             has_outline(&Document::load(&out).expect("load written")),
@@ -5969,7 +6197,8 @@ mod tests {
         // A baseline that agrees with the file, and a page past its end. Only
         // reachable from a frontend sending something the model never produced,
         // which is exactly the argument for not trusting the number.
-        let why = write_copy(&path, &keeping(4, &[(0, 0), (9, 0)]), &out).expect_err("must refuse");
+        let why =
+            write_copy(&path, &keeping(4, &[(0, 0), (9, 0)]), &out, None).expect_err("must refuse");
         assert!(why.message.contains("does not have"), "{why}");
         assert!(!out.exists());
     }
@@ -5981,7 +6210,7 @@ mod tests {
         std::fs::write(&source, encrypted_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &plan_of(&[0]), &out).expect_err("must refuse");
+        let why = write_copy(&source, &plan_of(&[0]), &out, None).expect_err("must refuse");
         assert!(
             why.message.contains("encrypted"),
             "the message names the reason: {why}"
@@ -5993,8 +6222,23 @@ mod tests {
         assert!(partials_beside(&out).is_empty(), "not even a temporary");
     }
 
-    /// A *genuinely* encrypted document is refused too, and it is the case the
-    /// synthetic fixture cannot reach.
+    /// A *genuinely* encrypted document keeps its encryption, and it is the case
+    /// the synthetic fixture cannot reach.
+    ///
+    /// **This asserted a refusal until 2026-08-29, and the refusal was a proxy.**
+    /// What it was defending is in the paragraphs below: an encrypted document
+    /// must never be written back in the clear. Refusing was how that was
+    /// achieved while `lopdf`'s full serialiser was the only writer available;
+    /// since `rewrite` re-encrypts with the state the load recorded, the
+    /// property can be asserted directly instead. A test that pins the proxy
+    /// rather than the property is what `docs/TRAPS.md` records as *a refusal
+    /// that names a fallback has to keep the fallback open* --- and here it
+    /// would have argued against the increment that closed it.
+    ///
+    /// The two fixtures now check different things, which is the whole reason
+    /// there are two: one is unlocked by the empty password `lopdf` tries
+    /// unprompted, so it is rewritten and must come back encrypted; the other
+    /// is behind a real password nobody supplied, so it is still refused.
     ///
     /// **The fixture below claimed this test was redundant and it was wrong.**
     /// Its doc comment said "a genuinely encrypted fixture would test the same
@@ -6012,27 +6256,56 @@ mod tests {
     /// Two fixtures where the right rule and the wrong rule agree is one
     /// fixture; `docs/TRAPS.md` has that under its own title.
     #[test]
-    fn a_really_encrypted_document_is_refused_even_when_it_opens_unprompted() {
+    fn a_really_encrypted_document_keeps_its_encryption_or_names_its_lock() {
         let scratch = Scratch::new("really-encrypted");
         let out = scratch.join("out.pdf");
         let mut examined = 0;
-        for name in ["incr-encrypted-open.pdf", "incr-encrypted-pw.pdf"] {
-            let Some(path) = fixture(name) else {
-                println!("[SKIP] {name}: fixture not generated");
-                continue;
-            };
+
+        // Opens on the empty password `lopdf` tries unprompted, so tpdf holds
+        // the key without being given one: it is rewritten, and the check is
+        // that the encryption came back. This is the exact document that was
+        // being silently written in the clear before the guard was corrected.
+        if let Some(path) = fixture("incr-encrypted-open.pdf") {
             examined += 1;
-            let why = write_copy(&path, &plan_of(&[0, 0]), &out)
-                .expect_err("an encrypted document must be refused");
+            write_copy(&path, &plan_of(&[0, 0]), &out, None)
+                .expect("a document tpdf can unlock is rewritten");
+            let raw = std::fs::read(&out).expect("read back");
             assert!(
-                why.message.contains("encrypted"),
-                "{name}: the message names the reason: {why}"
+                raw.windows(8).any(|w| w == b"/Encrypt"),
+                "incr-encrypted-open.pdf came back with no /Encrypt dictionary, so its \
+                 encryption was silently dropped"
             );
-            assert!(!out.exists(), "{name}: a refusal writes nothing");
             assert!(
                 partials_beside(&out).is_empty(),
-                "{name}: not even a temporary"
+                "incr-encrypted-open.pdf: no temporary is left behind"
             );
+            std::fs::remove_file(&out).expect("clean up");
+        } else {
+            println!("[SKIP] incr-encrypted-open.pdf: fixture not generated");
+        }
+
+        // Behind a real password, and none was supplied. Still refused, and the
+        // message has to name the lock rather than something the reader cannot
+        // act on -- they can supply the password, and that is now the way
+        // through rather than a dead end.
+        if let Some(path) = fixture("incr-encrypted-pw.pdf") {
+            examined += 1;
+            let why = write_copy(&path, &plan_of(&[0, 0]), &out, None)
+                .expect_err("a locked document must be refused");
+            assert!(
+                why.message.contains("encrypted"),
+                "incr-encrypted-pw.pdf: the message names the reason: {why}"
+            );
+            assert!(
+                !out.exists(),
+                "incr-encrypted-pw.pdf: a refusal writes nothing"
+            );
+            assert!(
+                partials_beside(&out).is_empty(),
+                "incr-encrypted-pw.pdf: not even a temporary"
+            );
+        } else {
+            println!("[SKIP] incr-encrypted-pw.pdf: fixture not generated");
         }
         assert!(
             examined > 0,
@@ -6097,14 +6370,15 @@ mod tests {
         let out = scratch.join("out.pdf");
         let count = page_count(&path);
 
-        let why =
-            write_copy(&path, &plan_of(&vec![0u8; count + 1]), &out).expect_err("must refuse");
+        let why = write_copy(&path, &plan_of(&vec![0u8; count + 1]), &out, None)
+            .expect_err("must refuse");
         assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(!out.exists());
 
         // And the matching plan is accepted, so the refusal is about the
         // mismatch rather than about this document.
-        write_copy(&path, &plan_of(&vec![0u8; count]), &out).expect("the matching plan writes");
+        write_copy(&path, &plan_of(&vec![0u8; count]), &out, None)
+            .expect("the matching plan writes");
         assert!(out.exists());
     }
 
@@ -6112,8 +6386,13 @@ mod tests {
     fn an_empty_plan_is_refused() {
         let scratch = Scratch::new("empty");
         let out = scratch.join("out.pdf");
-        let why = write_copy(Path::new("../testdata/rotated.pdf"), &plan_of(&[]), &out)
-            .expect_err("must refuse");
+        let why = write_copy(
+            Path::new("../testdata/rotated.pdf"),
+            &plan_of(&[]),
+            &out,
+            None,
+        )
+        .expect_err("must refuse");
         assert!(why.message.contains("at least one page"), "{why}");
     }
 
@@ -6136,7 +6415,7 @@ mod tests {
         std::fs::copy(&path, &copy).expect("copy fixture");
         let before = std::fs::read(&copy).expect("read");
 
-        let why = write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &copy).expect_err("must refuse");
+        let why = write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &copy, None).expect_err("must refuse");
         assert!(why.message.contains("save over"), "{why}");
         assert_eq!(
             std::fs::read(&copy).expect("read"),
@@ -6147,7 +6426,7 @@ mod tests {
         // The same file reached by a different spelling of the path is still the
         // same file --- a comparison of the strings would let this through.
         let indirect = scratch.join(".").join("copy.pdf");
-        assert!(write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &indirect).is_err());
+        assert!(write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &indirect, None).is_err());
     }
 
     /// Staging writes the whole document and changes nothing the reader has.
@@ -6172,7 +6451,8 @@ mod tests {
         std::fs::copy(&path, &open).expect("copy fixture");
         let before = std::fs::read(&open).expect("read");
 
-        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        let staged =
+            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
 
         assert!(staged.path.exists(), "the staged file is written");
         assert_ne!(staged.path, open, "and it is not the source");
@@ -6226,7 +6506,7 @@ mod tests {
             "and still has them afterwards, so the page-count guard cannot fire"
         );
 
-        let why = stage_in_place(&open, &plan).expect_err("must refuse");
+        let why = stage_in_place(&open, &plan, None).expect_err("must refuse");
         assert!(why.message.contains("changed on disk"), "{why}");
         // The message has to leave the reader somewhere to go: their edits are
         // still in the journal, and Save a copy is the way to keep them.
@@ -6254,7 +6534,7 @@ mod tests {
         std::fs::copy(&path, &open).expect("copy fixture");
 
         let plan = plan_opened_as(&[1, 0, 0, 0], &open);
-        let staged = stage_in_place(&open, &plan).expect("must stage");
+        let staged = stage_in_place(&open, &plan, None).expect("must stage");
         assert!(staged.path.exists());
     }
 
@@ -6275,7 +6555,7 @@ mod tests {
         let open = scratch.join("open.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let why = stage_in_place(&open, &plan_of(&[1, 0, 0, 0])).expect_err("must refuse");
+        let why = stage_in_place(&open, &plan_of(&[1, 0, 0, 0]), None).expect_err("must refuse");
         assert!(why.message.contains("could not record"), "{why}");
         assert!(why.message.contains("Save a copy"), "{why}");
         // The message is one a reader reads, so it has to be one sentence rather
@@ -6304,7 +6584,8 @@ mod tests {
         let open = scratch.join("open.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        let staged =
+            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
         assert!(staged.path.exists(), "there is something to lose");
 
         // Something else writes while the document is being closed. Longer, so
@@ -6356,7 +6637,8 @@ mod tests {
         let open = scratch.join("open.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        let staged =
+            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
         assert_eq!(verify_before_commit(&staged, &open), Ok(()));
         assert!(
             staged.path.exists(),
@@ -6381,7 +6663,8 @@ mod tests {
         let out = scratch.join("out.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        write_copy(&open, &plan_of(&[1, 0, 0, 0]), &out).expect("a copy needs no fingerprint");
+        write_copy(&open, &plan_of(&[1, 0, 0, 0]), &out, None)
+            .expect("a copy needs no fingerprint");
         assert!(out.exists());
     }
 
@@ -6419,7 +6702,7 @@ mod tests {
         );
         std::fs::write(&open, &bytes).expect("rewrite");
 
-        let copied = write_copy(&open, &plan, &out).expect("a copy risks nothing");
+        let copied = write_copy(&open, &plan, &out, None).expect("a copy risks nothing");
         assert!(copied.changed, "and it says the source had changed");
         assert!(out.exists(), "and the reader's edits are somewhere");
         // Still a real document rather than a placeholder, which is the half a
@@ -6443,7 +6726,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let copied = write_copy(&open, &plan_opened_as(&[1, 0, 0, 0], &open), &out)
+        let copied = write_copy(&open, &plan_opened_as(&[1, 0, 0, 0], &open), &out, None)
             .expect("an untouched source copies");
         assert!(!copied.changed);
         assert!(out.exists());
@@ -6479,7 +6762,7 @@ mod tests {
             "the fixture really is a different shape"
         );
 
-        let why = write_copy(&open, &plan, &out).expect_err("must refuse");
+        let why = write_copy(&open, &plan, &out, None).expect_err("must refuse");
         assert!(why.changed, "and it is offered as a change: {why}");
         assert!(!out.exists(), "and writes nothing");
     }
@@ -6505,7 +6788,8 @@ mod tests {
             .map(|id| effective_rotation(&before, *id).rem_euclid(360))
             .collect();
 
-        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open)).expect("stage");
+        let staged =
+            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
         commit_in_place(&staged.path, &open).expect("commit");
 
         assert!(!staged.path.exists(), "nothing of the staged file survives");
@@ -6541,7 +6825,7 @@ mod tests {
         let before = std::fs::read(&open).expect("read");
         let count = page_count(&open);
 
-        let why = stage_in_place(&open, &plan_opened_as(&vec![0u8; count + 1], &open))
+        let why = stage_in_place(&open, &plan_opened_as(&vec![0u8; count + 1], &open), None)
             .expect_err("must refuse");
         assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(
@@ -6557,7 +6841,7 @@ mod tests {
         // The control: the same document with a plan that matches does stage,
         // so the refusal is about the mismatch rather than about this fixture.
         let staged =
-            stage_in_place(&open, &plan_opened_as(&vec![0u8; count], &open)).expect("stage");
+            stage_in_place(&open, &plan_opened_as(&vec![0u8; count], &open), None).expect("stage");
         assert!(staged.path.exists());
     }
 
@@ -6570,7 +6854,8 @@ mod tests {
         let scratch = Scratch::new("fresh");
         let out = scratch.join("brand-new.pdf");
         assert!(!out.exists(), "the control: it really is absent");
-        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out).expect("a fresh destination is accepted");
+        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out, None)
+            .expect("a fresh destination is accepted");
         assert!(out.exists());
     }
 
@@ -6677,7 +6962,7 @@ mod tests {
         };
         let scratch = Scratch::new("partial");
         let out = scratch.join("done.pdf");
-        write_copy(&path, &plan_of(&[1, 1, 1, 1]), &out).expect("write");
+        write_copy(&path, &plan_of(&[1, 1, 1, 1]), &out, None).expect("write");
         assert!(out.exists());
         assert!(
             partials_beside(&out).is_empty(),
@@ -6724,7 +7009,7 @@ mod tests {
              so a change to one is visible in the other"
         );
 
-        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out).expect("write");
+        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out, None).expect("write");
 
         // Deliberately not `assert_eq!`: the failing side is a whole PDF, and
         // `assert_eq!` on two `Vec<u8>` prints every byte as a decimal number ---
@@ -7909,7 +8194,7 @@ mod tests {
 
             let plan = plan_opened_as(&vec![0u8; count], &path);
             let started = std::time::Instant::now();
-            let built = planned_bytes(&path, &plan, OnChange::Refuse, NO_VIEW_TURN)
+            let built = planned_bytes(&path, &plan, OnChange::Refuse, NO_VIEW_TURN, None)
                 .expect("rewrite the document");
             let took = started.elapsed();
             let peak = crate::worker::phys_footprint(me).unwrap_or(0);
@@ -8020,8 +8305,8 @@ mod tests {
                 appends.push((clock.elapsed().as_secs_f64() * 1000.0, added));
 
                 let clock = std::time::Instant::now();
-                let whole =
-                    planned_bytes(&at, &plan, OnChange::Proceed, NO_VIEW_TURN).expect("rewrite");
+                let whole = planned_bytes(&at, &plan, OnChange::Proceed, NO_VIEW_TURN, None)
+                    .expect("rewrite");
                 let wrote = whole.bytes.len();
                 write_atomically(&out, &whole.bytes).expect("write");
                 rewrites.push((clock.elapsed().as_secs_f64() * 1000.0, wrote));
@@ -8130,7 +8415,7 @@ mod tests {
             let out = scratch.join("out.pdf");
             std::fs::write(&source, document_with_annots(shape)).expect("write fixture");
 
-            write_copy(&source, &plan_with_mark(one_quad()), &out)
+            write_copy(&source, &plan_with_mark(one_quad()), &out, None)
                 .unwrap_or_else(|e| panic!("{shape:?}: {e}"));
 
             // What the *page* lists, in order. The comment that was already
@@ -8157,7 +8442,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_with_mark(one_quad()), &out).expect("save");
+        write_copy(&source, &plan_with_mark(one_quad()), &out, None).expect("save");
 
         let doc = Document::load(&out).expect("reopen");
         let page = ordered_pages(&doc)[0];
@@ -8209,7 +8494,7 @@ mod tests {
         let quads = |source: &std::path::Path, out: &std::path::Path, turns: u8| -> Vec<f32> {
             let mut plan = plan_with_mark(one_quad());
             plan.pages[0].turns = turns;
-            write_copy(source, &plan, out).expect("save");
+            write_copy(source, &plan, out, None).expect("save");
             let doc = Document::load(out).expect("reopen");
             let page = ordered_pages(&doc)[0];
             let annots = doc
@@ -8296,7 +8581,8 @@ mod tests {
                 made: "D:20260818120000Z".to_string(),
             }],
         };
-        let why = write_copy(&source, &plan, &out).expect_err("a shared page must be refused");
+        let why =
+            write_copy(&source, &plan, &out, None).expect_err("a shared page must be refused");
         assert!(
             why.message.contains("same page object"),
             "the refusal does not say why: {why}"
@@ -8345,7 +8631,7 @@ mod tests {
                 made: "D:20260818120000Z".to_string(),
             }],
         };
-        write_copy(&source, &plan, &out).expect("a mark on the unshared page is fine");
+        write_copy(&source, &plan, &out, None).expect("a mark on the unshared page is fine");
         assert_eq!(listed_on_page(&out, 2), vec!["Highlight".to_string()]);
         // And nowhere else: a writer that put the mark on the first page it
         // found would satisfy the line above on a one-page document and is
@@ -8366,7 +8652,7 @@ mod tests {
             right: 72.0,
             bottom: 118.0,
         }];
-        let why = write_copy(&source, &plan_with_mark(flat), &out)
+        let why = write_copy(&source, &plan_with_mark(flat), &out, None)
             .expect_err("a mark covering nothing must be refused");
         assert!(why.message.contains("no area"), "{why}");
     }
@@ -9303,7 +9589,7 @@ mod tests {
             images: vec![0],
             image_objects: 1,
         }];
-        write_copy(&source, &plan, &out).expect("save");
+        write_copy(&source, &plan, &out, None).expect("save");
         let bytes = std::fs::read(&out).expect("read back");
         assert!(
             !bytes.windows(PIXELS.len()).any(|w| w == PIXELS),
@@ -9715,7 +10001,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, encrypted_document()).expect("write fixture");
-        let why = write_copy(&source, &plan_with_mark(one_quad()), &out)
+        let why = write_copy(&source, &plan_with_mark(one_quad()), &out, None)
             .expect_err("an encrypted source must still be refused");
         assert!(why.message.contains("encrypted"), "{why}");
     }
@@ -9725,7 +10011,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_of_kind(kind, one_quad()), &out).expect("save");
+        write_copy(&source, &plan_of_kind(kind, one_quad()), &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         // The one annotation on the page, followed rather than searched for:
         // the fixture is written with none, so anything found here is ours.
@@ -9827,7 +10113,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, plan, &out).expect("save");
+        write_copy(&source, plan, &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         // Every form XObject in the file, of which the fixture has none.
         let stream = doc
@@ -9885,7 +10171,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_with_ink(), &out).expect("save");
+        write_copy(&source, &plan_with_ink(), &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         let stream = doc
             .objects
@@ -9939,7 +10225,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_with_ink(), &out).expect("save");
+        write_copy(&source, &plan_with_ink(), &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         let lists: Vec<&Vec<Object>> = doc
             .objects
@@ -9957,7 +10243,7 @@ mod tests {
 
         // The other direction: a highlight written the same way carries none.
         let out2 = scratch.join("out2.pdf");
-        write_copy(&source, &plan_with_mark(one_quad()), &out2).expect("save");
+        write_copy(&source, &plan_with_mark(one_quad()), &out2, None).expect("save");
         let doc2 = Document::load(&out2).expect("reopen");
         assert!(
             doc2.objects
@@ -10296,7 +10582,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, source_bytes).expect("write fixture");
-        write_copy(&source, plan, &out).expect("save");
+        write_copy(&source, plan, &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         let stream = doc
             .objects

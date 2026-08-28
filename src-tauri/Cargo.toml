@@ -303,6 +303,10 @@ name = "ocr-sandbox-probe"
 path = "examples/ocr_sandbox_probe.rs"
 
 [[example]]
+name = "encrypted-rewrite-probe"
+path = "examples/encrypted_rewrite_probe.rs"
+
+[[example]]
 name = "redact-gate-probe"
 path = "examples/redact_gate_probe.rs"
 

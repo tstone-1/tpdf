@@ -1630,11 +1630,38 @@ nothing", which is where the reasoning stopped. It refuses now, rather than taki
 password, because even with the key `lopdf`'s writer cannot put the encryption back. An
 encrypted document prints whole or not at all.
 
-**Not done: an encrypted document still cannot be rewritten**, so a reader who deletes a
+~~**Not done: an encrypted document still cannot be rewritten**, so a reader who deletes a
 page from one is refused. That is a `lopdf` limitation rather than a missing argument, and
-closing it means the hardened structural rewrite the stack table already names QPDF for.
-The refusal names the reason, which is the difference between this and the state before
-today.
+closing it means the hardened structural rewrite the stack table already names QPDF for.~~
+**Closed 2026-08-29, and it did not need QPDF.** The second sentence was wrong and was
+believed for months because nobody read `lopdf`'s own encryption module: `Document::encrypt`
+is public and re-encrypts every object against a state, and a password load leaves that state
+on `Document::encryption_state`. So `checked` takes it off the document and `rewrite` puts it
+back after the last step that adds an object.
+
+Two things about that repair are not guessable from the API. `encrypt` begins
+`if self.is_encrypted() { return Err(AlreadyEncrypted) }` and a decrypt leaves the state set,
+so the state must be **taken** rather than borrowed --- a document that was decrypted refuses
+to be re-encrypted until it is. And the re-encryption has to run *after* the sweep and after
+everything that adds an object, because `encrypt` walks the object map once: anything added
+afterwards is written in the clear beside objects that are not, which is a file no reader
+opens.
+
+Measured through the production path by `examples/encrypted_rewrite_probe.rs`, and the
+verdict comes from `qpdf` rather than from the writer's own reader --- 17 encryption fields
+agree between source and output on `incr-encrypted-pw.pdf`, `R = 6`, `P = -4`, AESv3 for
+streams, strings and file, both passwords unchanged, a page dropped. **The page count is
+always read back with the password**, because a `lopdf` load without one parses no objects at
+all and answers zero on a perfectly good file; the spike this grew from round-tripped an
+empty document and printed three passes before that was noticed.
+
+What is still refused, and each for its own reason: a document nobody unlocked, where the
+message names the lock and supplying the password is now a way through rather than a dead
+end; an incoming file in a merge, because there is no way to write one file preserving *two*
+documents' encryption; and a print job, because the bytes go to `NSPrintOperation` or
+`Windows.Data.Pdf`, and handing the platform a plaintext copy of an encrypted document is a
+different decision that has not been measured. A signature over the original bytes is broken
+either way, which is already true of every rewrite.
 
 ---
 

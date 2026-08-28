@@ -1268,6 +1268,28 @@ served from Rust. The webview is the least trusted place in the application (res
 7), so a password parked in component state for a document's lifetime would be the one hop
 worth avoiding, and it is avoided.
 
+**Seven commands ask for it as of 2026-08-29, where one did, and the count is the change
+rather than the shape.** A rewrite used to refuse every encrypted document, so `save_document`
+asked only for the arm that appends. A rewrite now re-encrypts what it wrote with the state
+the load recorded, which needs the key twice: `lopdf` parses no objects at all without it, and
+`Document::encrypt` puts the encryption back. So `save_copy`, `extract_pages`,
+`split_document`, `merge_documents`, `redact_copy`, `redact_document` and `save_document` each
+call `password_for`, which is one ask on `Job::Password` and a local that goes when the
+command returns.
+
+**This adds no hop and no lifetime.** Every one of those is the same read, from the same
+`Held::password`, into the same process that already holds it, for the length of one command
+--- and each was already free to make that read. What it does add is copies, which is the
+zeroing paragraph above becoming a little more true: there are more of them, none is zeroed,
+and a partial job would read as a guarantee.
+
+**One deliberate non-extension: printing.** `save::print_bytes` passes `None`, so an encrypted
+document is still refused there rather than rasterised from a plaintext buffer. The bytes a
+print job produces go to `NSPrintOperation` or `Windows.Data.Pdf`, which would need the key
+themselves, so making printing work means handing the platform a decrypted copy of a document
+whose author encrypted it. That is a different decision from *let the rewrite work*, it has
+not been measured, and the refusal names the lock so a reader is not left guessing.
+
 #### T6.11 — Redacting, added 2026-08-26
 
 **No new capability, and one genuinely new kind of claim.** `redact_copy` is §T6.1's verb:

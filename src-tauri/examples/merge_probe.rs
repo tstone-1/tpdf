@@ -81,7 +81,7 @@ fn main() {
         std::env::temp_dir().join(format!("tpdf-merge-probe-{}.pdf", std::process::id()))
     });
     let plan = whole(mine);
-    let merged = match save::write_merged(first, &plan, std::slice::from_ref(second), &out) {
+    let merged = match save::write_merged(first, &plan, std::slice::from_ref(second), &out, None) {
         Ok(merged) => merged,
         Err(why) => {
             println!("[FAIL] the merge was refused: {why}");

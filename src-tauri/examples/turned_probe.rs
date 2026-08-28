@@ -343,7 +343,7 @@ fn reading(
         "tpdf-turned-probe-{}-{page}-{kind:?}.pdf",
         std::process::id()
     ));
-    save::write_copy(file, &plan, &out).map_err(|why| why.message)?;
+    save::write_copy(file, &plan, &out, None).map_err(|why| why.message)?;
     let rendered = render(bindings, &out, page, scale);
     let _ = std::fs::remove_file(&out);
     let (after, w2, h2) = rendered?;

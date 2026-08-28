@@ -182,7 +182,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             image_objects: 0,
         }],
     };
-    save::write_copy(file, &plan, &out).map_err(|e| e.message)?;
+    save::write_copy(file, &plan, &out, None).map_err(|e| e.message)?;
 
     let page = GatePage {
         page: 0,

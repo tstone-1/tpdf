@@ -248,7 +248,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Platforms | macOS + Windows | Settled |
 | Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** --- renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
 | Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** --- surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
-| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite; still wanted for preserving encryption and for object streams |
+| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite, and **no longer wanted for encryption either**: `lopdf`'s own `Document::encrypt` preserves it, measured against `qpdf` field for field (2026-08-29). Object streams remain |
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** --- paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** --- reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** --- reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
@@ -795,7 +795,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Whether `/Annots` is an indirect array decides how large an annotation edit is
 - Embedded fonts are subsetted
 - `lopdf`'s object collection is quadratic, but the algorithm is not
-- `lopdf` silently drops encryption on save
+- Removing a refusal removes it for every caller, including the one that never had a guard of its own (a shared refusal removed for the save paths deliberately and for the print path by accident, because one caller reaches the writer directly and never meets the guard its sibling has; the suite stayed green because the test named for the subject only ever exercises the other entry point, and the tell was a comment of my own that had become false three edits later)
+- `lopdf` silently drops encryption on save (its full serialiser does, and the entry's own closing sentence --- *QPDF re-encrypts with the original parameters* --- read as an inventory of the remedies and held a capability shut for months: `Document::encrypt` is public, and a rewrite that preserves encryption needs no C++ dependency)
 - An incremental save is cheap on disk, not in memory --- and its cost is the parse
 - An object a prior revision overwrote is reachable by no parser
 - A signature blob is trimmed by trailing zero, and BER ends in zeros (1 in 256 DER blobs loses its last byte; a real CAdES signature loses its terminators, and `der` refuses indefinite length anyway --- closed 2026-08-21, and both halves went together because where a blob ends and what length form it uses are one question)

@@ -562,7 +562,7 @@ fn run_gate(
         marks: Vec::new(),
         redactions,
     };
-    if save::write_copy(file, &plan, &out).is_err() {
+    if save::write_copy(file, &plan, &out, None).is_err() {
         let _ = std::fs::remove_file(&out);
         return;
     }
