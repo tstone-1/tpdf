@@ -166,6 +166,15 @@ struct Tally {
     /// thing that rule accepts, and whether the unread ones cluster there is a
     /// measurement rather than an argument.
     unread_chars: BTreeMap<&'static str, usize>,
+    /// Every region the gate reached a per-region verdict on, bucketed by the
+    /// length of the control its page was given.
+    ///
+    /// **The denominator, and without it the bucket above is unreadable.** 29 of
+    /// 33 unread controls drawing eight characters or more is a statement about
+    /// the failures only; if nine in ten of *all* controls are that long it is
+    /// exactly what a uniform failure rate produces and the length explains
+    /// nothing. Counted per region rather than per page so the two maps divide.
+    all_chars: BTreeMap<&'static str, usize>,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -594,9 +603,19 @@ fn run_gate(
                         at += here;
                     }
                     PageOutcome::Regions(verdicts) => {
+                        // The page's control serves every region on it, so the
+                        // denominator is counted here once per region -- the
+                        // same unit the numerator above is counted in.
+                        let shape = pages
+                            .iter()
+                            .find(|p| p.page == page.page)
+                            .and_then(control_shape);
                         for verdict in verdicts {
                             let region = asked.get(at).copied().unwrap_or_default();
                             at += 1;
+                            if let Some((_, chars)) = shape {
+                                *tally.all_chars.entry(char_bucket(chars)).or_default() += 1;
+                            }
                             match verdict {
                                 Legibility::Illegible { .. } => tally.proved += 1,
                                 Legibility::NotVerified { cause, .. } => {
@@ -724,11 +743,13 @@ fn report(t: &Tally, seconds: f32) {
                     t.unread_px.get(bucket).copied().unwrap_or(0)
                 );
             }
-            println!("  and the control token drew");
+            println!("  and the control token drew (unread / all, and the rate)");
             for bucket in CHAR_BUCKETS {
+                let bad = t.unread_chars.get(bucket).copied().unwrap_or(0);
+                let all = t.all_chars.get(bucket).copied().unwrap_or(0);
                 println!(
-                    "      {bucket:<32} {:>6}",
-                    t.unread_chars.get(bucket).copied().unwrap_or(0)
+                    "      {bucket:<32} {bad:>6} /{all:>6}   {:.1}%",
+                    pct(bad, all)
                 );
             }
             let bucketed: usize = t.unread_px.values().sum();

@@ -5226,16 +5226,70 @@ the bound is an upper one the error only ever runs the safe-looking way --- too 
 never too large. A test on the scale alone cannot see it, because the scale is correct for the
 number it was given.
 
-**Two predictions about the same bucket were wrong, and the measurement is why.** The masking
-hypothesis --- that `mask_columns` clips the control --- is refused by reading: masking is
-applied to the region strip and the control strip is passed to `stack` untouched. The token
-hypothesis was wrong in the *opposite* direction from the one proposed: the prediction was that
-four-character tokens fail `adjudicate`'s containment test by being too short to match, and of
-the 33 still unread after the scale fix, **none** drew four characters and **29 drew eight or
-more**. `control_from_page` picks the *longest* qualifying word, and a long run is what an engine
-is most likely to return split across two spans --- which is the containment test failing for
-being too long. That is the ranked question after this one, and it is now a measurement rather
-than a guess.
+**Three predictions about the same bucket were wrong, and each was refused by a different
+instrument.** The masking hypothesis --- that `mask_columns` clips the control --- is refused by
+*reading*: masking is applied to the region strip and the control strip is passed to `stack`
+untouched.
+
+The token hypothesis was refused by a *denominator*, and it is the one worth keeping. The
+prediction was that four-character tokens fail `adjudicate`'s containment test by being too short
+to match; the measurement said the opposite --- of the 33 still unread after the scale fix,
+**none** drew four characters and **29 drew eight or more**. That looks like an indictment of
+`control_from_page` picking the *longest* qualifying word, and it was written up as the ranked
+next increment. It is a numerator with no denominator: 29 of **128** long controls is 22.7%,
+against 33.3% for five-to-seven characters and 0 of 8 at four. Long tokens fail *less*, and the
+proposed repair --- prefer a middle-length word --- moves the chooser into the worst bucket. **A
+count of failures bucketed by a property is not evidence about that property until the same
+bucketing is applied to the population**, and the failure is that the numerator alone reads as a
+complete finding.
+
+The third was refused by an *A/B*. The control's crop is the word's glyph box floored and ceiled
+to the pixel, so the strip is cut flush at the ascenders and descenders --- which is this file's
+own *two strips butted together make the engine misread both*, one layer in. Three points of
+vertical padding each way took the unread count from 33 to 39 and certification from 67.31% to
+64.74%: on a 10 pt line, 3 pt reaches into the lines above and below.
+
+What is left is a flat 19--33% failure rate across every token length of five or more, which is
+the signature of a property of the page or the image rather than of the control. The untested
+hypothesis is band geometry, and testing it needs the engine's items at the moment of refusal ---
+which `Legibility::NotVerified` does not carry.
+
+### A count of failures bucketed by a property is not evidence about that property, and the numerator alone reads as a finding
+
+2026-08-29, and it was one edit from being built. The redaction gate could not verify 33 regions
+because the control token was not read back; bucketing those 33 by token length gave **0** at
+four characters and **29 at eight or more**. `ocr::control_from_page` picks the *longest*
+qualifying word and `ocr::adjudicate` needs one recognised span to hold the whole token, so the
+reading writes itself: the chooser maximises the thing that breaks it, and the repair is to
+prefer a middle-length word. That went into `docs/PLAN.md` and a commit message as the ranked
+next increment.
+
+Bucketing the *population* the same way refuses it. 29 of 33 were long because **128 of the 148
+controls chosen were long**:
+
+| the control token drew | unread / all | rate |
+|---|---|---|
+| 4 characters | 0 / 8 | 0.0% |
+| 5 to 7 characters | 4 / 12 | 33.3% |
+| 8 or more | 29 / 128 | 22.7% |
+
+A long token fails *less* often than a middle one, at both sampling densities measured. The
+proposed repair moves the chooser toward the worst bucket, so building it would have made the
+gate worse while every gate stayed green --- there is no test that can fail for this, because the
+code would have been doing exactly what it was changed to do.
+
+**The shape is that a numerator is a complete-looking sentence.** "29 of 33 were long" is true,
+specific, and reads as a finding; nothing about it announces that a denominator is missing, and
+the missing denominator is not a number you can be reminded to look up --- it is a second pass
+over a population you may not have kept. Here it cost one extra `BTreeMap` and one line at a
+call site the numerator was already being counted at, which is the general answer: **count the
+population in the same unit and at the same place as the failures, in the same commit**. A rate
+per bucket is then free, and a bucket with no denominator is visibly a bucket with no
+denominator.
+
+Two more things this run settled, both in the entry above: the same bucket's masking hypothesis
+was refused by *reading* the code, and a crop-padding hypothesis by an *A/B* that made the number
+worse. Three predictions, three instruments, none of them the one the prediction suggested.
 
 ### An OCR engine's bounding box is a detection, not a measurement
 

@@ -3329,25 +3329,49 @@ was removed --- is enforced in `control_from_page` and is untouched. Same 40 doc
 **Necessary, and not sufficient.** Five regions were rescued; 23 controls now clear the floor and
 are still not read back. So the scale was one defect and there is another behind it.
 
-**The other two candidates are now measured rather than guessed, and both predictions were
-wrong.** Masking is refused by reading: `mask_columns` is applied to the region strip, and the
-control strip goes into `stack` untouched, so it cannot clip the control. The token hypothesis
-was wrong in the *opposite* direction --- the prediction was that four-character tokens fail
-`adjudicate`'s containment test by being too short to match by accident, and of the 33 still
-unread, **none** drew four characters while **29 drew eight or more**. `control_from_page` picks
-the *longest* qualifying word, and `adjudicate` requires **one** recognised span to hold the whole
-token; a long run is exactly what an engine returns split in two. `docs/TRAPS.md` already carries
-*a control token spanning a whole line is read back only when the engine returns the line in one
-piece*, which was written about a token that was a line and applies to a token that is a long
-word.
+**The other two candidates are refused, and so is the one that replaced them.** Masking is
+refused by reading: `mask_columns` is applied to the region strip, and the control strip goes
+into `stack` untouched, so it cannot clip the control.
 
-The ten still under 8 px are a separate and smaller thing: at the `MAX_SCALE` ceiling of 8 that
-means a control box under 1 pt tall, which is a degenerate box rather than small print.
+The token-length candidate was ranked next here for about an hour on 2026-08-29, and the
+paragraph that ranked it is kept as an error rather than deleted. It said: of the 33 regions
+still unread, **none** drew four characters and **29 drew eight or more**; `control_from_page`
+picks the *longest* qualifying word while `adjudicate` needs **one** recognised span to hold the
+whole token, so the chooser maximises what breaks it. Every fact in that sentence is true. **It
+is a numerator with no denominator**, and adding one refuted it:
 
-**Ranked next on this subsystem**: the token the control chooser picks. It is 29 of 33 of what
-is left, the mechanism is named above, and the cheap experiment is to prefer a *middle-length*
-qualifying word over the longest one and re-run the same corpus --- a change to
-`control_from_page`'s tie-break, with the existing table as its A/B.
+| the control token drew | unread / all, `--regions 4` | rate | `--regions 12` | rate |
+|---|---|---|---|---|
+| 4 characters | 0 / 8 | **0.0%** | 0 / 24 | **0.0%** |
+| 5 to 7 characters | 4 / 12 | **33.3%** | 12 / 47 | **25.5%** |
+| 8 or more | 29 / 128 | **22.7%** | 52 / 271 | **19.2%** |
+
+29 of 33 were long because **128 of 148 controls are long**. A long token fails *less* often than
+a middle one at both densities, so preferring a middle-length word --- the experiment this section
+proposed --- moves the chooser toward the worst bucket. The proposal was measured before it was
+built and would have made the gate worse.
+
+**Padding the control's crop was measured too, and is also worse.** The crop is the word's glyph
+box floored and ceiled to the pixel, so the strip is cut flush at the ascenders and descenders,
+which is the shape of `docs/TRAPS.md`'s *two strips butted together make the engine misread both*.
+Three points of vertical padding each way took the unread count from 33 to **39** and
+certification from 67.31% to **64.74%**, because on a 10 pt line 3 pt reaches into the lines above
+and below and hands the engine slivers of ink belonging to neither.
+
+The ten still under 8 px are a separate and smaller thing, and there are two ways to reach that
+reading: a control box under 2 pt at the `MAX_SCALE` ceiling, or a probe image halved toward
+`MIN_SCALE` to fit the buffer. Nothing records which, and no measurement has separated them.
+
+**Ranked next on this subsystem --- and it is a question rather than a candidate.** The failure
+rate is roughly flat at 19--33% across every token length of five or more, which is the signature
+of something that is a property of the *page or the image* rather than of the control the chooser
+picked. The one hypothesis of the original three never tested is band geometry: `adjudicate`
+partitions the engine's items by `Control::contains`, and a span that holds the token while
+falling outside the band produces exactly this verdict and is indistinguishable from the engine
+not reading it. Testing that needs the engine's items at the moment of refusal, which no caller
+has --- `adjudicate` returns a `Legibility`, and `NotVerified` carries a sentence and no evidence.
+So the increment is to give it some, and the measurement follows from that rather than preceding
+it.
 
 **And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
 one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose

@@ -2312,8 +2312,17 @@ rendered control to describe. The first bucket is how tall that control landed a
 `ocr_gate::MIN_CONTROL_PX`, which is the bound the scale rule exists to clear --- a row below the
 floor is the rule missing what it aims at, and on 2026-08-29 that was 34 of 38. The second is how
 many characters the token drew, because `ocr::adjudicate` matches by containment and one
-recognised span has to hold the whole token. Both print every bucket including the empty ones,
-and a `[WARN]` fires if they do not sum to the cause's own count.
+recognised span has to hold the whole token. The first prints every bucket including the empty
+ones, with a `[WARN]` if they do not sum to the cause's own count.
+
+⚠ **The token axis prints `unread / all` and a rate, and the denominator is not decoration ---
+it is what stopped a wrong increment being built.** Read as a numerator alone the bucket says 29
+of 33 unread controls drew eight characters or more, which reads as an indictment of
+`control_from_page` picking the *longest* qualifying word. With the denominator it says 29 of
+**128**: a rate of 22.7% against 33.3% for five-to-seven characters, so long tokens fail *less*
+and the obvious repair moves the chooser toward the worse bucket. A count of failures bucketed
+by a property is never evidence about that property until the same bucketing is applied to the
+population.
 
 ⚠ **`--regions N` is not only the sample size; it changes what the gate can do, so every
 percentage from this harness has to be quoted with its density.** The regions set `size_pt`
