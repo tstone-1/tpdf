@@ -111,6 +111,10 @@ FIXTURES: list[tuple[str, list[str]]] = [
         "testdata/vector-multi.pdf",
         ["testdata/make_vector_pdf.py", "testdata/vector-multi.pdf", "200000", "12"],
     ),
+    # Base-14 Helvetica on a 1684 pt sheet: no embedded font, so unlike the four
+    # in `make_text_pdf.py` this one is dependency-free and a runner can build
+    # it. That is why it is its own script rather than a fifth builder there.
+    ("testdata/text-wide.pdf", ["testdata/make_wide_pdf.py", "testdata"]),
 ]
 
 #: The signed fixtures, which need **pyhanko** and are behind `--signed`.

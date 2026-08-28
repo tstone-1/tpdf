@@ -462,8 +462,9 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
     let base = real_h.saturating_sub(ctrl_h);
     let ceiling = f64::from(sheet.width) / f64::from(base + 1);
     println!(
-        "           the fixed rows are {base} px, so nothing wider than {ceiling:.1}:1 can be \
-         built from this control"
+        "           the fixed rows are {base} px, control strip {:.1} pt, so nothing wider than \
+         {ceiling:.1}:1 can be built from this control",
+        f64::from(ctrl_h) / f64::from(scale)
     );
     // **Where the padding rows go is a second variable, and the earlier sweep
     // confounded it with the aspect.** That draft grew the image with

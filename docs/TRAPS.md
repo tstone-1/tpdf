@@ -5425,6 +5425,45 @@ both were proved: keying the crossing on a constant aspect fired the shape contr
 height control silent, keying it on a constant height did the mirror. One axis broken, one
 control. A single total would have gone red for both and named neither.
 
+### Two variables a corpus cannot separate, because on an ordinary page one forces the other
+
+2026-08-30. Three increments in a row narrowed the redaction gate's silent refusals --- the engine
+answering and returning no spans at all --- and each one pointed harder at the probe image's
+**aspect**. Over 40 real documents the 8:1--16:1 band produced zero silent refusals across 294
+regions and again across 459, while the band past 16:1 produced 24 of 36 and then 80 of 80. That
+is about as clean as a corpus reading gets, and the repair it ranked was padding the wide images
+back toward the middle.
+
+The repair was aimed at nothing. `ocr_gate::stack` builds an image
+`width_pt` wide and `tallest + control_pt + padding` tall, with `padding` a fixed 24 pt. On a
+595 pt page, reaching 16:1 therefore **requires** `tallest + control_pt` to come to under about
+13 pt. So in a corpus of ordinary-width pages, "a wide probe image" and "a small control" are not
+two properties that happen to correlate --- the first cannot occur without the second. Every
+bucket, rate and cross-tabulation taken over that corpus was reading one variable and attributing
+it to the other, and no amount of further slicing could have said so, because the corpus contains
+no counter-example to slice.
+
+**A fixture is what separates them, by moving the term the corpus holds still.** `text-wide.pdf`
+reaches the same shapes from the other direction: a 1684 pt sheet with ordinary 14 pt text builds
+an 18.1:1 image and sweeps to 28.1:1 with the control strip left at 34.5 pt, against A4's 30.5. At
+28:1, 24:1, 20:1 and 18:1 the engine returns a span and reads the token back every time. The
+aspect is innocent; it was standing in for the control's size in points.
+
+**The generalisable question is not "do these correlate" but "can this population contain a
+counter-example".** Where a quantity is a fixed function of the others --- here `aspect =
+width / (a + b + const)` --- holding one input constant across the whole corpus makes two of the
+remaining terms indistinguishable by construction. Write the identity down before bucketing, and
+ask which of its inputs the corpus actually varies. Page width was the answer here and it took
+three increments to look at it, because it never appeared in any table.
+
+**The control fired again, on a second cause, and that is what stopped a wrong reading.** The
+sweep's second check --- the token must read back at the shape the gate itself builds --- failed on
+`text-heavy.pdf` and `incr-xrefstream.pdf`, the two existing fixtures that come closest at 12.2:1.
+Their controls are too small to be read reliably, so no column of theirs is evidence about shape.
+Without that check, 12.2:1 reading "no" would have looked like the wide band starting early, which
+is the conclusion the corpus had primed everyone to accept. A check written after it caught one
+failure caught a different one the same day.
+
 ### A sweep that pads with `resize` is not the change it stands in for, and the difference set the next increment
 
 2026-08-30. The redaction gate's remaining unexplained failure is Vision returning **no spans at
