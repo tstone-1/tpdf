@@ -12,6 +12,7 @@ use tpdf_lib::document::OpenDocument;
 use tpdf_lib::ocr::{
     adjudicate, control_from_page, Control, ControlWord, Legibility, Options, Pixels, Recogniser,
 };
+use tpdf_lib::ocr_gate;
 use tpdf_lib::ocr_vision::Vision;
 use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::text;
@@ -388,6 +389,93 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
         match &verdict3 {
             Legibility::NotVerified { .. } => "refused, as it must".into(),
             other => format!("{other:?}"),
+        },
+    );
+
+    // ------------------------------- when the engine returns nothing at all
+    // `docs/PLAN.md` §6: the majority of the gate's unverifiable regions are the
+    // engine *answering* and returning no spans at all for a probe image holding
+    // a control it should be able to read. Over a corpus that is a count with no
+    // picture behind it, deliberately -- `redact-reach-probe` never lets a real
+    // document's pixels out of the process. A fixture's pixels are ours.
+    //
+    // One variable: the image's height. Every row below holds the identical
+    // control strip, byte for byte, at the same scale and the same width, with
+    // white rows added underneath. If the item count collapses as the image gets
+    // shorter, then a probe image a page wide and a few dozen rows tall is a
+    // shape this engine will not read, and the repair is padding rather than
+    // anything the chooser or the band does.
+    //
+    // **The region strip is white rows the height of one line, not the page's
+    // tallest blank band.** The first draft of this used `blank_band`, which is
+    // the biggest gap anywhere on the sheet -- hundreds of rows on these
+    // fixtures -- and produced a probe image 548 px tall at 2.2:1, which is not
+    // the shape under suspicion and read perfectly. What the gate actually
+    // stacks is the rows one dragged region covers, and after the removal took
+    // the ink and `ocr_gate::mask_columns` blanked the columns beside it, those
+    // rows are white. A line's height of white is that.
+    let redacted_rows = vec![0xFFu8; ctrl_h as usize * sheet.width as usize * 4];
+    let (real, real_h, _) = ocr_gate::stack(
+        &redacted_rows,
+        sheet.rows(ctrl_top, ctrl_h),
+        sheet.width,
+        scale,
+    )
+    .map_err(|e| format!("stack: {e}"))?;
+    let stride = sheet.width as usize * 4;
+    println!();
+    println!(
+        "shapes     the gate's own probe image is {}x{} px, aspect {:.1}:1",
+        sheet.width,
+        real_h,
+        f64::from(sheet.width) / f64::from(real_h)
+    );
+    println!("           height   aspect   spans   control read");
+    let mut read_anywhere = false;
+    let mut tallest_silent = 0u32;
+    for factor in [1u32, 2, 4, 8] {
+        let target = real_h * factor;
+        let mut image = real.clone();
+        image.resize(target as usize * stride, 0xFF);
+        let seen = engine.recognise(
+            Pixels {
+                rgba: &image,
+                width: sheet.width,
+                height: target,
+                scale,
+            },
+            &opts,
+        );
+        let (spans, held) = match &seen {
+            Ok(items) => (
+                items.len(),
+                items
+                    .iter()
+                    .any(|i| i.text.to_uppercase().contains(&token.to_uppercase())),
+            ),
+            Err(_) => (0, false),
+        };
+        if spans > 0 {
+            read_anywhere = true;
+        } else {
+            tallest_silent = tallest_silent.max(target);
+        }
+        println!(
+            "           {target:>6}   {:>5.1}:1   {spans:>5}   {}",
+            f64::from(sheet.width) / f64::from(target),
+            if held { "yes" } else { "no" }
+        );
+    }
+    // The control over the experiment. If the strip reads at no shape at all,
+    // every row above is a statement about this strip rather than about the
+    // image's proportions, and the sweep says nothing.
+    r.check(
+        read_anywhere,
+        "the control strip reads at some image shape",
+        if read_anywhere {
+            format!("tallest shape returning nothing: {tallest_silent} px")
+        } else {
+            "no shape read it, so the rows above are about this strip".into()
         },
     );
 
