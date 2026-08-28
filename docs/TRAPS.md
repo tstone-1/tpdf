@@ -5405,6 +5405,26 @@ The `[WARN]` beside it is worth copying too: the cross-tabulated total and the h
 total count the same regions by two routes, so they must agree, and the run says so rather than
 being trusted to.
 
+**And when the two marginals are the same size, the reading that suggests itself is that they
+are the same regions --- which is the one to distrust.** 2026-08-30, the next increment on the
+same harness at `--regions 12`: 12 of the 36 silent refusals had rendered their control under
+8 px and 12 sat in a probe image at 8:1 or squarer. The write-up called that agreement
+*suggestive* and hedged it to "two axes that each report a 12 do not establish that they are
+counting one set of regions". The hedge was right and far too weak. Crossing the two put the
+overlap at **0** --- the cell carrying both properties has no population at all, not a zero rate.
+Every sub-floor silent refusal sat in the *widest* bucket, and every squarest-bucket one had been
+shown a control at or above the floor. The two counts were equal by coincidence and described
+disjoint sets, and a bound of 0 to 12 resolving at 0 is the end that says **two defects**. One
+repair aimed at both was the next thing ranked.
+
+**Give each marginal its own control, not one control over the total.** The crossing has to
+reproduce both rows it was derived from, and those are counted at different call sites, so a
+single `[WARN]` over the cross-tabulated total cannot say which axis drifted. Two loops --- one
+per axis, each checked against that axis's own row --- are what make the failure readable, and
+both were proved: keying the crossing on a constant aspect fired the shape control and left the
+height control silent, keying it on a constant height did the mirror. One axis broken, one
+control. A single total would have gone red for both and named neither.
+
 ### An OCR engine's bounding box is a detection, not a measurement
 
 Found 2026-07-31 the first time `ocr-probe` ran the real Vision binding rather than its unit
