@@ -283,6 +283,39 @@ struct Tally {
     /// cell's rate. An unpopulated cell is not a zero rate, and the report
     /// leaves it out rather than printing it as one.
     all_px_aspect: BTreeMap<(&'static str, &'static str), usize>,
+    /// The control's height in **points**, which is what the aspect axis turned
+    /// out to be standing in for.
+    ///
+    /// Added 2026-08-30 after `testdata/text-wide.pdf` showed a 28:1 probe image
+    /// reading back perfectly with an ordinary control. The aspect is
+    /// `width_pt / (tallest + pt + 24)`, so on a page of ordinary width a wide
+    /// image *requires* a small `pt` --- the two are one variable in a corpus of
+    /// A4, and no bucketing of that corpus could have separated them.
+    unread_pt: BTreeMap<&'static str, usize>,
+    /// The silent share of the row above, and the population beside it.
+    silent_pt: BTreeMap<&'static str, usize>,
+    all_pt: BTreeMap<&'static str, usize>,
+    /// Points crossed with the image's shape, which is the measurement this
+    /// increment exists for.
+    ///
+    /// **It asks whether the corpus contains a counter-example at all.** If every
+    /// document here is a page of ordinary width, the populated cells lie on a
+    /// diagonal and the two axes are one; an off-diagonal cell is a wide page
+    /// with a full-sized control --- what the fixture had to be written to
+    /// produce --- and its silence rate is the reading that decides between them.
+    silent_pt_aspect: BTreeMap<(&'static str, &'static str), usize>,
+    all_pt_aspect: BTreeMap<(&'static str, &'static str), usize>,
+    /// Which of the two clamps in [`ocr_gate::scale_for`] left a control under
+    /// the floor.
+    ///
+    /// `ocr_gate`'s own doc comment on `ProbeGeometry::control_px` records this
+    /// as unmeasured --- *"which of the two produced a given reading is not
+    /// recorded, and no measurement has separated them"*. Both inputs are in
+    /// hand here: a control under `MIN_CONTROL_PX / MAX_SCALE` cannot reach the
+    /// floor at any scale, and a scale below what that control asked for means
+    /// the image was halved to fit the buffer. They are not exclusive, so
+    /// *both* is its own row rather than an arm that swallows one of them.
+    unread_clamp: BTreeMap<&'static str, usize>,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -630,16 +663,126 @@ fn px_bucket(px: f32) -> &'static str {
 /// The aspect is a ratio, so the render scale cancels out of it: a probe image
 /// halved to fit the buffer is the same shape as one that was not. That is what
 /// makes it a different axis from the height rather than another reading of it.
-fn control_shape(page: &GatePage) -> Option<(f32, usize, f32)> {
+fn control_shape(page: &GatePage) -> Option<Shape> {
     let survivors = ocr_gate::surviving(&page.words, &page.regions, &page.taking);
     let choice = tpdf_lib::ocr::control_from_page(&survivors, &page.regions).ok()?;
     let geometry = ocr_gate::geometry_for(page, &choice).ok()?;
     let (w, h) = geometry.image_pt;
-    Some((
-        geometry.control_px,
-        choice.token.chars().count(),
-        if h > 0.0 { w / h } else { 0.0 },
-    ))
+    Some(Shape {
+        px: geometry.control_px,
+        // The control's height in points, which is the input `scale_for` is
+        // given rather than anything derived back out of its answer -- `px` is
+        // `pt * scale` by construction, so dividing recovers the input exactly.
+        pt: if geometry.scale > 0.0 {
+            geometry.control_px / geometry.scale
+        } else {
+            0.0
+        },
+        scale: geometry.scale,
+        chars: choice.token.chars().count(),
+        aspect: if h > 0.0 { w / h } else { 0.0 },
+    })
+}
+
+/// Everything about the control the gate chose for a page that a failure can be
+/// bucketed by.
+///
+/// A struct rather than a tuple since 2026-08-30, when it reached five fields:
+/// the two call sites destructure it positionally and a five-tuple is where that
+/// stops being readable. Every field is one call into the gate's own code, taken
+/// once per page and shared by every region on it.
+#[derive(Debug, Clone, Copy)]
+struct Shape {
+    /// How tall the control landed in pixels --- what [`ocr_gate::MIN_CONTROL_PX`]
+    /// is about.
+    px: f32,
+    /// The same height in points, which is the axis `px` was standing in for.
+    ///
+    /// **These are not two readings of one quantity, and 2026-08-30 is when that
+    /// stopped being obvious.** `px` is `pt * scale` and the scale is chosen, so
+    /// two controls of equal point size land at different pixel heights when one
+    /// of them sat in an image large enough to be halved. The corpus reading that
+    /// mattered went the other way: the probe image's *aspect* is
+    /// `width_pt / (tallest + pt + 24)`, so on a page of ordinary width a wide
+    /// image forces a small `pt`, and the two cannot be told apart there at all.
+    pt: f32,
+    /// The scale [`ocr_gate::scale_for`] settled on, in pixels per point.
+    ///
+    /// Kept because it is what separates the two clamps that can leave a control
+    /// under the floor, which `ocr_gate`'s own doc comment records as never
+    /// having been measured: a control under 2 pt cannot reach 16 px even at
+    /// [`ocr_gate::MAX_SCALE`], and an image too large for the buffer is halved
+    /// toward [`ocr_gate::MIN_SCALE`] whatever the control needs.
+    scale: f32,
+    /// How many characters the token drew.
+    chars: usize,
+    /// The probe image's width against its height. Scale-invariant.
+    aspect: f32,
+}
+
+/// The buckets the control's height **in points** is reported in.
+///
+/// The first boundary is not a round number chosen for reading: it is
+/// `MIN_CONTROL_PX / MAX_SCALE`, the point size below which no scale
+/// [`ocr_gate::scale_for`] may pick can reach the floor. Written as the division
+/// rather than as `2.0`, so raising either constant moves the bucket with it ---
+/// a bound written against its own constant is a trap this repository has an
+/// entry for, and the fix there was to keep one expression rather than two.
+const PT_BUCKETS: [&str; 4] = [
+    "under 2 pt (unreachable)",
+    "2 to 6 pt",
+    "6 to 12 pt",
+    "12 pt and over",
+];
+
+/// Which bucket a control of `pt` points falls in.
+fn pt_bucket(pt: f32) -> &'static str {
+    if pt < ocr_gate::MIN_CONTROL_PX / ocr_gate::MAX_SCALE {
+        PT_BUCKETS[0]
+    } else if pt < 6.0 {
+        PT_BUCKETS[1]
+    } else if pt < 12.0 {
+        PT_BUCKETS[2]
+    } else {
+        PT_BUCKETS[3]
+    }
+}
+
+/// The reasons a control can land under [`ocr_gate::MIN_CONTROL_PX`].
+const CLAMPS: [&str; 5] = [
+    "the ceiling could not reach it",
+    "the image was halved to fit",
+    "both of those at once",
+    "neither --- at or above the floor",
+    "short for neither reason",
+];
+
+/// Which clamp left this control where it is.
+///
+/// Not an `if/else if` chain over the two causes: they can hold together, and an
+/// ordered chain would credit whichever was written first and report the other
+/// as never happening. *Both* is a row.
+fn clamp_of(pt: f32, px: f32, scale: f32) -> &'static str {
+    let unreachable = pt * ocr_gate::MAX_SCALE < ocr_gate::MIN_CONTROL_PX;
+    let asked = (ocr_gate::MIN_CONTROL_PX / pt).clamp(ocr_gate::MIN_SCALE, ocr_gate::MAX_SCALE);
+    let halved = scale < asked;
+    match (unreachable, halved) {
+        (true, true) => CLAMPS[2],
+        (true, false) => CLAMPS[0],
+        (false, true) => CLAMPS[1],
+        // A control that cleared both clamps and is *still* short has no
+        // explanation in `scale_for` at all, so it gets its own row rather than
+        // being filed under one of the two causes. A non-zero count here says
+        // the two clamps do not account for the sub-floor controls and the
+        // reasoning above is incomplete -- which is worth seeing loudly.
+        (false, false) => {
+            if px < ocr_gate::MIN_CONTROL_PX {
+                CLAMPS[4]
+            } else {
+                CLAMPS[3]
+            }
+        }
+    }
 }
 
 /// The buckets [`Tally::unread_chars`] is reported in, in the order they print.
@@ -767,12 +910,24 @@ fn run_gate(
                         for verdict in verdicts {
                             let region = asked.get(at).copied().unwrap_or_default();
                             at += 1;
-                            if let Some((px, chars, aspect)) = shape {
+                            if let Some(Shape {
+                                px,
+                                pt,
+                                chars,
+                                aspect,
+                                ..
+                            }) = shape
+                            {
                                 *tally.all_chars.entry(char_bucket(chars)).or_default() += 1;
                                 *tally.all_aspect.entry(aspect_bucket(aspect)).or_default() += 1;
                                 *tally
                                     .all_px_aspect
                                     .entry((px_bucket(px), aspect_bucket(aspect)))
+                                    .or_default() += 1;
+                                *tally.all_pt.entry(pt_bucket(pt)).or_default() += 1;
+                                *tally
+                                    .all_pt_aspect
+                                    .entry((pt_bucket(pt), aspect_bucket(aspect)))
                                     .or_default() += 1;
                             }
                             match verdict {
@@ -816,8 +971,20 @@ fn run_gate(
                                         // above; this used to look it up again
                                         // per region, which is the same value
                                         // by a second route.
-                                        if let Some((px, chars, aspect)) = shape {
+                                        if let Some(Shape {
+                                            px,
+                                            pt,
+                                            scale,
+                                            chars,
+                                            aspect,
+                                        }) = shape
+                                        {
                                             *tally.unread_px.entry(px_bucket(px)).or_default() += 1;
+                                            *tally.unread_pt.entry(pt_bucket(pt)).or_default() += 1;
+                                            *tally
+                                                .unread_clamp
+                                                .entry(clamp_of(pt, px, scale))
+                                                .or_default() += 1;
                                             *tally
                                                 .unread_chars
                                                 .entry(char_bucket(chars))
@@ -844,6 +1011,17 @@ fn run_gate(
                                                         .silent_px_aspect
                                                         .entry((
                                                             px_bucket(px),
+                                                            aspect_bucket(aspect),
+                                                        ))
+                                                        .or_default() += 1;
+                                                    *tally
+                                                        .silent_pt
+                                                        .entry(pt_bucket(pt))
+                                                        .or_default() += 1;
+                                                    *tally
+                                                        .silent_pt_aspect
+                                                        .entry((
+                                                            pt_bucket(pt),
                                                             aspect_bucket(aspect),
                                                         ))
                                                         .or_default() += 1;
@@ -1076,6 +1254,97 @@ fn report(t: &Tally, seconds: f32) {
                          where the shape row says {marginal}"
                     );
                 }
+            }
+            // The axis the aspect turned out to be standing in for. Printed with
+            // its population for the reason every row here is: a count of
+            // failures at some control size says nothing until the same
+            // bucketing is applied to the regions that got this far.
+            println!("  and the control measured (unread / all, the rate, and the silent share)");
+            for bucket in PT_BUCKETS {
+                let bad = t.unread_pt.get(bucket).copied().unwrap_or(0);
+                let all = t.all_pt.get(bucket).copied().unwrap_or(0);
+                let silent = t.silent_pt.get(bucket).copied().unwrap_or(0);
+                println!(
+                    "      {bucket:<32} {bad:>6} /{all:>6}   {:.1}%, {silent} of them silent",
+                    pct(bad, all)
+                );
+            }
+            // **The measurement this axis exists for.** On a page of ordinary
+            // width the aspect is `width_pt / (tallest + pt + 24)`, so a wide
+            // probe image forces a small control and the two axes are one
+            // variable. An off-diagonal cell here -- a wide image with a
+            // full-sized control, or a square one with a tiny control -- is a
+            // counter-example the corpus supplies itself, and its silence rate
+            // is what chooses between the two readings. If every populated cell
+            // lies on the diagonal, this corpus cannot answer it and a fixture
+            // is the only instrument that can.
+            println!("  crossed with the image's shape (silent / all, and the rate)");
+            for pt in PT_BUCKETS {
+                for aspect in ASPECT_BUCKETS {
+                    let all = t.all_pt_aspect.get(&(pt, aspect)).copied().unwrap_or(0);
+                    let silent = t.silent_pt_aspect.get(&(pt, aspect)).copied().unwrap_or(0);
+                    if all > 0 {
+                        println!(
+                            "      {pt:<26}{aspect:<26} {silent:>4} /{all:>6}   {:.1}%",
+                            pct(silent, all)
+                        );
+                    }
+                }
+            }
+            // Which clamp left a control short. `ocr_gate`'s own doc comment
+            // records this as never having been measured. Every row prints,
+            // including the empty ones: a cause that never fires and a cause
+            // nobody counted look identical when the row is omitted.
+            println!("  and a control under the floor was left there by");
+            for bucket in CLAMPS {
+                println!(
+                    "      {bucket:<36} {:>6}",
+                    t.unread_clamp.get(bucket).copied().unwrap_or(0)
+                );
+            }
+            // The same per-axis controls the height crossing gets, for the same
+            // reason: the marginals are counted at different call sites, and one
+            // check over the total would go red for either and name neither.
+            for pt in PT_BUCKETS {
+                let crossed: usize = ASPECT_BUCKETS
+                    .iter()
+                    .map(|a| t.silent_pt_aspect.get(&(pt, *a)).copied().unwrap_or(0))
+                    .sum();
+                let marginal = t.silent_pt.get(pt).copied().unwrap_or(0);
+                if crossed != marginal {
+                    println!(
+                        "[WARN] the points crossing puts {crossed} silent refusal(s) at \"{pt}\" \
+                         where the points row says {marginal}"
+                    );
+                }
+            }
+            for aspect in ASPECT_BUCKETS {
+                let crossed: usize = PT_BUCKETS
+                    .iter()
+                    .map(|p| t.silent_pt_aspect.get(&(*p, aspect)).copied().unwrap_or(0))
+                    .sum();
+                let marginal = t
+                    .unread_shape_aspect
+                    .get(&(SHAPE_SILENT, aspect))
+                    .copied()
+                    .unwrap_or(0);
+                if crossed != marginal {
+                    println!(
+                        "[WARN] the points crossing puts {crossed} silent refusal(s) at \
+                         \"{aspect}\" where the shape row says {marginal}"
+                    );
+                }
+            }
+            // The clamp rows partition the same regions the height rows do, so
+            // they have to come to the same total. A shortfall means a control
+            // reached the report by a route `clamp_of` was not asked about.
+            let clamped: usize = t.unread_clamp.values().sum();
+            let by_height: usize = t.unread_px.values().sum();
+            if clamped != by_height {
+                println!(
+                    "[WARN] {clamped} control(s) attributed to a clamp of {by_height} with a \
+                     measured height"
+                );
             }
             // Every shape row above has to account for every region that had a
             // control to measure. A region with no shape is already named by

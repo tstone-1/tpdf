@@ -263,9 +263,22 @@ pub struct ProbeGeometry {
     /// by-product of it. It can still come out below the floor, by either of the
     /// two clamps in [`scale_for`]: a control under 2 pt is under 16 px even at
     /// the [`MAX_SCALE`] ceiling, and a probe image too large for the buffer is
-    /// halved toward [`MIN_SCALE`] regardless of what the control needs. Which
-    /// of the two produced a given reading is not recorded, and no measurement
-    /// has separated them.
+    /// halved toward [`MIN_SCALE`] regardless of what the control needs.
+    ///
+    /// **Separated 2026-08-30, and it is entirely the first.** `redact-reach-probe`
+    /// attributes every sub-floor control to a clamp, using the two inputs it
+    /// already holds --- a control under `MIN_CONTROL_PX / MAX_SCALE` cannot
+    /// reach the floor at any scale, and a scale below what that control asked
+    /// for means the halving loop ran. Over 40 documents at two sampling
+    /// densities: 24 and 40 attributed to the ceiling, **0 to the halving**, and
+    /// 0 short for neither reason. The buffer clamp has never fired on real
+    /// input, so `MIN_SCALE` is a bound the corpus does not reach rather than
+    /// one it works against --- worth re-measuring rather than assuming if
+    /// `capacity` or the region sampling changes.
+    ///
+    /// The bucket that clamp leaves behind is not a marginal case: **every one
+    /// of those controls failed**, 24 of 24 and 40 of 40. A control the scale
+    /// rule structurally cannot serve is one the gate cannot certify against.
     pub control_px: f32,
     /// The probe image's shape in points: width, then height.
     ///
