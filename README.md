@@ -330,6 +330,11 @@ of the entries are not about PDFs at all but about measurement and about writing
 are capable of failing, which is the recurring subject: a test that cannot go red passes
 exactly like one that can.
 
+[`docs/RATIONALE.md`](docs/RATIONALE.md) is the other half of the same split: the worked-out
+account behind each rule in [`AGENTS.md`](AGENTS.md) — what was measured, what the measurement
+cost, and which earlier sentence it corrected. The rule stays in the file an agent loads on
+every task; the evidence moved out of it.
+
 It is kept for the next person working on this, and that has generally been me a fortnight
 later. It is public on the theory that it is more useful than it is embarrassing.
 
