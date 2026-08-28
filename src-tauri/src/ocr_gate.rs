@@ -184,7 +184,14 @@ pub fn surviving(words: &[ControlWord], regions: &[[f32; 4]], taking: &str) -> V
         .collect()
 }
 
-/// Pixels per point to render at so a control of `size_pt` is readable.
+/// Pixels per point to render at so something `size_pt` tall is readable.
+///
+/// **Which height that is belongs to the caller, and getting it wrong is
+/// silent.** [`geometry_for`] passes the control *word*'s own height, because
+/// that is what the engine is shown. Passing
+/// [`crate::ocr::ControlChoice::size_pt`] --- the smallest box a region covered,
+/// which the safety rule guarantees is no *shorter* --- looks equivalent and
+/// systematically under-renders; `docs/TRAPS.md` has the entry.
 ///
 /// Clamped into [`MIN_SCALE`]..=[`MAX_SCALE`], then halved --- never below the
 /// floor --- until the probe image fits `capacity`.
@@ -233,6 +240,84 @@ pub fn scale_for(
         ));
     }
     Ok(scale)
+}
+
+/// What a page's probe image will be rendered at, and how tall the control
+/// lands there.
+///
+/// **The two numbers are one decision and are returned together on purpose.**
+/// The height the engine is shown is the product of the two, and until
+/// 2026-08-29 no caller had it: `gate_one_page` kept the scale and threw the
+/// control's own height away, so the one quantity [`MIN_CONTROL_PX`] is about
+/// existed nowhere. Returning only the scale would leave every caller to
+/// multiply it back out, and two derivations of one number are the drift
+/// `docs/TRAPS.md` records under *two copies of a distinction drift*.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProbeGeometry {
+    /// Pixels per point the strips are rendered at.
+    pub scale: f32,
+    /// How tall the control word itself lands in the probe image, in pixels.
+    ///
+    /// [`MIN_CONTROL_PX`] is the constant this is meant to clear, and since
+    /// 2026-08-29 it is what the scale is chosen to clear rather than a
+    /// by-product of it. It can still come out below the floor, by either of the
+    /// two clamps in [`scale_for`]: a control under 2 pt is under 16 px even at
+    /// the [`MAX_SCALE`] ceiling, and a probe image too large for the buffer is
+    /// halved toward [`MIN_SCALE`] regardless of what the control needs. Which
+    /// of the two produced a given reading is not recorded, and no measurement
+    /// has separated them.
+    pub control_px: f32,
+}
+
+/// The geometry for one page's probe image.
+///
+/// Split out of `gate_one_page` so a measurement can ask what the gate would
+/// render at without running it, and without a second copy of the arithmetic ---
+/// which is the whole reason it is public. `examples/redact_reach_probe.rs` is
+/// the caller that needs it.
+///
+/// # Errors
+///
+/// Whatever [`scale_for`] refuses, unchanged: the probe image will not fit even
+/// at [`MIN_SCALE`].
+pub fn geometry_for(
+    page: &GatePage,
+    choice: &crate::ocr::ControlChoice,
+) -> Result<ProbeGeometry, String> {
+    // The probe image is the tallest region on this page with the control strip
+    // under it, which is what the scale has to fit rather than the page.
+    let tallest = page
+        .regions
+        .iter()
+        .map(|r| (r[3] - r[1]).abs())
+        .fold(0.0f32, f32::max);
+    let control_pt = (choice.crop[3] - choice.crop[1]).abs();
+    // Plus what `stack` adds: a margin at each end and the gap between them.
+    let padding = 2.0 * MARGIN_PT + SEPARATION_PT;
+    let capacity = crate::ocr_worker::PIXELS_CAPACITY.min(crate::worker::TILE_CAPACITY);
+    // **`control_pt`, not `choice.size_pt`** --- the engine is shown the control
+    // *word*, and a surviving word with neither ascender nor descender is
+    // shorter than the box the scale used to be chosen from. Measured
+    // 2026-08-29 over 40 documents: of 38 regions the gate could not verify
+    // because the control was not read back, 34 had a control rendering under
+    // [`MIN_CONTROL_PX`] --- the floor this very call exists to clear. The two
+    // quantities are not interchangeable and only one of them is what the
+    // engine reads.
+    //
+    // `size_pt` keeps its own job, which is the *safety* rule: a control may not
+    // be set larger than what was removed. That is enforced in
+    // [`crate::ocr::control_from_page`], and this does not weaken it --- since
+    // `control_pt <= size_pt`, the scale can only come out larger than before.
+    let scale = scale_for(
+        control_pt,
+        page.width_pt,
+        tallest + control_pt + padding,
+        capacity,
+    )?;
+    Ok(ProbeGeometry {
+        scale,
+        control_px: control_pt * scale,
+    })
 }
 
 fn bytes_at(width_pt: f32, height_pt: f32, scale: f32) -> usize {
@@ -636,24 +721,8 @@ fn gate_one_page(
         }
     };
 
-    // The probe image is the tallest region on this page with the control strip
-    // under it, which is what the scale has to fit rather than the page.
-    let tallest = page
-        .regions
-        .iter()
-        .map(|r| (r[3] - r[1]).abs())
-        .fold(0.0f32, f32::max);
-    let control_pt = (choice.crop[3] - choice.crop[1]).abs();
-    // Plus what `stack` adds: a margin at each end and the gap between them.
-    let padding = 2.0 * MARGIN_PT + SEPARATION_PT;
-    let capacity = crate::ocr_worker::PIXELS_CAPACITY.min(crate::worker::TILE_CAPACITY);
-    let scale = match scale_for(
-        choice.size_pt,
-        page.width_pt,
-        tallest + control_pt + padding,
-        capacity,
-    ) {
-        Ok(scale) => scale,
+    let geometry = match geometry_for(page, &choice) {
+        Ok(geometry) => geometry,
         Err(why) => {
             return PageOutcome::Whole(Legibility::NotVerified {
                 why,
@@ -661,6 +730,7 @@ fn gate_one_page(
             })
         }
     };
+    let scale = geometry.scale;
     let width_px = (page.width_pt * scale).ceil() as u32;
     let height_px = (page.height_pt * scale).ceil() as u32;
 
@@ -1043,6 +1113,66 @@ mod tests {
             text: "keep".into(),
         }];
         assert_eq!(surviving(&words, &[], "").len(), 1);
+    }
+
+    #[test]
+    fn the_scale_clears_the_floor_for_the_control_and_not_for_the_box() {
+        // The two heights that used to be one. `size_pt` is the smallest box a
+        // region covered, 10 pt here; the surviving control word draws 5 pt,
+        // because it has neither an ascender nor a descender. Choosing the
+        // scale from the box gives 16/10 clamped to the 2x floor and renders
+        // the control at 10 px -- under `MIN_CONTROL_PX`, which is the number
+        // that whole call exists to clear.
+        //
+        // Measured 2026-08-29: 34 of 38 regions the gate could not verify for
+        // want of a readable control were below the floor for exactly this.
+        let page = GatePage {
+            page: 0,
+            regions: vec![[0.0, 0.0, 40.0, 10.0]],
+            words: Vec::new(),
+            taking: String::new(),
+            width_pt: 600.0,
+            height_pt: 800.0,
+        };
+        let choice = crate::ocr::ControlChoice {
+            crop: [0.0, 20.0, 40.0, 25.0],
+            token: "control".into(),
+            size_pt: 10.0,
+        };
+        let geometry = geometry_for(&page, &choice).expect("a geometry");
+        assert!(
+            geometry.control_px >= MIN_CONTROL_PX,
+            "a 5 pt control rendered at {} px, under the {MIN_CONTROL_PX} px floor, \
+             so the engine is being shown something it was never claimed to read",
+            geometry.control_px
+        );
+    }
+
+    #[test]
+    fn a_control_no_smaller_than_its_box_is_scaled_the_same_as_before() {
+        // The control: where the two heights agree, nothing moves. Without this
+        // the test above is satisfied by any change that raises the scale --
+        // including raising the floor or dropping the clamp -- and neither of
+        // those is the fix.
+        let page = GatePage {
+            page: 0,
+            regions: vec![[0.0, 0.0, 40.0, 8.0]],
+            words: Vec::new(),
+            taking: String::new(),
+            width_pt: 600.0,
+            height_pt: 800.0,
+        };
+        let choice = crate::ocr::ControlChoice {
+            crop: [0.0, 20.0, 40.0, 28.0],
+            token: "control".into(),
+            size_pt: 8.0,
+        };
+        let geometry = geometry_for(&page, &choice).expect("a geometry");
+        assert_eq!(
+            geometry.scale, 2.0,
+            "an 8 pt control is 16 px at the 2x floor"
+        );
+        assert_eq!(geometry.control_px, 16.0);
     }
 
     #[test]

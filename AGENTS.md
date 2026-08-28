@@ -897,6 +897,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - There was no check on the overlay at all, and that is why a reader found the underline defect (two renderers draw every mark and only one of them was measured)
 - A feature can be inert in the application while three layers of tests pass (the layer that composes is the layer nothing tests; the gate written for it found a second one on its first run)
 - A control that is easier than the check certifies nothing
+- A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault (the scale cleared 16 px for the smallest box a region covered, while the engine is shown the control *word*, which the safety rule guarantees is no taller --- 34 of 38 unverifiable regions rendered under the gate's own floor, and both competing hypotheses were wrong, one of them in the opposite direction)
 - An OCR engine's bounding box is a detection, not a measurement
 - A property that holds by construction cannot test the thing it resembles
 - Four assertions became unfalsifiable without being touched (the assertion never changed; a constant that was a whole name became one part of it, and becoming impossible to fail is not a failure)
