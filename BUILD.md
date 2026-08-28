@@ -4351,6 +4351,29 @@ starts at 0 and increments within the month.
    total --- the total moves every time somebody writes a mutation, and nothing goes red when
    it does.
 
+   **It expired without anybody changing the harness, which is the part worth carrying.** By
+   `26.8.11` the same table cost **40.0 s** per mutation, measured twice over four minutes ---
+   5.6 hours for 508 mutations, against the 1.77 s above. Nothing had regressed in the
+   harness: the *crate* had grown, and every mutation touches one file, so cargo re-codegens
+   the crate and relinks a test binary that full debug info had taken to 33 MB. A cost that
+   goes stale because the subject grew is invisible to every check here, exactly like the
+   counts this file keeps getting wrong.
+
+   Fixed the same day by building the mutation target with `CARGO_PROFILE_DEV_DEBUG=0`,
+   measured interleaved against the same command in a second target directory --- 22.6/30.1/27.0 s
+   against 3.9/3.7/3.3 s, and the directory 1.7 GB rather than 14 GB. The whole table then ran
+   in **1316 s including its 178 s cold build**: all 504 caught, 4 skipped as not runnable on
+   macos. It is safe because `debug` is debug *information* only --- `debug_assertions` and
+   overflow checks are separate knobs and are untouched, so every test runs the program it ran
+   before, and what is given up is line numbers in a panic backtrace that nothing here reads.
+   The reasoning is in `scripts/mutate_rust.py` beside the constant.
+
+   **Decompose before believing a per-mutation figure.** The no-op freshness check is 0.8 s
+   warm; touching one source file costs 14--15 s of it; the named test itself runs in 0.03 s.
+   Three measurements said the rebuild was the whole cost, which is what made the lever
+   obvious --- and the first theory, that a 33 MB binary was slow to *load*, was wrong and took
+   one direct run of the test binary to refute.
+
    **What the front-end table costs, and why it did not fall as far.** `mutate_frontend.py`
    got the same narrowing --- it runs the test *file* holding the mutation's own test, chosen
    from the file vitest prints beside every test in the control run's listing, with the same

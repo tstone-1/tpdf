@@ -110,6 +110,22 @@ const CONSECUTIVE = 8;
 const BASE = 1;
 /** Penalty per character skipped before the first match. */
 const LEADING_SKIP = 1;
+/**
+ * Score for the query being the *whole* title rather than the start of it.
+ *
+ * Larger than any difference the three above can produce between two titles one
+ * of which prefixes the other, which is the only case it decides: such a pair
+ * matches at the same word starts, consecutively, with the same leading skip,
+ * so they tie and registration order picks the winner. A reader who types a
+ * command's title in full and gets the *other* command highlighted has been
+ * given the wrong answer by a rule that never considered the question.
+ *
+ * Two such pairs exist in the real registry --- "Redact and save" inside
+ * "Redact and save as…", and "Save" inside "Save a copy..." --- and only the
+ * first was wrong, because `file.save` happens to be registered before
+ * `file.saveCopy`. Correct by registration order is not correct.
+ */
+const EXACT = WORD_START * 4;
 
 /**
  * Whether the character at `index` starts a word in `title`.
@@ -205,9 +221,14 @@ export function rank(
     // word-start match, so typing something specific always beats history.
     const recency = recents.indexOf(command.id);
     const bonus = recency < 0 ? 0 : Math.max(1, WORD_START / 2 - recency);
+    // Folded the way `fuzzyMatch` folds, so "redact and save" earns it too ---
+    // nothing else here is case-sensitive and an exactness rule that was would
+    // be the one place typing in lower case changed the answer.
+    const whole =
+      command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;
     matched.push({
       command,
-      score: hit.score + bonus,
+      score: hit.score + bonus + whole,
       positions: hit.positions,
     });
   }

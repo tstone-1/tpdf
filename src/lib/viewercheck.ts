@@ -79,9 +79,12 @@ import { SCROLLBAR_WIDTH, Viewer, type ViewerStatus } from "./viewer";
  * Spelled out here rather than read from the sidebar, which would make the check
  * agree with whatever the sidebar happens to build. It went red on its own when
  * the results tab landed and again when the comments tab did, which is the check
- * working --- twice. Three times: the marks tab made it five.
+ * working --- twice. Three times: the marks tab made it five. Four: the
+ * redactions tab made it six, and that red was not read for a week, because
+ * nothing runs this harness automatically and the mutation table is the only
+ * thing that runs its baseline.
  */
-const SIDEBAR_TABS = 5;
+const SIDEBAR_TABS = 6;
 
 /** Size of the surface the check mounts, in CSS pixels. */
 const WIDTH = 900;
@@ -3336,8 +3339,15 @@ async function appCommandChecks(
     id: string;
     /** Typed into the argument prompt, for the two commands that ask. */
     argument?: string;
-    /** Puts the viewer somewhere the command can be seen to move it from. */
-    from?: () => void;
+    /**
+     * Puts the viewer somewhere the command can be seen to move it from.
+     *
+     * May return a promise, and `edit.redactMatches` is why: its precondition
+     * is a completed search, and `viewer.idle` cannot be waited on for that ---
+     * it reports the frame loop, not the scan. Every other `from` here is
+     * synchronous and unaffected.
+     */
+    from?: () => void | Promise<void>;
     /** Reads what the command is supposed to change. */
     read: () => string;
     /** Whether the reading moved as the command promises. */
@@ -3802,6 +3812,21 @@ async function appCommandChecks(
       id: "edit.redactSelection",
       ...shell("redactSelection"),
       read: () => fired.join(","),
+      // Makes its own selection and skips a page that has none to make, exactly
+      // as the three marking commands above do --- and for the reason
+      // `edit.highlightSelection`'s comment already gives: a selection left by
+      // an earlier phase is not a precondition, it is a coincidence.
+      //
+      // It had neither, and inherited `find.inSelection`'s. That works wherever
+      // page 1 has text and nowhere else: on `vector-heavy` the neighbour is
+      // *skipped* by its own `unless`, so its `from` never runs, nothing is
+      // selected, the command is withheld, and the check reads `"Redact
+      // selection" highlighted "" of 0` --- which looks like a command that was
+      // never registered. Found by the step that sweeps the release bundle over
+      // both documents, since no runner in the mutation table opens a corpus
+      // with no text.
+      from: () => viewer.selectPage(),
+      unless: withText,
     },
     {
       // The third of the three, aimed separately for the same reason as the
@@ -3810,6 +3835,27 @@ async function appCommandChecks(
       id: "edit.redactMatches",
       ...shell("redactMatches"),
       read: () => fired.join(","),
+      // Guarded on there being matches to mark, and nothing before this point
+      // has searched --- the find phase runs *after* this loop. So the probe
+      // makes its own precondition, as `find.inSelection` does for a selection.
+      //
+      // Awaited, which is why `from` may return a promise: a search completes
+      // off the frame loop, so the loop's `settle(() => viewer.idle)` would let
+      // the palette be opened against a document with no matches yet. That is
+      // exactly what shipped --- the command was withheld, the palette matched
+      // nothing, and the check read `highlighted "" of 0`, which looks like a
+      // missing registration rather than a missing precondition.
+      from: async () => {
+        const needle = firstPage ? pickNeedle(firstPage.codes) : null;
+        if (!needle) return;
+        viewer.search(needle);
+        await settle(() => !viewer.searching && viewer.searchMatches.length > 0);
+      },
+      unless: withText,
+      // Put back, for the reason the two mark probes have one: every probe
+      // after this and every phase after this one would otherwise run against a
+      // document carrying a search nobody asked for.
+      then: () => viewer.clearSearch(),
     },
     {
       // The ellipse, aimed separately for the reason the note below it gives
@@ -3944,6 +3990,35 @@ async function appCommandChecks(
     {
       id: "file.saveCopy",
       ...shell("saveCopy"),
+      read: () => fired.join(","),
+    },
+    {
+      // The two redaction writes, driven for the reason `file.saveCopy` is:
+      // every action in this harness is a recorder, so what runs is a push onto
+      // `fired` and no file is written. `file.save` is undriven despite that,
+      // and the difference is its guard rather than its danger --- it is
+      // withheld on an unedited document, so there is nothing in the palette to
+      // press.
+      //
+      // Aimed separately, because they are one word apart in the source and the
+      // one that writes over the reader's own file is the costlier to mis-wire
+      // --- the same argument the three ways of marking a redaction carry above.
+      id: "file.redactCopy",
+      ...shell("redactCopy"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.redactDocument",
+      ...shell("redactDocument"),
+      read: () => fired.join(","),
+    },
+    {
+      // The redactions tab, driven like the four tabs above it. It reaches
+      // `showTab` with its own argument, which is the half a window check can
+      // read; that the panel then lists the pending regions is
+      // `redactlist.test.ts`'s.
+      id: "view.showRedactions",
+      ...shell("showTab:redactions"),
       read: () => fired.join(","),
     },
     {
@@ -4093,7 +4168,7 @@ async function appCommandChecks(
       skip(`${probe.id} runs from the palette`, cannot);
       continue;
     }
-    probe.from?.();
+    await probe.from?.();
     await settle(() => viewer.idle);
     fired = [];
     const before = probe.read();
@@ -4223,6 +4298,15 @@ async function appCommandChecks(
     "edit.underlineSelection",
     "edit.strikeoutSelection",
     "edit.squigglySelection",
+    // Guarded on a note being open, which is how a reader names the mark they
+    // mean. A document with no marks in it offers nothing to remove.
+    //
+    // **In registry order, which the check below compares by `join`.** The
+    // three entries here were written in the order somebody thought of them and
+    // put `edit.removeMark` last, where the registry has it first --- so the
+    // check was red on a clean tree, and stayed red unread because the harness
+    // that runs this baseline prints only its first three failures.
+    "edit.removeMark",
     // Joined on 2026-08-27 with the command itself, rather than after the
     // harness went red for it. Nothing runs this harness automatically -- it
     // needs a real window, so it is not a gate -- and the note above records
@@ -4232,9 +4316,6 @@ async function appCommandChecks(
     // Guarded on there being search matches, which a document nobody has
     // searched has none of. Declared with the command, as the one above was.
     "edit.redactMatches",
-    // Guarded on a note being open, which is how a reader names the mark they
-    // mean. A document with no marks in it offers nothing to remove.
-    "edit.removeMark",
     // Guarded on the document being edited, which an untouched one is not. It
     // joined this list late: the guard landed with "Save over the file the
     // reader opened" and turned this check red, and the red went unread because
@@ -4310,6 +4391,19 @@ async function appCommandChecks(
   // oversight: `linkChecks` is the next thing that reads the history and opens
   // by calling `setLinks`, which clears it too.
   viewer.clearHistory();
+  // And the search, for exactly the same reason and found the same way. The
+  // find-next phase above leaves one running --- it has to, since it is stepping
+  // through matches --- and `edit.redactMatches` is guarded on there being
+  // matches. So this check's answer depended on whether *that* phase's needle
+  // hit: withheld on `outline-simple`, offered on `tagged`, from one hand-written
+  // list that cannot be right for both. The comment beside `nav.back` above
+  // names this exact failure a phase earlier, and it did not transfer.
+  //
+  // The check asks what an open document alone earns, and a leftover search is
+  // not part of "an open document" --- so clearing it is what makes the question
+  // the one the name asks.
+  viewer.clearSearch();
+  await settle(() => viewer.idle && viewer.searchMatches.length === 0);
   const withDocument = registry.search("").map((ranked) => ranked.command.title);
   const missing = registered.filter(
     (id) => !withDocument.includes(titleOf(id)),

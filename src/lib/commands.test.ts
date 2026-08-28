@@ -202,6 +202,59 @@ function pageCommand(ran: string[], pages = 10): Command {
   };
 }
 
+describe("a title the query matches whole", () => {
+  /*
+   * Two commands, one title a strict prefix of the other, and the longer one
+   * registered first. Before the `EXACT` rule that is the whole of the defect:
+   * both titles match the query at every character and at every word start, so
+   * they score identically, ties keep registration order, and the command whose
+   * title the reader typed *in full* comes second.
+   *
+   * Found on 2026-08-27 by `viewercheck.ts`'s palette probe, which reported
+   * `"Redact and save" highlighted "Redact and save as…" of 2`. Two such pairs
+   * exist in the real registry --- that one and `Save` against `Save a copy...`
+   * --- and the second is correct only because `file.save` happens to be
+   * registered before `file.saveCopy`. A rule that holds by registration order
+   * is not a rule.
+   */
+  const pair = [
+    command("file.redactCopy", "Redact and save as\u2026"),
+    command("file.redactDocument", "Redact and save"),
+  ];
+
+  it("ranks the exact title first, whatever the registration order", () => {
+    expect(titles(rank("Redact and save", pair))[0]).toBe("Redact and save");
+  });
+
+  it("ranks it first from the other registration order too", () => {
+    expect(titles(rank("Redact and save", [...pair].reverse()))[0]).toBe(
+      "Redact and save",
+    );
+  });
+
+  it("is case-insensitive, as every other match here is", () => {
+    expect(titles(rank("redact AND save", pair))[0]).toBe("Redact and save");
+  });
+
+  it("still ranks a prefix query by the ordinary rules", () => {
+    // The control, and it is what stops the rule being a special case that
+    // fires on anything: "Redact and" is nobody's whole title, so neither
+    // command earns the bonus and registration order decides, as before.
+    expect(titles(rank("Redact and", pair))[0]).toBe("Redact and save as\u2026");
+  });
+
+  it("does not lift a whole-title match over a better one", () => {
+    // A one-character title matches everything as a subsequence, so without
+    // this the bonus could carry a title nobody meant above a real match. It
+    // does not: the exact hit is only compared against titles that also match.
+    const noisy = [
+      command("a", "S"),
+      command("b", "Save a copy\u2026"),
+    ];
+    expect(titles(rank("Save a copy\u2026", noisy))[0]).toBe("Save a copy\u2026");
+  });
+});
+
 describe("commands that take an argument", () => {
   it("runs with the value it was given", () => {
     const ran: string[] = [];

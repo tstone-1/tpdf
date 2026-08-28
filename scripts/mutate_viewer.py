@@ -1792,7 +1792,15 @@ def main() -> int:
             print(f"[FAIL] {runner} baseline unreadable: {broken}")
             return 1
         if failures:
-            print(f"[FAIL] {runner} baseline is not green: {sorted(failures)[:3]}")
+            # Every one of them, and it used to be `sorted(failures)[:3]`.
+            # Three failures printed out of four on 2026-08-27 cost a whole
+            # fix-and-rerun cycle: the three shown were repaired, the run came
+            # back red, and the fourth had been there all along -- alphabetically
+            # past the cut, which is the arbitrary half of it. A truncated
+            # failure list reads exactly like a complete one.
+            print(f"[FAIL] {runner} baseline is not green, {len(failures)} check(s):")
+            for line in sorted(failures):
+                print(f"         {line}")
             return 1
         baseline[runner] = lines
     lines = baseline[wanted[0]]

@@ -11957,6 +11957,161 @@ watching that tree.** A file-watcher, a language server, a sync client and a bac
 answer a write, and a harness that writes thousands of times pays each of them thousands of
 times --- while every number you take reads as the cost of your own work.
 
+### A check that borrows a neighbour's precondition passes wherever the neighbour ran
+
+`viewercheck.ts` drives every registered command from the palette. Some commands are guarded
+--- "Highlight selection" is withheld with nothing selected --- so a probe for one carries two
+fields: a `from` that makes the precondition, and an `unless` that skips the corpus where it
+cannot be made. `edit.highlightSelection` has both, and its comment says exactly why: *"the
+selection is made in `from` rather than assumed from whatever the last phase left."*
+
+The three redaction commands were added later, in one increment, and none of them got either.
+Two then failed, on different corpora, months apart in discovery and one evening apart in
+fact:
+
+- **`edit.redactMatches`** is guarded on there being search results, and nothing before it in
+  the loop searches --- the find phase runs *after*. It failed on every corpus.
+- **`edit.redactSelection`** is guarded on a selection, and it inherited one from
+  `find.inSelection`'s `from` twelve probes earlier. That works wherever page 1 has text. On
+  `vector-heavy` the neighbour is **skipped by its own `unless`**, so its `from` never runs,
+  nothing is selected, and the command is withheld.
+
+**The failure reads as a missing registration, not a missing precondition.** Both reported
+`"<title>" highlighted "" of 0` --- the palette matched nothing, because the command was not in
+it. That is the same text a command nobody registered would produce, which sends you to the
+registry rather than to the guard.
+
+Three things make the borrowed precondition worse than no precondition at all. It is
+**invisible**: nothing in the borrowing probe mentions the one it depends on, and they are
+hundreds of lines apart. It is **order-dependent**, so reordering the probe list breaks it
+with no edit to either probe. And it is **corpus-dependent** in a way that hides: the runner
+in the mutation table opens `outline-simple.pdf`, which has text, so the whole table --- 92
+mutations, 14 green baselines, an hour --- passed over it. It took the step that sweeps the
+release bundle across a document with **no extractable text** to find it.
+
+**No mutation can guard this one, and that is worth saying rather than papering over.** A
+mutation deleting `unless: withText` reddens only on a text-free corpus, and no runner in the
+table opens one; writing it would add a mutation that cannot fail, which this file has a
+dozen entries about. What covers it is the corpus sweep, and the rule to carry is the comment
+that was already there and did not transfer: **a precondition an earlier phase happens to
+leave is a coincidence, not a precondition.** When a probe needs state, it makes it.
+
+### A title that is a strict prefix of another ties, and registration order decides
+
+`rank` in `src/lib/commands.ts` scores a query against a command's title: a point per
+character, more at a word start, more again for a run of them, less for characters skipped
+before the first hit. Equal scores keep registration order, which is stated in the sort's own
+comment and is right --- it stops the list reshuffling as somebody types.
+
+What none of those terms can see is **whether the query is the whole title**. Where one title
+is a strict prefix of another, both match at the same word starts, consecutively, with the
+same leading skip. They tie. So the winner is whichever was registered first, and a reader who
+types a command's title in full can be handed the other command.
+
+Live in tpdf on 2026-08-27: **"Redact and save"** is a strict prefix of **"Redact and save
+as…"**, `file.redactCopy` is registered first, and typing the in-place command's full title
+highlighted the save-as one. Enter then opened a file dialog instead of redacting the open
+file.
+
+**The measurement is what made the fix the right size.** Extracting every `title:` from
+`appcommands.ts` and testing each against every other found **two** such pairs, not one --- the
+other being `Save` inside `Save a copy...`. That one is correct, and only because `file.save`
+happens to sit eleven lines above `file.saveCopy`. **Correct by registration order is not
+correct**, and a defect whose absence depends on source order is one line of reordering away
+from arriving. Without the sweep the fix would have read as a patch for one odd pair.
+
+The rule is one term --- a bonus for the query equalling the whole title, folded the way every
+other match here folds --- and the interesting part is its **controls**, because a rule that
+fires too eagerly is worse than the tie it replaces. Three of the five tests are controls: a
+query that is nobody's whole title must still be decided by the ordinary rules; a whole-title
+match must not be lifted over a *better* match; and the assertion must hold from either
+registration order. That last one cannot fail on its own --- the exact title is already first
+in one of the two orders --- so it earns its place only against a mutation that makes the bonus
+*negative*, which is written, and which reddens three tests where the deletion reddens two.
+
+**How it was found is the part to carry.** No unit test could have: every test in
+`commands.test.ts` builds its own commands, and the defect lives in a *pair* that exists only
+in the real registry. It surfaced in a window check that drives every registered command from
+the palette by its title and asserts the command that ran is the one it aimed at --- which
+reported `"Redact and save" highlighted "Redact and save as…" of 2`. A ranking rule is only
+as good as the population it ranks, and yours is in another file.
+
+### A harness that prints its first three failures reads exactly like one that prints all of them
+
+`mutate_viewer.py` refused a run whose baseline was red and said so with
+`sorted(failures)[:3]`. On 2026-08-27 the viewer baseline had **four** failures. Three were
+printed, all three were repaired, the harness was re-run --- and it came back red with a fourth
+that had been there the whole time.
+
+Two things make this worse than a plain missing line. The cut is **alphabetical**, so which
+failure is hidden has nothing to do with which matters: *"with no document only the commands
+needing none are offered"* sorted past `edit…`, `every…` and `the sidebar…` for no reason
+anybody chose. And the output carries **no sign that it was cut** --- three failures printed
+and three failures existing produce identical text, so the natural reading of a re-run that
+goes red again is that a repair did not take, which sends you back over work that was correct.
+
+The cost is a whole cycle of a harness whose baseline pass alone is five minutes. The fix is
+to print all of them with a count, so a long list is long rather than silently short.
+
+The general form, and this repository has the mirror of it elsewhere: **a cap on output is a
+claim about the output's size, and an uncapped reader cannot tell it was applied.** The same
+shape as a `.slice(0, 64)` on a palette's rows that made three commands read as withheld from
+a reader, and as a `[:3]` here. Where a truncation is genuinely wanted, say what was dropped.
+
+### A harness's cost expired because the code grew, and nothing goes red about that
+
+`BUILD.md` recorded `mutate_rust.py` at **1.77 s per mutation** --- 405 s for 229 --- measured
+2026-08-21 after the entry above fixed the two things that had made it 69 s. On 2026-08-27,
+cutting `26.8.11`, the same harness on the same machine measured **40.0 s**, twice, over four
+minutes. For a table that had meanwhile grown to 508 that is **5.6 hours**.
+
+**Nothing had regressed in the harness.** Its target directory was still its own, it still ran
+the named test alone, and no editor was open. What had changed was the subject: the release
+added 21,279 lines to a crate whose test binary full debug info had taken to **33 MB**, and
+every mutation touches one file, so cargo re-codegens the crate and relinks that binary. The
+harness's own target directory had gone from a documented 2.4 GB to **14 GB**.
+
+That is the shape worth carrying. A cost figure has no failing case: it is prose in a
+checklist, nothing asserts it, and it expires quietly when the thing it measures grows. The
+number stayed in the document being *correct about its own date* and *wrong about tonight*,
+and the only reason it was caught is that somebody timed one unit before spending five hours.
+
+**Decomposing it took three measurements and the first theory was wrong.** A `sample` of the
+running test binary showed it parked in `dyld4::Loader::runInitializersBottomUp` for its whole
+life, which reads as "the 33 MB binary is slow to load" --- an explanation that arrives with a
+mechanism already attached, and this file has an entry about distrusting those. Running the
+binary directly refuted it in one command: **0.03 s**. The real split:
+
+| | cost |
+|---|---|
+| no-op `cargo test --lib --no-run`, warm | 0.8 s |
+| after touching one source file | 14--15 s |
+| the named test itself, run directly | 0.03 s |
+
+So the rebuild was the whole of it, and debug info was the lever. Measured **interleaved**
+against the same command in a second target directory built with `CARGO_PROFILE_DEV_DEBUG=0`,
+never two blocks back to back:
+
+```
+round 1:  debug= 22.6s   nodebug=  3.9s
+round 2:  debug= 30.1s   nodebug=  3.7s
+round 3:  debug= 27.0s   nodebug=  3.3s
+```
+
+The whole table then ran in **1316 s including its 178 s cold build**, all 504 caught, 4
+skipped as not runnable on macOS --- and the directory is 1.7 GB rather than 14 GB.
+
+**Why it is safe, stated rather than assumed:** `debug` is debug *information*.
+`debug_assertions` and overflow checks are separate cargo knobs and are untouched, so every
+test runs exactly the program it ran before. What is given up is line numbers in a panic
+backtrace, and the harness identifies a caught mutation by the test *name* libtest prints,
+which carries none. Checked by grep before the change: nothing in the tree reads a backtrace.
+
+**And the general form.** When a documented cost is an order of magnitude off, the reflex is
+to look for what broke in the instrument. Look at what grew in the subject first --- it is the
+commoner cause and the one no check can report, because the check would have to know how big
+the thing is supposed to be.
+
 ### Narrowing a run made a shape the output parser had assumed away
 
 `mutate_frontend.py` was changed on 2026-08-21 to run only the test file holding the test

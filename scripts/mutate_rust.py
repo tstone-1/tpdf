@@ -80,7 +80,37 @@ CRATE = ROOT / "src-tauri"
 #: cost is one cold build ever rather than one per run. It also stops the editor
 #: from reporting diagnostics against a tree that is mutated at the time.
 MUT_TARGET = CRATE / "target" / "mutations"
-CARGO_ENV = {**os.environ, "CARGO_TARGET_DIR": str(MUT_TARGET)}
+
+#: And it builds that target directory *without debug info*, which is worth 7x.
+#:
+#: Every mutation touches one file, so cargo re-codegens the crate and relinks
+#: the test binary --- and with full debug info that binary is 33 MB and the
+#: cycle costs 22 to 30 s. Measured 2026-08-27, interleaved against the same
+#: command in a second target directory built with `debug = 0`:
+#:
+#:     round 1:  debug= 22.6s   nodebug=  3.9s
+#:     round 2:  debug= 30.1s   nodebug=  3.7s
+#:     round 3:  debug= 27.0s   nodebug=  3.3s
+#:
+#: For the 508-mutation table that is 5.6 hours against well under one, and the
+#: target directory is 1.7 GB rather than 14 GB. The cold build is 178 s, paid
+#: once.
+#:
+#: It is safe because `debug` is debug *information* only: `debug_assertions`
+#: and overflow checks are separate knobs and are untouched, so every test runs
+#: exactly the program it ran before. What is given up is line numbers in a
+#: panic backtrace, and nothing here reads one --- the harness identifies a
+#: caught mutation by the test *name* libtest prints, which is unaffected.
+#:
+#: The figure this replaces is `BUILD.md`'s 1.77 s per mutation, measured on
+#: 2026-08-21 when the crate was much smaller. That number did not go stale
+#: because anybody changed the harness; it went stale because the crate grew,
+#: which is exactly the kind of expiry nothing goes red about.
+CARGO_ENV = {
+    **os.environ,
+    "CARGO_TARGET_DIR": str(MUT_TARGET),
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+}
 
 #: Which platform this is, in the vocabulary `Mutation.only_on` uses.
 HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "win32" else "linux"

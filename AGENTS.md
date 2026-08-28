@@ -1372,6 +1372,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A Control+click is the primary button, so a guard on the button number missed the commonest right-click on macOS (the comment above the guard already stated the rule it was failing to enforce; the two-finger tap worked throughout, which is what made it read as a broken menu, and neither half of the guard had a test)
 - A key handler is only as safe as the newest element inside it (the correct reasoning was already written down two files away, and did not transfer)
 - A label the platform writes is compared against a label we write by nothing (two "About tpdf" items, six weeks apart, and every test in both languages checks ids)
+- A title that is a strict prefix of another ties, and registration order decides (typing a command's full name ran the OTHER command; two such pairs in the registry and the second is correct only by luck of source order, which a sweep over every title found and a patch for one pair would have missed --- three of the five tests are controls, and the one that cannot fail on its own earns its place against a NEGATIVE bonus)
 
 ### Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -1438,6 +1439,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A text comparison cannot see a property that is not about text
 - A selector naming one element stops reading the page when the layer gains another
 - A test whose precondition is already satisfied never runs
+- A check that borrows a neighbour's precondition passes wherever the neighbour ran (two sibling commands, two corpora; the failure reads as a command nobody registered, and the whole 92-mutation viewer table passed over it because its runner opens a corpus with text --- no mutation can guard it, and the comment stating the rule was already there twelve probes away)
 - A catch-all arm that was right for two variants is wrong for the third (a Reload button under a prompt about destroying the file; a quiet catch-all loses a notification, a loud one presses a button, and the check that exists is one layer from the defect)
 - A crash test that compiles away proves containment of a crash that never happened
 - A test for an atomic write must plant the intermediate it is meant to prove
@@ -1625,6 +1627,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A mechanical edit keyed on a field name hits every occurrence of that name (six wrong insertions: a parameter list, a request payload, an assertion, a check table; make the field required and let the type-checker enumerate the real sites)
 - An AppleScript loop over a property list iterates a reference, and every menu reads as empty (an instrument failure wearing the shape of a finding; two causes, one symptom, six lines)
 - A harness that edits source files pays for the editor watching them (4.4 hours to 405 s; the language server held the build lock, and the suite ran 607 tests to check one assertion)
+- A harness that prints its first three failures reads exactly like one that prints all of them (four baseline failures, three shown, one cycle of a five-minute harness spent rediscovering the fourth; the cut is ALPHABETICAL, so which one hides is arbitrary, and a re-run that goes red again reads as a repair that did not take)
+- A harness's cost expired because the code grew, and nothing goes red about that (a documented 1.77 s per mutation measured 40.0 s six days later, which is 5.6 hours for the table; the harness was unchanged and the CRATE had grown, so every mutation relinked a 33 MB debug binary --- `CARGO_PROFILE_DEV_DEBUG=0` took it to 2.5 s, and the first theory, that the binary was slow to LOAD, was refuted in one command by running it directly at 0.03 s)
 - A `tauri dev` watcher recompiles the crate you are gating, and rustc's own OOM reads as a failed test (`memory allocation of 1081360 bytes failed` with 34.5 GB free and 27 GB of commit headroom; the leaked-worker hypothesis was wrong and cost nothing to refute, and one unexplained observation is recorded as an observation)
 - A harness written on a locked screen is a harness that has never run (the half needing no screen was proved instead, and the gap went into `BUILD.md` beside the invocation, with the mutation that would prove it can go red)
 - A documented cost measured warm is the wrong number for the run you are about to make (0.47 s, ~8 s, 2 min 58 s and longer are all the same command; the correction written first was wrong in both halves, and its long figure had a second copy of itself contending for the build lock)
