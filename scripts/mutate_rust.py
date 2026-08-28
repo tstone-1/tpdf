@@ -5697,6 +5697,65 @@ MUTATIONS += [
     ),
 ]
 
+#: The evidence an unread control carries. None of these is unsafe -- every one
+#: leaves the verdict exactly as it was -- and that is the reason they are here:
+#: a measurement nobody can falsify is one that gets quoted, and `docs/PLAN.md`
+#: §6 has already had one increment ranked off a bucket with no denominator.
+MUTATIONS += [
+    Mutation(
+        # Report the token as read nowhere. The band hypothesis then measures
+        # zero on every corpus, which is the reassuring answer and the one that
+        # closes the question by hiding it.
+        "unread: report a token read outside the band as absent",
+        "src/ocr.rs",
+        "            .map(|i| control.overshoot(&i.rect))\n"
+        "            .min_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));",
+        "            .map(|i| control.overshoot(&i.rect))\n"
+        "            .min_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])))\n"
+        "            .filter(|_| false);",
+        "a_control_read_outside_its_band_is_recorded_as_outside_and_by_how_far",
+    ),
+    Mutation(
+        # Report the furthest reading rather than the nearest. The count is
+        # unchanged and the distance -- which is what says whether the repair is
+        # a tolerance or something larger -- becomes the worst span in the image.
+        "unread: report the furthest reading of the token, not the nearest",
+        "src/ocr.rs",
+        "            .min_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));",
+        "            .max_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));",
+        "the_nearest_reading_of_the_token_is_the_one_reported",
+    ),
+    Mutation(
+        # Count every span as in-band. `items == 0` is what separates an engine
+        # that read nothing from one that read the wrong things, and this leaves
+        # the two counters equal on every refusal.
+        "unread: count every span the engine returned as in-band",
+        "src/ocr.rs",
+        "                in_band: in_band.len(),",
+        "                in_band: items.len(),",
+        "an_engine_that_read_other_words_says_the_token_was_absent",
+    ),
+    Mutation(
+        # Write the overshoot with `f32::max`, which is the obvious spelling and
+        # returns the OTHER operand for a NaN -- so a rect with no centre reads
+        # as inside the band, is not counted as a survivor, and can certify.
+        # The only one of these five that is unsafe.
+        "unread: compute the overshoot with a max that swallows a NaN",
+        "src/ocr.rs",
+        "        let axis = |c: f32, lo: f32, hi: f32| {\n"
+        "            if c >= lo && c <= hi {\n"
+        "                0.0\n"
+        "            } else if c < lo {\n"
+        "                lo - c\n"
+        "            } else {\n"
+        "                c - hi\n"
+        "            }\n"
+        "        };",
+        "        let axis = |c: f32, lo: f32, hi: f32| (lo - c).max(c - hi).max(0.0);",
+        "a_centre_that_is_not_a_number_is_outside_the_band",
+    ),
+]
+
 
 #: A region over a picture. Two removals, and only the second one redacts:
 #: deleting the `Do` stops the page drawing the image, and dropping the resource
@@ -6069,8 +6128,8 @@ MUTATIONS += [
         # rule 1 and must not become a second copy of it.
         "gate: let the engine-failure reason drift from adjudicate's",
         "src/ocr_gate.rs",
-        "    Legibility::NotVerified {\n        why: format!(\"{e}\"),\n        cause: NotVerifiedCause::EngineError,\n    }\n}",
-        "    Legibility::NotVerified {\n        why: format!(\"the engine failed: {e}\"),\n        cause: NotVerifiedCause::EngineError,\n    }\n}",
+        "    Legibility::NotVerified {\n        why: format!(\"{e}\"),\n        cause: NotVerifiedCause::EngineError,\n        evidence: None,\n    }\n}",
+        "    Legibility::NotVerified {\n        why: format!(\"the engine failed: {e}\"),\n        cause: NotVerifiedCause::EngineError,\n        evidence: None,\n    }\n}",
         "the_error_path_says_what_adjudicate_would",
     ),
     Mutation(

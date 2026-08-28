@@ -396,11 +396,42 @@ impl Control {
     /// the control is, so a token occurring elsewhere on the page cannot stand in for it ---
     /// while tolerating an engine whose idea of a bounding box is looser than the pixels it
     /// was given. Which every engine's is: they are detections, not measurements.
+    ///
+    /// The centre test itself is in [`overshoot`](Self::overshoot), which answers the same
+    /// question with a distance attached. This is that answer at zero.
     fn contains(&self, rect: &[f32; 4]) -> bool {
+        self.overshoot(rect) == [0.0, 0.0]
+    }
+
+    /// How far a rect's centre sits outside the band, per axis, in points.
+    ///
+    /// Zero on an axis the centre is already inside, so `[0.0, 0.0]` *is*
+    /// [`contains`](Self::contains) --- written that way round so the two cannot
+    /// come to disagree about a span. The evidence on
+    /// [`Legibility::NotVerified`] is the second reader of this rule, and
+    /// `docs/TRAPS.md` carries more than one entry about a distinction kept in
+    /// two places.
+    ///
+    /// **A centre that is not a number reads as outside**, which is the safe
+    /// direction and is why the axis test is written as three explicit
+    /// comparisons rather than as a `clamp` or a pair of `f32::max` calls. Both
+    /// of those return the *other* operand when handed a `NaN`, so a degenerate
+    /// rect would come back as an overshoot of zero --- inside the band, not
+    /// counted as a survivor, and therefore able to certify a page.
+    fn overshoot(&self, rect: &[f32; 4]) -> [f32; 2] {
         let [l, t, r, b] = *rect;
         let [bl, bt, br, bb] = self.band;
         let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
-        cx >= bl && cx <= br && cy >= bt && cy <= bb
+        let axis = |c: f32, lo: f32, hi: f32| {
+            if c >= lo && c <= hi {
+                0.0
+            } else if c < lo {
+                lo - c
+            } else {
+                c - hi
+            }
+        };
+        [axis(cx, bl, br), axis(cy, bt, bb)]
     }
 }
 
@@ -635,6 +666,48 @@ fn longest_run(text: &str) -> &str {
         .unwrap_or("")
 }
 
+/// What the engine had returned when a control went unread.
+///
+/// **The refusal it rides on is the gate's largest bucket and its least
+/// diagnosable one.** [`NotVerifiedCause::ControlUnread`] says the token was not
+/// read back inside its band, and three quite different things produce that
+/// sentence: the engine returned nothing at all, it returned spans and none of
+/// them holds the token, or it *did* read the token and placed it outside the
+/// band --- which is a defect in the band rather than in the image, and is
+/// indistinguishable from the other two in a verdict carrying only prose.
+///
+/// `docs/PLAN.md` §6 ranked separating them, and separating them needs the items
+/// at the moment of the refusal, which no caller had: [`adjudicate`] consumes
+/// them and returns a [`Legibility`]. So they are summarised here rather than
+/// carried whole --- three numbers a probe can bucket, and no engine text, which
+/// is page content and has no business travelling with a verdict.
+///
+/// **Measured 2026-08-30, and the band is refused**: over 197 refusals at three
+/// sampling densities, not one span held the token and fell outside its band.
+/// What is left is the first shape --- the engine answering and returning
+/// nothing at all --- which is a statement about the image. The third field stays
+/// because a reading that has only ever been zero is the one whose disappearance
+/// would go unnoticed, and it is what would move if `ocr_gate::stack` or the
+/// centre rule changed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Unread {
+    /// How many spans the engine returned for the whole probe image.
+    ///
+    /// Zero is its own reading: the engine ran, answered, and read nothing
+    /// anywhere --- the image or the scale, never the band.
+    pub items: usize,
+    /// How many of those fell inside the control band.
+    pub in_band: usize,
+    /// How far outside the band the nearest span *containing the token* sat, per
+    /// axis, in points --- and `None` when no span anywhere held it.
+    ///
+    /// `Some` is the band hypothesis firing: the engine read the control and the
+    /// partition threw it away. The distance says which repair --- a hair over
+    /// the edge is a tolerance, half the image is an engine returning one span
+    /// for the lot.
+    pub token_outside_by: Option<[f32; 2]>,
+}
+
 /// The verdict of the redaction gate.
 ///
 /// Three-valued on purpose. Two-valued is the defect: with only clean and dirty,
@@ -661,6 +734,15 @@ pub enum Legibility {
         /// Which step could not be completed, in terms a *count* can be taken
         /// over. See [`NotVerifiedCause`].
         cause: NotVerifiedCause,
+        /// What the engine had returned, for the one cause that has an engine
+        /// answer to report. See [`Unread`].
+        ///
+        /// `None` means the engine had not answered --- either it never ran,
+        /// which is every cause that refuses before the recognition, or it
+        /// failed, which is [`NotVerifiedCause::EngineError`] and produced no
+        /// items to summarise. It never means *not recorded*: the one arm that
+        /// can build this always does.
+        evidence: Option<Unread>,
     },
 }
 
@@ -808,7 +890,9 @@ impl Legibility {
 /// 1. The engine failed at all --- `NotVerified`. It did not look.
 /// 2. The control token was not read back --- `NotVerified`. The engine ran and
 ///    proved it cannot read text of this size in this image, so its silence about
-///    the rest of the image carries no information.
+///    the rest of the image carries no information. This is the only rule whose
+///    verdict carries [`Unread`]: it is the only one where an engine answered
+///    and the answer is what the refusal is about.
 /// 3. Anything read outside the band --- `Legible`.
 /// 4. Otherwise --- `Illegible`.
 ///
@@ -828,20 +912,28 @@ pub fn adjudicate(
             return Legibility::NotVerified {
                 why: format!("{e}"),
                 cause: NotVerifiedCause::EngineError,
+                evidence: None,
             }
         }
     };
 
+    let token = normalise(&control.token);
     let (in_band, outside): (Vec<_>, Vec<_>) = items
         .iter()
         .cloned()
         .partition(|i| control.contains(&i.rect));
 
-    let control_seen = in_band
-        .iter()
-        .any(|i| normalise(&i.text).contains(&normalise(&control.token)));
+    let control_seen = in_band.iter().any(|i| normalise(&i.text).contains(&token));
 
     if !control_seen {
+        // The nearest one, so the number says how far the band missed rather
+        // than how far the worst span in the image is. `total_cmp` orders a
+        // `NaN` overshoot last, which is where a degenerate rect belongs.
+        let token_outside_by = outside
+            .iter()
+            .filter(|i| normalise(&i.text).contains(&token))
+            .map(|i| control.overshoot(&i.rect))
+            .min_by(|a, b| (a[0] + a[1]).total_cmp(&(b[0] + b[1])));
         return Legibility::NotVerified {
             why: format!(
                 "the control token {:?}, drawn at {:.1} pt, was not read back from the probe \
@@ -850,6 +942,11 @@ pub fn adjudicate(
                 control.token, control.size_pt
             ),
             cause: NotVerifiedCause::ControlUnread,
+            evidence: Some(Unread {
+                items: items.len(),
+                in_band: in_band.len(),
+                token_outside_by,
+            }),
         };
     }
 
@@ -1140,6 +1237,111 @@ mod tests {
         assert!(matches!(v, Legibility::NotVerified { .. }), "got {v:?}");
     }
 
+    /// The three shapes of evidence, asked of one function so a missing arm is
+    /// a compile error rather than a test nobody wrote.
+    fn unread(items: Vec<RecognisedItem>) -> Unread {
+        match adjudicate(&engine(), &control(), &Ok(items)) {
+            Legibility::NotVerified {
+                cause: NotVerifiedCause::ControlUnread,
+                evidence: Some(e),
+                ..
+            } => e,
+            other => panic!("expected an unread control carrying evidence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_engine_that_read_nothing_is_recorded_as_having_read_nothing() {
+        // Distinguishable from the two below by `items` alone, which is the
+        // whole point: this one is about the image or the scale and neither of
+        // the others is.
+        let e = unread(vec![]);
+        assert_eq!(e.items, 0);
+        assert_eq!(e.in_band, 0);
+        assert_eq!(e.token_outside_by, None);
+    }
+
+    #[test]
+    fn a_control_read_outside_its_band_is_recorded_as_outside_and_by_how_far() {
+        // The band hypothesis. `outside` sits at y 10 to 16 and the band starts
+        // at 100, so the centre is 87 pt above it and the horizontal centre is
+        // inside the full-width band.
+        let e = unread(vec![outside("K7QX2")]);
+        assert_eq!(e.items, 1);
+        assert_eq!(e.in_band, 0);
+        let by = e
+            .token_outside_by
+            .expect("the token was read, outside the band");
+        assert!(
+            (by[0] - 0.0).abs() < f32::EPSILON,
+            "the band spans the image's width, so nothing overshoots it sideways: {by:?}"
+        );
+        assert!(
+            (by[1] - 87.0).abs() < 0.001,
+            "expected 87 pt above the band's top edge, got {by:?}"
+        );
+    }
+
+    #[test]
+    fn an_engine_that_read_other_words_says_the_token_was_absent() {
+        // The reading that indicts the image rather than the band, and the one
+        // an `items` count alone cannot separate from the case above.
+        let e = unread(vec![outside("Aldebaran"), in_band("Aldebaran")]);
+        assert_eq!(e.items, 2);
+        assert_eq!(e.in_band, 1, "one of the two was inside the band");
+        assert_eq!(e.token_outside_by, None);
+    }
+
+    #[test]
+    fn the_nearest_reading_of_the_token_is_the_one_reported() {
+        // Two spans hold it. The number has to say how far the band missed, not
+        // how far the furthest thing in the image is.
+        let near = item("K7QX2", [5.0, 90.0, 60.0, 96.0]);
+        let e = unread(vec![outside("K7QX2"), near]);
+        let by = e.token_outside_by.expect("both spans hold the token");
+        assert!(
+            (by[1] - 7.0).abs() < 0.001,
+            "expected the nearer span's 7 pt, got {by:?}"
+        );
+    }
+
+    #[test]
+    fn a_centre_that_is_not_a_number_is_outside_the_band() {
+        // `f32::max` and `clamp` both return the other operand when handed a
+        // `NaN`, so an overshoot written with either reads as zero --- inside the
+        // band, not counted as a survivor, and able to certify the page. The
+        // safe direction is out.
+        let c = control();
+        let degenerate = [f32::NAN, 102.0, f32::NAN, 118.0];
+        assert!(
+            !c.contains(&degenerate),
+            "a rect with no centre was placed inside the control band"
+        );
+        let v = adjudicate(&engine(), &c, &Ok(vec![item("K7QX2", degenerate)]));
+        assert!(!v.certifies(), "a degenerate rect certified a page: {v:?}");
+    }
+
+    #[test]
+    fn the_overshoot_is_zero_exactly_when_the_band_contains_the_rect() {
+        // One rule, two readers. `contains` is written in terms of `overshoot`,
+        // so this pins the equivalence the evidence rests on rather than
+        // restating either.
+        let c = control();
+        for rect in [
+            [5.0, 102.0, 60.0, 118.0],
+            [10.0, 10.0, 90.0, 16.0],
+            [0.0, 98.5, 200.0, 121.5],
+            [-500.0, 105.0, -400.0, 115.0],
+            [0.0, 119.9, 10.0, 120.1],
+        ] {
+            assert_eq!(
+                c.contains(&rect),
+                c.overshoot(&rect) == [0.0, 0.0],
+                "the two readings of {rect:?} disagree"
+            );
+        }
+    }
+
     #[test]
     fn certifying_pixels_requires_an_illegible_verdict() {
         let buf = vec![0u8; 4 * 4 * 4];
@@ -1161,6 +1363,7 @@ mod tests {
             Legibility::NotVerified {
                 why: "engine crashed".into(),
                 cause: NotVerifiedCause::EngineError,
+                evidence: None,
             },
         ] {
             assert!(

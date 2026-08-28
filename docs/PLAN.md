@@ -3389,7 +3389,7 @@ The ten still under 8 px are a separate and smaller thing, and there are two way
 reading: a control box under 2 pt at the `MAX_SCALE` ceiling, or a probe image halved toward
 `MIN_SCALE` to fit the buffer. Nothing records which, and no measurement has separated them.
 
-**Ranked next on this subsystem --- and it is a question rather than a candidate.** The failure
+~~**Ranked next on this subsystem --- and it is a question rather than a candidate.** The failure
 rate is roughly flat at 19--33% across every token length of five or more, which is the signature
 of something that is a property of the *page or the image* rather than of the control the chooser
 picked. The one hypothesis of the original three never tested is band geometry: `adjudicate`
@@ -3398,7 +3398,68 @@ falling outside the band produces exactly this verdict and is indistinguishable 
 not reading it. Testing that needs the engine's items at the moment of refusal, which no caller
 has --- `adjudicate` returns a `Legibility`, and `NotVerified` carries a sentence and no evidence.
 So the increment is to give it some, and the measurement follows from that rather than preceding
-it.
+it.~~ **Answered 2026-08-30 --- and the answer is no.** See below.
+
+#### It was not the band, and it was not the scale either --- measured 2026-08-30
+
+The instrument the paragraph above asked for, built and run. `ocr::Unread` rides on
+`Legibility::NotVerified` and carries three numbers taken at the moment of the refusal: how many
+spans the engine returned for the whole probe image, how many fell inside the control band, and
+how far outside the band the nearest span *containing the token* sat. `None` on that last one
+means no span anywhere held it.
+
+Three numbers rather than the items themselves, for two reasons. Engine text is page content and
+has no business travelling with a verdict --- `redact-reach-probe` runs against a corpus of real
+documents and prints counts and shapes only. And the question is a count question: a probe can
+bucket three integers and cannot bucket a list of strings.
+
+**The band hypothesis is refused, over 197 refusals at three densities.**
+
+| `--regions` | control not read back | read nothing at all | read spans, none holding it | **read it, outside its band** |
+|---|---|---|---|---|
+| 4 | 35 | 21 (60.0%) | 14 (40.0%) | **0** |
+| 12 | 66 | 36 (54.5%) | 30 (45.5%) | **0** |
+| 40 | 96 | 80 (83.3%) | 16 (16.7%) | **0** |
+
+Not one span in the corpus held the control token and fell outside its band. `Control::contains`
+is a centre test over a band that spans the image's full width, so the only way to fall outside
+it is vertically, and nothing does. The centre rule earned that in 2026-08-27 --- it replaced
+strict containment precisely because Vision reports a box 1.5 pt above the strip it came from ---
+and this says the tolerance it bought is sufficient at every density measured.
+
+**And the scale is not what is left.** The rendered-height axis and the shape axis are two
+bucketings of one population, so crossing them is the only way to say which regions are in both.
+The probe now does:
+
+| `--regions 40` | under 8 px | 16 px and over | total |
+|---|---|---|---|
+| read nothing at all | 40 | **40** | 80 |
+| read spans, none holding it | 0 | 16 | 16 |
+| read it, outside its band | 0 | 0 | 0 |
+| total | 40 | 56 | 96 |
+
+**40 of the 80 silent refusals were shown a control at or above `MIN_CONTROL_PX`.** The two
+marginals --- 80 silent, 40 under the floor --- bound that anywhere between 40 and 80 and cannot
+measure it, which is why the cross-tabulation was worth the field rather than the arithmetic.
+`docs/TRAPS.md` carries the entry.
+
+**So the remaining defect is that the engine returns nothing at all for a probe image that
+contains a control it should be able to read.** That is the majority shape at every density, it
+is not explained by how tall the control landed, and it is a statement about the image rather
+than about anything the chooser or the band does. Two readings sharpen it: at `--regions 40`
+every one of the 40 sub-floor controls is silent and every one of the 16 partial readings is at
+or above the floor, so below the floor the engine does not read *less*, it reads nothing --- but
+at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
+density and not a rule.
+
+**Ranked next: reproduce the silence on a fixture.** Everything above is measured on a corpus
+whose pixels deliberately never leave the process, so nothing here can look at the image the
+engine was handed. `testdata/` can: if a probe image built from a fixture reproduces a zero-item
+answer, the two candidates worth trying are cheap to separate --- a probe image that is a page
+wide and a few dozen rows tall may be outside what Vision accepts at all, and a control strip
+whose crop lands on rows the word does not occupy would be blank without any step failing. Both
+are properties of the image, which is where the evidence now points, and neither can be
+distinguished from the other by any count this harness can take.
 
 **And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
 one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose
