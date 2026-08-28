@@ -430,18 +430,103 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
         real_h,
         f64::from(sheet.width) / f64::from(real_h)
     );
-    println!("           height   aspect   spans   control read");
+    // **The variable is the region strip's height, which is the corpus's own.**
+    // A probe image's shape is set by how tall the dragged region is against the
+    // page's width, so sweeping the white region strip is sweeping the thing a
+    // real page varies. Two earlier drafts got this wrong in ways worth naming:
+    // the first used the page's tallest blank band and measured a shape the gate
+    // never builds, and the second grew the image with `Vec::resize`, which
+    // appends white *below the bottom margin* rather than widening the margins
+    // --- close enough to look at, and not the construction a padding change in
+    // [`ocr_gate::stack`] would produce. Every row below is a real `stack`
+    // output, so the sweep and the repair are the same code path.
+    //
+    // The control strip is byte-identical in every row: `sheet.rows(ctrl_top,
+    // ctrl_h)` is the one argument that does not move.
+    //
+    // **It reaches past 16:1, which the earlier sweep could not.** Growing the
+    // image from the gate's own 7.0:1 only ever made it squarer, so the band the
+    // corpus says is silent --- wider than 16:1 --- had never been built on a
+    // fixture at all. `docs/PLAN.md` §6 ranked padding as the repair, and a
+    // repair for a band nothing has reproduced is a guess.
+    //
+    // **The fixed rows put a ceiling on the aspect, and it is the finding.**
+    // `stack` always writes two margins, the gap and the control strip, so the
+    // shortest image buildable from this control is `base + 1` rows and the
+    // widest shape reachable is `width / (base + 1)`. On these fixtures that is
+    // about 9:1, which is *below* the band the corpus goes silent in --- so the
+    // wide tail cannot be reproduced by shrinking the region here at all. It is
+    // reachable on a real page only with a shorter control, because the aspect
+    // is `width_pt / (tallest + control_pt + padding)` and the render scale
+    // cancels out of it.
+    let base = real_h.saturating_sub(ctrl_h);
+    let ceiling = f64::from(sheet.width) / f64::from(base + 1);
+    println!(
+        "           the fixed rows are {base} px, so nothing wider than {ceiling:.1}:1 can be \
+         built from this control"
+    );
+    // **Where the padding rows go is a second variable, and the earlier sweep
+    // confounded it with the aspect.** That draft grew the image with
+    // `Vec::resize`, which appends white *after* the bottom margin, and reported
+    // `outline-simple` losing the token at 1.9:1 --- the one piece of evidence
+    // that made padding "a candidate rather than an obvious win" in
+    // `docs/PLAN.md` §6. Building the same height through `stack` puts the white
+    // in the region strip instead, above the control rather than below it. The
+    // `trailing` column is the old construction at the same height, so the two
+    // differ in nothing but where the rows sit.
+    println!("           region   height   aspect   spans   control read   trailing");
     let mut read_anywhere = false;
     let mut tallest_silent = 0u32;
-    for factor in [1u32, 2, 4, 8] {
-        let target = real_h * factor;
-        let mut image = real.clone();
-        image.resize(target as usize * stride, 0xFF);
+    let mut wide_silent = 0usize;
+    let mut wide_shapes = 0usize;
+    // Read at the gate's own shape, explicitly rather than by hoping a swept
+    // height lands on it. The first draft took this from `height == real_h`
+    // inside the loop, where no swept aspect ever produces that number, so the
+    // control could not pass -- it failed on all four fixtures and was right to.
+    let held_at_gate_shape = engine
+        .recognise(
+            Pixels {
+                rgba: &real,
+                width: sheet.width,
+                height: real_h,
+                scale,
+            },
+            &opts,
+        )
+        .map(|items| {
+            items
+                .iter()
+                .any(|i| i.text.to_uppercase().contains(&token.to_uppercase()))
+        })
+        .unwrap_or(false);
+    println!(
+        "           {:>6}   {real_h:>6}   {:>5.1}:1       -   {}   <- the gate's own",
+        ctrl_h,
+        f64::from(sheet.width) / f64::from(real_h),
+        if held_at_gate_shape { "yes" } else { "no" }
+    );
+    for aspect in [28.0f64, 24.0, 20.0, 16.0, 12.0, 8.0, 4.0, 2.0] {
+        let want = (f64::from(sheet.width) / aspect).round().max(1.0) as u32;
+        // A shape below the fixed furniture -- two margins, the gap and the
+        // control strip -- cannot be built at all, and skipping it silently
+        // would read as a shape that was tried and said nothing.
+        let Some(under) = want.checked_sub(base).filter(|u| *u > 0) else {
+            println!(
+                "           {:>6}   {want:>6}   {aspect:>5.1}:1   (needs {} fewer fixed rows)",
+                0,
+                base + 1 - want.min(base + 1)
+            );
+            continue;
+        };
+        let strip = vec![0xFFu8; under as usize * stride];
+        let (image, height, _) =
+            ocr_gate::stack(&strip, sheet.rows(ctrl_top, ctrl_h), sheet.width, scale)
+                .map_err(|e| format!("stack: {e}"))?;
         let seen = engine.recognise(
             Pixels {
                 rgba: &image,
                 width: sheet.width,
-                height: target,
+                height,
                 scale,
             },
             &opts,
@@ -455,14 +540,53 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
             ),
             Err(_) => (0, false),
         };
+        // The shape actually built, not the one asked for: `stack` rounds its
+        // margins, so the two differ by a row or two and the aspect printed has
+        // to be the one the engine was shown.
+        let got = f64::from(sheet.width) / f64::from(height);
         if spans > 0 {
             read_anywhere = true;
         } else {
-            tallest_silent = tallest_silent.max(target);
+            tallest_silent = tallest_silent.max(height);
         }
+        if got > 16.0 {
+            wide_shapes += 1;
+            if spans == 0 {
+                wide_silent += 1;
+            }
+        }
+        // The same height, padded the other way: the gate's own image with white
+        // rows appended below its bottom margin. Only defined once the target is
+        // taller than what `stack` already produced.
+        let trailing = if height > real_h {
+            let mut image = real.clone();
+            image.resize(height as usize * stride, 0xFF);
+            let held = engine
+                .recognise(
+                    Pixels {
+                        rgba: &image,
+                        width: sheet.width,
+                        height,
+                        scale,
+                    },
+                    &opts,
+                )
+                .map(|items| {
+                    items
+                        .iter()
+                        .any(|i| i.text.to_uppercase().contains(&token.to_uppercase()))
+                })
+                .unwrap_or(false);
+            if held {
+                "yes"
+            } else {
+                "no"
+            }
+        } else {
+            "-"
+        };
         println!(
-            "           {target:>6}   {:>5.1}:1   {spans:>5}   {}",
-            f64::from(sheet.width) / f64::from(target),
+            "           {under:>6}   {height:>6}   {got:>5.1}:1   {spans:>5}   {:>11}   {trailing}",
             if held { "yes" } else { "no" }
         );
     }
@@ -478,6 +602,24 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
             "no shape read it, so the rows above are about this strip".into()
         },
     );
+    // The second control, and the one the sweep's conclusion rests on. A "no" in
+    // the wide rows means the shape lost the token only if the token was there
+    // to lose at the shape the gate actually builds. Without this, a strip this
+    // engine simply cannot read produces a column of "no" that reads exactly
+    // like a finding about proportions.
+    r.check(
+        held_at_gate_shape,
+        "the token reads back at the gate's own shape",
+        if held_at_gate_shape {
+            format!("{real_h} px, so a \"no\" further out is about the shape")
+        } else {
+            "not read at the gate's own shape, so the sweep says nothing".into()
+        },
+    );
+    // Not a check: whether a fixture reproduces the corpus's silent band is the
+    // measurement, and a probe that fails when the answer is "it does not" would
+    // be asserting the hypothesis rather than testing it.
+    println!("           beyond 16:1: {wide_silent} of {wide_shapes} shape(s) returned nothing");
 
     // ------------------------------------------- the chooser, against a real engine
     // The three checks above take their control out of the ENGINE's own output,

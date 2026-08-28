@@ -2146,29 +2146,58 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- 
 
 | fixture | result |
 |---|---|
-| `text-base14`, `text-marked`, `text-truetype`, `text-cid`, `rotated` | 7/7 |
-| `outline-simple` | 6/6, 1 skipped |
-| `form` | 5/5, 2 skipped |
+| `text-base14`, `text-marked`, `text-truetype`, `text-cid`, `rotated` | 9/9 |
+| `outline-simple` | 8/8, 1 skipped |
+| `form` | 7/7, 2 skipped |
 | `columns` | 2/2, 4 skipped --- two columns leave no vertically isolated span to use as a control |
 | `vector-heavy` | 1/1 against the *inverted* claim: the page has no text, so reading none is correct |
-| `links` | **5/6**, 1 skipped --- one expected red, below |
-| `encodings` | **5/6**, 1 skipped --- one expected red, below |
+| `links` | **7/8**, 1 skipped --- one expected red, below |
+| `encodings` | **7/8**, 1 skipped --- one expected red, below |
+
+⚠ **Those counts were two behind on 2026-08-30 and are re-measured here.** The shape sweep's
+control was added in the same commit that last touched this table and the row was not moved with
+it, so every fixture the sweep runs on read one low before today and two after. `columns` and
+`vector-heavy` are unchanged, which is the tell that the drift is the sweep: it is skipped on
+both. A count in prose has no gate behind it --- derive it from a run, and re-derive it whenever
+a check is added.
 
 **A shape sweep prints above the checks**, added 2026-08-30 and not a check --- it passes and
-fails nothing. It builds the gate's own probe image through `ocr_gate::stack` (a line's height of
-white where the region was, the control strip under it) and re-asks Vision at that shape and at
-two, four and eight times its height, with the content byte-identical in every row. It exists
-because the corpus probe's largest remaining bucket is the engine *answering* and returning no
-spans at all, and a corpus measurement cannot look at the image it was handed while a fixture can.
+fails nothing. It exists because the corpus probe's largest remaining bucket is the engine
+*answering* and returning no spans at all, and a corpus measurement cannot look at the image it
+was handed while a fixture can.
 
-The one check beside it is the control over the sweep: the strip has to read at *some* shape, or
-every row is a statement about that strip rather than about the proportions. Measured on four
-fixtures: the gate's real shape is **7.0:1** and Vision returned a span at every shape down to
-0.9:1, so the silence does not reproduce here. On `outline-simple` it kept returning a span and
-stopped reading the *token* back at 1.9:1 and 0.9:1 --- which is why the sweep reports both
-columns, and why padding is not an obvious remedy.
+**It sweeps the region strip's height, which is the corpus's own variable**, and every row is a
+real `ocr_gate::stack` output rather than a resized one --- so the sweep and any padding change
+are the same code path. The control strip is byte-identical in every row. Two earlier drafts got
+the construction wrong and both were corrected the same day: the first used the page's tallest
+blank band and measured a shape the gate never builds, and the second grew the image with
+`Vec::resize`, which appends white *below the bottom margin* rather than widening the image the
+way `stack` would.
 
-**The seventh check is the control chooser**, added 2026-08-27, and it is the only place
+⚠ **The fixed rows cap the aspect, so the band the corpus goes silent in cannot be built here at
+all.** `stack` always writes two margins, the gap and the control strip, and on these fixtures
+that is 104 to 117 px of a 1190-wide image --- a ceiling of **10.1:1 to 11.3:1**. Every target at
+12:1 and wider prints how many rows short it is instead of a reading, because a shape that was
+never built must not read like a shape that was tried and said nothing. Reaching past 16:1 needs a
+*shorter control*: the aspect is `width_pt / (tallest + control_pt + padding)` and the scale
+cancels, so with `padding` fixed at 24 pt a 595 pt page needs the region and the control together
+under about 13 pt.
+
+**Two checks are the controls over the sweep.** The strip has to read at *some* shape, or every
+row is a statement about that strip rather than about the proportions; and the token has to read
+back at the gate's own shape, or a "no" further out is not evidence about the shape either. The
+second was written from `height == real_h` inside the loop, which no swept aspect ever produces
+--- it failed on all four fixtures and was right to. It reads the gate's own image explicitly now.
+
+**The `trailing` column separates the aspect from where the padding rows sit**, and it overturned
+the reason padding was called a candidate rather than a win. At equal height and equal aspect,
+`outline-simple` at 4.0:1 reads the token back when the white is in the region strip and **not**
+when it is appended below the bottom margin. The earlier "padding loses the token at 1.9:1" was
+about trailing whitespace after the control, not about proportions. Through `stack`'s own
+construction the token reads back at every buildable shape on `text-base14`, `outline-simple` and
+`encodings`.
+
+**The control-chooser check**, added 2026-08-27 --- the ninth on a fixture where every check runs, and named here rather than numbered because appending a check renames a number, and it is the only place
 `ocr::control_from_page`'s claim meets a real engine. The three gate checks above it take their
 control strip out of **Vision's own output**, which is the engine agreeing with itself; this one
 chooses from what the *document* says and then asks Vision to read it back. It runs in both
