@@ -64,6 +64,23 @@ pub enum ItemSpec {
     },
 }
 
+/// Whether this platform gets a menu bar at all.
+///
+/// **The product decision, in the module it is about.** The header says why: on
+/// macOS the bar lives outside the window and costs the reader nothing, and on
+/// Windows a menu bar is chrome *inside* the window --- which this application
+/// exists partly to avoid. So everywhere else [`install`] and [`set_enabled`]
+/// return without building anything.
+///
+/// `const` rather than `#[cfg]` on the whole module, and that is the point of
+/// the shape. This module is `tauri::menu` throughout --- the only mentions of
+/// AppKit in it are in prose --- so it type-checks on every platform, and
+/// keeping it compiled everywhere means the frontend's payload is checked
+/// everywhere too. It was not: the Windows arm of `set_menu` took the spec as an
+/// unread `serde_json::Value`, so a change to the menu payload's shape would
+/// have compiled there and been read by nothing.
+pub const INSTALLS: bool = cfg!(target_os = "macos");
+
 /// One menu in the bar.
 #[derive(Deserialize, Debug, Clone)]
 pub struct SectionSpec {
@@ -113,6 +130,9 @@ impl<R: Runtime> MenuItems<R> {
 /// like one whose commands are missing, and this is the code path a reader
 /// notices only by the absence of what they were looking for.
 pub async fn install<R: Runtime>(app: &AppHandle<R>, spec: Vec<SectionSpec>) -> Result<(), String> {
+    if !INSTALLS {
+        return Ok(());
+    }
     let (tx, mut rx) = tauri::async_runtime::channel(1);
     let handle = app.clone();
     app.run_on_main_thread(move || {
@@ -139,6 +159,9 @@ pub async fn set_enabled<R: Runtime>(
     app: &AppHandle<R>,
     state: HashMap<String, bool>,
 ) -> Result<(), String> {
+    if !INSTALLS {
+        return Ok(());
+    }
     let (tx, mut rx) = tauri::async_runtime::channel(1);
     let handle = app.clone();
     app.run_on_main_thread(move || {

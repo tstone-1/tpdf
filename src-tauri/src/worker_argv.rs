@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 #[cfg(windows)]
-use crate::worker::{DOC_HANDLE_ARGV, TILE_HANDLE_ARGV};
+use crate::worker::{DOC_HANDLE_ARGV, OUT_HANDLE_ARGV, TILE_HANDLE_ARGV};
 
 /// Where the worker's PDFium library lives, given the parent's own.
 #[must_use]
@@ -48,6 +48,16 @@ pub fn doc_handle_arg(args: &[String]) -> Option<usize> {
 #[must_use]
 pub fn tile_handle_arg(args: &[String]) -> Option<usize> {
     value_of(args, TILE_HANDLE_ARGV).and_then(|v| v.parse().ok())
+}
+
+/// The output file handle the parent passed, on Windows.
+///
+/// `None` for every worker but one spawned to write --- see
+/// [`crate::worker::OUT_FD`].
+#[cfg(windows)]
+#[must_use]
+pub fn out_handle_arg(args: &[String]) -> Option<usize> {
+    value_of(args, OUT_HANDLE_ARGV).and_then(|v| v.parse().ok())
 }
 
 /// Joins arguments into the single command line `CreateProcess` takes.

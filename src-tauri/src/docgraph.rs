@@ -276,6 +276,40 @@ impl DocumentGraph {
             .map_err(|why| why.message)
     }
 
+    /// Applies a plan to these bytes and serialises the whole document.
+    ///
+    /// The counterpart of [`DocumentGraph::append`] for every plan an append
+    /// cannot express --- a deleted page, a move, a turn, a crop --- and uncached
+    /// for the same reason: two saves of one document are two different answers,
+    /// and the second one is not the first.
+    ///
+    /// **The bytes are not returned to the coordinator.** The caller writes them
+    /// down the descriptor the worker was started with; see
+    /// `worker_proto::Request::Rewrite`. What this function knows is the
+    /// document and the plan, which is the whole of the split it exists for.
+    ///
+    /// **A [`crate::save::Refusal`] rather than a `String`**, alone among the
+    /// methods here, and it is the one refusal a reader can act on that the
+    /// others do not make: *this file is not the file your edits were made
+    /// against*, which is the difference between offering Reload and not. Every
+    /// other caller of this type reports a failure and stops.
+    ///
+    /// # Errors
+    ///
+    /// The document's bytes are unreadable, or [`crate::save::rewrite_update`]
+    /// refuses --- see there for the reasons, all of which are about the document
+    /// or the plan rather than about this process.
+    pub fn rewrite(
+        &self,
+        plan: &crate::edits::Plan,
+        view: u8,
+    ) -> Result<Vec<u8>, crate::save::Refusal> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| crate::save::Refusal::from("the document's bytes could not be read"))?;
+        crate::save::rewrite_update(&bytes, plan, view, self.password())
+    }
+
     /// How many pages `lopdf` finds in these bytes.
     ///
     /// Uncached, like [`DocumentGraph::append`] and for a related reason: those

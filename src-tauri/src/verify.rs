@@ -367,6 +367,28 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
         )),
         Ok(doc) => {
             report.objects = doc.objects.len();
+            // **Before the walk, because an empty walk finds nothing and that
+            // reads exactly like a clean file.** `lopdf` answers `Ok` for a
+            // document it could not authenticate, having parsed no objects at
+            // all --- so the loop below would compare every needle against
+            // nothing, `found` would stay empty, and `verdict` would answer
+            // *Verified* about bytes this build never decoded. An absence and a
+            // lock are the same reading here, and the reassuring one is wrong.
+            //
+            // `docs/PLAN.md` §6 forbids reporting a redaction clean that was not
+            // proved clean, and this is the one scanner that claim rests on.
+            if doc.is_encrypted() {
+                report.blind.push(
+                    "the file is encrypted and no password opened it, so nothing in it was \
+                     decoded and nothing it contains was checked"
+                        .to_string(),
+                );
+            } else if doc.objects.is_empty() {
+                report.blind.push(
+                    "the file parsed to no objects at all, so nothing in it was accounted for"
+                        .to_string(),
+                );
+            }
             for (id, object) in &doc.objects {
                 let strings = flatten_strings(object);
                 for needle in needles {
@@ -749,6 +771,94 @@ mod tests {
         assert!(
             why[0].contains("SECRET") && why[0].contains("still in the file"),
             "the leak comes first: {why:?}"
+        );
+    }
+
+    /// A scan that decoded nothing must never be the reassuring answer.
+    ///
+    /// **The one claim `docs/PLAN.md` §6 will not let this build make.** `lopdf`
+    /// answers `Ok` for a document it could not authenticate, having decoded
+    /// none of it --- so every needle is compared against nothing, `found` stays
+    /// empty, and without the guard `verdict()` says *Verified* about bytes this
+    /// build never read. Measured on the fixture below: one blind entry, which
+    /// is the guard's own, so the verdict really was `Verified` before it.
+    ///
+    /// **Two subjects, because there are two rules.** The encrypted document
+    /// parses to **one** object rather than none --- so an `objects.is_empty()`
+    /// guard, which is the obvious one to write, would not fire here at all. It
+    /// is `is_encrypted()` that answers, and the emptiness rule needs a file of
+    /// its own or neither is falsifiable.
+    #[test]
+    fn a_scan_that_decoded_no_object_is_not_verified() {
+        let needles = vec!["a-string-that-is-in-no-document".to_string()];
+
+        let path = std::path::Path::new("../testdata/incr-encrypted-pw.pdf");
+        if !path.exists() {
+            println!(
+                "[SKIP] a_scan_that_decoded_no_object_is_not_verified: generate testdata/ (BUILD.md)"
+            );
+            return;
+        }
+        let bytes = std::fs::read(path).expect("read the fixture");
+
+        let locked = super::scan(&bytes, &needles, None);
+        assert_eq!(
+            locked.objects, 1,
+            "the fixture must be one `lopdf` opens without decoding it --- if this ever \
+             becomes 0 the emptiness rule below is what catches it, and this test is measuring \
+             the wrong thing"
+        );
+        assert!(
+            locked.found.is_empty(),
+            "the needle is in no document --- the point is that looking for it succeeded \
+             without anything having been looked at"
+        );
+        let Verdict::NotVerified(why) = locked.verdict() else {
+            panic!("a scan that decoded no object must never verify");
+        };
+        assert!(
+            why.iter()
+                .any(|reason| reason.contains("no password opened it")),
+            "the verdict has to say the file was never decoded: {why:?}"
+        );
+
+        // The control for that one. With the key the walk happens, so the guard
+        // is about what was read rather than about encryption as such.
+        let seeing = super::scan(&bytes, &needles, Some("swordfish"));
+        assert!(
+            seeing.objects > 1,
+            "with the password the scan must reach the object graph, not just its wrapper"
+        );
+        assert!(
+            !seeing
+                .blind
+                .iter()
+                .any(|reason| reason.contains("no password opened it")),
+            "a scan that decoded the file must not report it as undecoded: {:?}",
+            seeing.blind
+        );
+
+        // **The second subject.** A file that parses cleanly and holds nothing:
+        // not encrypted, so the rule above cannot reach it. Built by hand for
+        // `well_formed`'s reason --- `lopdf` writes at least a catalog for every
+        // document it will serialise, so no fixture from the writer has this
+        // shape.
+        let mut hollow = Vec::new();
+        hollow.extend_from_slice(b"%PDF-1.7\n");
+        let start = hollow.len();
+        hollow.extend_from_slice(b"xref\n0 1\n0000000000 65535 f \n");
+        hollow.extend_from_slice(b"trailer\n<</Size 1>>\n");
+        hollow.extend_from_slice(format!("startxref\n{start}\n%%EOF\n").as_bytes());
+        let empty = super::scan(&hollow, &needles, None);
+        assert_eq!(empty.objects, 0, "the hand-built file holds no objects");
+        let Verdict::NotVerified(why) = empty.verdict() else {
+            panic!("a scan of a document with no objects in it must never verify");
+        };
+        assert!(
+            why.iter()
+                .any(|reason| reason.contains("no objects at all")),
+            "the emptiness rule has its own reason, and this is the only subject that \
+             reaches it: {why:?}"
         );
     }
 }

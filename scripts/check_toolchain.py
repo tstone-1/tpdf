@@ -23,8 +23,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-PIN_FILE = REPO / "rust-toolchain.toml"
+ROOT = Path(__file__).resolve().parent.parent
+PIN_FILE = ROOT / "rust-toolchain.toml"
 
 
 def pinned_channel() -> str:
@@ -38,7 +38,7 @@ def running_version(argv: "list[str]") -> "str | None":
     try:
         out = subprocess.run(
             argv,
-            cwd=REPO,
+            cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,
@@ -55,7 +55,7 @@ def running_host() -> "str | None":
     try:
         out = subprocess.run(
             ["rustc", "-vV"],
-            cwd=REPO,
+            cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,
@@ -79,7 +79,7 @@ def commit_hash(argv: "list[str]") -> "str | None":
     try:
         out = subprocess.run(
             argv,
-            cwd=REPO,
+            cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,

@@ -71,10 +71,39 @@ Rust spelling of that shape is either not a loss or not silent:
     documentation comment that doesn't document anything".
   - **An inner `//!` where an outer `///` was meant** is `error[E0753]`.
 
-So a `.rs` arm would be a check with no reachable subject, which is the shape
-this repository refuses everywhere else. The review's six line-ranges were read
-two days later and every one of them pointed at a doc comment correctly bound to
-its item; the ranges had simply moved.
+So a `.rs` arm for *that* shape would be a check with no reachable subject, which
+is the shape this repository refuses everywhere else. The review's six
+line-ranges were read two days later and every one of them pointed at a doc
+comment correctly bound to its item; the ranges had simply moved.
+
+## The Rust shape that IS reachable, and it is not loss --- it is misattribution
+
+**The four bullets above are all about a blank line between the two runs. Take
+the blank line away and Rust does something else: the two runs are one comment.**
+Everything the first block said --- its summary, its `# Errors` section --- is
+then rendered as documentation for the item below, and the item the first block
+was written for keeps whatever it had, which is usually nothing. Nothing is lost,
+so the paragraph above is right; the attribution is wrong, and a confidently
+wrong rustdoc page is worse than a missing one.
+
+Measured on 2026-08-28, three live instances:
+
+  - `render.rs` --- seventeen lines describing `close` sat on the end of
+    `release_all`'s comment. `release_all` rendered with both, and `close` had no
+    documentation at all.
+  - `save.rs` --- `mark_sites` rendered with **two `# Errors` sections** and two
+    summaries, the second describing a function that writes.
+  - `lib.rs` --- introduced *in the session that wrote this check*, while fixing
+    the other two, and found only by running it. That is the argument for the
+    arm existing: the defect is invisible to a careful reader by construction.
+
+The rule is narrow on purpose. A `///` line is flagged when it ends a sentence,
+the line before it ends a sentence, the next line is a blank `///`, and the
+paragraph after that opens with this repository's house style for the paragraph
+that follows a summary --- a `**bolded claim**`. Measured over the whole tree
+that is seven flags: the three above, and four ordinary paragraph-final
+sentences, which are listed in `PROSE` with a reason each. A wider rule flagged
+twenty-four and would have been argued down to nothing.
 
 The same question is open for `scripts/*.py` and deliberately not answered here:
 a second docstring in a row is inert rather than lost, so the Python shape is not
@@ -89,10 +118,69 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-#: Frontend only, and the docstring above says why with the measurements: every
-#: Rust spelling of this defect is caught by rustc or by the clippy gate, so a
-#: `.rs` arm here would be a check with no reachable subject.
+#: Frontend only *for the orphan rule*, and the docstring above says why with the
+#: measurements: every Rust spelling of a silently **lost** doc comment is caught
+#: by rustc or by the clippy gate. Rust has its own shape, `fused` below.
 SUFFIXES = {".ts", ".svelte"}
+
+RUST = ROOT / "src-tauri" / "src"
+
+#: Lines the fused-run rule flags that are ordinary prose: a paragraph's last
+#: sentence, after another sentence, before a bolded paragraph. Keyed by file and
+#: by the line's own text, so an edit elsewhere in the file does not move them,
+#: and each carries why it is not a summary. An entry whose text is no longer in
+#: its file fails the check rather than being ignored --- an exemption nobody can
+#: see is how a check stops covering what it was written for.
+PROSE: dict[tuple[str, str], str] = {
+    (
+        "lib.rs",
+        "`docs/THREAT-MODEL.md` §T6.9 carries what holding it costs.",
+    ): "closes the paragraph about holding the password, and points at the section",
+    (
+        "save.rs",
+        "`docs/THREAT-MODEL.md` §T6 and residual risk 18 carry what that changes.",
+    ): "the same shape: a pointer closing the paragraph about where the parse runs",
+    (
+        "worker_shm.rs",
+        "`examples/rewrite_probe.rs` measures exactly that, deterministically.",
+    ): "names the probe that measures the SIGBUS the paragraph describes",
+    (
+        "workers.rs",
+        "That is the point of restarting.",
+    ): "a four-word conclusion to the paragraph above it, not a summary of an item",
+}
+
+
+def fused(path: pathlib.Path) -> list[tuple[int, str]]:
+    """Lines that look like a second summary inside one `///` run.
+
+    See the module docstring: two `///` runs with no blank line between them are
+    one comment, so the first block's summary and `# Errors` are rendered as the
+    documentation of the item below it.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    out: list[tuple[int, str]] = []
+
+    def doc(at: int) -> str | None:
+        if 0 <= at < len(lines) and lines[at].strip().startswith("///"):
+            return lines[at].strip()[3:].strip()
+        return None
+
+    for i in range(len(lines)):
+        here, before = doc(i), doc(i - 1)
+        if not here or not before:
+            continue
+        if not here.endswith(".") or not before.endswith("."):
+            continue
+        if doc(i + 1) != "":
+            continue
+        after = doc(i + 2)
+        if after is None or not after.startswith("**"):
+            continue
+        if (path.name, here) in PROSE:
+            continue
+        out.append((i + 1, here))
+    return out
 
 
 def blocks(lines: list[str]) -> list[tuple[int, int]]:
@@ -150,7 +238,48 @@ def main() -> int:
         for line, first in orphans(path):
             findings.append(f"{path.relative_to(ROOT)}:{line}: {first[:80]}")
 
-    print(f"scanned {len(files)} files, {total} doc comments")
+    # The Rust arm. A different rule for a different failure -- see the module
+    # docstring: not a doc comment that is lost, one that binds to the wrong item.
+    rust = sorted(p for p in RUST.rglob("*.rs") if p.is_file())
+    if not rust:
+        print(f"[FAIL] no .rs files under {RUST}", file=sys.stderr)
+        return 1
+    by_name = {p.name: p for p in rust}
+    for name, text in PROSE:
+        path = by_name.get(name)
+        if path is None:
+            print(f"[FAIL] the PROSE entry for {name} names a file that is gone", file=sys.stderr)
+            return 1
+        if text not in path.read_text(encoding="utf-8"):
+            print(
+                f"[FAIL] {name} no longer contains the PROSE line {text!r}, "
+                "so the exemption is stale",
+                file=sys.stderr,
+            )
+            return 1
+
+    fusions: list[str] = []
+    for path in rust:
+        for line, text in fused(path):
+            fusions.append(f"{path.relative_to(ROOT)}:{line}: {text[:80]}")
+
+    print(f"scanned {len(files)} frontend files ({total} doc comments) and {len(rust)} Rust files")
+    if fusions:
+        print(
+            f"[FAIL] {len(fusions)} Rust doc comment(s) look like a second summary inside "
+            "one `///` run. Two runs with no blank line between them are ONE comment, so "
+            "everything above binds to the item below and the item it was written for has "
+            "nothing.",
+            file=sys.stderr,
+        )
+        for line in fusions:
+            print(f"       {line}", file=sys.stderr)
+        print(
+            "       Move the block above the item it describes. If it really is the last "
+            "sentence of a paragraph, add it to PROSE with a reason.",
+            file=sys.stderr,
+        )
+        return 1
     if findings:
         print(
             f"[FAIL] {len(findings)} doc comment(s) document nothing: each is followed by "
@@ -166,7 +295,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print("[OK] every doc comment is followed by code rather than by another doc comment.")
+    print(
+        "[OK] every doc comment is followed by code, and no Rust `///` run carries a "
+        "second summary."
+    )
     return 0
 
 

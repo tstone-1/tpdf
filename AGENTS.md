@@ -248,7 +248,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | Platforms | macOS + Windows | Settled |
 | Rendering + text extraction | PDFium via [`pdfium-render`](https://docs.rs/pdfium-render) (BSD-3-Clause) | **Settled** --- renders, extracts and sandboxes correctly; not usable for redaction (spikes 0.1, 0.3, 0.5) |
 | Object graph + content streams | [`lopdf`](https://docs.rs/lopdf) (MIT) | **Settled** --- surgical rewriting and sanitation both work, with our own mark-and-sweep and an encryption guard (spikes 0.3, 0.4, 0.6) |
-| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite, and **no longer wanted for encryption either**: `lopdf`'s own `Document::encrypt` preserves it, measured against `qpdf` field for field (2026-08-29). Object streams remain |
+| Hardened structural rewrite | [QPDF](https://qpdf.readthedocs.io/) (Apache-2.0) | Candidate --- not required for the rewrite, and **no longer wanted for encryption either**: `lopdf`'s own `Document::encrypt` preserves it, measured against `qpdf` field for field (2026-08-28). Object streams remain |
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** --- paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** --- reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** --- reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
@@ -266,8 +266,22 @@ section for a save that only adds marks, because doing so is a pure function of 
 bytes and the plan --- and those bytes are the attacker's. It runs where every other parse of
 them runs, which narrowed `docs/THREAT-MODEL.md` residual risk 18 from every writing path to
 the rewriting ones. The split is by authority: `save::append_ready` asks the coordinator's
-questions about a path, `save::append_update` asks none. A rewrite has not moved, and the
-obstacle is its output rather than its input --- see `docs/PLAN.md` §3.
+questions about a path, `save::append_update` asks none.
+
+**Since 2026-08-28 the in-place *rewrite* runs there too**, which is what took *delete a page
+and press ⌘S* off that risk. The obstacle was never the input: it was that a rewrite's answer
+is the whole document, against a 32 MB reply limit and files ten times that. So the worker is
+handed an **output channel** --- the staging file's own descriptor, on `worker::OUT_FD`, given
+at `exec` --- and writes down it. `save::rewrite_update` is the pure half, `save::Rewriter` the
+seam, and `save::Outside` names the one choice both seams read. The coordinator holds neither
+the document's bytes nor the new file's; what crosses back is a length, which it compares
+against the staged file's own size.
+
+That the channel survives the sandbox was measured rather than assumed: the profile says
+`(deny file-write*)`, which denies *opening* a path and not a descriptor handed over before
+it. `worker-probe` writes one document both ways and compares byte for byte. The copy paths,
+the split, the merge and the print job are unchanged and are the rest of residual risk 18, and
+Windows is wired the same way and unmeasured.
 
 **Since 2026-08-23 a reader can open a document behind a password.** Until then an encrypted
 PDF could be chosen from the file dialog and then not opened by any route --- `open_failure`
@@ -284,15 +298,28 @@ worker after the first --- pool growth and crash replacement alike --- maps the 
 meets the same encryption; without it a locked document renders the page a reader is looking
 at and refuses the next. `docs/THREAT-MODEL.md` §T6.9 states what holding it costs.
 
-**Since 2026-08-23 a reader can also save a mark onto one, and that is the only save an
-encrypted document can have.** `lopdf`'s full serialiser writes every object in the clear and
-drops the `/Encrypt` dictionary with it, so a rewrite is refused and always will be through
-that writer; an append never touches the previous revision, and
-`IncrementalDocument::save_to` encrypts each appended object with the key the load recorded.
-So the plan decides: marks are appended and go through, anything else is a rewrite and is
-refused with a message saying so. `examples/password_probe.rs` runs it end to end --- 986
-bytes appended to a 2,346-byte AES-256 document, reopened afterwards with the same password
-and refused without it.
+**Since 2026-08-23 a reader can also save a mark onto one, and since 2026-08-28 a rewrite
+too.** An append never touches the previous revision, and `IncrementalDocument::save_to`
+encrypts each appended object with the key the load recorded; a rewrite goes through
+`lopdf`'s full serialiser, which writes every object in the clear and drops the `/Encrypt`
+dictionary with it --- so `save::rewrite` takes the encryption state off the document before
+it touches anything, and calls `Document::encrypt` back on as its **last** step, after the
+sweep and after everything that adds an object. `examples/password_probe.rs` runs the append
+end to end (986 bytes appended to a 2,346-byte AES-256 document, reopened afterwards with the
+same password and refused without it); `examples/encrypted_rewrite_probe.rs` is the rewrite's,
+through `qpdf` rather than through the writer that produced it.
+
+⚠ **This paragraph said the opposite for a day, and the stack table above said the truth ---
+one file with two accounts of one fact, which is the failure this file's own Quality-gates
+section names.** It read *"a rewrite is refused and always will be through that writer"*. The
+*always* was the load-bearing word and it was wrong: `Document::encrypt` is public, and the
+capability sat closed for months behind a sentence that read as a decision rather than as a
+to-do. What is genuinely refused is narrower and worth stating exactly: a document **nobody
+unlocked** cannot be rewritten, because there is no state to put back; and a **print job over
+part of** an encrypted document is refused, because re-encrypting gives the printer something
+it cannot read and not re-encrypting gives it a decrypted copy of a document somebody
+encrypted deliberately (`save::print_bytes`, which takes the reader's password precisely so
+that *that* refusal is the one they meet).
 
 The password reaches `save::append_update` because the worker holds it, and reaches
 `save::append_in_place` because the app process does. That second hop is not optional: the
@@ -470,6 +497,7 @@ scripts/gates.py --list
 ```
 
 Currently, in the order `--list` prints them: a toolchain-pin check, a PDFium pin check, a trap-index check, a
+future-date check, a
 workflow-parity check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
@@ -480,7 +508,7 @@ ordered rather than merely present: `toolchain` runs **first**, because every re
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
 
-**All eighteen can be green on a Mac while the Windows tree does not compile**, and that is not
+**Every one of them can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
@@ -519,7 +547,19 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   The box shipped inert with three layers of tests green, because nothing looks at the literal
   that joins them.
 - `docs` --- a doc comment must be followed by code. Two `/** */` blocks in a row bind only the
-  second, silently; the first scan found 31 orphans across twelve files.
+  second, silently; the first scan found 31 orphans across twelve files. Since 2026-08-28 it
+  also has a **Rust** arm, for the mirror failure: two `///` runs with no blank line between
+  them are *one* comment, so nothing is lost and the whole thing documents the wrong item ---
+  three live instances, one of them introduced while fixing the other two.
+- `wiring` also covers `ScrollerOptions` and `ThumbnailOptions` as of 2026-08-28, which with
+  `ViewerOptions` is every optional `on*` callback the frontend declares --- 19 of them.
+  `AppActions`' 51 members are deliberately **not** here: they are required, so `npm run check`
+  refuses a missing one, and a gate over them would have no reachable subject.
+- `dates` --- no date in a tracked file may be later than today. Provenance here is written as
+  dated measurements, and on 2026-08-28 there were **70** stamps reading a day or two ahead,
+  every one written by a commit dated 2026-08-28. A stamp in the future does not merely
+  mislead about one measurement; it makes every stamp written in the same sitting unreliable,
+  and nothing else notices.
 - `notices` --- runs last, because it reads the build's own sourcemaps to see which npm packages
   shipped.
 
@@ -764,6 +804,9 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - The cleanup after an fd shuffle can close what it just installed
 - A per-page invalidation counter is not the same as a generation
 - State keyed by a slot belongs to whatever moves into that slot (three honest answers, and the third is right for exactly one of the ten things on the list)
+- `(deny file-write*)` does not deny a write through a descriptor you were handed (the same asymmetry `DOC_FD` rests on in the other direction; measured with the profile verbatim and a control that proves the sandbox was on --- and the entry says which half is measured and which is the usual explanation, because the Windows one is a different mechanism and unmeasured)
+- A child cannot tell a descriptor it was handed from whatever is open at that number (the argv marker, and the only check that can see it is a worker asked to write when it was given nowhere)
+- A refusal flattened to a string across a process boundary loses the action that answers it (the message is right, the save is refused, and Reload is not offered; nothing goes red, and the flag needs both directions asserted because always-true costs the reader their work)
 - A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
 - A rename over a mapped file succeeds, and the mapping goes on serving the file that is gone (the reassuring outcome is the dangerous one, and the other platform is the one that says so)
 - A pool that replaces a dead worker with the same bytes faults again, forever
@@ -937,6 +980,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A page fitted to the element's own width is measured under the scrollbar
 - Fit-width rescales every page when one of them becomes the widest (the check's observable moved for an innocent reason; it was written and watched pass on one corpus)
 - A synthetic heading that does not reach the second column tests nothing
+- Two tests naming their scratch directory the same string delete each other's (twelve isolated runs of the loser passed; the fix is a per-instance counter, because renaming fixes the instance and leaves the class)
 - Whatever a fixture is meant to discriminate, it needs two of
 - A fixture where the right rule and the wrong rule agree cannot tell them apart (every ingredient present, the discrimination absent --- a surviving mutation indicts the fixture as often as the assertion)
 - `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one (the filesystem kept NFC and AppKit decomposed; the assertion to write is a resolution, not an equality)
@@ -954,6 +998,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An outcome two mechanisms can produce cannot test either one
 - A length bound cannot be tested by the verdict it produces
 - A check nested inside a lookup for the thing under test disappears with it
+- A lower bound on a wait is satisfied by any longer wait, including a broken one (a deadline mutated a thousandfold SURVIVED while the run took 150 s instead of 0.17 and printed `ok`; write both ends)
 - A check whose failure mode is a wait cannot fail
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - A check that cannot run is not a check, and a locked screen is enough to stop one
@@ -1231,6 +1276,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A regex over the source could not see eleven of the seventy-seven commands, four of them the ones the check was written for (a green `[OK]` on a planted claim that stamps do not exist; the ids are built in a `map`, so they are literals nowhere on disk, and the count printed beside the verdict read as a healthy population --- the same lesson another gate's docstring already carried, which did not transfer because the two checks look nothing alike)
 - A refusal a reader could answer, reported on a channel with no answer in it (a correct diagnosis is what made it invisible; grep for a message naming a capability tpdf lacks)
 - An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing (twelve lines arguing against the feature being built, attached to nothing; a scan is two lines of Python and found 26, and it over-reports on purpose --- a section header is the same shape)
+- Two `///` runs with no blank line are one comment, and it documents the wrong item (not a *loss* --- the exemption that says Rust cannot lose one is right; the attribution is what breaks, and three live instances included one introduced while fixing the other two)
 - A comment defending a name can become an argument for the opposite name, with no word of it changing (every clause stayed true and the conclusion inverted; a premise becoming TRUE is the direction that flips it, and there is no disagreement for a reader to stop at)
 - A comment defending a design, with every number in it stale (five styles, three repetitions and a sixth-style compile error, against nine arms, seven per-quad loops and a tenth; the argument survives being wrong about its own scale and the reader's ability to weigh it does not -- plus the per-arm measurement and the byte-exact control an extraction would need)
 - A *Not done* note can describe a route with no reader in it (the parameter's half was true and the reader's half never happened; it held the print subsystem's ranked gap for a week and aimed two sessions at the wrong place --- ask whether a reader can get there, which for a command is one grep over the callers)

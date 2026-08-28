@@ -247,7 +247,7 @@ pub fn scale_for(
 ///
 /// **The two numbers are one decision and are returned together on purpose.**
 /// The height the engine is shown is the product of the two, and until
-/// 2026-08-29 no caller had it: `gate_one_page` kept the scale and threw the
+/// 2026-08-28 no caller had it: `gate_one_page` kept the scale and threw the
 /// control's own height away, so the one quantity [`MIN_CONTROL_PX`] is about
 /// existed nowhere. Returning only the scale would leave every caller to
 /// multiply it back out, and two derivations of one number are the drift
@@ -259,13 +259,13 @@ pub struct ProbeGeometry {
     /// How tall the control word itself lands in the probe image, in pixels.
     ///
     /// [`MIN_CONTROL_PX`] is the constant this is meant to clear, and since
-    /// 2026-08-29 it is what the scale is chosen to clear rather than a
+    /// 2026-08-28 it is what the scale is chosen to clear rather than a
     /// by-product of it. It can still come out below the floor, by either of the
     /// two clamps in [`scale_for`]: a control under 2 pt is under 16 px even at
     /// the [`MAX_SCALE`] ceiling, and a probe image too large for the buffer is
     /// halved toward [`MIN_SCALE`] regardless of what the control needs.
     ///
-    /// **Separated 2026-08-30, and it is entirely the first.** `redact-reach-probe`
+    /// **Separated 2026-08-28, and it is entirely the first.** `redact-reach-probe`
     /// attributes every sub-floor control to a clamp, using the two inputs it
     /// already holds --- a control under `MIN_CONTROL_PX / MAX_SCALE` cannot
     /// reach the floor at any scale, and a scale below what that control asked
@@ -291,7 +291,7 @@ pub struct ProbeGeometry {
     ///
     /// Here because a probe image a page wide and a few dozen rows tall is the
     /// standing suspect for the gate's remaining refusals --- the engine
-    /// answering and returning no spans at all --- and until 2026-08-30 no caller
+    /// answering and returning no spans at all --- and until 2026-08-28 no caller
     /// could say what shape the gate had actually asked for. `ocr-probe` swept
     /// four fixtures from 7.0:1 to 0.9:1 and Vision returned a span at every
     /// one, which bounds the question rather than answering it: nothing said
@@ -309,7 +309,7 @@ pub struct ProbeGeometry {
 /// # Errors
 ///
 /// Two refusals with different remedies, and each carries the cause it belongs
-/// to rather than leaving the caller to pick one. Until 2026-08-30 this returned
+/// to rather than leaving the caller to pick one. Until 2026-08-28 this returned
 /// a bare `String` and its only caller filed everything under
 /// [`crate::ocr::NotVerifiedCause::ScaleRefused`] --- one predicate answering two
 /// questions, which is right until a second kind of failure makes them disagree.
@@ -338,7 +338,7 @@ pub fn geometry_for(
     // **`control_pt`, not `choice.size_pt`** --- the engine is shown the control
     // *word*, and a surviving word with neither ascender nor descender is
     // shorter than the box the scale used to be chosen from. Measured
-    // 2026-08-29 over 40 documents: of 38 regions the gate could not verify
+    // 2026-08-28 over 40 documents: of 38 regions the gate could not verify
     // because the control was not read back, 34 had a control rendering under
     // [`MIN_CONTROL_PX`] --- the floor this very call exists to clear. The two
     // quantities are not interchangeable and only one of them is what the
@@ -1204,7 +1204,7 @@ mod tests {
         // word 8 pt; `stack` adds a 6 pt margin at each end and a 12 pt gap.
         // 10 + 8 + 24 = 42, so 600 by 42 and an aspect of 14.3:1.
         //
-        // The aspect is what this is for: measured 2026-08-30, every silent
+        // The aspect is what this is for: measured 2026-08-28, every silent
         // refusal in a 40-document corpus sat outside the 8:1--16:1 band, which
         // holds four fifths of the population and fails at 9.5%.
         let page = GatePage {
@@ -1237,7 +1237,7 @@ mod tests {
         // the control at 10 px -- under `MIN_CONTROL_PX`, which is the number
         // that whole call exists to clear.
         //
-        // Measured 2026-08-29: 34 of 38 regions the gate could not verify for
+        // Measured 2026-08-28: 34 of 38 regions the gate could not verify for
         // want of a readable control were below the floor for exactly this.
         let page = GatePage {
             page: 0,

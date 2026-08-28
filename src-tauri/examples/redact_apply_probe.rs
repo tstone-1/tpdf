@@ -265,7 +265,8 @@ fn in_place(
     // `save_document` exists to get right: a rename over a mapped file succeeds
     // on macOS and leaves the mapping serving the inode that is no longer at
     // that path, and Windows refuses it outright while a section is open.
-    let staged = save::stage_in_place(&mine, &planned, None).map_err(|why| why.message)?;
+    let staged =
+        save::stage_in_place(&mine, &planned, None, &save::Here).map_err(|why| why.message)?;
     let sibling = staged.path.clone();
     drop(document);
     save::verify_before_commit(&staged, &mine).map_err(|why| why.message)?;

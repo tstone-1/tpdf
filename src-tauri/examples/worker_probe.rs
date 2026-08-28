@@ -36,6 +36,33 @@ use tpdf_lib::worker_child;
 /// measured (1024²--2048²) and small enough that a fixture renders quickly.
 const TILE: u16 = 512;
 
+/// A plan that turns every page a quarter turn and changes nothing else.
+///
+/// **Deliberately *not* append-shaped**, which is the whole point of it existing
+/// beside [`highlight_plan`]: a turn is an edit an update section cannot express,
+/// so `save::mode_for` sends it down the rewriting path. That is the path this
+/// probe's rewrite checks, and a plan that could have been appended would have
+/// exercised the other one.
+fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
+    use tpdf_lib::edits::PageView;
+
+    let pages = u32::try_from(page_count).unwrap_or(u32::MAX);
+    tpdf_lib::edits::Plan {
+        baseline: pages,
+        opened_as: None,
+        pages: (0..pages)
+            .map(|at| PageView {
+                id: u64::from(at) + 1,
+                source: at,
+                turns: 1,
+                crop: None,
+            })
+            .collect(),
+        redactions: Vec::new(),
+        marks: Vec::new(),
+    }
+}
+
 /// A plan that adds one highlight to page 1 and changes nothing else.
 ///
 /// Append-shaped by construction --- every baseline page kept, in order,
@@ -756,6 +783,152 @@ fn main() {
     }
     let _ = std::fs::remove_file(&good);
     let _ = std::fs::remove_file(&bad);
+
+    // --- The rewriting save, across the boundary ---------------------------
+    //
+    // **The shipped writer, which nothing else exercises.** Every test in
+    // `save.rs` and every other probe passes `save::Here`, so before these
+    // checks `save::InWorker`'s `Rewriter` half was proved only by compiling.
+    //
+    // It is the same four-check shape the read-back above uses, for the same
+    // reasons, and one more that only this path can make: a rewrite's answer is
+    // the whole document, so it travels down an output channel rather than in a
+    // reply, and the check that the channel is real is a worker asked to write
+    // when it was given nowhere to write.
+    let rewriting: &dyn save::Rewriter = &save::Here;
+    let rewrite_in_worker = save::InWorker::at(library_dir.clone());
+    let turning = turn_plan(page_count);
+
+    let by_hand = std::env::temp_dir().join("tpdf-worker-probe-rewrite-here.pdf");
+    let by_worker = std::env::temp_dir().join("tpdf-worker-probe-rewrite-worker.pdf");
+
+    let rewrite_to = |who: &dyn save::Rewriter,
+                      to: &Path,
+                      plan: &tpdf_lib::edits::Plan|
+     -> Result<usize, String> {
+        let mut source = std::fs::File::open(&document).map_err(|e| e.to_string())?;
+        let len = source.metadata().map_err(|e| e.to_string())?.len() as usize;
+        let mut out = std::fs::File::create(to).map_err(|e| e.to_string())?;
+        let wrote = who
+            .write(&mut source, len, &mut out, plan, None)
+            .map_err(|why| why.message)?;
+        // The same check the coordinator makes, for the same reason: the length
+        // reported and the length on disk are two independent statements.
+        let landed = out.metadata().map_err(|e| e.to_string())?.len() as usize;
+        if landed != wrote {
+            return Err(format!("reported {wrote} bytes and the file has {landed}"));
+        }
+        Ok(wrote)
+    };
+
+    // **What the move costs, interleaved and reported as minima.** A reader who
+    // presses the save key waits for this, so the number is worth having --- and
+    // two blocks back to back would measure whatever else the machine was doing
+    // between them, which `AGENTS.md` records as the way to get an A/B wrong.
+    // The minimum rather than the mean, because the question is what the work
+    // costs and not what the machine was doing while it ran.
+    let mut here_ms = f64::MAX;
+    let mut worker_ms = f64::MAX;
+    let mut mine = Err("not run".to_string());
+    let mut theirs = Err("not run".to_string());
+    for _ in 0..5 {
+        let at = Instant::now();
+        mine = rewrite_to(rewriting, &by_hand, &turning);
+        here_ms = here_ms.min(at.elapsed().as_secs_f64() * 1000.0);
+        let at = Instant::now();
+        theirs = rewrite_to(&rewrite_in_worker, &by_worker, &turning);
+        worker_ms = worker_ms.min(at.elapsed().as_secs_f64() * 1000.0);
+    }
+    println!(
+        "[INFO] the rewrite is {here_ms:.1} ms here and {worker_ms:.1} ms in a worker \
+         (+{:.1}, best of 5 interleaved)",
+        worker_ms - here_ms
+    );
+    // **Byte for byte, which is stronger than the read-back's number and is
+    // affordable here.** A rewrite of one document under one plan is
+    // deterministic --- every date in the output comes from the plan's own marks,
+    // not from the clock --- so the two processes have no licence to differ. A
+    // comparison of lengths or page counts would pass for a worker that dropped
+    // the turns.
+    let same = match (&mine, &theirs) {
+        (Ok(a), Ok(b)) if a == b => std::fs::read(&by_hand).ok() == std::fs::read(&by_worker).ok(),
+        _ => false,
+    };
+    check(
+        "the worker and the coordinator write the same document",
+        same,
+        format!("coordinator {mine:?}, worker {theirs:?}"),
+    );
+
+    // **A refusal that only a parse can produce.** The plan claims one more page
+    // than the file has, which `save::checked` catches *after* `lopdf` has read
+    // the document --- so a worker that never parsed anything cannot produce this
+    // message. It is the discriminating fixture the read-back's own comment
+    // explains the need for: a file PDFium refuses at open would be refused by a
+    // different guard, before the request was ever sent.
+    let miscounted = turn_plan(page_count + 1);
+    let mine = rewrite_to(rewriting, &by_hand, &miscounted);
+    let theirs = rewrite_to(&rewrite_in_worker, &by_worker, &miscounted);
+    check(
+        "and both refuse a plan whose baseline is not this document",
+        mine.is_err() && theirs.is_err(),
+        format!("coordinator {mine:?}, worker {theirs:?}"),
+    );
+    check(
+        "and the worker's refusal came from the rewrite, not from opening it",
+        match &theirs {
+            Err(said) => said.contains("changed since it was opened"),
+            Ok(_) => false,
+        },
+        format!("worker said {theirs:?}"),
+    );
+
+    // **And that a worker is genuinely involved**, which none of the three above
+    // can say --- an `InWorker` secretly delegating to `Here` answers identically
+    // on every fixture. Pointed at a directory with no PDFium in it, `Here` still
+    // writes and `InWorker` cannot start a child at all.
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-rewrite-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let engineless = save::InWorker::at(nowhere.clone());
+    let without = rewrite_to(&engineless, &by_worker, &turning);
+    let still = rewrite_to(rewriting, &by_hand, &turning);
+    check(
+        "and the rewrite path really needs a worker",
+        without.is_err() && still.is_ok(),
+        format!("worker {without:?}, coordinator {still:?}"),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
+
+    // **The output channel exists, said by its absence.** Every check above
+    // would pass if the descriptor were handed over unconditionally and the argv
+    // marker did nothing. This one asks an ordinary pooled-shape worker --- one
+    // spawned with no output file --- to rewrite, and requires it to say so in
+    // words rather than writing a document into whatever fd 6 happens to be.
+    match tpdf_lib::worker_shm::Shm::map_file(&document)
+        .and_then(|mapped| Worker::spawn_shared(std::sync::Arc::new(mapped), &library_dir))
+    {
+        Err(e) => check(
+            "a worker with nowhere to write refuses to rewrite",
+            false,
+            format!("could not start one: {e}"),
+        ),
+        Ok(mut worker) => {
+            let said = worker.call(&Request::Rewrite {
+                plan: turning.clone(),
+                view: 0,
+            });
+            check(
+                "a worker with nowhere to write refuses to rewrite",
+                match &said {
+                    Ok(r) => !r.ok && r.error.contains("anywhere to write"),
+                    Err(_) => false,
+                },
+                format!("worker answered {said:?}"),
+            );
+        }
+    }
+    let _ = std::fs::remove_file(&by_hand);
+    let _ = std::fs::remove_file(&by_worker);
 
     println!(
         "\n{}/{checks} checks passed, {skipped} not applicable to this platform",

@@ -305,9 +305,11 @@ jobs:
           for the password and says so when it is wrong. A mark can be saved
           onto one, as an update appended to the end of the file, so it stays
           encrypted and every byte that was already there is untouched.
-          Deleting, moving, rotating or cropping a page of one is refused,
-          because those need the whole file rewritten and a rewrite would drop
-          the encryption.
+          Deleting, moving, rotating or cropping a page of one works too: the
+          file is rewritten with its own encryption put back — the same
+          algorithm, the same permissions, the same password. Printing part of
+          one is the exception and says so; print the whole document, which is
+          handed to the printer unchanged.
 
           **What it tells you about a document.** *Document properties*, in the
           palette and at the foot of the File menu, shows what a file says

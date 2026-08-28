@@ -65,10 +65,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-CARGO_MANIFEST = REPO / "src-tauri" / "Cargo.toml"
-PDFIUM = REPO / "vendor" / "pdfium"
-OUTPUT = REPO / "THIRD-PARTY-NOTICES.md"
+ROOT = Path(__file__).resolve().parent.parent
+CARGO_MANIFEST = ROOT / "src-tauri" / "Cargo.toml"
+PDFIUM = ROOT / "vendor" / "pdfium"
+OUTPUT = ROOT / "THIRD-PARTY-NOTICES.md"
 
 # The platforms tpdf ships. The notices file is the union across all of them:
 # one document covering both products is simpler to ship and cannot be wrong by
@@ -257,7 +257,7 @@ def cargo_shipped_packages() -> "list[dict]":
         # same byte, in `mutate_rust.py`.
         raw = subprocess.run(
             argv,
-            cwd=REPO,
+            cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,
@@ -305,7 +305,7 @@ def npm_shipped_packages() -> "list[dict]":
     a package's `dev` flag in the lockfile is about how it was installed, not
     about whether its bytes end up in `dist/`.
     """
-    maps = sorted(REPO.glob(BUNDLE_SOURCEMAPS))
+    maps = sorted(ROOT.glob(BUNDLE_SOURCEMAPS))
     if not maps:
         raise FileNotFoundError(
             "no sourcemaps under dist/ -- run `npm run build` first. Deriving the "
@@ -326,7 +326,7 @@ def npm_shipped_packages() -> "list[dict]":
             if hit:
                 names.add(hit.group(1))
 
-    lock = json.loads(read_text(REPO / "package-lock.json"))
+    lock = json.loads(read_text(ROOT / "package-lock.json"))
     entries = lock.get("packages", {})
     out: "list[dict]" = []
     for name in sorted(names, key=str.lower):
@@ -336,7 +336,7 @@ def npm_shipped_packages() -> "list[dict]":
                 "name": name,
                 "version": entry.get("version", "?"),
                 "license": entry.get("license", "UNKNOWN"),
-                "dir": REPO / "node_modules" / name,
+                "dir": ROOT / "node_modules" / name,
             }
         )
     return out
@@ -597,7 +597,7 @@ def main() -> int:
     # a word. Name the files, so the next one is noticed rather than absorbed.
     # After render(), because render() is what reads them.
     for path, codec in sorted(FALLBACK_DECODES.items()):
-        rel = path.relative_to(REPO) if path.is_relative_to(REPO) else path
+        rel = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
         print(f"[note] {rel} is not UTF-8; decoded as {codec}")
 
     if args.cross_check:

@@ -45,14 +45,14 @@ use crate::progressive::{self, CancelToken};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{self, PageSize, TileFormat, TileRequest};
 #[cfg(windows)]
-use crate::worker::{doc_handle_arg, tile_handle_arg, Handover};
+use crate::worker::{doc_handle_arg, out_handle_arg, tile_handle_arg, Handover};
 use crate::worker::{
     doc_len_arg, library_dir_arg, Reply, Request, Response, Shm, PRESPAWN_ARGV, TILE_CAPACITY,
 };
 #[cfg(target_os = "macos")]
 use crate::worker::{recv_document, SANDBOX_PROFILE, SOCK_FD};
 #[cfg(unix)]
-use crate::worker::{DOC_FD, TILE_FD};
+use crate::worker::{DOC_FD, OUT_ARGV, OUT_FD, TILE_FD};
 
 /// Runs this process as a render worker. Never returns.
 pub fn main(args: &[String]) -> ! {
@@ -121,6 +121,12 @@ fn serve(args: &[String]) -> Result<(), String> {
     let prespawned = args.iter().any(|a| a == PRESPAWN_ARGV);
 
     let mut tile_shm = adopt_tile(args)?;
+    // Adopted here rather than at the request, because a descriptor is handed
+    // over at `exec` and there is nothing to look up later. `None` for every
+    // worker but one spawned to write, which is what makes a rewrite request to
+    // an ordinary worker a refusal with a reason rather than a write into
+    // whatever fd 6 happens to be.
+    let mut out_file = adopt_output(args);
 
     // Adopted before the sandbox when there is one to adopt. Read-only: a worker
     // must not be able to write the reader's file.
@@ -216,7 +222,14 @@ fn serve(args: &[String]) -> Result<(), String> {
 
     let mut out = std::io::stdout();
     for request in rx {
-        let response = handle(bindings, &document, &queue, &mut tile_shm, &request);
+        let response = handle(
+            bindings,
+            &document,
+            &queue,
+            &mut tile_shm,
+            out_file.as_mut(),
+            &request,
+        );
         reply(&mut out, &response)?;
     }
     Ok(())
@@ -240,6 +253,39 @@ fn adopt_tile(args: &[String]) -> Result<Shm, String> {
     // SAFETY: the parent named this handle in the spawn's handle list, so it is
     // live here, and nothing else in this process owns it.
     unsafe { Shm::from_handle(handle, TILE_CAPACITY, true) }
+}
+
+/// Adopts the output file the parent handed over, where it handed one over.
+///
+/// **Read from argv rather than probed**, because an unused descriptor number
+/// and one that was handed over are indistinguishable from inside this process:
+/// `File::from_raw_fd(6)` on a worker that got none is a handle to whatever is
+/// there, and writing a document into it is the failure that would follow. See
+/// [`crate::worker::OUT_ARGV`].
+#[cfg(unix)]
+fn adopt_output(args: &[String]) -> Option<std::fs::File> {
+    use std::os::fd::FromRawFd;
+
+    if !args.iter().any(|arg| arg == OUT_ARGV) {
+        return None;
+    }
+    // SAFETY: the parent dup2'd a live descriptor to this number before exec
+    // when it passed the marker, and nothing else in this process owns it.
+    Some(unsafe { std::fs::File::from_raw_fd(OUT_FD) })
+}
+
+/// Adopts the output file the parent handed over, where it handed one over.
+///
+/// The handle arrives in argv rather than on a fixed number, for the reason
+/// [`adopt_tile`] gives.
+#[cfg(windows)]
+fn adopt_output(args: &[String]) -> Option<std::fs::File> {
+    use std::os::windows::io::FromRawHandle;
+
+    let handle = out_handle_arg(args)?;
+    // SAFETY: the parent named this handle in the spawn's handle list, so it is
+    // live here, and nothing else in this process owns it.
+    Some(unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) })
 }
 
 /// Adopts the document mapping, read-only.
@@ -457,6 +503,7 @@ fn handle(
     document: &OpenDocument,
     queue: &SharedQueue,
     tile: &mut Shm,
+    out: Option<&mut std::fs::File>,
     request: &Request,
 ) -> Response {
     match request {
@@ -516,6 +563,7 @@ fn handle(
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
+        Request::Rewrite { plan, view } => rewrite(document, out, plan, *view),
         Request::Reread => match render::run_reread(document) {
             Ok(pages) => Response::reply(Reply::Reread(pages)),
             Err(e) => Response::err(e),
@@ -527,6 +575,52 @@ fn handle(
         // process can read, and it has one. Refusing would report a failure for
         // a state that is exactly what was wanted.
         Request::Unlock { .. } => Response::reply(Reply::Unlocked),
+    }
+}
+
+/// Rewrites the document under a plan and writes it down the output channel.
+///
+/// **The one request whose answer does not come back in the reply.** The reason
+/// is size: [`crate::worker_proto::MAX_REPLY_BYTES`] is 32 MB and a scanned
+/// document is ten times that, so a rewrite could not move into a worker until
+/// there was somewhere for the bytes to go. See
+/// [`crate::worker_proto::Request::Rewrite`].
+///
+/// **Refused, not ignored, when there is nowhere to write.** A worker without an
+/// output file was not spawned to write, and a rewrite request reaching it is a
+/// defect on the other side of the pipe --- said in words rather than by writing
+/// a document into whichever descriptor happens to be open at that number.
+///
+/// What checks the write landed whole is on the other side: the coordinator
+/// compares the staged file's own size against the length below. That is also
+/// what would catch a second rewrite on one worker, which would append rather
+/// than replace --- nothing sends one, and the check does not depend on that
+/// staying true.
+fn rewrite(
+    document: &OpenDocument,
+    out: Option<&mut std::fs::File>,
+    plan: &crate::edits::Plan,
+    view: u8,
+) -> Response {
+    let Some(out) = out else {
+        return Response::err(
+            "this worker was not started with anywhere to write, so it cannot rewrite a document",
+        );
+    };
+    let bytes = match render::run_rewrite(document, plan, view) {
+        Ok(bytes) => bytes,
+        // `refused`, not `err`: some of these refusals are answerable by
+        // reloading and the rest are not, and which is which is a fact the
+        // coordinator cannot recover from a sentence. See `Response::changed`.
+        Err(why) => return Response::refused(&why),
+    };
+    // Every byte into the kernel, and no further: the parent owns the file, and
+    // it is the parent's `sync_data` before the rename that makes the contents a
+    // statement about the platter rather than about a buffer. Syncing here as
+    // well would cost a second flush of the same data for nothing.
+    match out.write_all(&bytes).and_then(|()| out.flush()) {
+        Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
+        Err(e) => Response::err(format!("the rewritten document could not be written: {e}")),
     }
 }
 

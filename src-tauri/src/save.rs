@@ -70,8 +70,7 @@ use crate::edits::{Plan, PlannedMark};
 use crate::encoding::MAX_DECODE;
 use crate::fingerprint::{FileId, Fingerprint};
 use crate::pagetree::{
-    agreed_turns, apply_crops, apply_turns, displayed_page, drop_outline, drop_pages,
-    ordered_pages, reorder_pages, DisplayedPage,
+    agreed_turns, apply_crops, apply_turns, displayed_page, ordered_pages, DisplayedPage,
 };
 use crate::textbox;
 
@@ -177,14 +176,15 @@ enum OnChange {
     Proceed,
 }
 
-/// The bytes of a working document, and what the file was when they were built.
+/// The bytes of a working document, and whether its source had changed.
 ///
-/// `verified` is `None` only where the plan carried no fingerprint, which
-/// [`write_copy`] tolerates and [`stage_in_place`] refuses --- so the two fields
-/// are not independent, and which of the two paths you are on decides.
+/// **It carried the staging fingerprint too until 2026-08-28**, and that field
+/// is gone rather than merely unread: [`stage_in_place`] was its only consumer,
+/// and it no longer goes through here at all --- its bytes are written by a
+/// worker rather than returned to this process. What is left is the three copy
+/// paths, none of which ever read it.
 struct Planned {
     bytes: Vec<u8>,
-    verified: Option<Fingerprint>,
     /// The source had changed since it was opened, and `OnChange::Proceed` let
     /// it through. Always false under `OnChange::Refuse`, which returns an error
     /// instead of setting this.
@@ -264,10 +264,17 @@ const NO_VIEW_TURN: u8 = 0;
 ///
 /// Everything [`planned_bytes`] refuses --- including an encrypted source, which
 /// printing reaches only when the reader has edited it, since an untouched one
-/// is handed over byte for byte and never parsed here.
-pub fn print_bytes(source: &Path, plan: &Plan, view: u8) -> Result<Vec<u8>, Refusal> {
+/// is handed over byte for byte and never parsed here. `password` is the
+/// reader's, and it is what makes that refusal the encryption one rather than
+/// the locked-document one; see the body.
+pub fn print_bytes(
+    source: &Path,
+    plan: &Plan,
+    view: u8,
+    password: Option<&str>,
+) -> Result<Vec<u8>, Refusal> {
     // **Its own refusal, between the two phases, and it is not a second copy of
-    // `print::build`'s.** Until 2026-08-29 `checked` refused every document
+    // `print::build`'s.** Until 2026-08-28 `checked` refused every document
     // `lopdf` had decrypted, and that refusal was what stopped this function
     // handing a print job something it should not have. Making the rewrite
     // preserve encryption removed it --- for the save paths deliberately, and for
@@ -285,7 +292,20 @@ pub fn print_bytes(source: &Path, plan: &Plan, view: u8) -> Result<Vec<u8>, Refu
     // Between the phases rather than before them, because `Checked` is where the
     // answer is: `checked` holds the state it took off the document, and asking
     // the file again here would be a second parse deciding the same fact.
-    let checked = checked(source, plan, OnChange::Proceed, view, None)?;
+    //
+    // **And it takes the reader's password, for a refusal.** That reads like a
+    // contradiction and is the whole point: without the key `checked` refuses
+    // first, with *"tpdf could not unlock it ... Open it with its password
+    // first"* --- said to a reader who has the document open with its password,
+    // and naming an escape they have already taken. The refusal below is the one
+    // that names an operation that works, and it is only reachable once the
+    // parse in front of it succeeds. A guard whose neighbour refuses the same
+    // input cannot be reached by it, and until this argument existed the only
+    // document that reached this line was one with an *empty* user password,
+    // which `lopdf` opens unprompted --- which is why the test for it uses that
+    // fixture and why the wrong sentence went unmeasured.
+    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
+    let checked = checked(&original, plan, view, password)?;
     if checked.encryption.is_some() {
         return Err(
             "This document is encrypted, and printing part of it would have to write a copy \
@@ -294,7 +314,7 @@ pub fn print_bytes(source: &Path, plan: &Plan, view: u8) -> Result<Vec<u8>, Refu
                 .into(),
         );
     }
-    Ok(rewrite(plan, checked)?.bytes)
+    rewrite(plan, checked)
 }
 
 /// Writes the pages `plan` keeps, each with its own turn, from `source` to `out`.
@@ -558,6 +578,15 @@ pub fn write_merged(
         &base.bytes,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
+            // **The same password, because `rewrite` has just put the
+            // encryption back.** These are bytes this module wrote a line ago,
+            // and if the source was encrypted so are they. Omitting it does not
+            // fail the load: `lopdf` parses *no objects at all* for a document
+            // it cannot authenticate and still answers `Ok`, so what arrives is
+            // an empty document and the merge below fails at `into.catalog()`
+            // with a message blaming this module's own writer. An absence and a
+            // lock are the same reading, and the reassuring one is wrong.
+            password: password.map(str::to_string),
             ..Default::default()
         },
     )
@@ -566,6 +595,19 @@ pub fn write_merged(
     // up, because a message suggesting the reader do something about it would
     // be a wrong diagnosis.
     .map_err(|e| format!("tpdf could not read back the document it just built: {e}"))?;
+
+    // **Off the document before the merge, and back on after it.** That is
+    // `rewrite`'s constraint for `rewrite`'s reason: `Document::encrypt` walks
+    // the object map and encrypts what it finds, so an object added after it
+    // would be written in the clear beside objects that are not, and no reader
+    // could open the result. `take` is also required rather than tidy --- a
+    // document that was decrypted refuses to be re-encrypted while the state is
+    // still on it.
+    //
+    // The load above authenticated, so this is the base's own state: the
+    // algorithm, the permission bits and both passwords, parsed from its
+    // `/Encrypt` and never rebuilt.
+    let encryption = merged.encryption_state.take();
 
     for other in others {
         let incoming = Document::load_with_options(
@@ -592,6 +634,18 @@ pub fn write_merged(
             .map_err(|why| format!("could not merge {}: {why}", name_of(other)))?;
     }
 
+    // Last, after every incoming file has been appended --- see the `take`
+    // above. Without this the merge of an encrypted base would be written in
+    // the clear, which is exactly the silent removal the incoming-file refusal
+    // a few lines up exists to prevent, arriving through the base instead.
+    if let Some(state) = &encryption {
+        merged.encrypt(state).map_err(|e| {
+            // Not a sentence about the reader's document: the state came out of
+            // this same file a moment ago, so a failure here is tpdf's.
+            format!("tpdf could not restore this document's encryption: {e}")
+        })?;
+    }
+
     let bytes = serialise(&mut merged, "the merged document")?;
     write_atomically(out, &bytes)?;
     Ok(Merged {
@@ -615,10 +669,21 @@ fn name_of(path: &Path) -> String {
 
 /// Writes the working document beside `source`, ready to be put in its place.
 ///
-/// The first half of saving over the open file, and the half that can still be
-/// refused for free: every guard [`planned_bytes`] states runs here, before
-/// anything the reader has is disturbed. What comes back is the path of the
-/// sibling temporary file, which nothing has renamed yet.
+/// The first half of saving over the open file. What comes back is the path of
+/// the sibling temporary file, which nothing has renamed yet.
+///
+/// **Two kinds of refusal, and only one of them is still free.** This paragraph
+/// used to say that every guard runs before anything the reader has is
+/// disturbed, and half of that stopped being true when the rewrite moved into a
+/// worker. The questions about the *file* --- is this still the one the edits
+/// were made against, and can tpdf tell --- are [`rewrite_ready`]'s, and they
+/// still run before anything is created. The questions about the *document* are
+/// [`rewrite_update`]'s, and they cannot be asked until there is somewhere for
+/// the answer to be written, so they arrive after the temporary file exists.
+///
+/// What makes that safe is narrower than what the old sentence claimed, and it
+/// is the whole of it: [`stage`] removes the partial on every failing path, and
+/// nothing has been renamed either way.
 ///
 /// **The split exists because the document has to be closed in between.** A
 /// `rename` over a file some process has memory-mapped succeeds on macOS and
@@ -634,12 +699,15 @@ fn name_of(path: &Path) -> String {
 ///
 /// # Errors
 ///
-/// Everything [`planned_bytes`] refuses, and a temporary file that cannot be
-/// written. The temporary file is removed on the failing path that created one.
+/// Everything [`rewrite_ready`] and [`rewrite_update`] refuse; a source that
+/// cannot be opened or measured; a rewriter that wrote a different number of
+/// bytes than it reported; and a temporary file that cannot be written. The
+/// temporary file is removed on every failing path that created one.
 pub fn stage_in_place(
     source: &Path,
     plan: &Plan,
     password: Option<&str>,
+    rewriter: &dyn Rewriter,
 ) -> Result<Staged, Refusal> {
     // Refused here and tolerated by `write_copy`, which is the one place the two
     // paths differ on purpose. A fingerprint that could not be taken means tpdf
@@ -654,18 +722,64 @@ pub fn stage_in_place(
                 .into(),
         );
     }
-    let planned = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;
-    // Refused rather than unwrapped. It cannot fire --- `planned_bytes` derives
+    let ready = rewrite_ready(source, plan, OnChange::Refuse)?;
+    // Refused rather than unwrapped. It cannot fire --- `rewrite_ready` derives
     // this from the same `plan.opened_as` the guard above just proved present ---
     // but the two are eight lines and one function call apart, and the failure a
     // panic would replace is a *refused save*, which is the outcome every other
     // branch here already produces. A guard that turns an internal inconsistency
     // into the safe answer costs three lines and is not the unreachable guard the
     // repository has a rule about deleting.
-    let verified = planned.verified.ok_or_else(|| {
+    let verified = ready.verified.ok_or_else(|| {
         "tpdf could not confirm what this file was when it read it --- use Save a copy".to_string()
     })?;
-    let path = stage(source, &planned.bytes)?;
+
+    // The document, not the name it was reached by --- see `resolved`. Staging
+    // beside the target is also what puts the temporary file on the same
+    // filesystem as the thing it will replace, which is what makes the rename
+    // atomic rather than a copy.
+    let target = resolved(source);
+    // **Opened here and read through, never re-opened by name.** Everything
+    // `rewrite_ready` just established is about *this* file, and a rewriter that
+    // opened `target` again would apply the plan to whatever has that name by
+    // then --- the same race [`Reread`] is written to close, on the way in
+    // rather than on the way out.
+    let mut file = std::fs::File::open(&target)
+        .map_err(|e| format!("could not open {target:?} to save it: {e}"))?;
+    let len = file
+        .metadata()
+        .map_err(|e| format!("could not measure {target:?}: {e}"))?
+        .len() as usize;
+
+    // **The document refusals now arrive after the temporary file exists**, and
+    // that is a change worth naming rather than leaving to be noticed. They used
+    // to be made before anything was created, which the comment on this function
+    // still gives as the reason for the split; what makes it safe is that
+    // `stage` removes the partial file on every failing path, including this
+    // one, and that nothing has been renamed either way. What is *not* given up
+    // is the free half: `rewrite_ready` above still refuses a changed file
+    // before a byte is written anywhere.
+    let path = stage(&target, |out| {
+        let wrote = rewriter.write(&mut file, len, out, plan, password)?;
+        // **The one check on the way back**, and it is here rather than in the
+        // rewriter because only this side can make it: the worker says how many
+        // bytes it wrote and this file says how many it has, and the two are
+        // independent statements about the same write. A short write, a second
+        // rewrite appending to the first, or a reply built for another request
+        // all disagree here. Neither number is derived from the other.
+        let landed = out
+            .metadata()
+            .map_err(|e| format!("could not measure the staged file: {e}"))?
+            .len();
+        if landed != wrote as u64 {
+            return Err(format!(
+                "the rewritten document was reported as {wrote} bytes and the staged file is \
+                 {landed} --- the save was not completed"
+            )
+            .into());
+        }
+        Ok(())
+    })?;
     Ok(Staged { path, verified })
 }
 
@@ -1550,6 +1664,42 @@ impl InWorker {
     }
 }
 
+/// Waits for a worker's answer, and ends the worker if it does not come.
+///
+/// **The bound this path did not have.** `InWorker::pages` spawns its worker
+/// outside the pool, so the pool's supervisor --- the thing that owns
+/// [`crate::workers::DEFAULT_DEADLINE`] --- never sees it, and `Worker::call`
+/// is a blocking read bounded only by how *long* a reply may be. A document
+/// whose cross-reference sends `lopdf` round in circles would hold the
+/// `spawn_blocking` thread for ever, with the reader's document already closed
+/// and the appended bytes on disk unconfirmed.
+///
+/// `within` is a parameter for `overdue`'s reason: a check whose failure mode is
+/// a wait cannot be exercised, so the decision has to be reachable without
+/// hanging anything.
+///
+/// The pid is killed rather than the thread being asked to stop, because the
+/// thread is blocked inside a pipe read and nothing can interrupt it. Ending the
+/// process closes the pipe, the read fails, the thread drops its `Worker` and
+/// exits --- so the timeout leaks neither a process nor a thread.
+fn awaited<T>(
+    rx: &std::sync::mpsc::Receiver<T>,
+    within: std::time::Duration,
+    pid: u32,
+) -> Result<T, String> {
+    match rx.recv_timeout(within) {
+        Ok(answer) => Ok(answer),
+        Err(_) => {
+            crate::workers::kill_pid(pid);
+            Err(format!(
+                "the worker checking the saved file did not answer within {:.0} s, so the \
+                 save could not be confirmed",
+                within.as_secs_f64()
+            ))
+        }
+    }
+}
+
 impl Reread for InWorker {
     fn pages(
         &self,
@@ -1557,13 +1707,30 @@ impl Reread for InWorker {
         len: usize,
         password: Option<&str>,
     ) -> Result<usize, String> {
-        use crate::worker_proto::{Reply, Request};
-
         // The handle, never `source`. See [`Reread`]: mapping by name would
         // verify whichever file has that name now.
         let mapped = crate::worker_shm::Shm::map_open_file(file, len)?;
-        let mut worker =
+        let worker =
             crate::worker::Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+
+        // **Asked on a thread so the answer can be waited for with a bound.**
+        // See `awaited`. The pid is read before the move, because afterwards
+        // this thread no longer owns the worker.
+        let pid = worker.pid();
+        let key = password.map(str::to_string);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut worker = worker;
+            let _ = tx.send(Self::ask(&mut worker, key.as_deref()));
+        });
+        awaited(&rx, crate::workers::DEFAULT_DEADLINE, pid)?
+    }
+}
+
+impl InWorker {
+    /// The two requests the read-back makes, on the thread that owns the worker.
+    fn ask(worker: &mut crate::worker::Worker, password: Option<&str>) -> Result<usize, String> {
+        use crate::worker_proto::{Reply, Request};
 
         // **Before the question, and only when there is one.** A locked document
         // that is not unlocked first parses to zero objects, so the count would
@@ -1599,6 +1766,182 @@ impl Reread for InWorker {
                     None => "no payload at all".to_string(),
                 }
             )),
+        }
+    }
+}
+
+/// Who applies the reader's edits to a document and produces the new file.
+///
+/// **A seam, and the guarantee is what it takes away.** [`stage_in_place`] used
+/// to parse the reader's document with `lopdf` in this process, apply the plan
+/// and serialise it here. Those bytes are the attacker's verbatim, so every
+/// rewriting save --- a deleted page, a move, a turn, a crop --- was a
+/// coordinator-side parse of untrusted input, which is
+/// `docs/THREAT-MODEL.md` residual risk 18 and is reached by deleting a page and
+/// pressing the save key.
+///
+/// Passing the writing in rather than doing it here means the coordinator never
+/// holds the document's bytes and never holds the new file's. That is carried by
+/// the type: there is nothing here to parse, so no later edit can quietly
+/// reintroduce a parse.
+///
+/// **Two handles, never two pathnames**, for [`Reread`]'s reason in both
+/// directions. `source` is opened by the caller and read through, so what is
+/// rewritten is the file that was fingerprinted rather than whatever has that
+/// name now; `out` is the staging file the caller created, so the worker writes
+/// one file it was handed and has no name it could be made to write anywhere
+/// else. The second half is why this could not move until now: an append's
+/// answer is kilobytes and fits in a reply, and a rewrite's is the document.
+///
+/// **`Send`, because the save runs on the blocking pool** --- see [`Reread`],
+/// whose bound is here for the same reason and is stated in the same place.
+pub trait Rewriter: Send {
+    /// Writes `plan` applied to `source` into `out`, and says how many bytes.
+    ///
+    /// `len` is how long `source` is: a capacity hint for [`Here`] and the
+    /// length to map for a worker, which cannot ask a handle how long its file
+    /// is.
+    ///
+    /// **`&mut` on `source` because reading through a handle moves it**, and on
+    /// `out` because writing does --- [`Here`] does both in this process.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`rewrite_update`] refuses, and the write failing.
+    fn write(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        plan: &Plan,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal>;
+}
+
+/// Where a parse of the reader's own document happens.
+///
+/// **One choice, two seams.** [`Reread`] verifies the file an append wrote and
+/// [`Rewriter`] produces the file a rewrite writes; both are parses of
+/// attacker-controlled bytes, and both belong in a sandboxed child wherever
+/// there can be one. Naming the pair is what keeps the rule --- ask
+/// `render::Backend`, take a worker where there is one, mark the run where there
+/// is not --- stated once instead of at each seam, which is the second copy
+/// `docs/TRAPS.md` records drifting.
+///
+/// It adds no method of its own, deliberately: the thing being named is the
+/// *choice*, and a member here would be a third seam nobody asked for.
+pub trait Outside: Reread + Rewriter {}
+
+impl Outside for Here {}
+impl Outside for InWorker {}
+
+impl Rewriter for Here {
+    fn write(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        plan: &Plan,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        use std::io::Write as _;
+
+        let original = read_whole(source, len).map_err(|e| e.to_string())?;
+        let bytes = rewrite_update(&original, plan, NO_VIEW_TURN, password)?;
+        out.write_all(&bytes)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("the rewritten document could not be written: {e}"))?;
+        Ok(bytes.len())
+    }
+}
+
+impl Rewriter for InWorker {
+    fn write(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        plan: &Plan,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        // The handles, never the pathnames. See [`Rewriter`].
+        let mapped = crate::worker_shm::Shm::map_open_file(source, len)?;
+        let worker = crate::worker::Worker::spawn_writing(
+            std::sync::Arc::new(mapped),
+            out,
+            &self.library_dir,
+        )?;
+
+        // **Asked on a thread so the answer can be waited for with a bound**, as
+        // in [`InWorker::pages`]: this worker is outside the pool, so nothing
+        // else owns a deadline for it, and a document that sends `lopdf` round
+        // in circles would otherwise hold the blocking thread for ever. The pid
+        // is read before the move, because afterwards this thread no longer owns
+        // the worker.
+        let pid = worker.pid();
+        let key = password.map(str::to_string);
+        let plan = plan.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut worker = worker;
+            let _ = tx.send(Self::ask_rewrite(&mut worker, &plan, key.as_deref()));
+        });
+        awaited(&rx, crate::workers::DEFAULT_DEADLINE, pid)?
+    }
+}
+
+impl InWorker {
+    /// The two requests a rewrite makes, on the thread that owns the worker.
+    ///
+    /// [`InWorker::ask`]'s counterpart, and the unlock in front of it is there
+    /// for the same reason: `lopdf` parses no objects at all for a document it
+    /// cannot authenticate, so a locked document would rewrite to an empty one
+    /// rather than refusing.
+    fn ask_rewrite(
+        worker: &mut crate::worker::Worker,
+        plan: &Plan,
+        password: Option<&str>,
+    ) -> Result<usize, Refusal> {
+        use crate::worker_proto::{Reply, Request};
+
+        if let Some(password) = password {
+            let answered = worker.call(&Request::Unlock {
+                password: password.to_string(),
+            })?;
+            if !answered.ok {
+                return Err(format!(
+                    "the worker could not take the document's password: {}",
+                    answered.error
+                )
+                .into());
+            }
+        }
+
+        let answered = worker.call(&Request::Rewrite {
+            plan: plan.clone(),
+            view: NO_VIEW_TURN,
+        })?;
+        if !answered.ok {
+            // The one bit that has to survive the pipe: whether Reload is the
+            // answer. See `Response::changed`.
+            return Err(Refusal {
+                message: answered.error,
+                changed: answered.changed,
+            });
+        }
+        match answered.reply {
+            Some(Reply::Rewrote(bytes)) => Ok(bytes),
+            // A well-formed message answering a different question --- see
+            // [`InWorker::ask`], which says why the caller checks this rather
+            // than the protocol.
+            other => Err(format!(
+                "the worker answered the rewrite with {}",
+                match other {
+                    Some(reply) => format!("{reply:?}"),
+                    None => "no payload at all".to_string(),
+                }
+            )
+            .into()),
         }
     }
 }
@@ -1702,7 +2045,11 @@ fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// them is spent. `staged` is removed if the rename fails, so a refused save
 /// leaves the directory as it found it.
 pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
-    commit(staged, source)
+    // The same resolution `stage_in_place` made, and it has to be the same one:
+    // the staged file was written beside the *target*, so renaming it onto the
+    // link would move it across directories and replace the wrong entry. See
+    // `resolved`.
+    commit(staged, &resolved(source))
 }
 
 /// A plan checked against the document on disk, and everything the rewrite needs.
@@ -1730,10 +2077,6 @@ struct Checked {
     turns: Vec<(lopdf::ObjectId, u8)>,
     /// Whether the reader moved anything, so the page tree has to be rebuilt.
     moved: bool,
-    /// What the source fingerprinted as, where that was checked.
-    verified: Option<Fingerprint>,
-    /// The source had changed and [`OnChange::Proceed`] let it through.
-    changed: bool,
     /// The encryption the source had, when a password opened it, so [`rewrite`]
     /// can put it back.
     ///
@@ -1797,38 +2140,67 @@ fn planned_bytes(
     view: u8,
     password: Option<&str>,
 ) -> Result<Planned, Refusal> {
-    rewrite(plan, checked(source, plan, on_change, view, password)?)
+    let ready = rewrite_ready(source, plan, on_change)?;
+    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
+    Ok(ready.with(rewrite_update(&original, plan, view, password)?))
 }
 
-/// Checks a plan against the document on disk, writing nothing.
+/// What the caller established about the file before anything parsed it.
 ///
-/// Every refusal a save can make lives here. See [`Checked`] for why that is a
-/// boundary rather than a convenience.
+/// **The coordinator's half of a rewrite**, and the split is the same boundary
+/// [`Ready`] draws for an append: everything in here is a question about a
+/// *path* --- is this still the file the reader opened --- and answering it needs
+/// filesystem authority and no parser. Everything in [`rewrite_update`] is a
+/// parse of attacker-controlled bytes and needs no filesystem at all.
+/// `docs/THREAT-MODEL.md` §T6 and residual risk 18.
+///
+/// It carries no bytes and no length, which is the one place it differs from
+/// [`Ready`] and is worth stating rather than reading as an omission. An
+/// append's answer is offsets *measured from* a length, so the two halves have a
+/// number to compare and [`appended`] compares it; a rewrite's answer is a whole
+/// document that names nothing about what it was built from, so there is nothing
+/// of that shape to check. What plays that part here is the second fingerprint
+/// [`Staged`] carries, taken during staging and read again before the rename.
+#[derive(Debug)]
+pub struct RewriteReady {
+    verified: Option<Fingerprint>,
+    changed: bool,
+}
+
+impl RewriteReady {
+    /// Puts a builder's bytes together with what the caller checked itself.
+    ///
+    /// The fingerprint is deliberately not carried through: the only path that
+    /// needs it is [`stage_in_place`], which reads it from here directly and
+    /// never asks for the bytes. See [`Planned`].
+    fn with(self, bytes: Vec<u8>) -> Planned {
+        Planned {
+            bytes,
+            changed: self.changed,
+        }
+    }
+}
+
+/// Asks whether the file is still the one the plan was made against.
+///
+/// **No parser, and that is the point of it being separate.** It reads `source`
+/// only through [`Fingerprint`], which hashes bytes and never interprets them,
+/// so nothing here is a parse of attacker-controlled input.
 ///
 /// # Errors
 ///
-/// As [`planned_bytes`], minus the serialisation.
-fn checked(
-    source: &Path,
-    plan: &Plan,
-    on_change: OnChange,
-    view: u8,
-    password: Option<&str>,
-) -> Result<Checked, Refusal> {
-    if plan.pages.is_empty() {
-        return Err("a document must keep at least one page".into());
-    }
-
+/// The file changed since it was opened, under [`OnChange::Refuse`].
+fn rewrite_ready(source: &Path, plan: &Plan, on_change: OnChange) -> Result<RewriteReady, Refusal> {
     // Before the parse, and before anything is written anywhere. Every operation
     // below rewrites the object graph this plan was made against, so a `source`
     // that changed since the reader opened it is a different graph and the edits
     // no longer name what they were made on.
     //
-    // This is the general form of the page-count refusal below it, which shipped
-    // first and catches exactly one shape of the same problem: a file whose page
-    // count changed. Everything that keeps the count -- a re-export over the top,
-    // a sync client landing a newer copy, a signing tool rewriting in place --
-    // was invisible to it. See `docs/PLAN.md` §5 and `fingerprint.rs`.
+    // This is the general form of the page-count refusal in `checked`, which
+    // shipped first and catches exactly one shape of the same problem: a file
+    // whose page count changed. Everything that keeps the count -- a re-export
+    // over the top, a sync client landing a newer copy, a signing tool rewriting
+    // in place -- was invisible to it. See `docs/PLAN.md` §5 and `fingerprint.rs`.
     let mut changed = false;
     let verified = match (&plan.opened_as, on_change) {
         (Some(opened_as), OnChange::Refuse) => {
@@ -1847,20 +2219,70 @@ fn checked(
         },
         (None, _) => None,
     };
+    Ok(RewriteReady { verified, changed })
+}
+
+/// Applies a plan to a document's bytes and serialises the result.
+///
+/// **Pure, and that is the whole point of it existing separately.** Everything
+/// here is parsing and serialising attacker-controlled bytes; nothing here opens
+/// a file, names a path, or knows one exists --- which is what lets it run in a
+/// sandboxed worker instead of in the process holding the window and the
+/// reader's filesystem authority. The same split [`append_update`] has, for the
+/// same reason, and `docs/THREAT-MODEL.md` residual risk 18 is what it narrows.
+///
+/// `view` is the reader's own rotation in quarter turns, which a print job has
+/// and a save does not --- see [`NO_VIEW_TURN`].
+///
+/// # Errors
+///
+/// As [`planned_bytes`], minus the file being readable.
+pub fn rewrite_update(
+    original: &[u8],
+    plan: &Plan,
+    view: u8,
+    password: Option<&str>,
+) -> Result<Vec<u8>, Refusal> {
+    rewrite(plan, checked(original, plan, view, password)?)
+}
+
+/// Checks a plan against a document's bytes, writing nothing.
+///
+/// Every refusal a save can make about the *document* lives here; the one it
+/// makes about the *file* is [`rewrite_ready`]. See [`Checked`] for why the
+/// second split, between this and [`rewrite`], is a boundary rather than a
+/// convenience.
+///
+/// # Errors
+///
+/// As [`rewrite_update`], minus the serialisation.
+fn checked(
+    original: &[u8],
+    plan: &Plan,
+    view: u8,
+    password: Option<&str>,
+) -> Result<Checked, Refusal> {
+    if plan.pages.is_empty() {
+        return Err("a document must keep at least one page".into());
+    }
 
     // Not `mut`, and that is the split proving itself rather than a tidy-up:
     // every refusal below reads the document and none of them writes to it, so
     // the compiler now says what the comments used to. It went `mut` the moment
     // the two halves were one function.
-    let mut doc = Document::load_with_options(
-        source,
+    // `load_mem_with_options`, not `load_with_options`, and the difference is
+    // the whole split: a path is authority and bytes are not, so a function
+    // that takes the second can run where there is none. The append already
+    // reads this way for the same reason.
+    let mut doc = Document::load_mem_with_options(
+        original,
         lopdf::LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
             password: password.map(str::to_string),
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse {source:?}: {e}"))?;
+    .map_err(|e| format!("could not parse the document: {e}"))?;
 
     // Before anything is written, and before the page walk: a refusal that
     // arrives after a temporary file exists has to clean up, and a refusal that
@@ -1888,7 +2310,7 @@ fn checked(
     // in the clear and drops the `/Encrypt` dictionary with it, which is why
     // this used to be a refusal. The repair is not a different serialiser: it is
     // `Document::encrypt`, which re-encrypts every object with a state and
-    // writes a fresh dictionary. Measured 2026-08-29 on
+    // writes a fresh dictionary. Measured 2026-08-28 on
     // `testdata/incr-encrypted-pw.pdf` --- delete a page, re-encrypt, and
     // `qpdf --show-encryption` on the source and the output diff to nothing:
     // `R = 6`, `P = -4`, AESv3 for streams, strings and file, both passwords
@@ -1994,8 +2416,6 @@ fn checked(
         dropped,
         turns,
         moved,
-        verified,
-        changed,
         encryption,
     })
 }
@@ -2013,7 +2433,7 @@ fn checked(
 ///
 /// A page tree that cannot be rebuilt, a mark that maps to nothing, two pages
 /// that are one object and disagree, or a document `lopdf` will not serialise.
-fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
+fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     let Checked {
         mut doc,
         pages,
@@ -2021,28 +2441,14 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         dropped,
         turns,
         moved,
-        verified,
-        changed,
         encryption,
     } = checked;
 
-    if !dropped.is_empty() {
-        drop_pages(&mut doc, &dropped)?;
-        // Its destinations name pages that are no longer in the file. Dropped
-        // whole rather than repaired --- `pagetree::drop_outline` carries what
-        // repairing it would take, and it is its own piece of work.
-        drop_outline(&mut doc)?;
-    }
-
-    // After the deletion, so that the tree written here holds exactly the pages
-    // that survived it. The outline is *not* dropped for a move: a destination
-    // names a page object, and the object is still there --- a bookmark follows
-    // its page to wherever the reader put it, which is what a reader who
-    // rearranged a document means.
-    if moved {
-        let order: Vec<lopdf::ObjectId> = turns.iter().map(|(id, _)| *id).collect();
-        reorder_pages(&mut doc, &order)?;
-    }
+    // What goes and in what order, in the one sequence both writers share ---
+    // see `pagetree::materialise`, which carries why the outline is dropped for
+    // a deletion and kept for a move, and why turning pages is *not* part of it.
+    let order: Vec<lopdf::ObjectId> = turns.iter().map(|(id, _)| *id).collect();
+    crate::pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
 
     // Before `apply_turns`, and the order is load-bearing rather than tidy: a
     // mark was made against the rotation the file had when it was opened, and
@@ -2161,13 +2567,7 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Planned, Refusal> {
         })?;
     }
 
-    let bytes = serialise(&mut doc, "the document")?;
-
-    Ok(Planned {
-        bytes,
-        verified,
-        changed,
-    })
+    Ok(serialise(&mut doc, "the document")?)
 }
 
 /// Turns a document into the bytes that will be written, and checks them.
@@ -2588,26 +2988,6 @@ enum AnnotsSite {
 
 /// Reads what every mark needs, before anything is written.
 ///
-/// # Errors
-///
-/// A mark naming a page the file does not have; a mark on a page object that
-/// more than one kept page number names.
-/// Writes the reader's marks into the document as real annotations.
-///
-/// **One object per mark, appended to its page's `/Annots`.** That array may be
-/// absent, written inline, or an indirect reference to an array; `AGENTS.md`
-/// records that the distinction decides how large an annotation edit is, and
-/// [`attach`] handles all three.
-///
-/// **The coordinates are the whole of the difficulty.** A mark is held in
-/// display space --- what the reader dragged across, y downwards from the
-/// displayed page's top-left corner --- and `/QuadPoints` is the page's own
-/// space, y upwards, before `/Rotate` and measured from the media box. The
-/// mapping is [`crate::text::from_device`] followed by the crop box's origin,
-/// which is exactly the two steps `annots.rs` performs in reverse when it reads
-/// one back. Those are separate implementations, which is what makes
-/// `annot-probe`'s round trip a differential rather than a tautology.
-///
 /// `kept` is the one-based page numbers being written, used only for the
 /// shared-object refusal.
 ///
@@ -2677,6 +3057,20 @@ fn mark_sites(
 /// `sites` is [`mark_sites`]'s answer for the same `marks`, in the same order.
 /// The pairing is positional, which is why neither is public and both are
 /// produced side by side at each of the two call sites.
+///
+/// **One object per mark, appended to its page's `/Annots`.** That array may be
+/// absent, written inline, or an indirect reference to an array; `AGENTS.md`
+/// records that the distinction decides how large an annotation edit is, and
+/// [`attach`] handles all three.
+///
+/// **The coordinates are the whole of the difficulty.** A mark is held in
+/// display space --- what the reader dragged across, y downwards from the
+/// displayed page's top-left corner --- and `/QuadPoints` is the page's own
+/// space, y upwards, before `/Rotate` and measured from the media box. The
+/// mapping is [`crate::text::from_device`] followed by the crop box's origin,
+/// which is exactly the two steps `annots.rs` performs in reverse when it reads
+/// one back. Those are separate implementations, which is what makes
+/// `annot-probe`'s round trip a differential rather than a tautology.
 ///
 /// # Errors
 ///
@@ -4126,7 +4520,13 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
 
 /// Writes `bytes` to `out` via a sibling temporary file and a rename.
 fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
-    let staged = stage(out, bytes)?;
+    let staged = stage(out, |file| {
+        use std::io::Write as _;
+        file.write_all(bytes)
+            .and_then(|()| file.flush())
+            .map_err(|e| Refusal::from(format!("could not write {out:?}: {e}")))
+    })
+    .map_err(|why| why.message)?;
     commit(&staged, out)
 }
 
@@ -4180,14 +4580,56 @@ fn staging_name(stem: &std::ffi::OsStr, attempt: u32) -> std::ffi::OsString {
     name
 }
 
-fn stage(out: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
-    use std::io::Write as _;
+/// The file a pathname actually names, with every symlink resolved.
+///
+/// **A rename replaces a name, and a symlink is a name.** `std::fs::rename`
+/// onto a symlink replaces the *link* --- the entry becomes an ordinary file and
+/// the document it pointed at keeps its old contents. So an in-place rewrite
+/// through a link left the reader with two files quietly diverging, while the
+/// append, which opens the path and writes into it, followed the link and edited
+/// the document. Two save modes, one file, opposite outcomes, and no message
+/// either way.
+///
+/// Resolving here rather than refusing is the right half of that choice: a link
+/// to a PDF is a thing people have on purpose, and "tpdf will not save this"
+/// would be a worse answer than saving what they are looking at.
+///
+/// A path that cannot be canonicalized is handed back unchanged --- a
+/// destination that does not exist yet is the ordinary case for a copy, and
+/// there is nothing to resolve.
+fn resolved(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
 
+/// Creates the temporary file and lets `write` fill it.
+///
+/// **A closure rather than a `&[u8]`, since 2026-08-28**, and the reason is the
+/// whole of `docs/THREAT-MODEL.md` residual risk 18: a rewrite's bytes are
+/// produced by a sandboxed worker writing through this file's own descriptor, so
+/// there is no buffer here to hand in. Every guarantee below is unchanged and
+/// stays in one place, which is what the split is protecting --- the exclusive
+/// creation, the mode copy, the sync, and the removal of the partial file on any
+/// failure.
+///
+/// `write` gets the file with nothing written to it and the offset at zero. Its
+/// refusal is passed through rather than wrapped: it is a refusal about the
+/// *document* --- a page the plan names that the file does not have --- and
+/// prefixing it with "could not write" would report a parse failure as a disk
+/// failure.
+///
+/// # Errors
+///
+/// No unused temporary name; the file cannot be created; `write` refuses; or the
+/// contents cannot be got onto the platter.
+fn stage(
+    out: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> Result<(), Refusal>,
+) -> Result<PathBuf, Refusal> {
     let dir = out.parent().filter(|p| !p.as_os_str().is_empty());
     let dir = dir.unwrap_or(Path::new("."));
     let stem = out
         .file_name()
-        .ok_or_else(|| format!("{out:?} does not name a file to save to"))?;
+        .ok_or_else(|| Refusal::from(format!("{out:?} does not name a file to save to")))?;
 
     for attempt in 0..STAGING_ATTEMPTS {
         let partial = dir.join(staging_name(stem, attempt));
@@ -4198,29 +4640,53 @@ fn stage(out: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
         {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("could not create {partial:?}: {e}")),
+            Err(e) => return Err(Refusal::from(format!("could not create {partial:?}: {e}"))),
         };
+        // **Before the bytes, not after them.** A staged file is created with
+        // the process umask, usually `0644`, so a document a reader keeps at
+        // `0600` in a shared directory came back world-readable after any page
+        // edit --- a save is not the place to widen who can read a file. Doing
+        // it before `write_all` also means the contents are never on disk under
+        // the wider mode, which doing it after would not give.
+        //
+        // Best effort: a filesystem that does not carry modes has nothing to
+        // copy, and failing a save over that would be a refusal about the wrong
+        // thing. Unix only, because there is no counterpart to copy on Windows
+        // --- a file there inherits its ACL from the directory it is created in,
+        // which is the directory the original is in, so the replacement lands
+        // with the neighbours' permissions rather than with a default. The
+        // narrower question of an ACL set on the file itself is not answered by
+        // either platform's branch here; `docs/THREAT-MODEL.md` §T6.7 says so.
+        #[cfg(unix)]
+        if let Ok(existing) = std::fs::metadata(out) {
+            let _ = file.set_permissions(existing.permissions());
+        }
         // Removed on any failure, and this call created it, so removing it
         // cannot take anything that was not ours.
-        let written = file
-            .write_all(bytes)
-            .and_then(|()| file.flush())
+        let written = write(&mut file).and_then(|()| {
             // So that the rename swaps in a file whose contents are on the
             // platter. Without it the atomicity is a claim about the directory
             // entry only: a crash after the rename can leave the new name
             // pointing at a file of zeros, which is worse than either outcome
             // the split is meant to guarantee.
-            .and_then(|()| file.sync_data());
-        if let Err(e) = written {
+            //
+            // **This process's `sync_data`, whoever did the writing.** A worker
+            // writing through a duplicate of this descriptor puts its bytes in
+            // the kernel and stops there; the file is the same file, so the sync
+            // here is what covers them too.
+            file.sync_data()
+                .map_err(|e| Refusal::from(format!("could not flush {partial:?}: {e}")))
+        });
+        if let Err(why) = written {
             drop(file);
             let _ = std::fs::remove_file(&partial);
-            return Err(format!("could not write {partial:?}: {e}"));
+            return Err(why);
         }
         return Ok(partial);
     }
-    Err(format!(
+    Err(Refusal::from(format!(
         "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries"
-    ))
+    )))
 }
 
 /// Renames a staged file over `out`, removing it if that fails.
@@ -4263,6 +4729,22 @@ mod tests {
     use super::*;
     use crate::edits::PageView;
     use crate::pagetree::effective_rotation;
+
+    /// [`stage`] with a buffer, which is what it took before a worker did the
+    /// writing.
+    ///
+    /// The tests below are about the staging file --- its name, its mode, that a
+    /// collision moves to the next index --- and none of them is about where the
+    /// bytes came from. Passing them through a closure at every call site would
+    /// put four copies of the same two lines in front of the thing each test is
+    /// actually asserting.
+    fn stage_bytes(out: &Path, bytes: &[u8]) -> Result<PathBuf, Refusal> {
+        stage(out, |file| {
+            use std::io::Write as _;
+            file.write_all(bytes)
+                .map_err(|e| Refusal::from(format!("could not write {out:?}: {e}")))
+        })
+    }
     use lopdf::Object;
     use std::collections::HashSet;
 
@@ -4366,8 +4848,27 @@ mod tests {
     struct Scratch(PathBuf);
 
     impl Scratch {
+        /// A directory of this test's own, whatever anyone else called theirs.
+        ///
+        /// **The counter is not decoration.** The name used to be `{name}-{pid}`,
+        /// so two tests that happened to pick the same string shared one
+        /// directory --- and `new` begins by *deleting* it, while `Drop` deletes
+        /// it again. Under `cargo test`'s thread pool that is one test removing
+        /// another's working directory mid-run, which surfaces as an assertion
+        /// failure in whichever test lost the race and says nothing about the
+        /// name they share.
+        ///
+        /// It happened: `merge-encrypted` was taken by two tests, and the
+        /// resulting flake was reproducible only in the full suite --- twelve
+        /// isolated runs of the loser passed. The name is kept in the path
+        /// because it is what makes a leftover directory legible; uniqueness is
+        /// what makes it correct.
         fn new(name: &str) -> Scratch {
-            let dir = std::env::temp_dir().join(format!("tpdf-save-{name}-{}", std::process::id()));
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static NEXT: AtomicU32 = AtomicU32::new(0);
+            let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir()
+                .join(format!("tpdf-save-{name}-{}-{serial}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).expect("scratch dir");
             Scratch(dir)
@@ -4468,7 +4969,7 @@ mod tests {
             println!("[SKIP] a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do: generate testdata/ (BUILD.md)");
             return;
         };
-        let why = print_bytes(&source, &keeping(2, &[(0, 0)]), NO_VIEW_TURN)
+        let why = print_bytes(&source, &keeping(2, &[(0, 0)]), NO_VIEW_TURN, None)
             .expect_err("a print job from an encrypted document must be refused");
         assert!(
             why.message.contains("encrypted"),
@@ -4485,6 +4986,106 @@ mod tests {
             None,
         )
         .expect("the same document rewrites");
+    }
+
+    #[test]
+    fn a_print_job_from_a_locked_document_names_the_escape_that_exists() {
+        // **The sibling above, on the fixture it could not reach.** That test
+        // uses the empty-password document because it was the only one that got
+        // as far as the encryption refusal: without the reader's key `checked`
+        // refuses first, and its sentence --- *open it with its password* --- is
+        // advice to a reader who has done exactly that, naming an escape they
+        // have already taken. This one asserts the message a reader can act on.
+        //
+        // A guard whose neighbour refuses the same input is untested by it, and
+        // the neighbour here is one parse earlier.
+        let Some(source) = fixture("incr-encrypted-pw.pdf") else {
+            println!("[SKIP] a_print_job_from_a_locked_document_names_the_escape_that_exists: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let why = print_bytes(
+            &source,
+            &keeping(2, &[(0, 0)]),
+            NO_VIEW_TURN,
+            Some("swordfish"),
+        )
+        .expect_err("a print job from an encrypted document must be refused");
+        assert!(
+            why.message.contains("Print the whole document"),
+            "the refusal must name the operation that works, not one the reader has already \
+             done: {}",
+            why.message
+        );
+
+        // **The control, and it is what makes the assertion above mean
+        // something.** Without the password the refusal is the lock's, and it is
+        // a different sentence --- so a `print_bytes` that quietly ignored its
+        // new argument would pass the first assertion only by accident of which
+        // message it happened to produce. These two must not be the same string.
+        let locked = print_bytes(&source, &keeping(2, &[(0, 0)]), NO_VIEW_TURN, None)
+            .expect_err("without the key the parse itself is refused");
+        assert!(
+            locked.message.contains("could not unlock"),
+            "without the key the refusal is the lock's: {}",
+            locked.message
+        );
+        assert_ne!(
+            why.message, locked.message,
+            "the key has to change which refusal the reader is given"
+        );
+    }
+
+    #[test]
+    fn a_merge_whose_base_is_password_protected_keeps_its_encryption() {
+        // **Written because the reader would have been told tpdf broke.**
+        // `write_merged` builds the base through `planned_bytes`, which since
+        // the rewrite learned to preserve encryption hands back *encrypted*
+        // bytes --- and the reload of those bytes did not take the password.
+        // `lopdf` answers `Ok` with no objects for a document it cannot
+        // authenticate, so the merge failed at the catalog and the message
+        // blamed this module's own writer: "tpdf could not read back the
+        // document it just built".
+        //
+        // Every other `write_merged` test passes `None`, so none of them could
+        // have found this.
+        let (Some(source), Some(other)) = (fixture("incr-encrypted-pw.pdf"), fixture("links.pdf"))
+        else {
+            println!("[SKIP] a_merge_whose_base_is_password_protected_keeps_its_encryption: generate testdata/ (BUILD.md)");
+            return;
+        };
+        let scratch = Scratch::new("merge-encrypted-base");
+        let out = scratch.join("merged.pdf");
+
+        let merged = write_merged(
+            &source,
+            &keeping(2, &[(0, 0)]),
+            std::slice::from_ref(&other),
+            &out,
+            Some("swordfish"),
+        )
+        .expect("a merge whose base is unlocked must go through");
+
+        // Three assertions, and each answers a different way this can be wrong.
+        // The count says the merge happened at all; reading it back *with* the
+        // password says the output is a document rather than a shape; and the
+        // `/Encrypt` scan says the base's own encryption survived, which is the
+        // silent removal the incoming-file refusal exists to prevent arriving
+        // through the base instead.
+        assert_eq!(
+            merged.pages as usize,
+            1 + page_count(&other),
+            "the plan decided what went in, not the file"
+        );
+        assert_eq!(
+            page_count_with(&out, "swordfish"),
+            1 + page_count(&other),
+            "the merged file must reopen with the base's password"
+        );
+        let raw = std::fs::read(&out).expect("read back");
+        assert!(
+            raw.windows(8).any(|w| w == b"/Encrypt"),
+            "the merge of an encrypted base was written in the clear"
+        );
     }
 
     #[test]
@@ -6225,7 +6826,7 @@ mod tests {
     /// A *genuinely* encrypted document keeps its encryption, and it is the case
     /// the synthetic fixture cannot reach.
     ///
-    /// **This asserted a refusal until 2026-08-29, and the refusal was a proxy.**
+    /// **This asserted a refusal until 2026-08-28, and the refusal was a proxy.**
     /// What it was defending is in the paragraphs below: an encrypted document
     /// must never be written back in the clear. Refusing was how that was
     /// achieved while `lopdf`'s full serialiser was the only writer available;
@@ -6451,8 +7052,8 @@ mod tests {
         std::fs::copy(&path, &open).expect("copy fixture");
         let before = std::fs::read(&open).expect("read");
 
-        let staged =
-            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None, &Here)
+            .expect("stage");
 
         assert!(staged.path.exists(), "the staged file is written");
         assert_ne!(staged.path, open, "and it is not the source");
@@ -6460,6 +7061,222 @@ mod tests {
             std::fs::read(&open).expect("read"),
             before,
             "the document the reader has is untouched until the commit"
+        );
+    }
+
+    /// A rewrite through a symlink must edit the document, not replace the link.
+    ///
+    /// **The two save modes disagreed about one file, and neither said so.**
+    /// `std::fs::rename` onto a symlink replaces the *link*: the entry becomes an
+    /// ordinary file holding the new bytes and the document it pointed at keeps
+    /// the old ones. So a page turn left the reader with two files diverging,
+    /// while a highlight --- which goes through the append, and the append opens
+    /// the path rather than renaming over it --- followed the link and edited the
+    /// document. Same file, same gesture, opposite results.
+    ///
+    /// Both assertions are needed and neither implies the other: a fix that
+    /// resolved the link but staged in the wrong directory would keep the link a
+    /// link and still not change the target.
+    #[test]
+    #[cfg(unix)]
+    fn saving_in_place_through_a_symlink_edits_the_document_the_link_names() {
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        // **The link and the document live in different directories, and that is
+        // the whole fixture.** With both in one directory, staging beside the
+        // link and staging beside the document are the same place, so the two
+        // rules agree and neither can be tested --- a mutation removing the
+        // resolution from `stage` survived exactly that way. Apart, the staged
+        // file's directory is the mechanism, readable directly.
+        let scratch = Scratch::new("stage-symlink");
+        let elsewhere = scratch.join("documents");
+        std::fs::create_dir_all(&elsewhere).expect("target directory");
+        let real = elsewhere.join("real.pdf");
+        let link = scratch.join("link.pdf");
+        std::fs::copy(&path, &real).expect("copy fixture");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        let before = std::fs::read(&real).expect("read");
+
+        let staged = stage_in_place(&link, &plan_opened_as(&[1, 0, 0, 0], &link), None, &Here)
+            .expect("stage");
+        // Beside the document, not beside the name it was reached by. On this
+        // machine both are the same filesystem so the rename would work either
+        // way; the property is that it *always* does, and a temporary file on a
+        // different filesystem from its destination cannot be renamed onto it at
+        // all. That is not reachable from a unit test, so the directory is what
+        // is asserted --- the mechanism rather than its consequence.
+        // Both sides canonicalized, because on macOS `/var` is itself a symlink
+        // to `/private/var` and the scratch directory lives under it --- so the
+        // staged path is resolved and the expectation, built from `temp_dir()`,
+        // is not. Comparing them raw fails on a correct implementation, which is
+        // the direction that wastes an afternoon.
+        assert_eq!(
+            staged
+                .path
+                .parent()
+                .and_then(|dir| dir.canonicalize().ok())
+                .as_deref(),
+            elsewhere.canonicalize().ok().as_deref(),
+            "the staged file must land beside the document it will replace"
+        );
+        commit_in_place(&staged.path, &link).expect("commit");
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("stat the link")
+                .file_type()
+                .is_symlink(),
+            "the save replaced the link instead of the document it names"
+        );
+        assert_ne!(
+            std::fs::read(&real).expect("read the target"),
+            before,
+            "the document the link names is the one that must have changed"
+        );
+    }
+
+    /// A rewrite must not widen who can read the document.
+    ///
+    /// A staged file is created with the process umask --- usually `0644` --- and
+    /// then renamed over the original, so a document kept at `0600` in a shared
+    /// directory came back readable by everyone after any page edit. Nothing
+    /// reported it and no other check can see it: the bytes are correct and the
+    /// page count is right.
+    #[test]
+    #[cfg(unix)]
+    fn a_rewrite_keeps_the_documents_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let Some(path) = fixture("rotated.pdf") else {
+            println!("[SKIP] rotated.pdf not generated");
+            return;
+        };
+        let scratch = Scratch::new("stage-mode");
+        let open = scratch.join("open.pdf");
+        std::fs::copy(&path, &open).expect("copy fixture");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o640))
+            .expect("set the document's mode");
+
+        // **The control, and without it this test can hold by construction.**
+        // The assertion below is only worth something if `0640` is not what a
+        // freshly created file gets anyway --- under a `0026` umask it would be,
+        // and then nothing could fail. Ask the filesystem rather than assume the
+        // umask.
+        let probe = scratch.join("umask-probe");
+        std::fs::write(&probe, b"x").expect("probe");
+        let ambient = std::fs::metadata(&probe)
+            .expect("stat probe")
+            .permissions()
+            .mode()
+            & 0o777;
+        if ambient == 0o640 {
+            println!("[SKIP] a_rewrite_keeps_the_documents_mode: this umask creates 0640 anyway");
+            return;
+        }
+
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None, &Here)
+            .expect("stage");
+        commit_in_place(&staged.path, &open).expect("commit");
+
+        assert_eq!(
+            std::fs::metadata(&open).expect("stat").permissions().mode() & 0o777,
+            0o640,
+            "the save replaced the document with one anyone can read (ambient mode is {ambient:o})"
+        );
+    }
+
+    /// A read-back that never answers must end its worker, not wait for ever.
+    ///
+    /// `InWorker::pages` spawns its worker outside the pool, so the supervisor
+    /// that owns the deadline never sees it and `Worker::call` blocks on a pipe
+    /// with no bound. The document is already closed by then and the appended
+    /// bytes are already on disk, so "for ever" means a save that can never be
+    /// confirmed or rolled back.
+    ///
+    /// Exercised through `awaited` with a real process standing in for the
+    /// worker, because the decision takes its duration as an argument --- a check
+    /// whose only failure mode is a wait cannot fail.
+    #[test]
+    #[cfg(unix)]
+    fn a_read_back_that_never_answers_ends_the_worker() {
+        let mut victim = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a stand-in worker");
+        let pid = victim.id();
+        // Nobody ever sends. `_tx` is held so the channel is not simply closed,
+        // which would be a different outcome from silence.
+        let (_tx, rx) = std::sync::mpsc::channel::<usize>();
+
+        let began = std::time::Instant::now();
+        let within = std::time::Duration::from_millis(150);
+        let why = awaited(&rx, within, pid)
+            .expect_err("a wait that gets no answer must not report success");
+        let waited = began.elapsed();
+        assert!(
+            waited >= within,
+            "it has to have waited for the deadline it was given, and waited {waited:?}"
+        );
+        // **The upper bound is the half that has teeth.** A lower bound alone is
+        // satisfied by *any* longer wait, so a deadline a thousand times too long
+        // passes it --- measured: the same assertion stayed green while the test
+        // took 150 seconds instead of 0.17. A bound whose failure mode is a
+        // longer wait is not a bound. Twenty times the deadline is loose enough
+        // for a loaded runner and nowhere near a mistake worth catching.
+        assert!(
+            waited < within * 20,
+            "the wait has to be about the deadline it was given, and took {waited:?}"
+        );
+        assert!(
+            why.contains("did not answer"),
+            "the refusal has to say what happened: {why}"
+        );
+
+        let mut gone = false;
+        for _ in 0..200 {
+            if victim.try_wait().expect("wait").is_some() {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = victim.kill();
+        let _ = victim.wait();
+        assert!(
+            gone,
+            "the worker must be ended --- otherwise the timeout leaks the process and the \
+             thread blocked reading its pipe"
+        );
+    }
+
+    /// The control: an answer that arrives leaves the worker alone.
+    ///
+    /// Without it, an `awaited` that killed unconditionally would pass the test
+    /// above, and every ordinary save would be ending a healthy worker.
+    #[test]
+    #[cfg(unix)]
+    fn a_read_back_that_answers_in_time_leaves_the_worker_alone() {
+        let mut victim = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a stand-in worker");
+        let pid = victim.id();
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        tx.send(7).expect("send the answer");
+
+        assert_eq!(
+            awaited(&rx, std::time::Duration::from_secs(5), pid).expect("the answer arrives"),
+            7
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let still_there = victim.try_wait().expect("wait").is_none();
+        let _ = victim.kill();
+        let _ = victim.wait();
+        assert!(
+            still_there,
+            "a call that was answered must not have its worker killed"
         );
     }
 
@@ -6506,7 +7323,7 @@ mod tests {
             "and still has them afterwards, so the page-count guard cannot fire"
         );
 
-        let why = stage_in_place(&open, &plan, None).expect_err("must refuse");
+        let why = stage_in_place(&open, &plan, None, &Here).expect_err("must refuse");
         assert!(why.message.contains("changed on disk"), "{why}");
         // The message has to leave the reader somewhere to go: their edits are
         // still in the journal, and Save a copy is the way to keep them.
@@ -6534,7 +7351,7 @@ mod tests {
         std::fs::copy(&path, &open).expect("copy fixture");
 
         let plan = plan_opened_as(&[1, 0, 0, 0], &open);
-        let staged = stage_in_place(&open, &plan, None).expect("must stage");
+        let staged = stage_in_place(&open, &plan, None, &Here).expect("must stage");
         assert!(staged.path.exists());
     }
 
@@ -6555,7 +7372,8 @@ mod tests {
         let open = scratch.join("open.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let why = stage_in_place(&open, &plan_of(&[1, 0, 0, 0]), None).expect_err("must refuse");
+        let why =
+            stage_in_place(&open, &plan_of(&[1, 0, 0, 0]), None, &Here).expect_err("must refuse");
         assert!(why.message.contains("could not record"), "{why}");
         assert!(why.message.contains("Save a copy"), "{why}");
         // The message is one a reader reads, so it has to be one sentence rather
@@ -6584,8 +7402,8 @@ mod tests {
         let open = scratch.join("open.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let staged =
-            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None, &Here)
+            .expect("stage");
         assert!(staged.path.exists(), "there is something to lose");
 
         // Something else writes while the document is being closed. Longer, so
@@ -6637,8 +7455,8 @@ mod tests {
         let open = scratch.join("open.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let staged =
-            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None, &Here)
+            .expect("stage");
         assert_eq!(verify_before_commit(&staged, &open), Ok(()));
         assert!(
             staged.path.exists(),
@@ -6788,8 +7606,8 @@ mod tests {
             .map(|id| effective_rotation(&before, *id).rem_euclid(360))
             .collect();
 
-        let staged =
-            stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None).expect("stage");
+        let staged = stage_in_place(&open, &plan_opened_as(&[1, 0, 0, 0], &open), None, &Here)
+            .expect("stage");
         commit_in_place(&staged.path, &open).expect("commit");
 
         assert!(!staged.path.exists(), "nothing of the staged file survives");
@@ -6825,8 +7643,13 @@ mod tests {
         let before = std::fs::read(&open).expect("read");
         let count = page_count(&open);
 
-        let why = stage_in_place(&open, &plan_opened_as(&vec![0u8; count + 1], &open), None)
-            .expect_err("must refuse");
+        let why = stage_in_place(
+            &open,
+            &plan_opened_as(&vec![0u8; count + 1], &open),
+            None,
+            &Here,
+        )
+        .expect_err("must refuse");
         assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(
             partials_beside(&open).is_empty(),
@@ -6840,8 +7663,13 @@ mod tests {
 
         // The control: the same document with a plan that matches does stage,
         // so the refusal is about the mismatch rather than about this fixture.
-        let staged =
-            stage_in_place(&open, &plan_opened_as(&vec![0u8; count], &open), None).expect("stage");
+        let staged = stage_in_place(
+            &open,
+            &plan_opened_as(&vec![0u8; count], &open),
+            None,
+            &Here,
+        )
+        .expect("stage");
         assert!(staged.path.exists());
     }
 
@@ -6887,7 +7715,7 @@ mod tests {
         let taken = staging_path(&out, 0);
         std::fs::write(&taken, b"somebody else's work").expect("plant it");
 
-        let staged = stage(&out, b"%PDF-1.7 the new bytes").expect("stage");
+        let staged = stage_bytes(&out, b"%PDF-1.7 the new bytes").expect("stage");
         assert_eq!(
             staged,
             staging_path(&out, 1),
@@ -6912,8 +7740,8 @@ mod tests {
         // their own call wrote.
         let scratch = Scratch::new("staging-concurrent");
         let out = scratch.join("report.pdf");
-        let first = stage(&out, b"the first save").expect("stage");
-        let second = stage(&out, b"the second save").expect("stage");
+        let first = stage_bytes(&out, b"the first save").expect("stage");
+        let second = stage_bytes(&out, b"the second save").expect("stage");
 
         assert_eq!(
             (first.clone(), second.clone()),
@@ -6942,7 +7770,7 @@ mod tests {
         std::fs::write(&victim, b"do not overwrite me").expect("plant the victim");
         std::os::unix::fs::symlink(&victim, staging_path(&out, 0)).expect("plant the link");
 
-        let staged = stage(&out, b"%PDF-1.7 the new bytes").expect("stage");
+        let staged = stage_bytes(&out, b"%PDF-1.7 the new bytes").expect("stage");
         assert_eq!(
             std::fs::read(&victim).expect("read"),
             b"do not overwrite me",
@@ -7935,6 +8763,234 @@ mod tests {
             fake.asked.borrow().len(),
             1,
             "asked exactly once, so the write path has one verification and not two"
+        );
+    }
+
+    /// A [`Rewriter`] that writes what it is told to and records what it was asked.
+    ///
+    /// [`Fake`]'s counterpart on the writing side, and it exists for the same
+    /// reason: without it, the only way to ask whether the coordinator delegated
+    /// the *parse* is to read the source, and a source-level assertion proves a
+    /// shape rather than an ordering.
+    struct FakeWriter {
+        answer: Result<Vec<u8>, Refusal>,
+        /// How many bytes to *claim* beyond what was written.
+        ///
+        /// Zero for an honest writer. It is here because the check it exercises
+        /// --- the staged file's own size against the length reported back --- is
+        /// the only thing standing between a short write in another process and
+        /// a rename over the reader's document.
+        overstate_by: usize,
+        asked: std::cell::RefCell<Vec<(usize, Option<String>)>>,
+    }
+
+    impl FakeWriter {
+        fn writing(answer: Result<Vec<u8>, Refusal>) -> Self {
+            Self {
+                answer,
+                overstate_by: 0,
+                asked: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Rewriter for FakeWriter {
+        fn write(
+            &self,
+            _source: &mut std::fs::File,
+            len: usize,
+            out: &mut std::fs::File,
+            _plan: &Plan,
+            password: Option<&str>,
+        ) -> Result<usize, Refusal> {
+            use std::io::Write as _;
+
+            self.asked
+                .borrow_mut()
+                .push((len, password.map(str::to_string)));
+            let bytes = self.answer.clone()?;
+            out.write_all(&bytes).map_err(|e| e.to_string())?;
+            Ok(bytes.len() + self.overstate_by)
+        }
+    }
+
+    /// Whether anything is left beside `at` from a staging attempt.
+    ///
+    /// The observable for "the refusal cleaned up after itself". A staged file
+    /// nothing renames is not merely untidy: it is a copy of the reader's
+    /// document, possibly a partial one, sitting in their directory under a name
+    /// they did not choose.
+    fn leftovers_beside(at: &Path) -> Vec<String> {
+        let dir = at.parent().expect("a parent");
+        std::fs::read_dir(dir)
+            .expect("read the directory")
+            .filter_map(|entry| {
+                let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+                name.contains(PARTIAL).then_some(name)
+            })
+            .collect()
+    }
+
+    /// A document on disk and a plan that keeps every page of it, for the tests
+    /// below that are about the seam rather than about any particular edit.
+    fn staging_subject(scratch: &Scratch, name: &str) -> Option<(PathBuf, Plan)> {
+        let at = scratch.join(name);
+        std::fs::write(
+            &at,
+            b"%PDF-1.7\nnot a document this process will ever parse\n",
+        )
+        .expect("plant the source");
+        let plan = plan_opened_as(&[1, 0, 0, 0], &at);
+        Some((at, plan))
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_document_it_rewrites() {
+        // **The keystone of the rewrite's move, and it is red on the code this
+        // replaced.** The source planted here is not a PDF at all, so a
+        // coordinator that parsed it would refuse before writing anything ---
+        // which is exactly what `planned_bytes` did until 2026-08-28, on every
+        // save that deletes a page, moves one, turns one or crops one.
+        //
+        // The save succeeding on those bytes is what says the parse is somewhere
+        // else now: the bytes are the writer's, and this process has nothing to
+        // second-guess them with. It is the accounting observable for a property
+        // that is otherwise invisible --- every number a caller can see is the
+        // same whichever process did the parsing, so the thing to assert is *who
+        // was asked*.
+        let scratch = Scratch::new("rewrite-delegates");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 whatever the worker produced".to_vec()));
+
+        let staged = stage_in_place(&at, &plan, None, &writer).expect("the writer's bytes are it");
+
+        assert_eq!(
+            writer.asked.borrow().len(),
+            1,
+            "asked exactly once, so the save has one rewrite in it and not two"
+        );
+        assert_eq!(
+            std::fs::read(&staged.path).expect("read the staged file"),
+            b"%PDF-1.7 whatever the worker produced",
+            "the staged file holds what the writer wrote and nothing this process made"
+        );
+    }
+
+    #[test]
+    fn the_rewrite_is_asked_for_the_length_and_the_password() {
+        // **Neither term has a failing case under `Here`**, which is why they are
+        // pinned here rather than left to whichever implementation happens to
+        // read them. `Here` passes `len` to `read_whole` as a capacity hint, so
+        // a wrong one costs an allocation and changes no answer; it is the *map*
+        // length for a worker, where being wrong means rewriting a prefix of the
+        // document. And a password that never arrives makes `lopdf` parse no
+        // objects at all, so an encrypted document would rewrite to an empty one
+        // rather than refusing --- the same failure `reread_pages` names, on the
+        // way in instead of the way out.
+        let scratch = Scratch::new("rewrite-asks-for-length");
+        let (at, plan) = staging_subject(&scratch, "measured.pdf").expect("a subject");
+        let was = std::fs::metadata(&at).expect("measure").len() as usize;
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 rewritten".to_vec()));
+
+        stage_in_place(&at, &plan, Some("hunter2"), &writer).expect("stage");
+
+        assert_eq!(
+            writer.asked.borrow().as_slice(),
+            &[(was, Some("hunter2".to_string()))],
+            "the file as it is on disk, and the key the reader opened it with"
+        );
+    }
+
+    #[test]
+    fn a_rewriter_that_overstates_what_it_wrote_is_refused() {
+        // **The one check on the way back, and it is the only one there can be.**
+        // The bytes never reach this process, so nothing here can look at them;
+        // what it can do is compare two numbers that were arrived at
+        // independently --- the length the writer reports and the length the file
+        // has. A short write in another process, a reply built for a different
+        // request, or a second rewrite appending to the first all disagree here.
+        //
+        // Without it, a rename would put a truncated document over the reader's
+        // only copy and report success.
+        let scratch = Scratch::new("rewrite-overstates");
+        let (at, plan) = staging_subject(&scratch, "short.pdf").expect("a subject");
+        let mut writer = FakeWriter::writing(Ok(b"%PDF-1.7 rewritten".to_vec()));
+        writer.overstate_by = 1;
+
+        let why = stage_in_place(&at, &plan, None, &writer).expect_err("must refuse");
+
+        assert!(
+            why.message.contains("was not completed"),
+            "the refusal says the save did not finish: {}",
+            why.message
+        );
+        assert_eq!(
+            leftovers_beside(&at),
+            Vec::<String>::new(),
+            "and the partial file it refused over is gone"
+        );
+    }
+
+    #[test]
+    fn a_rewriter_that_refuses_says_so_without_a_disk_error_in_front_of_it() {
+        // A refusal from the writer is about the *document* --- a page the plan
+        // names that the file does not have --- and `stage` passes it through
+        // rather than wrapping it. Wrapping would report a parse failure as a
+        // disk failure, and send the reader looking at their filesystem.
+        //
+        // The `changed` half is the one that decides whether Reload is offered,
+        // and it has to survive this path as well as the pipe: a refusal that
+        // arrives correct from the worker and is flattened here reaches the
+        // reader as a sentence with no action attached.
+        let scratch = Scratch::new("rewrite-refuses");
+        let (at, plan) = staging_subject(&scratch, "refused.pdf").expect("a subject");
+        let writer = FakeWriter::writing(Err(Refusal::changed(
+            "the edits name page 9, which this document does not have",
+        )));
+
+        let why = stage_in_place(&at, &plan, None, &writer).expect_err("must refuse");
+
+        assert_eq!(
+            why.message, "the edits name page 9, which this document does not have",
+            "the writer's own words, not a wrapper's"
+        );
+        assert!(why.changed, "and the offer of Reload with them");
+        assert_eq!(
+            leftovers_beside(&at),
+            Vec::<String>::new(),
+            "and nothing is left beside the document"
+        );
+    }
+
+    #[test]
+    fn a_file_that_changed_is_refused_before_a_staging_file_exists() {
+        // **The free half of the split, and the reason `rewrite_ready` is a
+        // separate function.** Every refusal about the *document* now arrives
+        // after the temporary file has been created, because the writer needs
+        // somewhere to write before it can find anything wrong. The refusal
+        // about the *file* does not, and must not: it is answerable by reloading,
+        // and a reader who reloads should not find a partial copy of their
+        // document beside it under a name they never chose.
+        //
+        // The writer here would succeed. It is never reached, which is the
+        // assertion.
+        let scratch = Scratch::new("rewrite-changed-first");
+        let (at, plan) = staging_subject(&scratch, "moved.pdf").expect("a subject");
+        std::fs::write(&at, b"%PDF-1.7 something else entirely, and longer\n")
+            .expect("change it underneath");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 rewritten".to_vec()));
+
+        let why = stage_in_place(&at, &plan, None, &writer).expect_err("must refuse");
+
+        assert!(why.changed, "answerable by reloading: {}", why.message);
+        assert!(
+            writer.asked.borrow().is_empty(),
+            "the writer was never asked, so nothing parsed anything"
+        );
+        assert_eq!(
+            leftovers_beside(&at),
+            Vec::<String>::new(),
+            "and no staging file was ever created"
         );
     }
 

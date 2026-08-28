@@ -70,12 +70,12 @@ import re
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent
 
 # Where the frontend is. `index.html` and `shell.html` sit at the repo root and
 # are both Vite inputs, so they are frontend even though they are not under src/.
-ROOTS = [REPO / "src"]
-ROOT_FILES = [REPO / "index.html", REPO / "shell.html"]
+ROOTS = [ROOT / "src"]
+ROOT_FILES = [ROOT / "index.html", ROOT / "shell.html"]
 SUFFIXES = {".ts", ".js", ".svelte", ".html"}
 
 # Every way to hand a string to a markup parser that is reachable from this
@@ -200,7 +200,7 @@ def main() -> int:
     # structural audit silently covers nothing where its pattern does not occur.
     if not files:
         print(
-            f"[FAIL] no frontend sources found under {REPO} -- the scan covered "
+            f"[FAIL] no frontend sources found under {ROOT} -- the scan covered "
             "nothing, which is not the same as finding nothing.",
             file=sys.stderr,
         )
@@ -219,7 +219,7 @@ def main() -> int:
         # That is the trap that stopped `mutate_rust.py` running on Windows at
         # all, and it is one line away from repeating here.
         text = path.read_bytes().decode("utf-8")
-        rel = path.relative_to(REPO).as_posix()
+        rel = path.relative_to(ROOT).as_posix()
         lines = text.splitlines()
         lines_scanned += len(lines)
 

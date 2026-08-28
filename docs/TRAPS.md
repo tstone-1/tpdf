@@ -2109,7 +2109,7 @@ numbers do not merely inflate — they **reorder** what looks expensive.
 
 ### Removing a refusal removes it for every caller, including the one that never had a guard of its own
 
-2026-08-29, in the increment that let a rewrite preserve encryption. `save::checked` had
+2026-08-28, in the increment that let a rewrite preserve encryption. `save::checked` had
 refused every document `lopdf` decrypted on the way in, because its full serialiser wrote
 plaintext. Making `rewrite` re-encrypt made that refusal wrong, so it went --- and it had two
 beneficiaries, only one of which the change was about.
@@ -2155,7 +2155,7 @@ QPDF, which is how `docs/PLAN.md` came to say that letting a reader delete a pag
 encrypted document meant vendoring a C++ library. It does not. `lopdf` exposes
 `Document::encrypt(&EncryptionState)`, which re-encrypts every object and writes a fresh
 `/Encrypt`, and a password load leaves the state on the public `Document::encryption_state`
-field. Measured 2026-08-29: source and rewritten output diff to nothing across all 17 fields
+field. Measured 2026-08-28: source and rewritten output diff to nothing across all 17 fields
 of `qpdf --show-encryption`.
 
 **The general shape is worth more than the fact.** A trap entry that names one tool's remedy
@@ -5228,7 +5228,7 @@ and the headline rate moves with the sample size rather than with anything about
 | 40 | 1,389 | 26.4% | 67.9% | 93 | 850 |
 
 Measured 2026-08-28. The third and fourth columns read 69.8 / 67.3 / 56.7 / 27.1 and
-25.6 / 26.3 / 38.0 / 67.2 after the scale fix of 2026-08-29, and the numbers are left here as
+25.6 / 26.3 / 38.0 / 67.2 after the scale fix of 2026-08-28, and the numbers are left here as
 they were taken because the trap is about the *shape* of the table, which is unchanged: the
 left two columns and the right one are properties of the sampling and did not move at all,
 while every verdict column did.
@@ -5272,7 +5272,7 @@ about 8 px where the rule believes it produced 16.
 
 Nothing about this is visible from a verdict. The gate runs, refuses, and gives its reason ---
 *"the control token was not read back ... the engine is not able to read text of that size
-here"* --- which is a true sentence that points at the engine. Measured 2026-08-29 over 40 real
+here"* --- which is a true sentence that points at the engine. Measured 2026-08-28 over 40 real
 documents at reader density: of the 38 regions refused for an unread control, **34 rendered the
 control below the gate's own floor**. Choosing the scale from `control_pt` instead moved the two
 middle buckets to zero, took `>= 16 px` from 4 to 23, and certified 5 more regions --- 64.10% to
@@ -5316,7 +5316,7 @@ which `Legibility::NotVerified` does not carry.
 
 ### A count of failures bucketed by a property is not evidence about that property, and the numerator alone reads as a finding
 
-2026-08-29, and it was one edit from being built. The redaction gate could not verify 33 regions
+2026-08-28, and it was one edit from being built. The redaction gate could not verify 33 regions
 because the control token was not read back; bucketing those 33 by token length gave **0** at
 four characters and **29 at eight or more**. `ocr::control_from_page` picks the *longest*
 qualifying word and `ocr::adjudicate` needs one recognised span to hold the whole token, so the
@@ -5351,7 +5351,7 @@ Two more things this run settled, both in the entry above: the same bucket's mas
 was refused by *reading* the code, and a crop-padding hypothesis by an *A/B* that made the number
 worse. Three predictions, three instruments, none of them the one the prediction suggested.
 
-**And a second half, 2026-08-30, by the person who had just written the first.** A new axis was
+**And a second half, 2026-08-28, by the person who had just written the first.** A new axis was
 added to the same report --- the probe image's aspect ratio --- and its denominator was written
 *inside* the `if cause == ControlUnread` branch, one scope below where it belonged. A population
 counted inside the branch that selects the failures is the failures, so every row printed
@@ -5376,7 +5376,7 @@ same number**.
 
 ### Two marginals bound an overlap and cannot measure it, and the bound reads like a finding
 
-2026-08-30, the increment after the entry above, and the same population. The redaction gate's
+2026-08-28, the increment after the entry above, and the same population. The redaction gate's
 `control not read back` bucket was split two ways: by how tall the control rendered, and --- newly
 --- by what the engine had actually returned. At `--regions 40` the two rows read **80 of 96
 silent** and **40 of 96 under the 16 px floor**, and the sentence that suggests itself is *"so at
@@ -5406,7 +5406,7 @@ total count the same regions by two routes, so they must agree, and the run says
 being trusted to.
 
 **And when the two marginals are the same size, the reading that suggests itself is that they
-are the same regions --- which is the one to distrust.** 2026-08-30, the next increment on the
+are the same regions --- which is the one to distrust.** 2026-08-28, the next increment on the
 same harness at `--regions 12`: 12 of the 36 silent refusals had rendered their control under
 8 px and 12 sat in a probe image at 8:1 or squarer. The write-up called that agreement
 *suggestive* and hedged it to "two axes that each report a 12 do not establish that they are
@@ -5427,7 +5427,7 @@ control. A single total would have gone red for both and named neither.
 
 ### When the remedy is a constant, compute what it would take before you write it
 
-2026-08-30, immediately after the entry below, and the pair is the lesson. Two candidate repairs
+2026-08-28, immediately after the entry below, and the pair is the lesson. Two candidate repairs
 for the same measured defect were on the table. The first --- pad the probe image into the shape
 band the corpus never goes silent in --- was **built**: one rule, two callers, six mutations, unit
 tests, a day. It changed no verdict on 1,469 regions and was reverted. The second --- raise
@@ -5459,7 +5459,7 @@ who has not thought it through will reach for it.
 
 ### An intervention outranks a stratified observation, and a bucket four points wide did not break the tie
 
-2026-08-30, the third and last reading of the same question in one day. The redaction gate's silent
+2026-08-28, the third and last reading of the same question in one day. The redaction gate's silent
 refusals correlated with the probe image's shape; the entry below records that being called a
 proxy, then un-called, on a cross-tabulation that held the control's size in a 2 to 6 pt bucket and
 found the shape flipping the silent rate from **0 of 517** inside 8:1--16:1 to **52 of 104** beyond
@@ -5494,7 +5494,7 @@ one worth acting on; a rate that reshuffles between them is a description of the
 
 ### Two variables a corpus cannot separate, because on an ordinary page one forces the other
 
-2026-08-30. Three increments in a row narrowed the redaction gate's silent refusals --- the engine
+2026-08-28. Three increments in a row narrowed the redaction gate's silent refusals --- the engine
 answering and returning no spans at all --- and each one pointed harder at the probe image's
 **aspect**. Over 40 real documents the 8:1--16:1 band produced zero silent refusals across 294
 regions and again across 459, while the band past 16:1 produced 24 of 36 and then 80 of 80. That
@@ -5551,7 +5551,7 @@ failure caught a different one the same day.
 
 ### A sweep that pads with `resize` is not the change it stands in for, and the difference set the next increment
 
-2026-08-30. The redaction gate's remaining unexplained failure is Vision returning **no spans at
+2026-08-28. The redaction gate's remaining unexplained failure is Vision returning **no spans at
 all** for a probe image holding a control it should read. `ocr-probe` sweeps the image's shape to
 find out where that starts, and the first version grew it with `Vec::resize`, appending white rows
 to the end of the buffer. `ocr_gate::stack` writes `margin | region | gap | control | margin`, so
@@ -7327,6 +7327,82 @@ Three things generalise.
 Proved rather than assumed: with the wait fixed, the mutation aimed at this check
 (`problem: Some(problem)` -> `problem: None` in `search.rs`) still turns it red, so the flake
 was removed without removing the failure the check exists for.
+
+### `(deny file-write*)` does not deny a write through a descriptor you were handed
+
+The rewriting save could not move into a worker until there was somewhere for the bytes to
+go: an append's answer is kilobytes and rides in a reply, and a rewrite's answer is the whole
+document, against a 32 MB `MAX_REPLY_BYTES` and files ten times that. The channel that fits is
+the staging file's own descriptor, handed to the child at `exec` --- and the reason nobody had
+built it is that `worker::SANDBOX_PROFILE` says `(deny file-write*)` in as many words, which
+reads as *a worker cannot write anything*.
+
+It is not what the policy does. **It stops a worker opening a path for writing; it does not
+stop a write through a descriptor the parent opened.** That is the same asymmetry `DOC_FD`
+already rests on in the other direction --- the whole reason a sandboxed worker can read a
+document it has no authority to open --- and reading it as symmetric is what makes it a trap.
+
+The usual explanation is that Seatbelt evaluates `file-write-data` at `open` and not per
+write. That is the standard account and it is **not** what was measured here: what was
+measured is the pair of outcomes above. The distinction matters because the rule you can act
+on is *hand the descriptor over before the policy applies*, which the outcomes establish
+directly, and a mechanism nobody in this repository has verified is the kind of sentence
+`AGENTS.md` records going into a report and being wrong.
+
+**Measured before anything was designed, with the profile verbatim and a control.** A parent
+opens a scratch file, `dup2`s it to fd 3, and re-execs itself; the child applies
+`SANDBOX_PROFILE`, writes through fd 3, and then tries `File::create` on a path. The write
+succeeds and the create is refused with `EPERM` --- and the refusal is the load-bearing half,
+because without it the run is equally consistent with a sandbox that never came on. Reproduced
+twice, on macOS 26.
+
+**The Windows half is a different mechanism and is not covered by this measurement.** There a
+handle is duplicated into the child's table and the access granted at open travels with it,
+rather than being re-checked against the low-integrity token. Expected to work, unmeasured,
+and `docs/THREAT-MODEL.md` residual risk 18 says so rather than implying the two platforms
+were tested together --- which is the mistake `AGENTS.md` records making about the memory
+doctor, where one sentence about "the doctor" was a claim about two independent programs.
+
+### A child cannot tell a descriptor it was handed from whatever is open at that number
+
+`worker::OUT_FD` is 6, fixed, because the number has to be agreed before `exec` and there is
+no channel at that point to negotiate on. So the child's question --- *was I given an output
+file?* --- has no answer it can read off the descriptor: `File::from_raw_fd(6)` succeeds
+whether the parent installed something there or not, and a worker that guessed wrong would
+write a whole document into whatever fd 6 happens to be. On a worker started for rendering
+that is nothing at all today and is one inherited pipe away from being something.
+
+The answer is `worker::OUT_ARGV`, a marker present in argv exactly when the parent installed
+the descriptor, and `adopt_output` returns `None` without it. On Windows the handle *value* is
+in argv already, so the marker and the value are the same thing --- which is why the two
+platforms spell it differently rather than sharing a constant.
+
+**The check that this is real is the absence.** `worker-probe` spawns an ordinary worker with
+no output file and asks it to rewrite; it must refuse in words. Every other check in that
+section --- the byte-for-byte comparison, the shared refusal, the engineless directory ---
+would pass just as well if the descriptor were handed over unconditionally and the marker did
+nothing.
+
+### A refusal flattened to a string across a process boundary loses the action that answers it
+
+`save::Refusal` carries a message and one bit, `changed`, and the bit decides something the
+window cannot decide for itself: whether to offer Reload. Reloading throws away every edit in
+the journal, which is right for a document that was replaced underneath and wrong for *a
+document must keep at least one page*.
+
+Moving the rewrite into a worker moved the refusals that set that bit --- the page-count
+mismatch, and a plan naming a page the file does not have --- to the far side of a pipe whose
+error channel is a `String`. The obvious wiring compiles, reads correctly, and delivers a
+correct sentence with the one action that answers it missing. Nothing goes red: the message is
+right, the save is refused, and the reader is simply told a thing they cannot act on.
+
+So `Response` carries `changed` beside `locked` and `abandoned`, which are two earlier
+instances of the same shape --- a refusal that is *not* an error and that a caller has to tell
+apart. `Response::refused` is built from a `Refusal` rather than choosing the flag itself, so
+the two cannot disagree about which refusals carry it, and
+`a_refusal_carries_whether_reloading_would_answer_it` asserts **both** directions across a
+round trip: a flag that is always true offers Reload for a refusal reloading cannot fix, which
+is the direction that costs the reader their work.
 
 ### A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
 
@@ -10580,7 +10656,7 @@ inside. One run settled it, which is the standing rule about a claim regarding
 runtime behaviour belonging in an experiment rather than in a document.
 
 **A `Result<_, String>` whose caller supplies the cause is the same defect one layer up.**
-2026-08-30: `ocr_gate::geometry_for` had one error path, and its single caller wrote
+2026-08-28: `ocr_gate::geometry_for` had one error path, and its single caller wrote
 `cause: NotVerifiedCause::ScaleRefused` for whatever came back. When a second refusal was added ---
 the control is too small to render at any permitted scale, which is nothing to do with the buffer
 that `ScaleRefused` names --- there was no way for the function to say which, and the caller had
@@ -18058,3 +18134,84 @@ question asked of a compiler: *is it working, or is it merely running?*
 only on failure, which is right for a green run and is exactly wrong while diagnosing one
 that never ends. Streaming is what turned the second attempt from a guess into `Checking
 tpdf` followed by `Finished in 21.83s`.
+
+### Two `///` runs with no blank line are one comment, and it documents the wrong item
+
+`docs`'s Rust exemption argues that a doc comment cannot be *lost* in Rust: two `///` runs
+with a blank line between them both attach, checked by generating the HTML. That is correct
+and it is not the failure. **Take the blank line away and the two runs are one comment** ---
+so the first block's summary and its `# Errors` section are rendered as the documentation of
+the item below, and the item the first block was written for keeps whatever it had, which is
+usually nothing. Nothing is lost; the attribution is wrong, and a confidently wrong rustdoc
+page is worse than a missing one.
+
+Three live instances on 2026-08-28, found by writing the check rather than by reading:
+
+- **`render.rs`** --- seventeen lines describing `close` sat on the end of `release_all`'s
+  comment. `release_all` rendered with both blocks, and `close` had no documentation at all.
+- **`save.rs`** --- `mark_sites` rendered with **two summaries and two `# Errors` sections**,
+  the second describing a function that writes. The paragraphs belonged to `write_marks`,
+  sixty lines below, which had its own shorter doc.
+- **`lib.rs`** --- introduced *in the session that wrote the check*, while fixing the other
+  two, and caught only by running it. That is the argument for the check existing: a careful
+  reader cannot see this, because a fused run and a long comment are the same characters.
+
+**The rule is narrow, and the wide version was measured first.** A `///` line is flagged when
+it ends a sentence, the line before it ends a sentence, the next line is a blank `///`, and
+the paragraph after that opens with this repository's house style for the paragraph following
+a summary --- a `**bolded claim**`. Over the whole tree that is seven flags: the three above
+and four ordinary paragraph-final sentences, which are listed in `PROSE` with a reason each.
+Dropping the last condition gives twenty-four, which is the density at which a check gets
+argued down to nothing.
+
+**What does not work, and why the obvious repairs were rejected.** An outside review proposed
+flagging a run "whose first sentence names an identifier other than the item below". That
+would not have caught any of the three: the fused line named a *parameter* in one case and
+nothing at all in the others. `clippy::missing_docs_in_private_items` does catch the
+consequence --- an undocumented item --- and reports **800** of them here, which is a
+different project. Counting only top-level items outside `#[cfg(test)]` gives 75 of 1,035,
+still mostly probes. The narrow textual rule is the one that fits.
+
+Note `clippy::empty_line_after_doc_comments` already covers the *adjacent* mistake --- a blank
+line between a doc comment and its item --- and fired during this same increment. The two
+together bracket the problem: the compiler owns the gap, and the gate owns the join.
+
+### Two tests naming their scratch directory the same string delete each other's
+
+`Scratch::new(name)` built `tpdf-save-{name}-{pid}`, and `new` begins by **deleting** that
+directory while `Drop` deletes it again. Two tests that pick the same string therefore share
+one working directory, and under `cargo test`'s thread pool one removes the other's files
+mid-run.
+
+`merge-encrypted` was taken by two tests on 2026-08-28. What makes it worth an entry is the
+shape of the evidence: **twelve isolated runs of the losing test passed, 12 of 12**, and it
+failed roughly one full-suite run in six --- so every instinct that says "run it on its own to
+see what is wrong" answers that nothing is. The mutation harness surfaced it as *"the control
+run is not green"* naming a test the mutation had nothing to do with, which reads as a flaky
+harness rather than as a collision.
+
+The fix is a per-instance counter (`{name}-{pid}-{serial}`), not a rename: renaming fixes the
+instance and leaves the class, and nothing would have said so the next time. The name stays in
+the path because it is what makes a leftover directory legible; uniqueness is what makes it
+correct.
+
+Generalises to any test helper that derives a shared path from a caller-supplied string ---
+temporary files, lock names, fixture caches. **If two callers can pass the same string, they
+will**, and the failure appears in whichever one lost the race.
+
+### A lower bound on a wait is satisfied by any longer wait, including a broken one
+
+A test for a deadline asserted `elapsed >= within` and nothing else. The mutation that
+multiplied the bound by a thousand **survived**, and the run took **150 seconds instead of
+0.17** while reporting `test result: ok`. A bound whose failure mode is a longer wait is not a
+bound.
+
+The repair is one line --- `assert!(waited < within * 20)` --- and both mutations then die. The
+factor is loose enough for a loaded runner and nowhere near a mistake worth catching; the
+point is that *some* upper bound exists, not that twenty is the right number.
+
+This is the timing form of a shape already here twice: a check that measures along the axis it
+is policing, and a check whose failure mode is a wait. What is specific to timing is that the
+wrong answer is **invisible in the verdict** --- the suite is green, the only tell is a
+duration nobody reads. Whenever an assertion is about *how long*, write both ends.
+

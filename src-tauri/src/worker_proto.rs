@@ -172,6 +172,37 @@ pub enum Request {
         /// What to write. Never a path, never a destination.
         plan: crate::edits::Plan,
     },
+    /// Rewrite the mapped document under a plan, into the handed-over file.
+    ///
+    /// **The whole-document counterpart of [`Request::Append`], and the reason
+    /// it took longer to move is its answer rather than its work.** An append's
+    /// answer is kilobytes and fits in a [`Reply`]; a rewrite's is the document,
+    /// which does not --- `MAX_REPLY_BYTES` is 32 MB and a scan is ten times
+    /// that. So this one has an *output channel*: the worker is started with a
+    /// writable descriptor for the staging file the coordinator created, and
+    /// writes the serialised bytes straight down it. Nothing crosses back but a
+    /// length. `docs/THREAT-MODEL.md` residual risk 18 named exactly this as
+    /// what the remaining writers needed.
+    ///
+    /// **It still names nothing the worker could act on**, which is this type's
+    /// standing property and is the reason the channel is a descriptor rather
+    /// than a path. A path would be authority --- a name a hostile document
+    /// could make the worker write somewhere else. A descriptor to a file the
+    /// parent opened is one file and no name, and it survives a policy that
+    /// denies opening files at all: measured on macOS under
+    /// [`crate::worker::SANDBOX_PROFILE`], where a write through the inherited
+    /// descriptor succeeds and `File::create` on any path is refused with
+    /// `EPERM`.
+    ///
+    /// `view` is the reader's own rotation in quarter turns, which is zero for
+    /// every save and non-zero only for a print job. It travels because the plan
+    /// does not carry it --- rotating the view is not an edit.
+    Rewrite {
+        /// What to write. Never a path, never a destination.
+        plan: crate::edits::Plan,
+        /// The reader's own rotation, in quarter turns clockwise.
+        view: u8,
+    },
     /// How many pages `lopdf` finds in the mapped document.
     ///
     /// **The other half of [`Request::Append`]'s move.** That one builds a
@@ -304,6 +335,12 @@ pub enum Reply {
     Properties(Box<crate::docinfo::Properties>),
     /// The update section for a save that only adds marks.
     Append(crate::save::Update),
+    /// How many bytes a rewrite wrote into the handed-over file.
+    ///
+    /// A length and nothing else: the document itself went down the output
+    /// channel, and this is what the coordinator checks the staged file's own
+    /// size against. See [`Request::Rewrite`].
+    Rewrote(usize),
     /// The password was accepted, or was not needed.
     ///
     /// Carries nothing: [`Request::Unlock`] asks a yes-or-no question, and the
@@ -353,6 +390,21 @@ pub struct Response {
     /// holding the conversation knows, and words it.
     #[serde(default)]
     pub locked: bool,
+    /// Set when the refusal is "this file is not the file the edits were made
+    /// against".
+    ///
+    /// [`crate::save::Refusal`] carries exactly this bit in the coordinator, and
+    /// it decides one thing the window cannot decide for itself: whether to
+    /// offer Reload, which throws away the reader's edits. Right for a document
+    /// that changed underneath and wrong for *a document must keep at least one
+    /// page*.
+    ///
+    /// It is here because [`Request::Rewrite`] moved the refusals that set it
+    /// into the worker. A `String` across the pipe would have dropped the bit
+    /// silently, leaving a correct sentence with the one action that answers it
+    /// missing --- which is the shape of loss nothing goes red about.
+    #[serde(default)]
+    pub changed: bool,
     /// The structured reply, for a request that answers with one.
     ///
     /// `None` for a tile, whose payload is the shared mapping, and for a
@@ -387,6 +439,20 @@ impl Response {
             ok: false,
             error: message.into(),
             locked: true,
+            ..Default::default()
+        }
+    }
+
+    /// A refusal a reader can answer: the file is not the one they opened.
+    ///
+    /// See [`Self::changed`]. Built from a [`crate::save::Refusal`] rather than
+    /// chosen here, so the two cannot disagree about which refusals carry it.
+    #[must_use]
+    pub fn refused(why: &crate::save::Refusal) -> Self {
+        Self {
+            ok: false,
+            error: why.message.clone(),
+            changed: why.changed,
             ..Default::default()
         }
     }
@@ -489,6 +555,186 @@ pub(crate) fn read_reply_line(reader: &mut impl BufRead, limit: u64) -> Result<S
 
 #[cfg(test)]
 mod tests {
+
+    /// Every worker request is accounted for on the coordinator's side.
+    ///
+    /// **Adding one operation touches ten sites in six files, and nothing said
+    /// so.** A new [`Request`] variant compiles without an `Engine` method; an
+    /// `Engine` method compiles without a `RenderService` wrapper; the command
+    /// the frontend calls is a string. Each hop is thin and correct, and the set
+    /// of them existed only in somebody's memory --- the round-trip test below
+    /// enumerates the variants, but only against themselves.
+    ///
+    /// So this is the enumeration. Every variant is either mapped to the
+    /// `Engine` method that carries it or given a reason for having none, and a
+    /// new variant fails here until somebody writes down which it is. That is
+    /// the whole value: not that the table is clever, but that it cannot be
+    /// added to by accident.
+    ///
+    /// Read from the sources rather than from a `match`, because the claim is
+    /// about what is *declared* --- a `match` over `Request` would be exhaustive
+    /// by construction and could not notice a missing method at all.
+    #[test]
+    fn every_request_variant_is_mapped_to_an_engine_method_or_excused() {
+        /// `Request` variant -> the `Engine` method that carries it.
+        const CARRIED: &[(&str, &str)] = &[
+            ("Open", "open"),
+            ("Tile", "tile"),
+            ("Text", "text"),
+            ("Search", "search"),
+            ("Content", "content"),
+            ("Geometry", "geometry"),
+            ("CropBox", "crop_box"),
+            ("RedactPlans", "redaction_plans"),
+            ("Outline", "outline"),
+            ("Comments", "comments"),
+            ("Links", "links"),
+            ("Mapping", "mapping"),
+            ("Properties", "properties"),
+            ("Append", "append"),
+        ];
+
+        /// Variants that reach a worker by another route, and why.
+        const UNCARRIED: &[(&str, &str)] = &[
+            (
+                "Withdraw",
+                "broadcast to every worker to pre-empt a render already running, so it \
+                 does not go through the queue an `Engine` method dispatches on",
+            ),
+            (
+                "Reread",
+                "asked by `save::InWorker` of a worker it spawned itself, outside the \
+                 pool, to check a file it has just appended to",
+            ),
+            (
+                "Rewrite",
+                "asked by `save::InWorker` of a worker it spawned with the staging \
+                 file's own descriptor, which no pooled worker has and which is the \
+                 whole of why it cannot go through an `Engine` method",
+            ),
+            (
+                "Unlock",
+                "sent by whoever holds the password before its first real request, on \
+                 both the pooled and the save path",
+            ),
+        ];
+
+        /// `Engine` methods that carry no `Request`, and why.
+        const NOT_A_REQUEST: &[(&str, &str)] = &[
+            (
+                "password",
+                "asks the coordinator for a key, and never reaches a worker",
+            ),
+            (
+                "close",
+                "document lifecycle: the worker is released rather than asked",
+            ),
+            ("release_all", "the same, for every open document at once"),
+        ];
+
+        let proto = include_str!("worker_proto.rs");
+        let variants = declared_variants(proto, "pub enum Request {");
+        assert!(
+            variants.len() > 10,
+            "the variant scan found {} --- it is reading the wrong block",
+            variants.len()
+        );
+
+        let engine = include_str!("render.rs");
+        let methods = declared_fns(engine, "trait Engine");
+        assert!(
+            methods.len() > 10,
+            "the `Engine` scan found {} --- it is reading the wrong block",
+            methods.len()
+        );
+
+        for variant in &variants {
+            let carried = CARRIED.iter().any(|(name, _)| name == variant);
+            let excused = UNCARRIED.iter().any(|(name, _)| name == variant);
+            assert!(
+                carried || excused,
+                "`Request::{variant}` is in neither table. Adding a worker operation means \
+                 an `Engine` method, a `RenderService` wrapper, a `Workers` arm, a \
+                 `worker_child` arm and usually a command --- say which of those this one \
+                 needs, or why it needs none."
+            );
+            assert!(
+                !(carried && excused),
+                "`Request::{variant}` is in both tables"
+            );
+        }
+
+        for (variant, _) in CARRIED.iter().chain(UNCARRIED) {
+            assert!(
+                variants.iter().any(|name| name == variant),
+                "the table names `Request::{variant}`, which is not a variant any more"
+            );
+        }
+
+        for (variant, method) in CARRIED {
+            assert!(
+                methods.iter().any(|name| name == method),
+                "`Request::{variant}` is mapped to `Engine::{method}`, which does not exist"
+            );
+        }
+
+        for method in &methods {
+            let carries = CARRIED.iter().any(|(_, name)| name == method);
+            let excused = NOT_A_REQUEST.iter().any(|(name, _)| name == method);
+            assert!(
+                carries || excused,
+                "`Engine::{method}` carries no request and has no reason recorded. An \
+                 `Engine` method with no `Request` is either lifecycle or a gap."
+            );
+        }
+
+        for (method, _) in NOT_A_REQUEST {
+            assert!(
+                methods.iter().any(|name| name == method),
+                "the table excuses `Engine::{method}`, which does not exist"
+            );
+        }
+    }
+
+    /// The `PascalCase` variant names declared directly inside `header`'s block.
+    fn declared_variants(source: &str, header: &str) -> Vec<String> {
+        block(source, header)
+            .lines()
+            .filter_map(|line| {
+                let name: String = line
+                    .strip_prefix("    ")?
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric())
+                    .collect();
+                let first = name.chars().next()?;
+                (first.is_ascii_uppercase() && !line.starts_with("     ")).then_some(name)
+            })
+            .collect()
+    }
+
+    /// The function names declared inside `header`'s block.
+    fn declared_fns(source: &str, header: &str) -> Vec<String> {
+        block(source, header)
+            .split("fn ")
+            .skip(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| *c == '_' || c.is_alphanumeric())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// From `header` to the first line that is exactly `}`.
+    fn block<'a>(source: &'a str, header: &str) -> &'a str {
+        let start = source
+            .find(header)
+            .unwrap_or_else(|| panic!("{header:?} is not in the source any more"));
+        let rest = &source[start..];
+        let end = rest.find("\n}").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
     use super::{read_reply_line, ReplyError, Request, Response};
 
     #[test]
@@ -620,7 +866,11 @@ mod tests {
                 pages: 2,
                 built_against: 888,
             }),
+            // The second confusable pair, and the same trick: `Reread` and
+            // `Rewrote` are both one `usize`, so given the same number only the
+            // tag separates a page count from a byte count.
             Reply::Reread(2),
+            Reply::Rewrote(2),
             Reply::RedactPlans(Vec::new()),
             Reply::Unlocked,
             Reply::Warm,
@@ -647,6 +897,7 @@ mod tests {
                 | Reply::Properties(_)
                 | Reply::Append(_)
                 | Reply::Reread(_)
+                | Reply::Rewrote(_)
                 | Reply::Unlocked
                 | Reply::Warm => {}
             }
@@ -695,6 +946,38 @@ mod tests {
         };
         assert_eq!(page_count, 7);
         assert!(!lazy_geometry, "and the flag came back as it was sent");
+    }
+
+    #[test]
+    fn a_refusal_carries_whether_reloading_would_answer_it() {
+        // **The one bit of a `Refusal` that a `String` across the pipe would
+        // drop.** `changed` decides whether the window offers Reload, which
+        // throws the reader's edits away --- right for a document that was
+        // replaced underneath, and wrong for *a document must keep at least one
+        // page*. Since `Request::Rewrite` moved the refusals that set it into
+        // the worker, that bit has to survive the framing or a correct sentence
+        // arrives with the one action that answers it missing.
+        //
+        // Both directions, because a flag that is always true is as wrong as one
+        // that is always false --- and offering Reload for a refusal reloading
+        // cannot fix is the direction that costs the reader their work.
+        let replaced = Response::refused(&crate::save::Refusal::changed("it moved underneath"));
+        let ordinary = Response::refused(&crate::save::Refusal::from("keep at least one page"));
+
+        assert!(!replaced.ok, "a refusal is not a success");
+        assert!(replaced.changed, "answerable by reloading");
+        assert!(!ordinary.changed, "and this one is not");
+
+        for sent in [replaced, ordinary] {
+            let was = (sent.changed, sent.error.clone());
+            let line = serde_json::to_string(&sent).expect("serialise");
+            let back: Response = serde_json::from_str(&line).expect("deserialise");
+            assert_eq!(
+                (back.changed, back.error),
+                was,
+                "the flag and the words have to cross together: {line}"
+            );
+        }
     }
 
     #[test]

@@ -684,10 +684,14 @@ different kind of verb from the ones this surface had before.
 
 **Three refusals, and each is a correctness property rather than a security one:**
 
-- An **encrypted** source is refused outright. `lopdf` drops `/Encrypt` on save without a
-  word, so a copy of a restricted document would come out unrestricted and look identical.
-  This is exactly the T5 shape --- a false assurance --- pointed at the document's own
-  protection rather than at ours.
+- An **encrypted** source keeps its encryption, and one that nobody unlocked is refused.
+  `lopdf` drops `/Encrypt` on save without a word, so a copy of a restricted document would
+  come out unrestricted and look identical --- exactly the T5 shape, a false assurance,
+  pointed at the document's own protection rather than at ours. Until 2026-08-28 the answer
+  to that was to refuse every encrypted source; since then `save::rewrite` puts the file's
+  own state back with `Document::encrypt` as its last step, so the copy is as restricted as
+  the original. The refusal that remains is the one no key can satisfy: a document still
+  locked parses to nothing, and is declined with a message naming the lock.
 - A **page count that disagrees with the model** is refused, which is the only part of §5's
   external-modification story that exists yet.
 - **Writing over the source** is refused, compared by canonical path so that two spellings
@@ -1268,7 +1272,7 @@ served from Rust. The webview is the least trusted place in the application (res
 7), so a password parked in component state for a document's lifetime would be the one hop
 worth avoiding, and it is avoided.
 
-**Seven commands ask for it as of 2026-08-29, where one did, and the count is the change
+**Seven commands ask for it as of 2026-08-28, where one did, and the count is the change
 rather than the shape.** A rewrite used to refuse every encrypted document, so `save_document`
 asked only for the arm that appends. A rewrite now re-encrypts what it wrote with the state
 the load recorded, which needs the key twice: `lopdf` parses no objects at all without it, and
@@ -2120,11 +2124,76 @@ which is what makes it evidence rather than a milestone.
     offset 999999999, PDFium opens it without complaint, and `lopdf` names the
     cross-reference table.
 
+    ⚠ **And the rewriting save closed 2026-08-28, which is what the last paragraph of this
+    entry said it needed.** `save::rewrite_update` is the whole rewrite as a pure function
+    of the document's bytes and the plan --- the split `save::append_update` already had ---
+    and `save::Rewriter` is the seam that decides where it runs. `save::stage_in_place`
+    creates the staging file, opens the source, and hands both **handles** to
+    `save::InWorker`, which maps the source read-only, spawns a sandboxed child with the
+    staging file's descriptor on `worker::OUT_FD`, asks `Request::Rewrite` and drops it.
+    The document's bytes never enter the coordinator and neither do the new file's; what
+    crosses back is a length.
+
+    **The output channel is a descriptor, and that it works had to be measured rather than
+    assumed.** The profile the worker applies to itself contains `(deny file-write*)`, so
+    the obvious reading is that a worker cannot write anything. Measured on macOS 26 with
+    `worker::SANDBOX_PROFILE` verbatim: a write through the inherited descriptor succeeds,
+    and `File::create` on any path is refused with `EPERM` --- which is the control saying
+    the policy was in force, and without it the run is equally consistent with a sandbox
+    that never came on. So the policy stops a worker *opening* a path for writing and does
+    not stop a write through a descriptor the parent opened. That is the same asymmetry
+    `DOC_FD` already rests on in the other direction. The usual explanation --- the check is
+    at `open` rather than per write --- is the standard account and is not what was measured;
+    the rule to act on is the pair of outcomes.
+
+    **What it costs is one spawn, measured.** On `comments.pdf` the rewrite is 2.4 ms in the
+    coordinator and 11.4 ms in a worker --- +9.0 ms, best of five interleaved --- which is the
+    process start plus PDFium's initialisation and is therefore fixed rather than
+    proportional to the document. On a file where the parse is the cost it disappears; this
+    fixture is close to the worst case for it.
+
+    **What the coordinator can still check, and it is exactly one thing.** It never sees
+    the bytes, so it compares two numbers arrived at independently: the length the worker
+    reports and the length the staged file has. A short write, a reply built for another
+    request, or a second rewrite appending to the first all disagree there. Neither number
+    is derived from the other, which is what makes it a check rather than a restatement.
+
+    **Evidence.** `worker-probe` writes the same document twice --- once through
+    `save::Here` and once through `save::InWorker` --- and compares them **byte for byte**:
+    222,667 bytes each on `testdata/comments.pdf` under a plan that turns every page. A
+    rewrite is deterministic given one document and one plan, so the two processes have no
+    licence to differ, and a comparison of page counts would have passed for a worker that
+    dropped the turns. Three checks beside it: both refuse a plan whose baseline is not the
+    document, and the worker's refusal names the page counts, so it really parsed; pointed
+    at a directory with no PDFium the worker path fails where the coordinator path still
+    answers, which is what says a child was involved at all; and a worker started **without**
+    an output file refuses the request in words rather than writing a document into
+    whichever descriptor happens to be open at that number. In the unit suite,
+    `the_coordinator_does_not_parse_the_document_it_rewrites` hands the save a source that
+    is not a PDF and requires it to succeed --- red on the code this replaced.
+
     **What is not closed.** `save::Here` still parses in the coordinator, and it is what a
     platform with no sandbox gets --- refusing would make such a platform useless rather
     than uncontained, which is the rule `Backend::default_here` already follows, and
-    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. The rewriting
-    save, the two copy paths and Merge are all unchanged and are the rest of this entry.
+    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. **The two copy
+    paths, Split, Merge and the print job are unchanged and are the rest of this entry**:
+    all four go through `save::planned_bytes`, which reads the file and parses it here. The
+    seam they need is the one that now exists, so the work is wiring rather than design ---
+    but a copy's destination is chosen by the reader in a file dialog, and handing a worker
+    a descriptor to a file it did not create is a decision this entry has not made yet.
+    Printing is different again: its answer has to come back **into** this process to reach
+    `NSPrintOperation`, so the output channel does not fit it at all.
+
+    ⚠ **The Windows half is unmeasured, and nothing new has to be written to measure it.**
+    The mechanism there is a `DuplicateHandle` of the staging file into the child's table,
+    named in argv on `--out-handle` --- the same route the document's section already takes,
+    and the granted access travels with the handle rather than being re-checked against the
+    low-integrity token. That is the expected behaviour and it has not been run. The five
+    checks above are in `worker-probe`, which already runs on Windows, so the evidence is
+    one invocation rather than a new probe; `BUILD.md` makes it a step. Until that run
+    happens, a rewriting save on Windows is a path this document describes rather than one
+    it has watched work --- and `AGENTS.md` records what one sentence about two independent
+    implementations has cost before.
 
     The general shape is the one this entry already records --- **a mitigation that moved
     half a path reads exactly like one that moved the path**, and the half that stayed is
@@ -2151,11 +2220,13 @@ which is what makes it evidence rather than a milestone.
     than fatal (pinned by a test, so the property cannot be lost to a profile change) --- but
     there is no deadline and no memory bound, because enforcing either needs a separate
     process. A document that makes the parser spin therefore wedges the application and takes
-    the unsaved journal with it, rather than costing a replaceable worker. What the remaining
-    three need is not a second worker but an **output channel**: the append moved because its
-    answer is kilobytes and fits in a reply, and a rewrite's answer is the whole file.
-    `docs/PLAN.md` §3 records the shape. Until it lands this is disclosed rather than
-    mitigated, and it is reached by deleting a page and pressing ⌘S.
+    the unsaved journal with it, rather than costing a replaceable worker.
+
+    What those four needed was not a second worker but an **output channel**: the append
+    moved because its answer is kilobytes and fits in a reply, and a rewrite's answer is the
+    whole file. That channel exists as of 2026-08-28 and the in-place rewrite uses it, which
+    is what took *deleting a page and pressing ⌘S* off this list. The copies, the split, the
+    merge and the print job still reach the paragraph above.
 
 19. **The redaction gate's coverage is a ceiling, not a threshold**, added 2026-08-27 with
     §5.1's wiring. A region can only be certified when its page leaves a word the removal did

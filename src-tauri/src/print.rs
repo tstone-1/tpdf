@@ -39,7 +39,7 @@ use std::path::Path;
 use lopdf::{Document, LoadOptions};
 
 use crate::edits::Plan;
-use crate::pagetree::{agreed_turns, apply_turns, drop_outline, drop_pages, reorder_pages};
+use crate::pagetree::{agreed_turns, apply_turns};
 use crate::sweep;
 
 use crate::encoding::MAX_DECODE;
@@ -273,25 +273,20 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
         })
         .collect();
 
-    if wanted.len() != present.len() {
-        let kept: Vec<u32> = wanted.iter().map(|page| page.number).collect();
-        let dropped: Vec<u32> = present
-            .iter()
-            .copied()
-            .filter(|number| !kept.contains(number))
-            .collect();
-        drop_pages(&mut doc, &dropped)?;
-        // Destinations into pages that are no longer here.
-        drop_outline(&mut doc)?;
-    }
-
-    // Only when the reader's order differs from the file's. `reorder_pages`
+    let kept: Vec<u32> = wanted.iter().map(|page| page.number).collect();
+    let dropped: Vec<u32> = present
+        .iter()
+        .copied()
+        .filter(|number| !kept.contains(number))
+        .collect();
+    // Only when the reader's order differs from the file's --- `reorder_pages`
     // flattens the page tree, and doing that to a job that is merely a *subset*
-    // would rewrite the ancestry of every page for nothing.
-    if wanted.windows(2).any(|two| two[0].number >= two[1].number) {
-        let order: Vec<_> = plan.iter().map(|(id, _)| *id).collect();
-        reorder_pages(&mut doc, &order)?;
-    }
+    // would rewrite the ancestry of every page for nothing. The predicate is
+    // this caller's, because `print` learns it by comparing the numbers it just
+    // resolved while `save` is told it by the model; the action below is shared.
+    let order: Vec<_> = plan.iter().map(|(id, _)| *id).collect();
+    let moved = wanted.windows(2).any(|two| two[0].number >= two[1].number);
+    crate::pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
 
     // Per page rather than per document, because an edit turns one page and the
     // view turns all of them --- and the two add. Applied per *object*, since a
@@ -660,7 +655,7 @@ mod tests {
 
         let plan = edits.plan(1).expect("plan");
         assert_eq!(route(Some(&plan), None, 1), Route::Working, "the route");
-        let bytes = crate::save::print_bytes(path, &plan, 1).expect("print bytes");
+        let bytes = crate::save::print_bytes(path, &plan, 1, None).expect("print bytes");
         let after = os_pdf::read(&bytes).expect("the OS parser reads the job");
 
         assert_eq!(after.pages.len(), before.pages.len(), "every page is kept");
@@ -717,7 +712,7 @@ mod tests {
 
         let plan = edits.plan(1).expect("plan");
         assert_eq!(route(Some(&plan), None, 0), Route::Working, "the route");
-        let bytes = crate::save::print_bytes(path, &plan, 0).expect("print bytes");
+        let bytes = crate::save::print_bytes(path, &plan, 0, None).expect("print bytes");
 
         let out = Document::load_mem(&bytes).expect("reload");
         let table = out.get_pages();

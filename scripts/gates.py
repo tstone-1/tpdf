@@ -118,8 +118,8 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-CARGO_MANIFEST = str(REPO / "src-tauri" / "Cargo.toml")
+ROOT = Path(__file__).resolve().parent.parent
+CARGO_MANIFEST = str(ROOT / "src-tauri" / "Cargo.toml")
 
 
 def npm() -> str:
@@ -134,27 +134,35 @@ def gates() -> "list[tuple[str, list[str], str]]":
     return [
         (
             "toolchain",
-            [sys.executable, str(REPO / "scripts" / "check_toolchain.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_toolchain.py")],
             "the running rustc is not the one rust-toolchain.toml pins",
         ),
         (
             "pdfium",
-            [sys.executable, str(REPO / "scripts" / "fetch_pdfium.py"), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "fetch_pdfium.py"), "--check"],
             "vendor/pdfium is absent or is not the pinned build",
         ),
         (
             "traps",
-            [sys.executable, str(REPO / "scripts" / "check_trap_index.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_trap_index.py")],
             "docs/TRAPS.md and the AGENTS.md trap index name different sets of traps",
         ),
         (
+            # Cheap, and it guards the instrument every other dated claim in the
+            # repository is read through. Seventy stamps were written a day and
+            # two days ahead on 2026-08-28 before anything noticed.
+            "dates",
+            [sys.executable, str(ROOT / "scripts" / "check_dates.py")],
+            "a tracked file carries a date that has not happened yet",
+        ),
+        (
             "workflows",
-            [sys.executable, str(REPO / "scripts" / "check_workflow_parity.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_workflow_parity.py")],
             "ci.yml and release.yml no longer run the same gates job",
         ),
         (
             "anchors",
-            [sys.executable, str(REPO / "scripts" / "check_mutation_anchors.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_mutation_anchors.py")],
             "a mutation is aimed at code that is gone, or a killed harness left its edit behind",
         ),
         (
@@ -163,12 +171,12 @@ def gates() -> "list[tuple[str, list[str], str]]":
             # the whole point of it -- the question it asks used to be answered
             # by the mutation harness itself, twenty minutes into a run.
             "mutations",
-            [sys.executable, str(REPO / "scripts" / "check_mutation_test_files.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_mutation_test_files.py")],
             "a front-end mutation names a test the harness does not run, or a suite is in neither table",
         ),
         (
             "corpora",
-            [sys.executable, str(REPO / "scripts" / "viewer_sweep.py"), "--list"],
+            [sys.executable, str(ROOT / "scripts" / "viewer_sweep.py"), "--list"],
             "a testdata fixture is neither a window corpus nor excluded with a reason",
         ),
         (
@@ -211,17 +219,17 @@ def gates() -> "list[tuple[str, list[str], str]]":
         ),
         (
             "sinks",
-            [sys.executable, str(REPO / "scripts" / "check_webview_sinks.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_webview_sinks.py")],
             "a markup-parsing sink appeared in the frontend (THREAT-MODEL T8)",
         ),
         (
             "wiring",
-            [sys.executable, str(REPO / "scripts" / "check_viewer_wiring.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_viewer_wiring.py")],
             "a viewer callback is declared and not wired in App.svelte",
         ),
         (
             "docs",
-            [sys.executable, str(REPO / "scripts" / "check_doc_comments.py")],
+            [sys.executable, str(ROOT / "scripts" / "check_doc_comments.py")],
             "a doc comment documents nothing: an insertion separated it from its declaration",
         ),
         (
@@ -241,7 +249,7 @@ def gates() -> "list[tuple[str, list[str], str]]":
         ),
         (
             "notices",
-            [sys.executable, str(REPO / "scripts" / "third_party_notices.py"), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "third_party_notices.py"), "--check"],
             "THIRD-PARTY-NOTICES.md is stale, or a forbidden licence appeared",
         ),
     ]
@@ -253,7 +261,7 @@ def run(name: str, argv: "list[str]") -> "tuple[bool, float, int]":
     started = time.monotonic()
     code = -1
     try:
-        completed = subprocess.run(argv, cwd=REPO, check=False)
+        completed = subprocess.run(argv, cwd=ROOT, check=False)
         code = completed.returncode
         ok = code == 0
     except FileNotFoundError:

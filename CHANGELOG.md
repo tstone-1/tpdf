@@ -17,6 +17,106 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.12] - Unreleased
+
+### Changed: saving over a document no longer parses it in the app process
+
+**A save that deletes, moves, turns or crops a page now happens inside the
+sandboxed worker, and the rewritten file is written straight out of it.** Until
+now that path read the document and rebuilt it in the process that owns your
+window, your files and your unsaved edits. Nothing about the saved file changes;
+what changes is which process reads yours.
+
+The reason it had not moved is not the reading, it is the answer. A save that
+only adds a highlight produces a few hundred bytes, which fit in the worker's
+reply --- that one moved in `26.8.10`. A rewrite produces the whole document,
+which does not. So the worker is now handed the descriptor of the temporary file
+the save writes to, and puts the bytes there itself. It has no filesystem
+authority and no name it could be pointed at: one file, opened before it dropped
+its privileges.
+
+What is left of the old path, and it is written down rather than implied: Save a
+copy, Extract, Split, Merge and Print still parse in the app process, and a
+platform with no sandbox still does everything there and marks the run.
+
+### Changed: an encrypted document can be edited, not only added to
+
+**A page can now be deleted, moved, turned or cropped in a document behind a
+password, and the file stays behind that password.** Until now only marks could
+be saved onto one --- those are appended to the end of the file, which leaves the
+encrypted body untouched --- and everything else was declined.
+
+The reason it was declined is that a rewrite goes through a serialiser that
+writes every object in the clear and drops the `/Encrypt` dictionary with it, so
+the obvious implementation would have quietly produced an unlocked copy of a
+document somebody locked on purpose. What a rewrite does instead is take the
+file's own encryption off before it changes anything and put it back as the last
+step: the same algorithm, the same permission bits, both passwords, read from the
+file rather than rebuilt. The result opens with the password it always had, and
+refuses to open without it.
+
+A document nobody has unlocked is still refused, and now says so plainly: there
+is no key to put back.
+
+**Printing part of an encrypted document is the one operation still declined**,
+and it now tells you the thing you can actually do. Re-encrypting would hand the
+printer a file it cannot read; not re-encrypting would hand it a decrypted copy.
+So it says to print the whole document instead, which is passed to the printer
+unchanged. It used to say *"open it with its password first"* --- to a reader
+who had done exactly that.
+
+### Fixed: merging into a document behind a password
+
+Choosing *Merge* with an encrypted document open failed with a message blaming
+tpdf's own writer --- *"could not read back the document it just built"*. It now
+works, and the merged file keeps the open document's encryption. Documents
+*coming in* to a merge must still be unencrypted, and that refusal is unchanged:
+there is no way to write one file that preserves two documents' protection.
+
+### Fixed: a redaction of a document behind a password is now really checked
+
+After removing marked regions from an encrypted document, tpdf reads the written
+file back and reports what it could not prove gone. That check was being run
+without the password --- so it decoded none of the file, found none of the
+removed words in what it could not read, and would have called the result clean.
+
+It never actually said "clean", because a second check further on could not
+reopen the locked file either and reported *that* instead. The redaction was
+correct throughout and the reason given for not confirming it was the wrong one.
+Both checks now get the password, and the reader that decodes nothing refuses to
+give a verdict at all rather than an encouraging one.
+
+### Fixed: saving through a shortcut edited the shortcut
+
+If the file you opened was a symbolic link, saving a page change replaced the
+*link* --- leaving the document it pointed at untouched and the two quietly
+diverging --- while saving a highlight followed the link and edited the document.
+Same file, same gesture, two different outcomes. Both now edit the document the
+link names.
+
+### Fixed: saving no longer widens who can read the document
+
+A document you keep readable only by yourself came back readable by everyone
+after any page edit: the replacement file was created with the default
+permissions rather than the document's. It now keeps the mode the file had.
+
+### Changed: a save that cannot be confirmed now gives up instead of waiting
+
+After writing an update to the end of a file, tpdf re-reads it in a separate
+process to check the file is still whole. That check had no time limit, so a
+document able to send the reader round in circles would have hung the save
+indefinitely --- after the document was closed and the bytes were already on
+disk. It now gives up after thirty seconds, ends that process and says the save
+could not be confirmed.
+
+### Changed: an installed build no longer looks for its PDF engine on the build machine
+
+tpdf looked for its PDF engine first at the path the *build machine* had it,
+before looking inside the installed application. On a released build that path
+belongs to the machine that produced it, and on some machines it is a path
+another user could create. The engine parses every document you open, so that
+lookup is now made only by development builds.
+
 ## [26.8.11] - 2026-08-27
 
 ### Added: mark a region for redaction

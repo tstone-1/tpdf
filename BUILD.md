@@ -1617,6 +1617,38 @@ Both of those exist because the first draft got it wrong in the reassuring direc
 planted a file that was not a PDF, the worker refused it at open, and the check reported `[OK]`
 having never run `lopdf`. `docs/TRAPS.md` has both entries.
 
+**Five more on 2026-08-28, so the number is now 28** --- measured **28/28 with none not
+applicable on macOS**; the Windows figure was 19/19 before any of the last nine existed and has
+not been re-run. They put a worker on the save's *writing* side, which is the half
+`docs/THREAT-MODEL.md` residual risk 18 was still disclosing: the same four shapes as the
+verification checks above, plus one that only this path can make.
+
+The differential here is **byte for byte** rather than a number, and it is affordable because a
+rewrite of one document under one plan is deterministic --- every date in the output comes from
+the plan's own marks and not from the clock. On `testdata/comments.pdf` under a plan that turns
+every page, `save::Here` and `save::InWorker` both write 222,667 identical bytes. A comparison
+of lengths or page counts would have passed for a worker that dropped the turns.
+
+The extra check is the one that says the **output channel** is real: an ordinary worker,
+spawned with no output file, must refuse the rewrite in words rather than writing a document
+into whichever descriptor happens to be open at that number. Every other check in the section
+would pass just as well if the descriptor were handed over unconditionally and
+`worker::OUT_ARGV` did nothing.
+
+**What the move costs is printed beside them.** On `comments.pdf` (4 pages, 238 KB) the
+rewrite is **2.4 ms in this process and 11.4 ms in a worker, +9.0 ms** --- best of five
+interleaved, minima rather than means, because the question is what the work costs and not
+what the machine was doing while it ran. That delta is one process spawn plus PDFium's
+initialisation, so it is **fixed rather than proportional**: on a document where the parse and
+the serialisation are hundreds of milliseconds it is noise, and this fixture is close to the
+worst case for it. Nothing else on the save path got slower --- the parse moved, it did not
+happen twice.
+
+⚠ **Run it on Windows before the next release.** The rewrite's output channel there is a
+`DuplicateHandle` into the child rather than a `dup2` before `exec`, and no run has yet
+exercised it --- so the five checks above are macOS evidence for a mechanism that has two
+implementations. `AGENTS.md` records what a single sentence about two platforms costs.
+
 Reverting `worker_child`'s bind arm to `bind(&library_dir)?` turns both red with
 `worker stopped answering (exited with 1 (0x00000001))` --- which is the string the reader who
 reported it saw, reproduced from the other end. That is the mutation to re-run if either check
@@ -2155,14 +2187,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- 
 | `encodings` | **7/8**, 1 skipped --- one expected red, below |
 | `text-wide` | 9/9 --- the wide-sheet fixture, below |
 
-⚠ **Those counts were two behind on 2026-08-30 and are re-measured here.** The shape sweep's
+⚠ **Those counts were two behind on 2026-08-28 and are re-measured here.** The shape sweep's
 control was added in the same commit that last touched this table and the row was not moved with
 it, so every fixture the sweep runs on read one low before today and two after. `columns` and
 `vector-heavy` are unchanged, which is the tell that the drift is the sweep: it is skipped on
 both. A count in prose has no gate behind it --- derive it from a run, and re-derive it whenever
 a check is added.
 
-**A shape sweep prints above the checks**, added 2026-08-30 and not a check --- it passes and
+**A shape sweep prints above the checks**, added 2026-08-28 and not a check --- it passes and
 fails nothing. It exists because the corpus probe's largest remaining bucket is the engine
 *answering* and returning no spans at all, and a corpus measurement cannot look at the image it
 was handed while a fixture can.
@@ -2368,7 +2400,7 @@ no cause is subtracted and named rather than absorbed.
 cause where the gate got as far as showing the engine something, so it is the only one with a
 rendered control to describe. The first bucket is how tall that control landed against
 `ocr_gate::MIN_CONTROL_PX`, which is the bound the scale rule exists to clear --- a row below the
-floor is the rule missing what it aims at, and on 2026-08-29 that was 34 of 38. The second is how
+floor is the rule missing what it aims at, and on 2026-08-28 that was 34 of 38. The second is how
 many characters the token drew, because `ocr::adjudicate` matches by containment and one
 recognised span has to hold the whole token. The first prints every bucket including the empty
 ones, with a `[WARN]` if they do not sum to the cause's own count.
@@ -2388,12 +2420,12 @@ image, how many fell in the control band, and how far outside the band the neare
 *containing the token* sat. Three rows follow --- *read nothing at all*, *read spans, none
 holding it*, *read it, outside its band* --- each split by the rendered-height bucket beneath
 it. The split is the point: the height rows and the shape rows are two bucketings of one
-population, and two marginals bound their overlap without measuring it. Measured 2026-08-30 over
+population, and two marginals bound their overlap without measuring it. Measured 2026-08-28 over
 197 refusals at three densities, the outside-the-band row is **0** at every one, and at
 `--regions 40` exactly 40 of the 80 silent refusals had a control at or above `MIN_CONTROL_PX`
 --- which the marginals alone could only place between 40 and 80.
 
-**A fourth axis, added 2026-08-30: the probe image's own proportions.**
+**A fourth axis, added 2026-08-28: the probe image's own proportions.**
 `ocr_gate::geometry_for` reports the shape it planned, and the row prints `unread / all` and a
 rate per aspect band, with the silent count beside it. It is a different axis from the control's
 rendered height rather than another reading of it, because an aspect is a ratio and the render
@@ -2404,11 +2436,11 @@ four fifths of the population.
 
 ⚠ **That row's denominator has to be counted in the per-region loop, not inside the
 `ControlUnread` branch.** Written one scope too low it counts the failures, so every band prints
-`N / N 100.0%` --- which happened on 2026-08-30, one increment after the trap about denominators
+`N / N 100.0%` --- which happened on 2026-08-28, one increment after the trap about denominators
 was written. The `bad / all` form is what makes it visible; a bare percentage would have read as a
 finding.
 
-**A sixth and seventh axis, added 2026-08-30: the control's height in points, and which clamp
+**A sixth and seventh axis, added 2026-08-28: the control's height in points, and which clamp
 left it short.** Points is what the aspect turned out to be standing in for, and it is the sharper
 single reading: **every control under 2 pt failed**, 24 of 24 and 40 of 40 at the two densities,
 against 16.1% for 2 to 6 pt and 7.4% for 6 to 12 pt. That boundary is `MIN_CONTROL_PX /
@@ -2426,7 +2458,7 @@ count at 36 and took *shown unreadable* from 276 to 264. The change was reverted
 §6 and the trap entry have why. Read the aspect rows as a property of the population, and do not
 rank work off them again.
 
-**An eighth axis, added 2026-08-30: what a higher scale ceiling would do.** For every unread
+**An eighth axis, added 2026-08-28: what a higher scale ceiling would do.** For every unread
 control the probe computes the scale it would have needed --- `ocr_gate::scale_wanted`, unclamped
 --- and whether the probe image fits at it, through `ocr_gate::bytes_at` against the worker's
 capacity. Both went public for this; neither is a second copy of anything. Measured: **0 of 24 and
@@ -2450,7 +2482,7 @@ row rather than an arm of an ordered chain. Measured: **24 and 40 from the ceili
 halving, 0 short for neither reason.** The `MIN_SCALE` clamp has never fired on real input; re-run
 this if `capacity` or the region sampling changes.
 
-**A fifth axis, added 2026-08-30: the two above, crossed.** The height row and the shape row are
+**A fifth axis, added 2026-08-28: the two above, crossed.** The height row and the shape row are
 marginals of one population, so equal counts on them are not evidence of one set of regions. The
 crossing prints `silent / all` per cell, and populated cells only --- an unpopulated cell is not a
 zero rate, it is no measurement, and printing it as `0.0%` reads as the former. It answered the
@@ -2491,7 +2523,7 @@ three pages each:
 | 12 | 448 | 56.7% | 38.0% | 64 | 106 |
 | 40 | 1,389 | 27.1% | 67.2% | 84 | 850 |
 
-Measured 2026-08-29, after `geometry_for` began choosing the render scale from the control
+Measured 2026-08-28, after `geometry_for` began choosing the render scale from the control
 word's own height rather than from the smallest box a region covered. The four rows before that
 change read 65.1 / 64.1 / 55.8 / 26.4 in the third column.
 
@@ -4176,6 +4208,35 @@ If you add a harness, do not let the exit code be its only verdict --- parse the
 too, and make the two agree. That is what caught this: a run printing `[OK] session restore
 verified` directly beneath a phase whose own last line said `0/1 checks passed`.
 
+### The four Phase 0 spikes nothing above invokes
+
+`AGENTS.md` says this file has the invocations, and for four `[[example]]` targets it did
+not --- measured 2026-08-28 by diffing the `[[example]]` names in `src-tauri/Cargo.toml`
+against this document: 40 targets, 4 unnamed. They are the oldest spikes, they answered
+their question once, and their answers are load-bearing in `docs/PLAN.md` --- which is
+exactly why they should still be runnable rather than quietly rotting into files nobody
+knows how to start.
+
+```bash
+# Spike 0.3, the gating one: can one text object be edited and the rest of the page
+# reproduced faithfully? Two routes, PDFium and lopdf, measured against each other.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example text-roundtrip
+
+# Spike 0.6: does an appended update section satisfy a reader that is not ours?
+cargo run --release --manifest-path src-tauri/Cargo.toml --example incremental-save
+
+# Does `pdfium-render`'s `thread_safe` actually serialize PDFium? The whole
+# worker-process architecture rests on the answer, so it is measured rather than cited.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example thread-probe
+
+# Can a worker be handed its document *after* it is sandboxed, over a socket? This is
+# what a pre-spawned worker would need, and it is why the ~6.6 ms floor sits where it does.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example fdpass-probe
+```
+
+Each prints its own verdict and exits non-zero on failure. `text-roundtrip` and
+`incremental-save` need `testdata/`; `fdpass-probe` is macOS-only.
+
 ---
 
 ## Cutting a release
@@ -4217,7 +4278,7 @@ starts at 0 and increments within the month.
 
    ⚠ **That minute is the warm figure, and a change to a widely-included module makes the
    run minutes long rather than seconds --- so the rule above will tell you to kill a healthy
-   run.** Measured 2026-08-29 after editing `ocr_gate.rs`: **~4 minutes** cold against **1 s**
+   run.** Measured 2026-08-28 after editing `ocr_gate.rs`: **~4 minutes** cold against **1 s**
    warm on the very next invocation, both green. Two things follow. Judge by CPU, never by
    elapsed, exactly as the paragraph above says --- but **use the `grep` form it prints and
    not `ps -p <pid>` on the process you happen to have**, because cargo and `cargo-clippy` are

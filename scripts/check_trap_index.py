@@ -42,9 +42,9 @@ Usage:
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-TRAPS = REPO / "docs" / "TRAPS.md"
-AGENTS = REPO / "AGENTS.md"
+ROOT = Path(__file__).resolve().parent.parent
+TRAPS = ROOT / "docs" / "TRAPS.md"
+AGENTS = ROOT / "AGENTS.md"
 
 # The index section of AGENTS.md, and the heading level its groups use. Bullets
 # outside a group are not index entries -- the section's own prose may use them.
