@@ -175,6 +175,67 @@ struct Tally {
     /// exactly what a uniform failure rate produces and the length explains
     /// nothing. Counted per region rather than per page so the two maps divide.
     all_chars: BTreeMap<&'static str, usize>,
+    /// The same regions a third time, split by what the engine had actually
+    /// returned --- [`tpdf_lib::ocr::Unread`], one counter per shape.
+    ///
+    /// **The third candidate, and the one the first two made necessary.** Neither
+    /// the control's rendered height nor its length accounts for the bucket: after
+    /// the 2026-08-29 scale fix the failure rate is flat at 19--33% across every
+    /// token length of five or more, which is the signature of a property of the
+    /// page or the image rather than of the control the chooser picked. The
+    /// hypothesis it was built to test is the band: [`tpdf_lib::ocr::adjudicate`]
+    /// partitions the engine's spans by centre, and a span that *holds* the token
+    /// while falling outside produces this exact verdict.
+    ///
+    /// **Measured 2026-08-30, and the band is refused: `outside` is zero over 197
+    /// refusals at three densities.** The rows are kept, and `outside` most of
+    /// all --- a row that has only ever been zero is the one whose absence would
+    /// go unnoticed, and it is the row that would move if `stack` or the centre
+    /// rule ever changed. What is left is `silent`, at 54.5% to 83.3%: the engine
+    /// answers and returns nothing for a probe image holding a control it should
+    /// read.
+    ///
+    /// Three counters rather than a map, because they are not buckets of one
+    /// quantity: `silent` is a statement about the image, `absent` about what the
+    /// engine could make of it, and `outside` about the band's geometry. Each
+    /// names a different place to look.
+    unread_silent: usize,
+    unread_absent: usize,
+    unread_outside: usize,
+    /// Regions whose unread verdict carried no evidence at all, which the type
+    /// says cannot happen --- so this is the arithmetic control on the three
+    /// above rather than a fourth reading. A non-zero here is a defect in
+    /// [`tpdf_lib::ocr::adjudicate`], not a finding about the gate.
+    unread_no_evidence: usize,
+    /// How far above its band each reading of the token sat, in points.
+    ///
+    /// Kept per reading rather than as a running maximum, because the repair
+    /// differs by distance and a single worst case cannot say which is typical:
+    /// a hair over the edge is a tolerance to widen, half the image is an engine
+    /// returning one span for both strips and no tolerance fixes it.
+    ///
+    /// **Empty on every corpus measured so far**, since it only fills when
+    /// `unread_outside` does. The line it feeds is therefore printed only when it
+    /// is non-empty: a median over nothing is a number, and it would be a number
+    /// about no readings.
+    outside_by: Vec<f32>,
+    /// The shape and the rendered height of the same region, together.
+    ///
+    /// **Two marginals cannot answer the question the two of them raise.** At
+    /// `--regions 40` on 2026-08-30, 80 of 96 unread controls had the engine
+    /// return nothing at all and 40 had rendered under 8 px --- which bounds the
+    /// overlap and does not measure it: anywhere from 40 to 80 of the silent
+    /// ones were shown a control the scale rule believed was legible. The
+    /// difference decides whether the remaining work is the scale or the image,
+    /// and no arithmetic over the two rows can settle it.
+    ///
+    /// **It is 40** --- the low end, so the scale accounts for exactly half the
+    /// silence and the other half is a control at or above the floor that the
+    /// engine returned nothing for.
+    ///
+    /// Keyed by shape first so the report's rows are the shapes, which is the
+    /// division that names a place to look.
+    unread_shape_px: BTreeMap<(&'static str, &'static str), usize>,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -527,6 +588,16 @@ fn control_shape(page: &GatePage) -> Option<(f32, usize)> {
 /// The buckets [`Tally::unread_chars`] is reported in, in the order they print.
 const CHAR_BUCKETS: [&str; 3] = ["4 characters", "5 to 7 characters", "8 or more"];
 
+/// The three shapes an unread control comes in, from [`tpdf_lib::ocr::Unread`].
+///
+/// Constants rather than literals at each site, because the tally writes them
+/// and the report reads them --- two copies of a string is the drift that turns a
+/// row into a permanent zero, which is the reading that says a step stopped
+/// failing.
+const SHAPE_SILENT: &str = "read nothing at all";
+const SHAPE_ABSENT: &str = "read spans, none holding it";
+const SHAPE_OUTSIDE: &str = "read it, outside its band";
+
 /// Which bucket a token of `chars` characters falls in.
 fn char_bucket(chars: usize) -> &'static str {
     if chars <= tpdf_lib::ocr::MIN_CONTROL_CHARS {
@@ -618,23 +689,57 @@ fn run_gate(
                             }
                             match verdict {
                                 Legibility::Illegible { .. } => tally.proved += 1,
-                                Legibility::NotVerified { cause, .. } => {
+                                Legibility::NotVerified {
+                                    cause, evidence, ..
+                                } => {
                                     tally.unanswered += 1;
                                     *tally.causes.entry(cause.label()).or_default() += 1;
                                     // Only for this one cause: the others are
                                     // refusals to choose a control at all, so
                                     // there is no rendered height to bucket.
                                     if *cause == NotVerifiedCause::ControlUnread {
-                                        if let Some((px, chars)) = pages
-                                            .iter()
-                                            .find(|p| p.page == page.page)
-                                            .and_then(control_shape)
-                                        {
+                                        // Matched exhaustively rather than by
+                                        // an `if let`, so a shape that is
+                                        // neither of the three is counted
+                                        // rather than dropped into whichever
+                                        // arm is written last.
+                                        let named = match evidence {
+                                            None => {
+                                                tally.unread_no_evidence += 1;
+                                                None
+                                            }
+                                            Some(e) if e.items == 0 => {
+                                                tally.unread_silent += 1;
+                                                Some(SHAPE_SILENT)
+                                            }
+                                            Some(e) => match e.token_outside_by {
+                                                Some(by) => {
+                                                    tally.unread_outside += 1;
+                                                    tally.outside_by.push(by[1]);
+                                                    Some(SHAPE_OUTSIDE)
+                                                }
+                                                None => {
+                                                    tally.unread_absent += 1;
+                                                    Some(SHAPE_ABSENT)
+                                                }
+                                            },
+                                        };
+                                        // `shape` is the page's, computed once
+                                        // above; this used to look it up again
+                                        // per region, which is the same value
+                                        // by a second route.
+                                        if let Some((px, chars)) = shape {
                                             *tally.unread_px.entry(px_bucket(px)).or_default() += 1;
                                             *tally
                                                 .unread_chars
                                                 .entry(char_bucket(chars))
                                                 .or_default() += 1;
+                                            if let Some(label) = named {
+                                                *tally
+                                                    .unread_shape_px
+                                                    .entry((label, px_bucket(px)))
+                                                    .or_default() += 1;
+                                            }
                                         }
                                     }
                                 }
@@ -750,6 +855,69 @@ fn report(t: &Tally, seconds: f32) {
                 println!(
                     "      {bucket:<32} {bad:>6} /{all:>6}   {:.1}%",
                     pct(bad, all)
+                );
+            }
+            // What the engine had returned when it happened, which is the one
+            // reading that names a *place* rather than a property of the
+            // control. Printed even at zero, for the reason every cause row is.
+            println!("  and of those, what the engine had returned");
+            for (label, count) in [
+                (SHAPE_SILENT, t.unread_silent),
+                (SHAPE_ABSENT, t.unread_absent),
+                (SHAPE_OUTSIDE, t.unread_outside),
+            ] {
+                println!("      {label:<32} {count:>6}   {:.1}%", pct(count, unread));
+                // The shape's own split by rendered height. Without it the two
+                // rows are marginals, which bound the overlap and cannot
+                // measure it -- and the overlap is what says whether the work
+                // left is the scale or the image.
+                for bucket in PX_BUCKETS {
+                    let n = t
+                        .unread_shape_px
+                        .get(&(label, bucket))
+                        .copied()
+                        .unwrap_or(0);
+                    if n > 0 {
+                        println!("          {bucket:<28} {n:>6}");
+                    }
+                }
+            }
+            // Every shape row above has to account for every region that had a
+            // control to measure. A region with no shape is already named by
+            // the evidence `[WARN]`; one with no height is named by the bucket
+            // `[WARN]` below. This catches the pair going out of step.
+            let crossed: usize = t.unread_shape_px.values().sum();
+            let bucket_total: usize = t.unread_px.values().sum();
+            if crossed != bucket_total {
+                println!(
+                    "[WARN] {crossed} cross-tabulated of {bucket_total} with a measured control \
+                     --- the two axes disagree about the same regions"
+                );
+            }
+            if !t.outside_by.is_empty() {
+                let mut by = t.outside_by.clone();
+                by.sort_by(f32::total_cmp);
+                let median = by[by.len() / 2];
+                println!(
+                    "      of those, above the band by: median {median:.1} pt, worst {:.1} pt",
+                    by[by.len() - 1]
+                );
+            }
+            // The type says a `ControlUnread` verdict always carries evidence,
+            // so this is the arithmetic control on the three rows rather than a
+            // fourth reading. Silence is the healthy state.
+            if t.unread_no_evidence > 0 {
+                println!(
+                    "[WARN] {} unread verdict(s) carried no evidence --- adjudicate has a path \
+                     that does not record one",
+                    t.unread_no_evidence
+                );
+            }
+            let shapes = t.unread_silent + t.unread_absent + t.unread_outside;
+            if shapes + t.unread_no_evidence != unread {
+                println!(
+                    "[WARN] {shapes} shape(s) for {unread} unread control(s) --- this probe has \
+                     lost some"
                 );
             }
             let bucketed: usize = t.unread_px.values().sum();

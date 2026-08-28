@@ -717,6 +717,7 @@ fn gate_one_page(
             return PageOutcome::Whole(Legibility::NotVerified {
                 cause: too_easy.cause(),
                 why: format!("{too_easy}"),
+                evidence: None,
             });
         }
     };
@@ -727,6 +728,7 @@ fn gate_one_page(
             return PageOutcome::Whole(Legibility::NotVerified {
                 why,
                 cause: NotVerifiedCause::ScaleRefused,
+                evidence: None,
             })
         }
     };
@@ -749,6 +751,7 @@ fn gate_one_page(
             return PageOutcome::Whole(Legibility::NotVerified {
                 why,
                 cause: NotVerifiedCause::ControlStrip,
+                evidence: None,
             })
         }
     };
@@ -786,6 +789,7 @@ fn judge(
             return crate::ocr::Legibility::NotVerified {
                 why,
                 cause: NotVerifiedCause::RegionStrip,
+                evidence: None,
             }
         }
     };
@@ -796,6 +800,7 @@ fn judge(
         return crate::ocr::Legibility::NotVerified {
             why,
             cause: NotVerifiedCause::Mask,
+            evidence: None,
         };
     }
     let (pixels, height, band) = match stack(&under, control, width_px, scale) {
@@ -804,6 +809,7 @@ fn judge(
             return crate::ocr::Legibility::NotVerified {
                 why,
                 cause: NotVerifiedCause::Stack,
+                evidence: None,
             }
         }
     };
@@ -844,6 +850,7 @@ pub fn unanswered(e: &crate::ocr::RecogniseError) -> Legibility {
     Legibility::NotVerified {
         why: format!("{e}"),
         cause: NotVerifiedCause::EngineError,
+        evidence: None,
     }
 }
 
@@ -1406,6 +1413,7 @@ mod tests {
             &Legibility::NotVerified {
                 why: "the engine died".into(),
                 cause: NotVerifiedCause::EngineError,
+                evidence: None,
             },
         )
         .unwrap();

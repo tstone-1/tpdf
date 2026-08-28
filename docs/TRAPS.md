@@ -5351,6 +5351,37 @@ Two more things this run settled, both in the entry above: the same bucket's mas
 was refused by *reading* the code, and a crop-padding hypothesis by an *A/B* that made the number
 worse. Three predictions, three instruments, none of them the one the prediction suggested.
 
+### Two marginals bound an overlap and cannot measure it, and the bound reads like a finding
+
+2026-08-30, the increment after the entry above, and the same population. The redaction gate's
+`control not read back` bucket was split two ways: by how tall the control rendered, and --- newly
+--- by what the engine had actually returned. At `--regions 40` the two rows read **80 of 96
+silent** and **40 of 96 under the 16 px floor**, and the sentence that suggests itself is *"so at
+least 40 of the silent ones were shown a control the scale rule believed was legible"*.
+
+That sentence is true and it is not a measurement. Two marginals over one population fix the
+overlap only within `|A| + |B| - N` and `min(|A|, |B|)`, which here is **anywhere from 40 to 80**
+--- and the two ends mean opposite things. At 80 the scale is irrelevant to the silence; at 40 it
+explains half of it. The bound cannot choose, and it is the shape of a number you quote.
+
+Crossing them costs one `BTreeMap<(&str, &str), usize>` and one line at a call site where both
+values are already in hand: the tally was already computing the height bucket and had just
+computed the shape. The answer was **40** --- the low end, so the scale accounts for exactly half
+the silence and the other half is a control at or above the floor that the engine still returned
+nothing for.
+
+**The tell is an arithmetic word in a finding.** "At least", "no more than", "somewhere between"
+in a sentence about two counts of one population means you are reading a bound, and a bound is
+what you write when the cross-tabulation was not recorded. It usually cannot be recovered later:
+these two axes are computed in the same loop iteration and forgotten at the end of it, so
+recovering the overlap means running the whole harness again --- which is the same cost as the
+denominator problem in the entry above, and the same fix. **Record the pair where you record
+either one.**
+
+The `[WARN]` beside it is worth copying too: the cross-tabulated total and the height-bucket
+total count the same regions by two routes, so they must agree, and the run says so rather than
+being trusted to.
+
 ### An OCR engine's bounding box is a detection, not a measurement
 
 Found 2026-07-31 the first time `ocr-probe` ran the real Vision binding rather than its unit

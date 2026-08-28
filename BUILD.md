@@ -2324,6 +2324,23 @@ and the obvious repair moves the chooser toward the worse bucket. A count of fai
 by a property is never evidence about that property until the same bucketing is applied to the
 population.
 
+**A third axis prints under the same cause: what the engine had actually returned.**
+`ocr::Unread` rides on the verdict and carries how many spans came back for the whole probe
+image, how many fell in the control band, and how far outside the band the nearest span
+*containing the token* sat. Three rows follow --- *read nothing at all*, *read spans, none
+holding it*, *read it, outside its band* --- each split by the rendered-height bucket beneath
+it. The split is the point: the height rows and the shape rows are two bucketings of one
+population, and two marginals bound their overlap without measuring it. Measured 2026-08-30 over
+197 refusals at three densities, the outside-the-band row is **0** at every one, and at
+`--regions 40` exactly 40 of the 80 silent refusals had a control at or above `MIN_CONTROL_PX`
+--- which the marginals alone could only place between 40 and 80.
+
+Two `[WARN]`s guard it. The three shapes plus the no-evidence count must equal the cause's own
+total, and the cross-tabulated total must equal the height-bucket total, since both count the
+regions that had a measurable control. A non-zero *carried no evidence* is a defect in
+`ocr::adjudicate` rather than a finding about the gate: the type says that arm always records
+one.
+
 ⚠ **`--regions N` is not only the sample size; it changes what the gate can do, so every
 percentage from this harness has to be quoted with its density.** The regions set `size_pt`
 --- the height of the smallest box any of them covers --- and they consume the pool of
