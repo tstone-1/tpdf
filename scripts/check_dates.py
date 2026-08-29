@@ -11,9 +11,12 @@ A date in the future breaks that in a way nothing else notices. It is not
 merely wrong --- it makes every stamp in the same batch unreliable, because a
 reader who spots one has no way to tell which of the others were written in the
 same sitting. On 2026-08-28 there were **seventy** such stamps across eleven
-tracked files, all reading 2026-08-29 or 2026-08-30, every one of them written
-by a commit dated 2026-08-28. Nothing was wrong with the measurements; the
-provenance on all of them was.
+tracked files, every one reading a day or two ahead of the commit that wrote
+it. Nothing was wrong with the measurements; the provenance on all of them was.
+
+The dates that defect wrote are described here rather than quoted, because this
+file is scanned like every other tracked file and a quoted future date would be
+a finding about the checker. Its *table* is a different case, handled below.
 
 **Today rather than HEAD's commit date**, deliberately. Comparing against the
 last commit would refuse a working tree in which you have correctly stamped
@@ -61,6 +64,22 @@ EXEMPT: "dict[tuple[str, str], str]" = {
         "2030-01-01",
     ): "the same fixture certificate, in the frontend's own expectation",
 }
+
+# The table above has to spell its dates out in Python source, and this file is
+# tracked text like any other -- so on the day the gate landed it read its own
+# three keys as future stamps and failed on both CI legs, having never once been
+# green. A date *here* is a key, not a claim about when something was measured.
+#
+# Derived from EXEMPT rather than listed, so a fourth exemption cannot re-break
+# the gate, and scoped to the keys rather than to the file: a future date in this
+# file that no exemption names is still a finding, which is what stops this from
+# becoming the whole-file excuse the comment above rejects.
+#
+# From `__file__` rather than a constant, because a constant would name nothing
+# after a rename. `as_posix()` because `git ls-files` reports forward slashes on
+# every platform, Windows included.
+SELF = Path(__file__).resolve().relative_to(ROOT).as_posix()
+EXEMPT_DATES = {when for _, when in EXEMPT}
 
 
 def tracked() -> "list[str]":
@@ -114,8 +133,14 @@ def main() -> int:
                     when = datetime.date(year, month, day)
                 except ValueError:
                     continue  # 2026-13-01 is not a date, it is a coincidence
-                if when > today and (name, when.isoformat()) not in EXEMPT:
-                    ahead.append(f"{name}:{line_no}: {when.isoformat()}")
+                if when <= today:
+                    continue
+                stamp = when.isoformat()
+                if (name, stamp) in EXEMPT:
+                    continue
+                if name == SELF and stamp in EXEMPT_DATES:
+                    continue
+                ahead.append(f"{name}:{line_no}: {stamp}")
 
     if ahead:
         print(f"[FAIL] {len(ahead)} date(s) in tracked files have not happened yet:")

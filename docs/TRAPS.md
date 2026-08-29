@@ -11982,6 +11982,65 @@ Related, and different in the half that matters: the `NaN` entry is about an ass
 cannot pass *loudly* — it fails on the first run and reads as a broken harness. This one
 fails quietly, in a phase of 250 checks, in a harness nobody runs on a schedule.
 
+### A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships
+
+`scripts/check_dates.py` refuses any ISO date in a tracked file that has not happened yet,
+because this repository's provenance is written as dates and a stamp in the future makes every
+stamp written in the same sitting unreliable. Its exemption table is keyed by **file and exact
+date**, deliberately, so that excusing one certificate expiry does not take a document's two
+dozen real stamps out of the scan:
+
+```python
+EXEMPT = {
+    ("docs/THREAT-MODEL.md", "YYYY-MM-DD"): "when the Developer ID signing certificate expires",
+    ...
+}
+```
+
+(The real key is an ISO date, written out. It is a placeholder here for the reason this
+entry is about, and the same goes for every date below.)
+
+That table has to spell those dates out in Python source, and `scripts/check_dates.py` is a
+tracked text file like any other. So the scan read its own three keys as three future stamps.
+The gate failed on the commit that introduced it and **has never once been green**. Its
+docstring supplied a fourth, by quoting the dates of the defect it was written for.
+
+**The half worth carrying is not "a check can be born red" — the entry above already says
+that, and blames a manual-only harness. This one is a `gates.py` gate.** CI ran it on both
+platforms, both legs went red, and the commit shipped anyway. A manual harness is only as
+green as the last time a person ran it; a CI gate is only as green as the last time a person
+*read* it, and `18/19 gates passed` at the end of a long log reads like a pass. The habit that
+catches it is one command before starting work rather than a stronger check: `gh run list
+--workflow=ci.yml --branch main --limit 1`, with the conclusion read and not the run's
+existence.
+
+**The repair that looks obvious is the one the table's own comment rejects.** Exempting
+`scripts/check_dates.py` wholesale removes its prose from the scan, and prose is exactly what
+the gate exists to cover. What shipped instead exempts *the keys* in *this file*, derived from
+`EXEMPT` rather than typed, so a fourth exemption cannot re-break the gate and a future date
+here that no exemption names is still a finding. `SELF` comes from `__file__` rather than a
+constant — a constant names nothing after a rename — and through `as_posix()`, because
+`git ls-files` reports forward slashes on every platform.
+
+Four controls, because the fix's failure mode is silently becoming the whole-file excuse: a
+planted date decades out in the checker's own prose (fails, 1 finding); the self-exemption clause
+deleted (fails, exactly the table's 3); `SELF` pointed at another path (fails, the same 3,
+which is what proves it resolves to this file rather than merely being a string); and a
+planted date in `BUILD.md` (fails). The quoted docstring date needed no exemption — it was
+reworded, because a date a checker describes rather than quotes cannot rot.
+
+**Writing this entry reproduced the trap.** The first draft quoted the exemption key and the
+planted control date, so `docs/TRAPS.md` became a tracked file carrying two dates that have not
+happened — and the gate, three minutes after being repaired, failed on the paragraph describing
+the repair. It was right to. A document *about* future dates is not exempt from the rule, which
+is why the exemption is scoped to the checker's own table and to nothing else.
+
+**Generalises to any check whose population includes its own source.** A denylist of forbidden
+strings, a grep for a banned API, a scanner for TODO markers: each one writes the thing it
+hunts for into the file doing the hunting. The question to ask when adding one is whether the
+checker is in the set it scans, and if it is, whether the exemption is scoped to the tokens
+that have to be there rather than to the file.
+
 ### An accounting observable nobody reads is the same as not having one
 
 `Doc::ink_bodies` was added with the eraser for the stated reason that a version kept after
