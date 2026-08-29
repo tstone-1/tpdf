@@ -297,6 +297,17 @@ export interface AppActions {
   /** Whether a mark's note is open, which is what names the mark to remove. */
   hasOpenMark(): boolean;
   /**
+   * Whether the comment on show is one the reader can rewrite.
+   *
+   * Two conditions, not one: a comment popup has to be open, and its annotation
+   * has to be an object of its own. A comment the file wrote as a direct
+   * dictionary inside a page's `/Annots` cannot be overridden by an incremental
+   * update at all --- see `Comment.object`.
+   */
+  canEditComment(): boolean;
+  /** Turns the open comment's body into an editor and puts the keyboard in it. */
+  editComment(): void;
+  /**
    * Picks the colour marks are drawn in, by a `markcolors.ts` swatch id.
    *
    * One call for both meanings --- what the next mark will be, and what the mark
@@ -829,6 +840,28 @@ export function registerAppCommands(
       // has named. There is no "the mark under the pointer" here: a menu item
       // is chosen with the pointer somewhere else entirely, and the open note
       // is the application's own record of which mark is being worked on.
+      // **Editing a comment somebody else wrote**, which until now the README
+      // listed as not built. The command exists as well as the popup's own Edit
+      // button for the reason every command here does: `docs/PLAN.md` asks that
+      // everything be reachable in two keystrokes, and a reader who has opened a
+      // note with the keyboard should not have to find a button with the mouse.
+      //
+      // It arms rather than acts, so there is nothing destructive behind it ---
+      // the words are the reader's to type and undo takes the whole edit back.
+      // No keyboard binding, because the popup has to be open for it to mean
+      // anything and a chord that silently does nothing most of the time teaches
+      // a reader to distrust it.
+      id: "edit.editForeignMark",
+      // "this comment" rather than "comment": the subject is whichever note is
+      // open, which the reader has already pointed at, and the palette is chosen
+      // with the pointer somewhere else. Same reasoning as "Remove mark", one
+      // step further --- that one could not say which mark it meant, and this one
+      // can say which *kind* of thing it means.
+      title: "Edit this comment",
+      enabled: () => withDocument() && actions.canEditComment(),
+      run: () => actions.editComment(),
+    },
+    {
       id: "edit.removeMark",
       // Not "Remove highlight", which was right while a highlight was the only
       // mark there was. A menu item naming one of three kinds is wrong twice

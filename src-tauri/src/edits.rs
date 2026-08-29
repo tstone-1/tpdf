@@ -233,7 +233,21 @@ pub struct NoteEditView {
     /// What the comment now says.
     pub body: String,
     /// When the reader typed it, in PDF date form.
+    ///
+    /// The writer's form, which no panel should show. `shown` beside it is the
+    /// reader's.
     pub made: String,
+    /// The same moment as `YYYY-MM-DD HH:MM`, or `None` if it would not parse.
+    ///
+    /// **Built by `annots::parse_date`, which is the same function the scan
+    /// uses**, because the panel puts this date in the same byline as the date
+    /// of a comment nobody has edited. Two formatters would show one row in a
+    /// different shape from the row above it.
+    ///
+    /// `None` cannot happen for a date this application generated, and it is an
+    /// `Option` anyway rather than an `expect`: the alternative to no date is a
+    /// wrong one, and `annots.rs` already takes that posture for the file's own.
+    pub shown: Option<String>,
 }
 
 /// What the frontend asks for when a reader makes a mark.
@@ -1775,6 +1789,7 @@ fn snapshot(model: &Doc) -> EditState {
                 object: (object.number(), object.generation()),
                 page: page.get(),
                 body: edit.body.clone(),
+                shown: crate::annots::parse_date(edit.made.as_bytes()),
                 made: edit.made.clone(),
             }
         })

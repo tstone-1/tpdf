@@ -4134,7 +4134,9 @@ discovery.
   2026-08-17, and see below for why it is not a contradiction of the first bullet.
 - **No modal dialogs for routine work.**
 - **Sidebar** with thumbnails, outline, annotations and search results as tabs. All four
-  exist as of 2026-08-16; the annotations tab is read-only --- see *Reading comments* below.
+  exist as of 2026-08-16. The annotations tab was read-only until 2026-08-29, when a
+  comment's *body* became editable --- everything else about somebody else's annotation still
+  is. See *Reading comments* below.
 - Dark and light themes following the system.
 
 ### The menu bar, built 2026-08-17
@@ -4724,12 +4726,53 @@ can otherwise distinguish. Two of the three the previous increment registered ha
 re-aimed --- `set_note` moved their lines out of `write_note_edits` --- and the anchor gate is
 what said so.
 
-**Not done: no reader can reach it.** `annot_rewrite` is registered and nothing calls it. The
-comments panel lists what the scan found and does not yet join `EditState.notes` onto it, so an
-edited comment would read as unedited until the file is saved and reopened; and the README's
-`edit.editForeignMark` stays a *not-built* claim, because that marker names a **command id**
-and no command by any name is registered in the palette. Both are the same increment: the
-frontend one.
+~~**Not done: no reader can reach it.**~~ **Done 2026-08-29 --- see below.**
+
+##### The reader's path, and the join that makes it visible --- 2026-08-29
+
+`annot_rewrite` had no caller and the panel had no idea the model held anything. Both halves
+of that are closed, and the second is the one worth stating first because it is the half a
+feature usually ships without.
+
+**The join is in `commentsIn`, which is the one translator every consumer already goes
+through.** The comments a reader sees come from a scan of the file on disk; what they have
+typed since lives in the model. A consumer that saw the first without the second would show
+somebody the words they had just replaced. Putting the join in the translator means the panel,
+the popup and the overlay's hit test are all answered from one place rather than each
+remembering to look --- and it is matched on the **object**, never on `Comment.id`, for the
+reason that whole increment exists.
+
+**The date moves with the body**, and `annots::parse_date` became `pub(crate)` so that the two
+are built by one function. The panel puts an edited comment's date in the same byline as the
+date of a comment nobody has touched; two formatters would show one row in a different shape
+from the row above it. A reader whose own words appear under somebody else's timestamp has been
+told something false, and this is the second place that sentence has had to be written --- the
+first is in `save.rs`, about `/M`.
+
+**The body is read-only until the reader arms it.** A textarea sitting in the popup from the
+moment it opens would read as the reader's own note and would let a stray keystroke alter a
+colleague's words. So there is an Edit button, and `edit.editForeignMark` beside it for a
+reader on the keyboard. That is the posture *Redact region by dragging* takes and for its
+reason: arming silently costs more than one press. Once armed it is `markpopup.ts`'s
+discipline exactly --- the text commits when the box closes, Escape included, and only a
+changed body is sent.
+
+**A comment with no object of its own offers no button rather than a disabled one.** There is
+nothing an incremental update could override, so the capability is absent rather than withheld,
+and a disabled control that is never enabled for a given comment is a promise the file cannot
+keep.
+
+**Two mechanical findings, both from checks that already existed.** The command sweep in
+`appcommands.test.ts` went red because a correctly-guarded command reaches no action --- the
+same treatment its six siblings get, and the sweep's own comment says why. And the fake DOM's
+`querySelector` matches tag names only and has no `replaceWith`: the obvious implementation,
+finding the body and swapping the editor over it, would have worked in a browser and thrown
+under the unit suite. The popup repaints its children instead, which needs neither.
+
+**Not done:** replying to a comment, changing its author or its subject, and deleting one.
+Those are three more commands over the same object; nothing about the model or the writer
+stops them. The panel's own rows are still not editable --- the editor is in the popup, and a
+reader reaches it from the page or from the row.
 
 #### Multilingual search — corpus done 2026-08-01
 

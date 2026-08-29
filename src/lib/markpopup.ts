@@ -4,16 +4,22 @@
  * ## Why this is not `commentpopup.ts`
  *
  * That one shows what somebody else wrote in the file: an author, a date, a
- * kind, replies, and every field read-only. This one is a form over a single
- * string the reader owns, plus the one destructive action a mark has. They share
+ * kind, replies --- a document, whose body the reader can arm an editor over and
+ * whose other fields are the file's. This one is a form over a single string
+ * the reader owns from the start, plus the one destructive action a mark has. They share
  * their placement (`popup.ts`) and nothing else, and folding them together would
  * mean a widget that is a form or a document depending on where its subject came
  * from.
  *
- * The asymmetry is real rather than an omission: a comment already in the file
- * cannot be edited here at all, because the model knows nothing about it --- it
- * was read by `annots.rs` out of the bytes, and the journal has no command that
- * names it. Editing those is its own increment; see `docs/PLAN.md` Phase 2.
+ * **The asymmetry stayed when the reason for it went.** This paragraph used to
+ * say a comment out of the file could not be edited at all, because the model
+ * knew nothing about it. Since 2026-08-29 the model does: `Command::Rewrite`
+ * names an annotation by the object the *file* gave it, and `commentpopup.ts`
+ * has an editor of its own. What is still true is that the editor is over
+ * there and not here, and the reason is the one this note opens with --- a
+ * comment is a document with an author, a date and replies, and a mark is a
+ * form over one string the reader owns. Folding them together now would be the
+ * same mistake with one fewer excuse.
  *
  * ## The note commits when the popup closes
  *

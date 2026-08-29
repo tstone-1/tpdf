@@ -22,6 +22,7 @@ import {
   type MarkKind,
   type MarkView,
   type PageId,
+  type NoteEdited,
   type PageView,
   type RedactionView,
   type StampName,
@@ -32,7 +33,7 @@ import { colorFor, type MarkColor } from "./markcolors";
 // first, and the declaration lives in `pages.ts` so that the modules which only
 // need the shape --- the scroller, the thumbnails --- do not have to import this
 // one, which cannot be loaded outside a webview.
-export type { MarkView, PageView, RedactionView };
+export type { MarkView, NoteEdited, PageView, RedactionView };
 
 /**
  * What `save_copy` and `extract_pages` report about the file they wrote.
@@ -107,28 +108,6 @@ export interface Split {
   changed: boolean;
   /** Every file written, in order. */
   paths: string[];
-}
-
-/**
- * One comment out of the file that the reader has rewritten. Mirrors
- * `edits::NoteEditView`.
- */
-export interface NoteEdited {
-  /**
-   * The annotation object, as `[number, generation]`.
-   *
-   * The file's name for it, not a model id, and the reason is `Comment.id`:
-   * that is a position in one scan, so inserting a comment anywhere earlier
-   * renumbers every later one. A comment whose `object` is `null` cannot be
-   * edited at all --- see `comments.ts`.
-   */
-  object: [number, number];
-  /** The page it is on, by `PageView.id` --- never a position. */
-  page: number;
-  /** What the comment now says. */
-  body: string;
-  /** When the reader typed it, in PDF date form. */
-  made: string;
 }
 
 /** Mirrors `edits::EditState`. */

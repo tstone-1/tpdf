@@ -132,6 +132,43 @@ export interface RedactionView {
 }
 
 /**
+ * One comment out of the file that the reader has rewritten.
+ *
+ * Mirrors `edits::NoteEditView`, and lives here with {@link MarkView} and
+ * {@link RedactionView} for their reason --- but the consumer is different, and
+ * it is what decides the shape. Those two are drawn; this one is **joined**, by
+ * {@link commentsIn}, onto the comments a scan of the file produced. Without
+ * that join a reader would edit a comment and see the file's own words in the
+ * panel until they saved and opened it again.
+ *
+ * **Addressed by the object rather than by `Comment.id`**, which is a position
+ * in one scan and moves whenever an earlier comment is inserted. A comment whose
+ * `object` is `null` cannot be edited at all --- see `Comment.object`.
+ */
+export interface NoteEdited {
+  /** The annotation object, as `[number, generation]`. */
+  object: [number, number];
+  /** The page it is on, by {@link PageView.id} --- never a slot. */
+  page: PageId;
+  /** What the comment now says. Replaces `Comment.body` whole. */
+  body: string;
+  /**
+   * When the reader typed it, in PDF date form.
+   *
+   * The writer's form. Carried so that nothing on this side has to build one,
+   * and shown to nobody --- {@link shown} is the reader's.
+   */
+  made: string;
+  /**
+   * The same moment as `YYYY-MM-DD HH:MM`, or `null` if it would not parse.
+   *
+   * Built in Rust by the same `parse_date` the scan uses, so an edited comment's
+   * byline is in the same shape as the byline of the row above it.
+   */
+  shown: string | null;
+}
+
+/**
  * What removing one region would take, and what it would miss.
  *
  * Mirrors `redact::RegionPlan`, and it is the one thing about a pending
@@ -452,16 +489,46 @@ export function linksIn(items: readonly Link[], pages: PageMap): Link[] {
   return mapped;
 }
 
-/** The comments of the working document, those on deleted pages left out. */
+/**
+ * The comments of the working document, those on deleted pages left out.
+ *
+ * **And with the reader's own edits written over them**, which is the second job
+ * and the reason `notes` is a parameter rather than something a caller applies
+ * afterwards. The scan is a reading of the file on disk and the model is what
+ * has happened since; a consumer that saw the first without the second would
+ * show a reader the words they had just replaced. Doing it here means every
+ * consumer --- the panel, the popup, the overlay's hit test --- is answered from
+ * one join rather than each remembering to look.
+ *
+ * Matched on `object`, never on `Comment.id`: an id is a position in one scan
+ * and a plan crosses a process boundary. A comment whose `object` is `null`
+ * matches nothing, which is right --- the model cannot name one either.
+ *
+ * `notes` defaults to empty so that a caller with no model in hand --- a test, or
+ * a document opened before the first state reply --- gets the scan unchanged
+ * rather than having to pass a placeholder.
+ */
 export function commentsIn(
   items: readonly Comment[],
   pages: PageMap,
+  notes: readonly NoteEdited[] = [],
 ): Comment[] {
   const mapped: Comment[] = [];
   for (const comment of items) {
     const slot = pages.slotOf(comment.page);
     if (slot === undefined) continue;
-    mapped.push({ ...comment, page: slot });
+    const edit = comment.object
+      ? notes.find(
+          (note) =>
+            note.object[0] === comment.object?.[0] &&
+            note.object[1] === comment.object[1],
+        )
+      : undefined;
+    mapped.push(
+      edit
+        ? { ...comment, page: slot, body: edit.body, date: edit.shown }
+        : { ...comment, page: slot },
+    );
   }
   return mapped;
 }

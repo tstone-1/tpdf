@@ -18520,3 +18520,36 @@ each time it is run.
 The general form, and it is not only about maps: **before asserting an order, ask what
 produces it.** If the answer is anything with a random seed, a filesystem, or a thread pool in
 it, change the producer rather than the assertion.
+
+### The fake DOM supports what has been needed before, and nothing else
+
+Arming an editor over a comment's body has an obvious implementation: find the element
+holding the words and call `replaceWith` on the textarea. Two lines, correct in a browser,
+and **it throws under the unit suite** --- `testdom.ts`'s `FakeElement` has no `replaceWith`
+at all, and its `querySelector` matches by **tag name only**, so
+`querySelector('[data-role="comment-body"]')` answers `null` for an element that is plainly
+there.
+
+That is the worst pair of failures to have together. The missing method is loud, and it is
+loud in the *test*, which reads as the test being wrong rather than the design being
+untestable. The selector is silent: it returns `null`, the optional chain skips the swap, the
+editor is never inserted, and an assertion about what the reader sees fails several steps from
+the cause.
+
+The double is not deficient --- it is exactly as capable as the code that has needed it. Every
+element in it was added because some module used it, so the set of supported operations is a
+record of what this frontend has done before, not of what the DOM offers. Reaching for a
+method no module here has used is therefore a reliable way to leave the test suite behind, and
+the tell is available before you write it: **grep the double for the method**.
+
+The fix is not a better double. `commentpopup.ts` already rebuilds its children with
+`replaceChildren` every time it shows a comment, so arming the editor is one more call to the
+same builder with the body replaced --- one builder, two modes, both visible in one function,
+and no DOM operation the module was not already making. The version that needed extending the
+double would also have split "what the popup contains" across two places, so the read view and
+the edit view could drift a field apart.
+
+The general form: **when a change needs an operation the test double lacks, that is evidence
+about the change and not only about the double.** Extending the double is sometimes right; ask
+first whether the code can be expressed in what the module already does, because that version
+is usually the one with fewer places to disagree with itself.

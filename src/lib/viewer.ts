@@ -416,6 +416,22 @@ export interface ViewerOptions {
    * to open.
    */
   onMarkNote?: (mark: number, note: string) => void;
+  /**
+   * Called when the reader rewrote a comment that came out of the file.
+   *
+   * {@link onMarkNote}'s counterpart for somebody else's annotation, and the
+   * argument is the whole {@link Comment} rather than an id: the model addresses
+   * one by the **object** the file gave it, and the page it needs is this
+   * viewer's slot, which only the caller can translate back into a page
+   * identity. Two bare numbers here would be a slot and an object number side by
+   * side, which is the mistake this repository has already paid for once.
+   *
+   * Only ever with a body that changed, and only for a comment that has an
+   * object. Optional for {@link onMarkNote}'s reason --- a viewer with no model
+   * behind it still shows comments, and the Edit button simply does not appear
+   * to save anything.
+   */
+  onCommentEdit?: (comment: Comment, body: string) => void;
   /** Called when the reader asked to take one of their own marks off the page. */
   onMarkRemove?: (mark: number) => void;
   /**
@@ -1303,7 +1319,10 @@ export class Viewer {
     // `aria-hidden`, and a dialog inside it would be unreachable by a screen
     // reader --- which is the one reader who cannot see the mark it is anchored
     // to either.
-    this.popup = new CommentPopup(root, () => this.closeComment());
+    this.popup = new CommentPopup(root, {
+      onClose: () => this.closeComment(),
+      onRewrite: (comment, body) => this.opts.onCommentEdit?.(comment, body),
+    });
 
     // The reader's own marks get their own box, for the reason `markpopup.ts`
     // gives. Hosted by the root and built once, exactly as above.
@@ -1643,10 +1662,13 @@ export class Viewer {
     // Before the listeners go: an open note is a `position:absolute` box over a
     // surface that is about to be replaced, and the next document's first frame
     // would otherwise paint under somebody else's comment.
-    this.popup.hide();
-    // Without committing. A document being closed is not a reader finishing a
-    // sentence, and the model behind this viewer is going away with it --- the
-    // note would be sent to a handle nobody holds.
+    //
+    // **Both without committing**, and the reason is one sentence for the pair:
+    // a document being closed is not a reader finishing a sentence, and the
+    // model behind this viewer is going away with it --- the text would be sent
+    // to a handle nobody holds. The comment popup needed this the day it learned
+    // to commit; before that its `hide` had nothing to suppress.
+    this.popup.hide(false);
     this.markNote.hide(false);
     this.clearLinkFocus();
     clearTimeout(this.retryTimer);
@@ -2799,7 +2821,14 @@ export class Viewer {
       // The open note is not in the new list --- a different document, or a
       // reload. Closing it is the only honest option: leaving it up would
       // attribute somebody's words to a page that does not have them.
-      this.closeComment();
+      //
+      // **Without committing**, which is `markpopup.ts`'s rule for a mark that
+      // has gone: the comment this popup was editing is not in the document any
+      // more, so sending its text would name an object the reader is no longer
+      // looking at. The reader loses what they typed, and that is the smaller
+      // harm --- the alternative writes it somewhere they did not mean.
+      this.popup.hide(false);
+      this.opts.onComment?.(null);
     }
   }
 
@@ -3121,6 +3150,22 @@ export class Viewer {
     this.popup.show(comment, this.repliesTo(id), this.anchorFor(comment), focus);
     this.opts.onComment?.(id);
     this.wake();
+  }
+
+  /**
+   * Whether the comment on show can be rewritten.
+   *
+   * What `edit.editForeignMark` asks before offering itself, and it is the
+   * popup's answer rather than a second reading of the same facts here --- the
+   * popup is what knows whether one is open and what it is.
+   */
+  get commentEditable(): boolean {
+    return this.popup.editable;
+  }
+
+  /** Turns the open comment's body into an editor. Does nothing if it cannot. */
+  editComment(): void {
+    this.popup.edit();
   }
 
   /** Closes the note, if one is open. */
