@@ -1,6 +1,9 @@
 //! The body of `examples/win_ocr_probe.rs`. See that file for what this answers.
 
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
+
 use tpdf_lib::ocr_gate::MIN_CONTROL_PX;
+use tpdf_lib::sandbox_win::{self, Containment, Stdio};
 use windows::core::HSTRING;
 use windows::Globalization::Language;
 use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
@@ -41,37 +44,136 @@ const SIZES_PX: [i32; 2] = [44, MIN_CONTROL_PX as i32];
 const REAL_WORD: &str = "REDACTED";
 const NON_WORD: &str = "qwrtzp";
 
+/// How this binary re-execs itself as the contained child.
+const CONTAINED_ARGV: &str = "--contained-child";
+
+/// What the child answers when it was not contained after all.
+const NOT_CONTAINED_EXIT: u32 = 3;
+
 /// One reading, printed whatever it says.
 fn say(label: &str, value: &str) {
     println!("  {label:<28} {value}");
 }
 
+/// One string, at one size, and what came back.
+///
+/// Data rather than a printed line, because the contained child takes the same
+/// readings in another process and the parent has to *compare* them. A probe that
+/// printed on both sides and left the reader to diff two tables would be one
+/// where a difference is noticed by whoever is paying attention.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Reading {
+    px: i32,
+    text: String,
+    got: String,
+    verdict: String,
+}
+
+impl Reading {
+    fn label(&self) -> String {
+        format!("{:>3} px  read {:?}", self.px, self.text)
+    }
+
+    fn value(&self) -> String {
+        format!("{:?}  {}", self.got, self.verdict)
+    }
+}
+
+/// Every string at every size, as data.
+fn take_readings(engine: &OcrEngine) -> Vec<Reading> {
+    let mut out = Vec::new();
+    for px in SIZES_PX {
+        for text in [REAL_WORD, NON_WORD] {
+            let (got, verdict) = match read_back(engine, text, px) {
+                Ok(got) => {
+                    // Three outcomes, not two. Nothing read is what the gate's
+                    // own silent regions look like, and folding it into DIFFERS
+                    // would report a size the engine cannot see as a correction
+                    // it made.
+                    let verdict = if got.trim().is_empty() {
+                        "NOTHING READ"
+                    } else if got.split_whitespace().any(|w| w == text) {
+                        "VERBATIM"
+                    } else {
+                        "DIFFERS"
+                    };
+                    (got, verdict.to_string())
+                }
+                Err(why) => (String::new(), format!("failed: {why}")),
+            };
+            out.push(Reading {
+                px,
+                text: text.to_string(),
+                got,
+                verdict,
+            });
+        }
+    }
+    out
+}
+
+/// The installed recogniser languages, as `(tag, display name)`.
+///
+/// Prints nothing, and neither does [`make_engine`]. The contained child's stdout
+/// **is** the answer channel, so a helper that reported by printing would corrupt
+/// the reply the parent parses --- and it would do so only in the contained case,
+/// which is the one nobody runs by hand.
+fn languages() -> Result<Vec<(String, String)>, String> {
+    let list = OcrEngine::AvailableRecognizerLanguages()
+        .map_err(|e| format!("AvailableRecognizerLanguages: {e}"))?;
+    Ok(list
+        .into_iter()
+        .map(|lang| {
+            (
+                lang.LanguageTag()
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+                lang.DisplayName()
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect())
+}
+
+/// An engine, and where it came from.
+fn make_engine(tags: &[(String, String)]) -> Result<(OcrEngine, String), String> {
+    match OcrEngine::TryCreateFromUserProfileLanguages() {
+        Ok(engine) => Ok((engine, "an engine".into())),
+        // A real and interesting state: packs are installed but none matches the
+        // profile's languages. Naming which one was used keeps every reading
+        // below attributable to a language.
+        Err(why) => {
+            let (tag, _) = tags
+                .first()
+                .ok_or("no recogniser language to fall back to")?;
+            let engine = Language::CreateLanguage(&HSTRING::from(tag.as_str()))
+                .and_then(|l| OcrEngine::TryCreateFromLanguage(&l))
+                .map_err(|e| format!("no engine from any listed language: {e} (profile: {why})"))?;
+            Ok((engine, format!("no profile engine; fell back to {tag}")))
+        }
+    }
+}
+
 pub fn main() {
+    if std::env::args().any(|a| a == CONTAINED_ARGV) {
+        contained_child();
+    }
+
     println!("[win-ocr-probe] Windows.Media.Ocr, on this machine");
 
-    let langs = match OcrEngine::AvailableRecognizerLanguages() {
-        Ok(list) => list,
-        Err(e) => {
+    let tags = match languages() {
+        Ok(tags) => tags,
+        Err(why) => {
             // Not exit 1. Failing to *ask* is a different fact from an empty
             // answer, and folding the two together is what makes an absent
             // capability indistinguishable from a broken probe.
-            eprintln!("[FAIL] AvailableRecognizerLanguages: {e}");
+            eprintln!("[FAIL] {why}");
             std::process::exit(2);
         }
     };
-
-    let mut tags: Vec<String> = Vec::new();
-    for lang in &langs {
-        let tag = lang
-            .LanguageTag()
-            .map(|t| t.to_string())
-            .unwrap_or_default();
-        let name = lang
-            .DisplayName()
-            .map(|t| t.to_string())
-            .unwrap_or_default();
+    for (tag, name) in &tags {
         say("recogniser language", &format!("{tag}  ({name})"));
-        tags.push(tag);
     }
     say("languages installed", &tags.len().to_string());
 
@@ -87,69 +189,20 @@ pub fn main() {
         return;
     }
 
-    let engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
-        Ok(e) => {
-            say("from user profile", "an engine");
-            e
+    let engine = match make_engine(&tags) {
+        Ok((engine, source)) => {
+            say("from user profile", &source);
+            engine
         }
-        Err(e) => {
-            // A real and interesting state: packs are installed but none matches
-            // the profile's languages. Falling back names which one was used, so
-            // the reading below is attributable.
-            say("from user profile", &format!("no engine ({e})"));
-            let first = &tags[0];
-            match Language::CreateLanguage(&HSTRING::from(first.as_str()))
-                .and_then(|l| OcrEngine::TryCreateFromLanguage(&l))
-            {
-                Ok(e) => {
-                    say("fell back to", first);
-                    e
-                }
-                Err(e) => {
-                    eprintln!("[FAIL] no engine from any listed language: {e}");
-                    std::process::exit(2);
-                }
-            }
+        Err(why) => {
+            eprintln!("[FAIL] {why}");
+            std::process::exit(2);
         }
     };
 
-    match engine.RecognizerLanguage().and_then(|l| l.LanguageTag()) {
-        Ok(tag) => say("engine language", &tag.to_string()),
-        Err(e) => say("engine language", &format!("unreadable ({e})")),
-    }
-    match OcrEngine::MaxImageDimension() {
-        // A real bound on `ocr::Pixels`: the gate composites a probe image and
-        // hands it over whole, so a limit below a page at render scale is a
-        // constraint on the caller, not a detail of the binding.
-        Ok(max) => say("max image dimension", &max.to_string()),
-        Err(e) => say("max image dimension", &format!("unreadable ({e})")),
-    }
-
-    for px in SIZES_PX {
-        for text in [REAL_WORD, NON_WORD] {
-            match read_back(&engine, text, px) {
-                Ok(got) => {
-                    // Three outcomes, not two. Nothing read is what the gate's own
-                    // silent regions look like, and folding it into DIFFERS would
-                    // report a size the engine cannot see as a correction it made.
-                    let verdict = if got.trim().is_empty() {
-                        "NOTHING READ"
-                    } else if got.split_whitespace().any(|w| w == text) {
-                        "VERBATIM"
-                    } else {
-                        "DIFFERS"
-                    };
-                    say(
-                        &format!("{px:>3} px  read {text:?}"),
-                        &format!("{got:?}  {verdict}"),
-                    );
-                }
-                Err(why) => say(
-                    &format!("{px:>3} px  read {text:?}"),
-                    &format!("failed: {why}"),
-                ),
-            }
-        }
+    let here = take_readings(&engine);
+    for reading in &here {
+        say(&reading.label(), &reading.value());
     }
 
     println!(
@@ -158,6 +211,156 @@ pub fn main() {
          hardest",
         SIZES_PX[1]
     );
+
+    contained_rung(&here);
+}
+
+/// Runs the same readings again in a child under the containment that ships.
+///
+/// **The rung the ranking actually turns on.** Everything above ran at whatever
+/// integrity the shell gave it, and a real engine would run where the parser
+/// worker runs. macOS answered the mirror of this with *no*: Vision is killed by
+/// SIGTRAP under `SANDBOX_PROFILE` and needs general `file-read`, which is why
+/// OCR is a separate process under `OCR_SANDBOX_PROFILE`. If the same is true
+/// here, an in-box Windows engine needs a second containment story rather than a
+/// line in the worker.
+///
+/// **Through `sandbox_win` rather than a ladder of its own.** `win_sandbox_probe`
+/// built six rungs to find out which one PDFium survives; that question is
+/// answered, and the answer is what `Containment::default()` implements. Asking
+/// it again here would be a second copy of security-critical code, and the copy
+/// that drifts is the one nobody ships.
+fn contained_rung(control: &[Reading]) {
+    match run_contained() {
+        Ok(there) => {
+            for reading in &there {
+                say(&format!("contained {}", reading.label()), &reading.value());
+            }
+            // Compared as data. The interesting outcome is not "the child failed"
+            // but "the child read something *different*", which is what a
+            // substituted font or a denied resource looks like from here --- and
+            // `docs/TRAPS.md` records a sandboxed PDFium returning `ok` while
+            // silently substituting a typeface, which is the same shape.
+            let same = there == control;
+            println!(
+                "[verdict] under the containment that ships (job + low integrity): {}",
+                if same {
+                    "reads IDENTICALLY to uncontained"
+                } else {
+                    "reads DIFFERENTLY -- compare the rows above"
+                }
+            );
+        }
+        Err(why) => {
+            // Loud, and not an exit code. The uncontained readings above did
+            // happen and are worth keeping; what failed is one rung.
+            println!("[verdict] the contained rung could not be measured: {why}");
+        }
+    }
+}
+
+/// Spawns this binary contained, and reads back what it measured.
+fn run_contained() -> Result<Vec<Reading>, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    // Quoted by hand, and the naive rule is correct *here* where it is not in
+    // general: `worker_argv::command_line` doubles a run of backslashes before
+    // the closing quote, because `--lib C:\Program Files\tpdf\` would otherwise
+    // escape it and swallow the next argument. This command line is an executable
+    // path and a literal flag; a path ending in `.exe` has no trailing backslash
+    // and `"` is not a legal filename character, so the case that rule exists for
+    // is unreachable. That function is `pub(crate)` and an example is another
+    // crate, which is what forces the choice rather than a preference.
+    let command = format!("\"{}\" {CONTAINED_ARGV}", exe.display());
+
+    // Two pipes as `Worker::spawn_contained_worker` builds them, even though only
+    // the reply half carries anything: `Stdio` wants three valid handles, and
+    // giving the child a stdin it can read to EOF is cheaper than reasoning about
+    // what a worker does with an invalid one.
+    let (requests_read, requests_write) = sandbox_win::pipe()?;
+    let (replies_read, replies_write) = sandbox_win::pipe()?;
+    // SAFETY: four fresh handles from `CreatePipe`, owned by nothing else.
+    // Wrapped now rather than after the spawn, so that an error on any branch
+    // added later closes them --- `File`'s drop is the cleanup that cannot be
+    // forgotten.
+    let (_stdin, mut stdout, child_stdin, child_stdout) = unsafe {
+        (
+            std::fs::File::from_raw_handle(requests_write.cast()),
+            std::fs::File::from_raw_handle(replies_read.cast()),
+            std::fs::File::from_raw_handle(requests_read.cast()),
+            std::fs::File::from_raw_handle(replies_write.cast()),
+        )
+    };
+
+    let stdio = Stdio::with_inherited_stderr(
+        child_stdin.as_raw_handle().cast(),
+        child_stdout.as_raw_handle().cast(),
+    )?;
+    let handles: [windows_sys::Win32::Foundation::HANDLE; 0] = [];
+    let contained =
+        sandbox_win::spawn_contained(&command, &handles, &Containment::default(), Some(&stdio))?;
+
+    // Closed in the parent *before* the child runs, for the reason the worker
+    // states: while this process holds a copy of the reply pipe's write end that
+    // pipe never reaches EOF, so a child that died reads as one still thinking.
+    drop(child_stdin);
+    drop(child_stdout);
+
+    contained.resume()?;
+
+    let mut answer = String::new();
+    let read = std::io::Read::read_to_string(&mut stdout, &mut answer);
+    let code = contained.wait()?;
+
+    // The exit code first, because a child that died has no answer to parse and
+    // the parse error would name the wrong thing. `describe_exit` is what turns
+    // an NTSTATUS into a sentence --- and macOS's lesson is exactly this: the
+    // engine may abort its host rather than refuse, so dying IS a result.
+    if code == NOT_CONTAINED_EXIT {
+        return Err(format!(
+            "the child was not contained, so it measured nothing: {}",
+            answer.trim()
+        ));
+    }
+    if code != 0 {
+        return Err(format!(
+            "the contained child exited {} ({}); it said {:?}",
+            code,
+            sandbox_win::describe_exit(code),
+            answer.trim()
+        ));
+    }
+    read.map_err(|e| format!("reading the child's answer: {e}"))?;
+    serde_json::from_str(answer.trim())
+        .map_err(|e| format!("parsing the child's answer {:?}: {e}", answer.trim()))
+}
+
+/// The other half: measure under containment and answer on stdout.
+fn contained_child() -> ! {
+    // **Before measuring, not after.** A child that quietly ran uncontained would
+    // report that the engine survives containment, which is the direction that
+    // costs something --- `docs/TRAPS.md` on a control that cannot fail. This is
+    // a verification where macOS has an application: by the time this runs the
+    // decision was taken by whoever spawned us, and all we can do is check.
+    if let Err(why) = sandbox_win::assert_contained() {
+        println!("{why}");
+        std::process::exit(NOT_CONTAINED_EXIT as i32);
+    }
+    let engine = match languages().and_then(|tags| make_engine(&tags)) {
+        Ok((engine, _)) => engine,
+        Err(why) => {
+            println!("no engine under containment: {why}");
+            std::process::exit(2);
+        }
+    };
+    let readings = take_readings(&engine);
+    match serde_json::to_string(&readings) {
+        Ok(json) => println!("{json}"),
+        Err(e) => {
+            println!("serialising readings: {e}");
+            std::process::exit(2);
+        }
+    }
+    std::process::exit(0);
 }
 
 /// Draws `text` into a bitmap and asks the engine to read it.
