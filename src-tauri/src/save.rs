@@ -1223,6 +1223,12 @@ pub fn append_update(
     // `save_document` refuses before it closes the document, so nothing is
     // written and the reader keeps their edits. `BUILD.md` and `docs/PLAN.md`
     // §3 carry the run.
+    // **Checked against the previous revision, which is where a reply's parent
+    // lives, and before `prev` is moved into the incremental document.** The new
+    // document is empty from here on --- an append writes only what changed ---
+    // so asking *it* about an annotation the file already had would refuse every
+    // honest reply. See [`RepliesChecked`].
+    let replies = check_replies(&prev, &plan.marks)?;
     let mut incremental = IncrementalDocument::create_from(original, prev);
     // **Brought across before anything is written, and only what changes.** A
     // page whose `/Annots` is its own object contributes that array and nothing
@@ -1247,7 +1253,8 @@ pub fn append_update(
     // carrying either --- so there is no later step for the token to gate. The
     // binding says so out loud, because `#[must_use]` is right to ask.
     let _marks_are_all_this_path_writes =
-        write_marks(&mut incremental.new_document, &plan.marks, &sites)?;
+        write_marks(&mut incremental.new_document, &plan.marks, &sites, replies)
+            .map_err(Refusal::from)?;
 
     // **Comments that were already in the file, overridden in place.** An
     // incremental update writes a *new version of an object*, which is exactly
@@ -2469,6 +2476,18 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // same breath, which is the case this ordering forgives.
     rewrite_note_edits(&mut doc, &plan.notes)?;
 
+    // **Beside the note edits, and above `materialise` for their reason.** A
+    // reply names an annotation that is already in the file, and
+    // `materialise` unlinks a dropped page's annotations while
+    // `sweep::collect` deletes them --- so asking afterwards would report a
+    // comment on a page the reader kept as missing from the document they are
+    // looking at. Measured rather than reasoned: with the call below the page
+    // surgery, a reply naming a *dropped* page's object was refused with "not
+    // in this document any more" instead of "not an annotation", which is a
+    // true sentence about the file being built and the wrong diagnosis of the
+    // plan.
+    let replies = check_replies(&doc, &plan.marks)?;
+
     // What goes and in what order, in the one sequence both writers share ---
     // see `pagetree::materialise`, which carries why the outline is dropped for
     // a deletion and kept for a move, and why turning pages is *not* part of it.
@@ -2484,7 +2503,7 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // over --- the borrow checker will not have it both ways, and the append
     // genuinely needs two. See `mark_sites`.
     let sites = mark_sites(&doc, &pages, &kept, &plan.marks)?;
-    let written = write_marks(&mut doc, &plan.marks, &sites)?;
+    let written = write_marks(&mut doc, &plan.marks, &sites, replies)?;
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
     // rotation written onto a page that is about to go is work thrown away. The
@@ -3077,6 +3096,66 @@ fn mark_sites(
     Ok(sites)
 }
 
+/// Proof that every reply in a plan names an annotation in the document the plan
+/// was made against.
+///
+/// **A token rather than a comment, and that is the whole reason it exists.**
+/// The check cannot live inside [`write_marks`], because the two save paths hand
+/// that function different documents: the rewrite gives it the document being
+/// written, and the append gives it a *new, empty* one whose previous revision
+/// holds the annotation being answered. So the lookup has to happen in each
+/// path, against the document that path was planned against --- and a refusal
+/// with two call sites is exactly the shape `docs/TRAPS.md` records drifting,
+/// where one caller reaches the writer directly and never meets the guard its
+/// sibling has. Requiring the token as an argument makes that unspellable: a
+/// third save path cannot write a mark until it has produced one.
+#[must_use]
+struct RepliesChecked;
+
+/// Refuses any reply whose parent is not an annotation in `doc`.
+///
+/// `doc` is the document the plan was made against --- the previous revision for
+/// an append, the loaded document for a rewrite --- because that is where the
+/// object a reply names lives. Nothing is written here; the answer is only
+/// whether writing would be honest.
+///
+/// The model has already refused a reply on a kind that cannot carry one. This
+/// is the half the model *cannot* know, for the reason [`set_note`] gives about
+/// the comment it edits: the model has never read the file, so a plan naming an
+/// arbitrary object would otherwise thread a reply onto a font, a page or the
+/// catalog, and `/IRT` on a page means nothing at all.
+///
+/// # Errors
+///
+/// The object not being in the document, not being a dictionary, or not being an
+/// annotation.
+fn check_replies(doc: &Document, marks: &[PlannedMark]) -> Result<RepliesChecked, Refusal> {
+    for mark in marks {
+        let Some(parent) = mark.reply_to else {
+            continue;
+        };
+        let object = doc.get_object((parent.0, parent.1)).map_err(|e| {
+            Refusal::changed(format!(
+                "the comment being answered is not in this document any more: {e}"
+            ))
+        })?;
+        let dictionary = object
+            .as_dict()
+            .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+        // Not "has the subtype we expect": any annotation has one, and the check
+        // that matters is that this is an annotation at all. `set_note` asks the
+        // same question of the same kind of object, in the same words.
+        if dictionary
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_err()
+        {
+            return Err("that comment is not an annotation".into());
+        }
+    }
+    Ok(RepliesChecked)
+}
+
 /// Writes each mark as an annotation, into whichever document is being built.
 ///
 /// `sites` is [`mark_sites`]'s answer for the same `marks`, in the same order.
@@ -3104,6 +3183,7 @@ fn write_marks(
     doc: &mut Document,
     marks: &[PlannedMark],
     sites: &[MarkSite],
+    _replies_were_checked: RepliesChecked,
 ) -> Result<MarksWritten, String> {
     for (mark, site) in marks.iter().zip(sites) {
         let MarkSite {
@@ -3341,6 +3421,25 @@ fn mark_dictionary(
     // would be worse than writing none.
     if let Some(name) = mark.stamp {
         dictionary.set("Name", Object::Name(name.pdf_name().to_vec()));
+    }
+    // **`/IRT` and `/RT` together, and neither alone.** `/IRT` names the
+    // annotation this one is in reply to; `/RT /R` says the relationship is a
+    // reply rather than `/Group`, which is the other value and means "these are
+    // one annotation shown as several". A reader that sees `/IRT` without `/RT`
+    // defaults to `/R` --- so writing it is belt and braces --- but a reader that
+    // sees `/Group` threads nothing, and being explicit is what makes the
+    // intention survive a round trip through an editor that rewrites the
+    // dictionary.
+    //
+    // Nothing is asked of the kind here: the model refuses `reply_to` on
+    // anything but a comment, so a mark carrying one is a comment by
+    // construction. What *is* checked, one layer up, is that the object exists
+    // and is an annotation --- see [`check_replies`], which cannot be done here
+    // because this function is handed the document being written rather than the
+    // one the plan was made against.
+    if let Some((number, generation)) = mark.reply_to {
+        dictionary.set("IRT", Object::Reference((number, generation)));
+        dictionary.set("RT", Object::Name(b"R".to_vec()));
     }
     if note {
         // The icon a reader sees. `/Comment` is the speech bubble in every
@@ -8095,6 +8194,7 @@ mod tests {
                 // empty border, which is a box, so a test written for a stamp
                 // would be measuring the wrong kind.
                 stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+                reply_to: None,
                 source: 0,
                 quads,
                 strokes: Vec::new(),
@@ -8345,6 +8445,205 @@ mod tests {
     /// stream, and the document would be destroyed by a save that reported
     /// success.
     #[test]
+    fn a_reply_is_written_as_one_and_reads_back_as_one() {
+        // **Read back through `annots::scan` rather than through the object
+        // graph here, and never through PDFium.** `pdfium-render` does not
+        // expose `/IRT` at all --- which is the reason comments are read through
+        // `lopdf` in the first place --- so a reply that failed to set it would
+        // not fail loudly through that reader, it would arrive as an unrelated
+        // second note by another author. `annots.rs` is a separate
+        // implementation from this file, which is what makes this a differential
+        // rather than the writer agreeing with itself.
+        let (original, annot) = document_with_a_comment_on_the_second_page();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.marks = vec![PlannedMark {
+            kind: MarkKind::Note,
+            source: 1,
+            quads: vec![crate::docmodel::Quad {
+                left: 10.0,
+                top: 10.0,
+                right: 30.0,
+                bottom: 30.0,
+            }],
+            strokes: Vec::new(),
+            stamp: None,
+            reply_to: Some((annot.0, annot.1)),
+            color: [1.0, 0.9, 0.2],
+            author: "Reader".into(),
+            note: "I answer it.".into(),
+            made: "D:20260829120000Z".into(),
+        }];
+        assert!(
+            plan.is_appendable(),
+            "the premise: a reply only adds, so it goes out through the append"
+        );
+
+        let update = append_update(original.clone(), &plan, None).expect("the append");
+        let mut after = original.clone();
+        after.extend_from_slice(&update.update);
+
+        let scanned = crate::annots::scan(&after, 2, None).expect("the appended file must scan");
+        assert_eq!(scanned.items.len(), 2, "the file's comment and the reply");
+
+        // Found by body rather than by position, because the scan's order is the
+        // file's and this test is not about that.
+        let parent = scanned
+            .items
+            .iter()
+            .position(|item| item.body == "before")
+            .expect("the comment that was already there");
+        let reply = scanned
+            .items
+            .iter()
+            .position(|item| item.body == "I answer it.")
+            .expect("the reply");
+        assert_eq!(
+            scanned.items[reply].reply_to,
+            Some(parent as u32),
+            "the reply must answer the comment it named"
+        );
+        assert_eq!(
+            scanned.items[parent].reply_to, None,
+            "and the comment it answers must answer nothing"
+        );
+
+        // **`/RT` is asserted here and by nothing else**, because `annots.rs`
+        // reads `/IRT` and never asks what kind of relationship it is --- so the
+        // scan above cannot see this key at all. The dictionary comment calls it
+        // belt and braces, which is exactly the sort of claim that stays true
+        // only while somebody checks it: a reader that saw `/Group` instead
+        // would show the two comments as one annotation rather than as a thread.
+        let after = Document::load_mem(&after).expect("the appended file must parse");
+        let written = after
+            .objects
+            .values()
+            .filter_map(|object| object.as_dict().ok())
+            .find(|dictionary| dictionary.get(b"IRT").is_ok())
+            .expect("the reply's own dictionary");
+        assert_eq!(
+            written.get(b"RT").and_then(Object::as_name).expect("/RT"),
+            b"R",
+            "the reply must say it is a reply rather than a group"
+        );
+    }
+
+    /// The control for the test above: the same reply, on a mark that answers
+    /// nothing, is threaded under nobody.
+    ///
+    /// Without it, a scan that reported *every* comment as a reply to the first
+    /// would pass the assertion above and read as the writer working.
+    #[test]
+    fn a_comment_that_answers_nothing_is_threaded_under_nobody() {
+        let (original, _) = document_with_a_comment_on_the_second_page();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.marks = vec![PlannedMark {
+            kind: MarkKind::Note,
+            source: 1,
+            quads: vec![crate::docmodel::Quad {
+                left: 10.0,
+                top: 10.0,
+                right: 30.0,
+                bottom: 30.0,
+            }],
+            strokes: Vec::new(),
+            stamp: None,
+            reply_to: None,
+            color: [1.0, 0.9, 0.2],
+            author: "Reader".into(),
+            note: "I answer it.".into(),
+            made: "D:20260829120000Z".into(),
+        }];
+
+        let update = append_update(original.clone(), &plan, None).expect("the append");
+        let mut after = original.clone();
+        after.extend_from_slice(&update.update);
+
+        let scanned = crate::annots::scan(&after, 2, None).expect("the appended file must scan");
+        assert!(
+            scanned.items.iter().all(|item| item.reply_to.is_none()),
+            "no comment here answers another"
+        );
+    }
+
+    /// A reply naming an object that is not an annotation is refused, on both
+    /// save paths.
+    ///
+    /// **Both, in one test, because the guard has two call sites.** It cannot
+    /// live inside `write_marks` --- the two paths hand that function different
+    /// documents --- so it is called once in each, and a test exercising one
+    /// would pass while the other wrote `/IRT` at a page. The proof token is
+    /// what makes forgetting the call a compile error; this is what makes the
+    /// call correct.
+    #[test]
+    fn a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths() {
+        let (original, annot) = document_with_a_comment_on_the_second_page();
+        let page_object = Document::load_mem(&original)
+            .expect("the fixture parses")
+            .get_pages()
+            .into_iter()
+            .next()
+            .expect("a page")
+            .1;
+
+        let reply_naming = |object: lopdf::ObjectId| PlannedMark {
+            kind: MarkKind::Note,
+            source: 1,
+            quads: vec![crate::docmodel::Quad {
+                left: 10.0,
+                top: 10.0,
+                right: 30.0,
+                bottom: 30.0,
+            }],
+            strokes: Vec::new(),
+            stamp: None,
+            reply_to: Some((object.0, object.1)),
+            color: [1.0, 0.9, 0.2],
+            author: "Reader".into(),
+            note: "I answer a page.".into(),
+            made: "D:20260829120000Z".into(),
+        };
+
+        let mut appending = plan_of(&[0, 0]);
+        appending.marks = vec![reply_naming(page_object)];
+        let refused =
+            append_update(original.clone(), &appending, None).expect_err("a page is not a comment");
+        assert!(
+            refused.message.contains("not an annotation"),
+            "the append's refusal must say what is wrong: {refused:?}"
+        );
+
+        let mut rewriting = plan_of(&[0, 0]);
+        rewriting.pages = vec![PageView {
+            id: 2,
+            source: 1,
+            turns: 0,
+            crop: None,
+        }];
+        rewriting.marks = vec![reply_naming(page_object)];
+        assert!(
+            !rewriting.is_appendable(),
+            "the premise: dropping a page is what forces the other writer"
+        );
+        let refused = rewrite_update(&original, &rewriting, NO_VIEW_TURN, None)
+            .expect_err("a page is not a comment on this path either");
+        assert!(
+            refused.message.contains("not an annotation"),
+            "the rewrite's refusal must say what is wrong: {refused:?}"
+        );
+
+        // The control, and it is the one that keeps both assertions above from
+        // being satisfied by a writer that refuses every reply.
+        let mut honest = plan_of(&[0, 0]);
+        honest.marks = vec![reply_naming(annot)];
+        assert!(
+            append_update(original, &honest, None).is_ok(),
+            "a reply naming the real comment must go through"
+        );
+    }
+
+    #[test]
     fn a_rewrite_refuses_a_note_edit_that_names_a_page() {
         let (original, _) = document_with_a_comment_on_the_second_page();
         let page_object = Document::load_mem(&original)
@@ -8434,6 +8733,7 @@ mod tests {
         plan.marks = vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             source: 0,
             quads: one_quad(),
             strokes: Vec::new(),
@@ -10020,6 +10320,7 @@ mod tests {
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
+                reply_to: None,
                 source: 0,
                 quads: one_quad(),
                 strokes: Vec::new(),
@@ -10071,6 +10372,7 @@ mod tests {
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
+                reply_to: None,
                 source: 2,
                 quads: one_quad(),
                 strokes: Vec::new(),
@@ -12068,6 +12370,7 @@ mod tests {
         plan.marks.push(PlannedMark {
             kind,
             stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+            reply_to: None,
             source: 0,
             quads: vec![quad],
             strokes: Vec::new(),

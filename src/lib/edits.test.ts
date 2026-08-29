@@ -345,6 +345,7 @@ describe("Edits", () => {
         quads: [10, 20, 30, 40],
         strokes: [],
         stamp: null,
+        reply_to: null,
         color: [1, 0.9, 0.2],
         author: "",
         note: "a note",

@@ -399,6 +399,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             source: 0,
             // Display space, which is y-down: `top` is the smaller number. The
             // same shape `save.rs`'s own tests use, because a quad the writer

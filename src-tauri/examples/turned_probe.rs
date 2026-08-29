@@ -327,6 +327,7 @@ fn reading(
                 // The biconditional the model enforces, restated at the one
                 // place here that builds a mark.
                 stamp: (kind == MarkKind::Stamp).then_some(StampName::Draft),
+                reply_to: None,
                 page: id,
                 quads: vec![quad.left, quad.top, quad.right, quad.bottom],
                 strokes: Vec::new(),

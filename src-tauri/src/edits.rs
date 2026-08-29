@@ -297,6 +297,20 @@ pub struct NewMark {
     /// The model refuses the two ways this can disagree with `kind`.
     #[serde(default)]
     pub stamp: Option<StampName>,
+    /// The comment this one answers, as `[number, generation]`, when it is a
+    /// reply.
+    ///
+    /// **The object rather than a comment id**, for the reason
+    /// [`Edits::rewrite`] takes one: a scan position is a place in one reading
+    /// of one file and does not survive a save, and the object is the only name
+    /// the file and the model agree on.
+    ///
+    /// Defaulted for [`NewMark::stamp`]'s reason: every existing sender keeps
+    /// working, and a missing field is an ordinary note rather than a
+    /// deserialisation failure a reader would see as the command doing nothing.
+    /// The model refuses the one way this can disagree with `kind`.
+    #[serde(default)]
+    pub reply_to: Option<(u32, u16)>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     pub author: String,
@@ -734,6 +748,9 @@ impl Edits {
                     quads,
                     strokes,
                     stamp: want.stamp,
+                    reply_to: want
+                        .reply_to
+                        .map(|(number, generation)| ObjectId::new(number, generation)),
                     color: want.color.map(channel),
                     author: want.author,
                     made,
@@ -1257,6 +1274,9 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
                     stamp: body.stamp,
+                    reply_to: body
+                        .reply_to
+                        .map(|object| (object.number(), object.generation())),
                     color: model.color_of(*mark),
                     author: body.author.clone(),
                     note: model.note_of(*mark).to_string(),
@@ -1519,6 +1539,18 @@ pub struct PlannedMark {
     /// gets drawn, and the model has already refused the two ways it can
     /// disagree with the kind.
     pub stamp: Option<StampName>,
+    /// The comment this one answers, as `[number, generation]`, for a reply.
+    ///
+    /// Carried to the writer for [`PlannedMark::stamp`]'s reason, and the model
+    /// has already refused the one way it can disagree with the kind. What the
+    /// writer still has to check is the thing the model cannot know: that the
+    /// object is an annotation in *this* file --- see `save::mark_dictionary`.
+    ///
+    /// `#[serde(default)]` so a plan written before this existed still parses as
+    /// the ordinary note it meant. It crosses the worker boundary with the rest
+    /// of the plan.
+    #[serde(default)]
+    pub reply_to: Option<(u32, u16)>,
     pub color: [f32; 3],
     pub author: String,
     pub note: String,
@@ -1645,6 +1677,12 @@ fn describe(why: Refusal) -> String {
         // one.
         Refusal::StampMismatch(kind) => {
             format!("a {kind:?} mark cannot carry the stamp name it was sent with")
+        }
+        // The reply half, and the third of the family. Same audience as the two
+        // above --- no reader can cause it, because the only door into a reply
+        // is a comment's own popup, which cannot offer a highlight.
+        Refusal::ReplyMismatch(kind) => {
+            format!("a {kind:?} mark cannot answer a comment")
         }
         // The three redaction refusals, worded for a reader rather than for a
         // sender: unlike the two above, every one of them is reachable from a
@@ -2477,6 +2515,7 @@ mod tests {
         NewMark {
             kind,
             stamp: None,
+            reply_to: None,
             page,
             quads: vec![72.0, 100.0, 300.0, 118.0],
             strokes: Vec::new(),
@@ -2716,6 +2755,7 @@ mod tests {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            reply_to: None,
             page,
             quads: Vec::new(),
             strokes,
@@ -3254,6 +3294,41 @@ mod tests {
             "a mark on a page nobody extracted came along"
         );
         assert_eq!(plan.marks[0].source, 0);
+    }
+
+    #[test]
+    fn a_reply_carries_the_comment_it_answers_all_the_way_to_the_plan() {
+        // **The layer between the two that already have tests.** The model
+        // refuses a parent on the wrong kind and the writer turns one into
+        // `/IRT`; what neither of them can see is this crossing, where the wire
+        // form `(u32, u16)` becomes an `ObjectId` and comes back out again. A
+        // `None` dropped in here writes a comment that answers nobody, and the
+        // file it produces is perfectly valid --- which is why nothing
+        // downstream would complain.
+        let edits = opened();
+        let pages = edits.state(7).expect("state").pages;
+
+        let mut reply = of_kind(MarkKind::Note, pages[0].id);
+        reply.reply_to = Some((12, 0));
+        edits.annotate(7, reply, stamped()).expect("the reply");
+
+        // The control, and it shares the page so that "every mark carries a
+        // parent" cannot pass this test either.
+        edits
+            .annotate(7, of_kind(MarkKind::Note, pages[0].id), stamped())
+            .expect("an ordinary comment");
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.marks.len(), 2);
+        assert_eq!(
+            plan.marks[0].reply_to,
+            Some((12, 0)),
+            "the comment being answered did not reach the writer"
+        );
+        assert_eq!(
+            plan.marks[1].reply_to, None,
+            "and a comment that answers nobody must not acquire a parent"
+        );
     }
 
     #[test]

@@ -46,6 +46,11 @@ function harness(
   // popup on show, so the withheld direction is what a test that says nothing
   // about comments exercises.
   commentEditable = false,
+  // **Its own flag rather than sharing `commentEditable`.** The two conditions
+  // agree today --- both ask for an open popup whose comment has an object ---
+  // and one flag driving both would make a mutation that swaps the two commands'
+  // guards survive, because every harness reading would move together.
+  commentReplyable = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -122,6 +127,8 @@ function harness(
     hasOpenMark: () => markOpen,
     canEditComment: () => commentEditable,
     editComment: () => fired.push("editComment"),
+    canReplyToComment: () => commentReplyable,
+    replyToComment: () => fired.push("replyToComment"),
     // Default false, on the reasoning the journal pair above states: a document
     // opens with nothing to save, so a test that says nothing about edits
     // exercises the direction where Save is withheld.
@@ -332,8 +339,8 @@ describe("every registered command", () => {
     // Built with an update on offer, a journal in both directions, a live
     // selection, an open note and unsaved changes, because otherwise
     // `app.installUpdate`, `edit.undo`, `edit.redo`, `edit.highlightSelection`,
-    // `edit.removeMark`, `edit.editForeignMark` and `file.save` are correctly
-    // disabled and this sweep
+    // `edit.removeMark`, `edit.editForeignMark`, `edit.replyToComment` and
+    // `file.save` are correctly disabled and this sweep
     // would read a working guard as a no-op command. The sweep asks "does every
     // command reach an action", which presumes each is in a state where it is
     // allowed to run; the guards themselves are asserted above, in both
@@ -350,8 +357,12 @@ describe("every registered command", () => {
       // is allowed to run.
       true,
       // An editable comment on show, so `edit.editForeignMark` is too --- the
-      // last argument added, and the comment above is why each of them is here
-      // rather than the guard being subtracted.
+      // comment above is why each of them is here rather than the guard being
+      // subtracted.
+      true,
+      // And a replyable one, so `edit.replyToComment` is. Its own argument for
+      // the reason the harness gives: one flag for both would let a swap of the
+      // two commands' guards pass unnoticed.
       true,
     );
     const shell = registry
@@ -550,6 +561,30 @@ describe("the page operations", () => {
         ?.enabled?.();
     expect(editable(false)).toBe(false);
     expect(editable(true)).toBe(true);
+  });
+
+  it("withholds replying to a comment when none is on show that can be", () => {
+    // The reply command's own pair, and not a second assertion in the test
+    // above: the two commands read two different actions, and one test driving
+    // both through one flag would pass with either guard reading the other's.
+    const replyable = (commentReplyable: boolean) =>
+      harness(true, {}, {}, false, false, false, {}, false, false, commentReplyable)
+        .registry.all()
+        .find((c) => c.id === "edit.replyToComment")
+        ?.enabled?.();
+    expect(replyable(false)).toBe(false);
+    expect(replyable(true)).toBe(true);
+  });
+
+  it("withholds replying to a comment with no document, however replyable", () => {
+    // The other half of this command's conjunction, for the reason the edit
+    // command's own case one line down gives.
+    expect(
+      harness(false, {}, {}, false, false, false, {}, false, false, true)
+        .registry.all()
+        .find((c) => c.id === "edit.replyToComment")
+        ?.enabled?.(),
+    ).toBe(false);
   });
 
   it("withholds editing a comment with no document, however editable", () => {
@@ -942,6 +977,8 @@ describe("the window shortcuts for editing", () => {
       hasOpenMark: () => false,
       canEditComment: () => false,
       editComment: () => 0,
+      canReplyToComment: () => false,
+      replyToComment: () => 0,
       saveDocument: () => fired.push("saveDocument"),
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),

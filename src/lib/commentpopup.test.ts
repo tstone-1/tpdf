@@ -57,12 +57,22 @@ describe("CommentPopup", () => {
 
   /** Every rewrite the popup sent, so a test can say it sent none. */
   let rewrites: { object: [number, number]; body: string }[] = [];
+  /**
+   * Every reply the popup sent, in its own list.
+   *
+   * Separate from `rewrites` rather than one list with a tag, because the whole
+   * risk in this feature is one operation arriving as the other: a single list
+   * would let a test that meant "it replied" pass on a rewrite that happened to
+   * carry the same words.
+   */
+  let replies: { object: [number, number]; body: string }[] = [];
 
   function popup(): CommentPopup {
     // A host with a size, since the placement clamps against it.
     dom.root.clientWidth = 900;
     dom.root.clientHeight = 700;
     rewrites = [];
+    replies = [];
     return new CommentPopup(dom.root as unknown as HTMLElement, {
       onClose: () => {
         closed += 1;
@@ -71,6 +81,9 @@ describe("CommentPopup", () => {
         // Recorded rather than asserted here: a recorder that threw would fail
         // the test that *provoked* the call rather than the one reading it.
         if (comment.object) rewrites.push({ object: comment.object, body });
+      },
+      onReply: (comment, body) => {
+        if (comment.object) replies.push({ object: comment.object, body });
       },
     });
   }
@@ -294,6 +307,109 @@ describe("CommentPopup", () => {
     if (box) box.value = "half a sentence";
     note.edit();
     expect(editorOf(note)?.value).toBe("half a sentence");
+  });
+
+  it("offers no reply for a comment the file wrote without an object", () => {
+    // The same structural limit the Edit test states, and its own test rather
+    // than a second assertion there: `/IRT` names an object, so a comment that
+    // has none cannot be answered either -- but that the two agree is a fact
+    // about today, not a shared rule.
+    const note = popup();
+    note.show(comment({ id: 1 }), [], anchor(), false);
+    expect(note.replyable).toBe(false);
+    expect(words(note)).not.toContain("Reply");
+    note.reply();
+    expect(editorOf(note)).toBeNull();
+  });
+
+  it("arms an empty editor for a reply and sends it under the comment it answers", () => {
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    expect(note.replyable).toBe(true);
+
+    note.reply();
+    const box = editorOf(note);
+    // **Empty, where a rewrite opens at what the comment says.** A reply box
+    // pre-filled with somebody else's words is the shape of mistake that gets
+    // sent: the reader edits around them and answers in the wrong voice.
+    expect(box?.value).toBe("");
+    expect(box?.focused).toBe(true);
+
+    if (box) box.value = "It is figure 3.";
+    note.hide();
+    expect(replies).toEqual([{ object: [12, 0], body: "It is figure 3." }]);
+    // The assertion that keeps the two apart, and it is the whole risk in this
+    // feature: a reply must never arrive as an edit to the comment it answers.
+    expect(rewrites).toEqual([]);
+  });
+
+  it("sends no reply when the box is closed with nothing in it", () => {
+    // A reader who presses Reply and changes their mind. `was` is the empty
+    // string for a reply, so this is the untouched case.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.reply();
+    note.hide();
+    expect(replies).toEqual([]);
+    expect(rewrites).toEqual([]);
+  });
+
+  it("sends no reply when the box is typed into and then emptied", () => {
+    // **The case the untouched test above cannot reach**, and the one the blank
+    // check exists for: the text differs from what the box opened with, so
+    // every guard upstream of the destination lets it through. An empty comment
+    // added to somebody's thread is the one outcome the reader did not ask for.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.reply();
+    const box = editorOf(note);
+    if (box) box.value = "   ";
+    note.hide();
+    expect(replies).toEqual([]);
+  });
+
+  it("clears a body of the same shape, because an empty rewrite is a real edit", () => {
+    // The control for the test above, and it is what makes the blank check a
+    // rule about replies rather than about editors. A reader who selects a
+    // comment's text and deletes it has asked for an empty comment, and that is
+    // a legitimate edit to send.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.edit();
+    const box = editorOf(note);
+    if (box) box.value = "";
+    note.hide();
+    expect(rewrites).toEqual([{ object: [12, 0], body: "" }]);
+  });
+
+  it("does not let a reply be armed over an open edit", () => {
+    // The words are already typed and they were meant for the body. Switching
+    // the destination under them would send them to a new comment instead,
+    // which is the silent failure this feature can produce.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.edit();
+    const box = editorOf(note);
+    if (box) box.value = "meant for the body";
+    note.reply();
+    note.hide();
+    expect(rewrites).toEqual([{ object: [12, 0], body: "meant for the body" }]);
+    expect(replies).toEqual([]);
+  });
+
+  it("does not let an edit be armed over an open reply", () => {
+    // The mirror, and it needs its own case: the guard is one condition read by
+    // two callers, and a version that checked only the edit path would pass the
+    // test above and fail here.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.reply();
+    const box = editorOf(note);
+    if (box) box.value = "meant as an answer";
+    note.edit();
+    note.hide();
+    expect(replies).toEqual([{ object: [12, 0], body: "meant as an answer" }]);
+    expect(rewrites).toEqual([]);
   });
 
   it("takes the keyboard only when asked", () => {

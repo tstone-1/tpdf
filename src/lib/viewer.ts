@@ -432,6 +432,17 @@ export interface ViewerOptions {
    * to save anything.
    */
   onCommentEdit?: (comment: Comment, body: string) => void;
+  /**
+   * Called when the reader typed a reply to a comment and the editor closed.
+   *
+   * The whole comment for {@link onCommentEdit}'s reason, and here the caller
+   * needs a third thing from it --- the parent's rectangle, which is where the
+   * reply's own icon goes. Only ever with text that is not blank.
+   *
+   * Optional for {@link onMarkNote}'s reason: a viewer with no model behind it
+   * still shows comments, and the Reply button simply does not save anything.
+   */
+  onCommentReply?: (comment: Comment, body: string) => void;
   /** Called when the reader asked to take one of their own marks off the page. */
   onMarkRemove?: (mark: number) => void;
   /**
@@ -1322,6 +1333,7 @@ export class Viewer {
     this.popup = new CommentPopup(root, {
       onClose: () => this.closeComment(),
       onRewrite: (comment, body) => this.opts.onCommentEdit?.(comment, body),
+      onReply: (comment, body) => this.opts.onCommentReply?.(comment, body),
     });
 
     // The reader's own marks get their own box, for the reason `markpopup.ts`
@@ -3166,6 +3178,22 @@ export class Viewer {
   /** Turns the open comment's body into an editor. Does nothing if it cannot. */
   editComment(): void {
     this.popup.edit();
+  }
+
+  /**
+   * Whether the comment on show can be answered.
+   *
+   * {@link Viewer.commentEditable}'s twin, and the popup's answer for that
+   * accessor's reason. Two accessors rather than one, because the two commands
+   * ask different questions and only happen to agree today.
+   */
+  get commentReplyable(): boolean {
+    return this.popup.replyable;
+  }
+
+  /** Opens an empty editor for a reply. Does nothing if it cannot. */
+  replyToComment(): void {
+    this.popup.reply();
   }
 
   /** Closes the note, if one is open. */

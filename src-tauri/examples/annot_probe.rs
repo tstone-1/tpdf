@@ -637,6 +637,7 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
                 // that builds a mark here rather than a default that would be
                 // wrong for eight kinds out of nine.
                 stamp: (args.kind == MarkKind::Stamp).then_some(args.stamp),
+                reply_to: None,
                 page: id,
                 quads: quads
                     .iter()
@@ -2458,6 +2459,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: vec![10.0, 10.0, 10.0, 40.0],
             strokes: Vec::new(),
@@ -2477,6 +2479,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: vec![10.0, 10.0, 40.0],
             strokes: Vec::new(),
@@ -2500,6 +2503,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: vec![10.0, 10.0, 200.0, 40.0],
             strokes: vec![vec![10.0, 10.0, 200.0, 40.0]],
@@ -2519,6 +2523,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: Vec::new(),
             strokes: Vec::new(),
@@ -2544,6 +2549,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: Vec::new(),
             strokes: vec![vec![50.0, 50.0, 50.0, 50.0, 50.0, 50.0]],
@@ -2563,6 +2569,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: Vec::new(),
             strokes: vec![vec![10.0, 10.0, 40.0]],
@@ -2590,6 +2597,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             page: id,
             quads: vec![10.0, 10.0, 200.0, 40.0],
             strokes: Vec::new(),

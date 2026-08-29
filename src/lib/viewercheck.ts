@@ -3178,6 +3178,11 @@ async function appCommandChecks(
       viewer.editComment();
       return 1;
     },
+    canReplyToComment: () => viewer.commentReplyable,
+    replyToComment: () => {
+      viewer.replyToComment();
+      return 1;
+    },
     // Recorded rather than driven, like the update pair: `file.save` is in
     // `undriven` below, because a ⌘S here would write the corpus fixture that
     // every other check in the run is reading. False so the command stays out

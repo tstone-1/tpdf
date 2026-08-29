@@ -308,6 +308,18 @@ export interface AppActions {
   /** Turns the open comment's body into an editor and puts the keyboard in it. */
   editComment(): void;
   /**
+   * Whether the comment on show is one the reader can answer.
+   *
+   * The same two conditions {@link AppActions.canEditComment} states, and its
+   * own member rather than a second reading of that one: `/IRT` names an
+   * object, so a comment written as a direct dictionary cannot be answered
+   * either --- but the two commands ask different questions and only happen to
+   * agree today.
+   */
+  canReplyToComment(): boolean;
+  /** Opens an empty editor whose text becomes a reply to the open comment. */
+  replyToComment(): void;
+  /**
    * Picks the colour marks are drawn in, by a `markcolors.ts` swatch id.
    *
    * One call for both meanings --- what the next mark will be, and what the mark
@@ -860,6 +872,21 @@ export function registerAppCommands(
       title: "Edit this comment",
       enabled: () => withDocument() && actions.canEditComment(),
       run: () => actions.editComment(),
+    },
+    {
+      // Beside the command above, and arming rather than acting for its reason.
+      // The two are deliberately separate: answering a comment and changing what
+      // it says are different acts on different objects, and a reader who meant
+      // one is badly served by discovering they did the other.
+      //
+      // No keyboard binding, for the reason the one above has none --- the popup
+      // has to be open for it to mean anything.
+      id: "edit.replyToComment",
+      // "this comment" for the reason above: the subject is whichever note is
+      // open, and the palette is chosen with the pointer somewhere else.
+      title: "Reply to this comment",
+      enabled: () => withDocument() && actions.canReplyToComment(),
+      run: () => actions.replyToComment(),
     },
     {
       id: "edit.removeMark",

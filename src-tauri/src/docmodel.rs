@@ -825,6 +825,27 @@ pub struct Mark {
     /// is, and it keeps this struct's "everything here is fixed at creation"
     /// property intact.
     pub stamp: Option<StampName>,
+    /// The comment this one answers, when it is a reply. `None` for a mark that
+    /// answers nothing, which is every mark a reader places on the page.
+    ///
+    /// **An [`ObjectId`] rather than a [`MarkId`], and the asymmetry is the
+    /// point.** A reply's parent is an annotation *out of the file* --- the
+    /// model has never read it and has no id for it --- so the only name the two
+    /// sides agree on is the one the file itself uses, which is exactly what
+    /// [`Command::Rewrite`] says about the comment it edits.
+    ///
+    /// **One-directional where [`Mark::stamp`] is a biconditional.** A reply
+    /// must be a [`MarkKind::Note`], because `/IRT` on a highlight is not a
+    /// thread, it is a highlight with a stray key. But a `Note` with no parent
+    /// is an ordinary sticky note and is the commoner thing by far, so
+    /// [`Doc::annotate`] refuses one half and not the other --- and the test for
+    /// it is named for that, because a rule with no failing case is a comment.
+    ///
+    /// Fixed at creation like everything else here. A reader who wants to answer
+    /// a different comment writes a different reply; moving one between threads
+    /// is not an operation any reader has asked for and would need `/IRT` to be
+    /// mutable, which would put it in [`Working`] with the note.
+    pub reply_to: Option<ObjectId>,
     /// Red, green and blue in 0..=1, as `/C` takes them.
     pub color: [f32; 3],
     /// `/T`. Empty when the reader has no name set.
@@ -1088,6 +1109,15 @@ pub enum Refusal {
     /// guess which. That is the trap about one predicate answering two
     /// questions, refused here before it could be made.
     StampMismatch(MarkKind),
+    /// A parent comment named on a mark that is not a comment.
+    ///
+    /// Its own variant for [`StampMismatch`](Refusal::StampMismatch)'s reason,
+    /// and the third rule about a third field. **Only one half is a refusal**,
+    /// unlike the two above: a [`MarkKind::Note`] with no parent is an ordinary
+    /// sticky note, which is what most of them are, so there is nothing to
+    /// refuse in that direction. It carries the kind the caller sent, which is
+    /// the only thing a diagnostic can usefully name.
+    ReplyMismatch(MarkKind),
     /// No redaction has ever had this id.
     NoSuchRedaction(RedactionId),
     /// The id names a redaction that was taken back off the page --- including
@@ -1864,6 +1894,12 @@ impl Doc {
         if mark.stamp.is_some() != (mark.kind == MarkKind::Stamp) {
             return Err(Refusal::StampMismatch(mark.kind));
         }
+        // The third of the family, and the only one that is not a
+        // biconditional --- see [`Mark::reply_to`] on why a comment with no
+        // parent needs no refusal while a highlight with one does.
+        if mark.reply_to.is_some() && mark.kind != MarkKind::Note {
+            return Err(Refusal::ReplyMismatch(mark.kind));
+        }
         // **Two questions, asked of the kind that can tell them apart.** For
         // every other kind "covers nothing" is a quad with no area; for ink it
         // is a stroke with no length, and its quad *always* covers area because
@@ -2370,6 +2406,7 @@ mod tests {
         Mark {
             kind: MarkKind::Highlight,
             stamp: None,
+            reply_to: None,
             page,
             quads: vec![Quad {
                 left: 72.0,
@@ -2927,6 +2964,7 @@ mod tests {
         Mark {
             kind: MarkKind::Ink,
             stamp: None,
+            reply_to: None,
             page,
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
             strokes,
@@ -2956,6 +2994,7 @@ mod tests {
         Mark {
             kind: MarkKind::Ink,
             stamp: None,
+            reply_to: None,
             page,
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
             strokes,
@@ -3409,6 +3448,50 @@ mod tests {
         real.stamp = Some(StampName::Approved);
         assert!(doc.annotate(real, String::new()).is_ok());
         assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
+    }
+
+    /// A parent on a mark that cannot answer one is refused, and a comment
+    /// answering one is not.
+    #[test]
+    fn only_a_comment_may_answer_a_comment() {
+        // [`Mark::reply_to`]'s rule, and its own test for the reason the stamp
+        // one above gives. **One direction only**, which is the thing to be
+        // careful about: a comment with no parent is an ordinary sticky note and
+        // is what almost every comment is, so there is nothing to refuse there
+        // --- and a test asserting both halves would be asserting something the
+        // model deliberately does not do.
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let parent = ObjectId::new(12, 0);
+
+        let mut highlight_answering = mark_on(page);
+        highlight_answering.reply_to = Some(parent);
+        assert_eq!(
+            doc.annotate(highlight_answering, String::new()),
+            Err(Refusal::ReplyMismatch(MarkKind::Highlight))
+        );
+
+        // The control the entry above is named for: a model that refused every
+        // parent would pass the assertion above and read as the rule working.
+        let mut reply = mark_on(page);
+        reply.kind = MarkKind::Note;
+        reply.reply_to = Some(parent);
+        let id = doc
+            .annotate(reply, "I answer it.".to_string())
+            .expect("reply");
+        assert_eq!(
+            doc.mark(id).expect("body").reply_to,
+            Some(parent),
+            "the parent did not survive into the mark's body"
+        );
+
+        // The other control, and the half the rule must *not* refuse: an
+        // ordinary comment, with nothing to answer.
+        let mut alone = mark_on(page);
+        alone.kind = MarkKind::Note;
+        assert!(doc.annotate(alone, String::new()).is_ok());
+
+        assert_eq!(doc.marks_issued(), 2, "a refused mark spent an id");
     }
 
     #[test]

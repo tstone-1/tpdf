@@ -18553,3 +18553,50 @@ The general form: **when a change needs an operation the test double lacks, that
 about the change and not only about the double.** Extending the double is sometimes right; ask
 first whether the code can be expressed in what the module already does, because that version
 is usually the one with fewer places to disagree with itself.
+
+### A guard checked after the surgery is a true sentence about the wrong document
+
+`save::check_replies` refuses a reply naming an object that is not an annotation. It has two
+call sites, because the two save paths hand the writer different documents: a rewrite writes
+into the document it loaded, and an append writes into a *new, empty* one whose previous
+revision holds the annotation being answered. So there is no single place inside `write_marks`
+where the lookup can go.
+
+On the rewrite path the first placement was directly above `write_marks`, which is where the
+mark writing happens and which reads as the obvious spot. The test refusing a reply that names
+a **page** then failed, and the message it failed with is the finding:
+
+```
+the comment being answered is not in this document any more: object ID 3 0 not found
+```
+
+That is a true sentence. `pagetree::materialise` had already unlinked the dropped page and
+`sweep::collect` had already deleted it, so by the time the guard looked, the object genuinely
+was not there. The refusal was correct, the save was correctly refused, and **the diagnosis
+was about the file being built rather than about the plan the reader made**. A reader who
+reached this would be told their document had changed underneath them, which is the one
+explanation that is certainly wrong.
+
+Move the call above `materialise` and it says "that comment is not an annotation", which is
+what happened.
+
+Two things make this worth writing down rather than filing as a slip.
+
+**The sibling had already learned it, one increment earlier and forty lines away.**
+`rewrite_note_edits` sits immediately above `materialise` and carries a comment saying exactly
+why: *"anything that can make the object unreachable. `materialise` unlinks a dropped page's
+annotations and `sweep::collect` deletes them."* The new guard asks the same question of the
+same kind of object and was placed by where its *output* is used rather than by what its
+*input* needs. A rule written down next door does not transfer on its own; what transfers is
+asking, for each new guard, which of the document's states it is a question about.
+
+**Both placements refuse, so no coarse test can tell them apart.** A test asserting only that
+the save fails passes either way. The one that caught it asserts the refusal's *wording* --- a
+habit this repository has because a refusal that names no cause is a wrong diagnosis rather
+than a vague one, and because a reader acts on the sentence and not on the exit code. There is
+a mutation aimed at the ordering (`reply: check a reply's parent after the pages have been
+removed`), and it is caught by that assertion and by nothing else.
+
+The general form: **a guard's placement is decided by which state of the subject it is asking
+about, not by which line consumes its answer.** When the subject is mutated between the two,
+those are different questions, and the wrong one can be perfectly true.

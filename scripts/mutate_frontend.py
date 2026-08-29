@@ -5789,8 +5789,13 @@ MUTATIONS += [
         # whose text can never reach the file -- and nothing tells them.
         "comments: offer the editor for a comment with no object of its own",
         "src/lib/commentpopup.ts",
+        # Widened to carry the accessor's own name on 2026-08-29, when
+        # `replyable` landed with a body identical to this one and the bare
+        # `return` line matched twice. The gate caught it; a narrower anchor
+        # would have mutated whichever came first.
+        "  get editable(): boolean {\n"
         "    return this.shown !== null && this.subject?.object != null;",
-        "    return this.shown !== null;",
+        "  get editable(): boolean {\n    return this.shown !== null;",
         "offers no editor for a comment the file wrote without an object",
     ),
     Mutation(
@@ -5809,8 +5814,11 @@ MUTATIONS += [
         # replaced by the file's own words with no warning.
         "comments: let a second arming rebuild the editor",
         "src/lib/commentpopup.ts",
-        "    if (!this.editable || this.editing) return;",
-        "    if (!this.editable) return;",
+        # Re-aimed 2026-08-29: the guard moved into `arm`, which `edit` and
+        # `reply` share, so the line it used to sit on is gone. The mutation is
+        # unchanged in what it does -- it is the same guard, one level down.
+        "    if (!allowed || this.editing) return;",
+        "    if (!allowed) return;",
         "does not throw away what is typed when Edit is pressed twice",
     ),
     Mutation(
@@ -5844,6 +5852,65 @@ MUTATIONS += [
         "      enabled: () => actions.canEditComment(),\n"
         "      run: () => actions.editComment(),",
         "withholds editing a comment with no document, however editable",
+    ),
+    Mutation(
+        # Send a reply through the rewrite door. The reader answers a comment
+        # and their words replace it instead -- somebody else's note, silently
+        # overwritten, which is the worst outcome this feature can produce.
+        "comments: send a reply as an edit to the comment it answers",
+        "src/lib/commentpopup.ts",
+        "    this.opts.onReply(comment, now);",
+        "    this.opts.onRewrite(comment, now);",
+        "arms an empty editor for a reply and sends it under the comment it answers",
+    ),
+    Mutation(
+        # Open the reply box on the comment's own words. The reader edits around
+        # somebody else's sentence and answers in their voice.
+        "comments: open a reply box holding the comment's own words",
+        "src/lib/commentpopup.ts",
+        '    this.was = mode === "body" ? comment.body : "";',
+        "    this.was = comment.body;",
+        "arms an empty editor for a reply and sends it under the comment it answers",
+    ),
+    Mutation(
+        # Send a reply that is only whitespace. An empty comment appears in
+        # somebody's thread, which is the one outcome the reader did not ask
+        # for -- and it cannot be told from a deliberate blank.
+        "comments: send a reply with nothing in it",
+        "src/lib/commentpopup.ts",
+        "    if (!now.trim()) return;",
+        "",
+        "sends no reply when the box is typed into and then emptied",
+    ),
+    Mutation(
+        # Apply the blank check to a rewrite as well. The mirror, and it is why
+        # the check sits at the destination rather than in `arm`: a reader who
+        # deletes a comment's text has asked for an empty comment.
+        "comments: refuse to clear a body because a reply may not be blank",
+        "src/lib/commentpopup.ts",
+        '    if (mode === "body") {\n      this.opts.onRewrite(comment, now);\n      return;\n    }',
+        '    if (mode === "body") {\n      if (now.trim()) this.opts.onRewrite(comment, now);\n      return;\n    }',
+        "clears a body of the same shape, because an empty rewrite is a real edit",
+    ),
+    Mutation(
+        # Offer a reply for a comment the file wrote as a direct dictionary.
+        # `/IRT` names an object; there is nothing for the reply to point at, so
+        # the button would be a promise the file cannot keep.
+        "comments: offer a reply for a comment with no object of its own",
+        "src/lib/commentpopup.ts",
+        "  get replyable(): boolean {\n"
+        "    return this.shown !== null && this.subject?.object != null;",
+        "  get replyable(): boolean {\n    return this.shown !== null;",
+        "offers no reply for a comment the file wrote without an object",
+    ),
+    Mutation(
+        # Offer the command with no document open. The other half of the
+        # conjunction, which a test that only varies the popup cannot see.
+        "comments: offer Reply to this comment with no document open",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.canReplyToComment(),",
+        "      enabled: () => actions.canReplyToComment(),",
+        "withholds replying to a comment with no document, however replyable",
     ),
 ]
 

@@ -194,6 +194,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // change your own. Nothing arms it and nothing about it is destructive:
       // it turns a note into a box you can type in.
       "edit.editForeignMark",
+      // Beside it, and after it: a reader scanning this menu meets "change what
+      // it says" before "add to the thread", which is the order the two commands
+      // were built in and the order the popup shows their buttons.
+      "edit.replyToComment",
       SEPARATOR,
       // A group of their own, and the whole palette rather than a selection of
       // it: a menu that offered four of the six colours the swatch row shows
