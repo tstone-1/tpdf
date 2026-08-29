@@ -1267,7 +1267,7 @@ fn overdue(calls: &[InFlight], deadline: Duration, now: Instant) -> Vec<u32> {
 /// could ignore. The same argument [`Workers::close`] makes about not sending a
 /// goodbye on the wire.
 #[cfg(unix)]
-pub(crate) fn kill_pid(pid: u32) {
+pub fn kill_pid(pid: u32) {
     // SAFETY: an ordinary signal, to a child of this process that the caller has
     // established is still unreaped. A failure means it is already gone, which
     // is the outcome being asked for.
@@ -1312,7 +1312,7 @@ pub(crate) fn kill_pid(pid: u32) {
 /// mitigation, same size --- the pid space would have to wrap inside a few
 /// microseconds --- and no separate one to write here.
 #[cfg(windows)]
-pub(crate) fn kill_pid(pid: u32) {
+pub fn kill_pid(pid: u32) {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 

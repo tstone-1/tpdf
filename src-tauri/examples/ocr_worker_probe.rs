@@ -2,8 +2,12 @@
 //!
 //! ```text
 //! cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-worker-probe -- \
-//!     testdata/text-base14.pdf --lib vendor/pdfium/lib
+//!     testdata/text-base14.pdf
 //! ```
+//!
+//! No `--lib`, and not for brevity: the default joins `PDFIUM_SUBDIR`, which is
+//! `bin` on Windows, where `lib` exists, holds the *import* library and binds to
+//! nothing.
 //!
 //! `ocr-sandbox-probe` measures the *profile*: what a process can still do once
 //! `OCR_SANDBOX_PROFILE` is in force. This measures the *worker*: whether the engine
@@ -22,21 +26,16 @@
 //! `docs/TRAPS.md` has *a check whose failure mode is a wait cannot fail*, and the engine
 //! ignores the deadline it is handed, so the parent is the only place that bound can live.
 
-// macOS only, and it fails to *compile* off it rather than doing nothing: `ocr_vision` is
-// macOS-gated, and so is the worker's child half. The gate goes on a module and never on the
-// crate root, because `#![cfg(...)]` there removes `main` and cargo then reports a missing
-// entry point. See `docs/TRAPS.md`.
-#[cfg(not(target_os = "macos"))]
-fn main() {
-    eprintln!("ocr-worker-probe exercises the macOS OCR worker; macOS only");
-    std::process::exit(2);
-}
+// Portable since 2026-08-29, and it was the last OCR instrument that was not.
+// It was macOS-only because its in-process baseline named `ocr_vision::Vision`
+// directly; `WindowsOcr` is behind the same `ocr::Recogniser`, so only the
+// engine's *construction* is per-platform now and the probe measures the worker
+// on whichever platform it is run. That mattered more than it sounds: the worker
+// this measures is newest on Windows, and Windows was the one platform that
+// could not measure it.
+#[path = "../src/probes/ocr_worker_probe.rs"]
+mod imp;
 
-#[cfg(target_os = "macos")]
 fn main() {
     imp::main();
 }
-
-#[cfg(target_os = "macos")]
-#[path = "../src/probes/ocr_worker_probe.rs"]
-mod imp;

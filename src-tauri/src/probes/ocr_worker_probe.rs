@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 
 use tpdf_lib::document::OpenDocument;
 use tpdf_lib::ocr::{Options, Pixels, RecogniseError, RecognisedItem, Recogniser};
+#[cfg(target_os = "macos")]
 use tpdf_lib::ocr_vision::Vision;
+#[cfg(windows)]
+use tpdf_lib::ocr_windows::WindowsOcr;
 use tpdf_lib::ocr_worker::{OcrWorker, PIXELS_CAPACITY, REPLY_DEADLINE};
 use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 
@@ -56,7 +59,11 @@ pub fn main() {
     tpdf_lib::ocr_worker::child_main_if_asked(&std::env::args().collect::<Vec<_>>());
 
     let mut file = PathBuf::new();
-    let mut library = PathBuf::from("vendor/pdfium/lib");
+    // `PDFIUM_SUBDIR`, not `lib`. On Windows `lib/` exists and holds the *import*
+    // library, so hardcoding it gives a directory that is there and a load that
+    // fails much later pointing at a path that looks right ---
+    // `only_the_macos_spikes_hardcode_the_library_directory` is the rule.
+    let mut library = PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -109,12 +116,25 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     // In-process, in this same program, on the same bytes. A worker that reads
     // nothing and an engine that reads nothing produce identical output, and the
     // differential below is the only row that tells them apart.
-    let here = match Vision.recognise(sheet.pixels(), &opts) {
+    //
+    // Through `ocr::Recogniser` since 2026-08-29, which is what makes this probe
+    // portable: only the *construction* of the engine is per-platform, because
+    // `Vision` is a unit struct and `WindowsOcr::new` asks the OS for a
+    // recogniser and can fail. Everything after this line is the trait, so what
+    // is measured is the worker rather than the engine behind it.
+    let engine_here = match engine_here() {
+        Ok(engine) => engine,
+        Err(e) => {
+            r.check(false, "in-process: the engine is available", e);
+            r.finish();
+        }
+    };
+    let here = match engine_here.recognise(sheet.pixels(), &opts) {
         Ok(items) => items,
         Err(e) => {
             r.check(
                 false,
-                "in-process: vision runs on this page",
+                "in-process: the engine runs on this page",
                 format!("{e}"),
             );
             r.finish();
@@ -122,9 +142,15 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     };
 
     // ---------------------------------------------------------------- the worker
-    // **Before the in-process baseline, deliberately.** The scan below asks
-    // whether this process ever mapped the engine, and running it here for a
-    // baseline would map it --- so the order is the check.
+    // **This comment used to say the spawn happens before the baseline,
+    // deliberately, so that the scan below could ask whether running the
+    // baseline is what mapped the engine.** It was false about the code sitting
+    // thirteen lines beneath it --- the baseline is above --- and the ordering it
+    // argued for would buy nothing anyway, because the rows further down measured
+    // that `objc2-vision` links Vision and the framework is therefore mapped at
+    // launch, called or not. The argument was live until that measurement landed
+    // and outlived it. `docs/TRAPS.md` has the entry; the order here is not a
+    // check of anything, and nothing should be built on it being one.
     let mut worker = OcrWorker::spawn()?;
     let pid = worker.pid();
     let (engine, items) = match worker.recognise(sheet.pixels(), &opts) {
@@ -155,10 +181,23 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             format!("{} span(s) from pid {pid}", items.len()),
         );
     }
+    // Against the in-process engine's own `id()` rather than a literal, which is
+    // one fewer copy of the platform distinction and a stronger claim: the worker
+    // has to report *this platform's* engine, not merely a non-empty one.
+    //
+    // The `build` is checked non-empty and deliberately **not** compared. On
+    // macOS it comes from `sw_vers`, a subprocess spawned inside
+    // `OCR_SANDBOX_PROFILE` --- so a difference there would be a finding about
+    // what the sandbox still permits, which is `ocr-sandbox-probe`'s question and
+    // not this one's.
+    let expected = engine_here.id();
     r.check(
-        engine.name == "vision" && !engine.build.is_empty(),
-        "the engine identity comes back and resolves",
-        format!("{} ({})", engine.name, engine.build),
+        engine.name == expected.name && !engine.build.is_empty(),
+        "the engine identity comes back and is this platform's",
+        format!(
+            "{} ({}) against {} here",
+            engine.name, engine.build, expected.name
+        ),
     );
     r.check(
         pid != std::process::id(),
@@ -182,16 +221,26 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         "the loader's table can be read at all",
         format!("{} image(s)", images.len()),
     );
-    let engine_images = mapped_vision();
-    r.check(
-        !engine_images.is_empty(),
-        "the engine is mapped from launch, because it is linked",
-        format!(
-            "{} image(s): {}",
-            engine_images.len(),
-            engine_images.first().map(String::as_str).unwrap_or("")
-        ),
-    );
+    // macOS only, and not an omission on Windows. This row is a statement about
+    // **static linkage**: `objc2-vision` links the framework, so it is in the
+    // table before a call. `Windows.Media.Ocr` is WinRT, activated through
+    // `combase` at the first call rather than linked, so what its images are and
+    // when they arrive is a different question with a different answer --- and
+    // asserting a name here without measuring one would be a guess wearing a
+    // check's clothes. It is unmeasured, and saying so beats inventing a row.
+    #[cfg(target_os = "macos")]
+    {
+        let engine_images = mapped_vision();
+        r.check(
+            !engine_images.is_empty(),
+            "the engine is mapped from launch, because it is linked",
+            format!(
+                "{} image(s): {}",
+                engine_images.len(),
+                engine_images.first().map(String::as_str).unwrap_or("")
+            ),
+        );
+    }
     // The emptiness control. Without it, a filter that matches nothing reports a
     // clean process exactly as a clean process does --- and the row above would
     // be the only thing standing between this probe and that mistake.
@@ -291,6 +340,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
 }
 
 /// Which Vision images this process has mapped, by path.
+#[cfg(target_os = "macos")]
 fn mapped_vision() -> Vec<String> {
     tpdf_lib::images::mapped()
         .into_iter()
@@ -316,15 +366,42 @@ fn joined(items: &[RecognisedItem]) -> String {
 }
 
 /// Kills a pid outright, so the next call meets a process that is gone.
+///
+/// `workers::kill_pid` rather than a `libc::kill` of its own, which is what stood
+/// here: that function already has both arms --- `SIGKILL` on unix, and
+/// `TerminateProcess` on Windows, which has no signals --- and its Windows arm
+/// carries a comment about a copy of it that degraded to a no-op off its platform
+/// and left the deadline silently unenforced. A second copy of an `unsafe` FFI is
+/// the shape this repository keeps finding drifted, and the sleep below is the
+/// only thing this caller actually wants that the shared one does not do.
 fn kill(pid: u32) {
-    // SAFETY: a pid this process spawned; `SIGKILL` to a pid that has already
-    // exited is an error we ignore rather than undefined behaviour.
-    unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGKILL);
-    }
-    // The parent has not reaped it yet, so it becomes a zombie rather than
-    // vanishing; the pipe closing is what the next call sees.
+    tpdf_lib::workers::kill_pid(pid);
+    // The parent has not reaped it yet, so on unix it becomes a zombie rather
+    // than vanishing; the pipe closing is what the next call sees either way.
     std::thread::sleep(Duration::from_millis(100));
+}
+
+/// The same engine the worker will run, constructed in this process.
+///
+/// Boxed rather than `impl Recogniser`, so that the three arms have one signature
+/// and a platform with neither engine can return an error instead of needing a
+/// type it does not have. The trait is object-safe, and a probe pays nothing for
+/// the indirection.
+#[cfg(target_os = "macos")]
+fn engine_here() -> Result<Box<dyn Recogniser>, String> {
+    Ok(Box::new(Vision))
+}
+
+#[cfg(windows)]
+fn engine_here() -> Result<Box<dyn Recogniser>, String> {
+    WindowsOcr::new()
+        .map(|e| Box::new(e) as Box<dyn Recogniser>)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn engine_here() -> Result<Box<dyn Recogniser>, String> {
+    Err(tpdf_lib::ocr_worker::NO_ENGINE.to_string())
 }
 
 // -------------------------------------------------------------------- render

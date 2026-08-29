@@ -18373,3 +18373,42 @@ a unit test, and the only observable here is a child process that answers or doe
 by-hand removal above *is* the mutation; the CI step is what makes the next one loud. When a
 defect's only observable is a process, say so --- a mutation entry naming a test that cannot
 see it reports SURVIVED and reads as a gap in the suite.
+
+### A comment argued for an ordering the code did not have, and the file's own measurement had made it pointless
+
+`ocr_worker_probe.rs` opened its worker section with this, in bold:
+
+> **Before the in-process baseline, deliberately.** The scan below asks whether this process
+> ever mapped the engine, and running it here for a baseline would map it --- so the order is
+> the check.
+
+The baseline is **thirteen lines above it**. The comment is false about the code it sits in,
+and it is not a near-miss: it names the opposite order and gives a reason for it.
+
+The reason is the interesting half, because it was true once. It was written when the probe
+expected an *absent* image to be the evidence that the app process never runs the engine ---
+and if that were the claim, running Vision for a baseline first really would destroy it. Then
+the probe measured the thing and found the opposite: `objc2-vision` links Vision the ordinary
+way, so the framework is mapped at launch, called or not, in **2 images of 619 before a single
+call**. Three rows further down the file say exactly that, at length. So the baseline could be
+moved above the spawn --- correctly --- and the comment defending the old order survived,
+arguing for a property that no longer bought anything.
+
+**A comment can be wrong in two independent ways at once, and the second hides the first.** A
+reader who checks the claim against the code finds it false and assumes a stale edit; a reader
+who checks it against the *argument* finds the argument coherent and assumes the code drifted.
+Neither reaches the real state, which is that the measurement below refuted the premise and
+nobody deleted the conclusion. This repository already records *a comment defending a design,
+with every number in it stale* and *a comment defending a name can become an argument for the
+opposite name, with no word of it changing*. This is the third form: **the code moved because
+the file's own later finding said it could, and the comment defending the old code stayed.**
+
+Nothing could have caught it. There is no gate over whether a comment describes the lines
+beneath it --- `docs` checks that a doc comment is *followed by code*, which this one is. It
+was found by reading the file in order to make it portable, which is the only instrument there
+is for this class, and the reason to state it plainly in the replacement rather than quietly
+deleting the paragraph: the next reader who wonders whether the order matters should find the
+answer, not silence.
+
+**And the order is now load-bearing for nothing**, which is what the replacement says. If a
+future change wants the spawn first, it may have it.
