@@ -2353,10 +2353,36 @@ after drawing; if that were wrong every glyph would be transparent and the engin
 report no text. The comment in `draw` says so. Vary the fixture --- a larger `GLYPH_PX`, a
 different face --- before concluding anything about `Windows.Media.Ocr`.
 
-**What it cannot say: containment.** It runs at whatever integrity the shell gave it, and a real
-engine would run at low integrity inside a job object. macOS answered the mirror of that
-question with *no* --- see `ocr-sandbox-probe` below --- so expect a rung ladder like
-`win-sandbox-probe`, not a flag.
+**The containment rung, added 2026-08-29.** Everything above runs at whatever integrity the
+shell gave the probe, and a real engine would run where the parser worker runs. So the probe
+re-execs itself with `--contained-child` through **`sandbox_win::spawn_contained` with
+`Containment::default()`** --- the containment that ships, job object plus low integrity --- and
+takes the same four readings there. macOS answered the mirror of this with *no*: Vision is
+killed by SIGTRAP under `SANDBOX_PROFILE` and needs general `file-read`, which is why OCR is a
+separate process under `OCR_SANDBOX_PROFILE`. If the same holds here, an in-box Windows engine
+needs a second containment story rather than a line in the worker.
+
+Three things make that rung worth trusting:
+
+- **The child proves it is contained before it measures.** `sandbox_win::assert_contained()`
+  first, exiting 3 if not. A child that quietly ran uncontained would report that the engine
+  survives containment, which is the direction that costs something.
+- **The verdict is a comparison, not a survival check.** The uncontained readings are the
+  control and the two lists are compared as data. The outcome to fear is not a child that
+  died but one that read something *different* --- a substituted font or a denied resource
+  looks exactly like that, and `docs/TRAPS.md` records a sandboxed PDFium returning `ok`
+  while silently swapping a typeface.
+- **Dying is a result, not an error.** The child's exit code is read before its answer is
+  parsed and passed through `sandbox_win::describe_exit`, because macOS's lesson is that this
+  class of engine aborts its host rather than refusing.
+
+It reuses `sandbox_win` rather than building a ladder of its own. `win-sandbox-probe` built six
+rungs to find which one PDFium survives; that question is answered and the answer is what
+`Containment::default()` implements, so a second ladder here would be a second copy of
+security-critical code --- and the copy that drifts is the one nobody ships.
+
+**Not yet measured.** The rung is written and cross-checked from a Mac; its first reading is
+the next CI run.
 
 ### `ocr-sandbox-probe`: what is left of a process under each profile
 
