@@ -799,7 +799,7 @@ pub fn stage_in_place(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     /// Append an update section. Fast on a large file, and only for an edit that
-    /// touches nothing but annotations --- see [`Plan::only_adds_marks`].
+    /// touches nothing but annotations --- see [`Plan::is_appendable`].
     Append,
     /// Reserialise the whole document. Correct for every plan, and what every
     /// save did until 2026-08-22.
@@ -869,7 +869,7 @@ const _: () = assert!(APPEND_MAX_BYTES < 345_040_737);
 /// question stops being asked of documents this size.
 #[must_use]
 pub fn mode_for(plan: &Plan, source_bytes: u64) -> Mode {
-    if plan.only_adds_marks() && source_bytes <= APPEND_MAX_BYTES {
+    if plan.is_appendable() && source_bytes <= APPEND_MAX_BYTES {
         Mode::Append
     } else {
         Mode::Rewrite
@@ -1014,7 +1014,7 @@ pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
         .map_err(|e| format!("could not measure {source:?}: {e}"))?
         .len();
     // **Asks [`mode_for`] rather than repeating its rule.** This used to test
-    // `only_adds_marks` itself, which was one condition and therefore harmless
+    // `is_appendable` itself, which was one condition and therefore harmless
     // to say twice; with a size bound beside it, two copies of the rule is two
     // places for it to drift, and `docs/TRAPS.md` records what a second copy
     // does to a differential. The measurement moved above the guard for the
@@ -1122,7 +1122,7 @@ pub fn append_update(
     plan: &Plan,
     password: Option<&str>,
 ) -> Result<Update, Refusal> {
-    if !plan.only_adds_marks() {
+    if !plan.is_appendable() {
         // Not a reader-facing refusal: nothing offers this mode, `mode_for`
         // chooses it, and a caller reaching here with the wrong plan has a
         // defect rather than a document problem. Refused rather than
@@ -1176,7 +1176,7 @@ pub fn append_update(
         )));
     }
 
-    // Every page is kept --- `only_adds_marks` said so --- and the one-based
+    // Every page is kept --- `is_appendable` said so --- and the one-based
     // numbering is `write_marks`' shared-object refusal's, not a page selection.
     let kept: Vec<u32> = (1..=u32::try_from(pages.len()).unwrap_or(u32::MAX)).collect();
     let sites = mark_sites(&prev, &pages, &kept, &plan.marks)?;
@@ -1248,6 +1248,14 @@ pub fn append_update(
     // binding says so out loud, because `#[must_use]` is right to ask.
     let _marks_are_all_this_path_writes =
         write_marks(&mut incremental.new_document, &plan.marks, &sites)?;
+
+    // **Comments that were already in the file, overridden in place.** An
+    // incremental update writes a *new version of an object*, which is exactly
+    // what changing somebody else's note is --- so this needs no new machinery
+    // beyond bringing the object across, the way each page's `/Annots` is
+    // brought across above. `opt_clone_object_to_new_document` is clone-if-
+    // absent, so two edits to one annotation find each other's work.
+    write_note_edits(&mut incremental, &plan.notes)?;
 
     // **The previous revision is thrown away as it is written**, which is the
     // point: `IncrementalDocument::save_to` writes the whole prior file through
@@ -3822,6 +3830,61 @@ fn numbers(values: [f64; 4]) -> Object {
     Object::Array(values.iter().map(|v| Object::Real(*v as f32)).collect())
 }
 
+/// Writes each planned body over the annotation it names.
+///
+/// **Every refusal here is about the plan disagreeing with the file**, which is
+/// the case a reader can act on: the document changed under them, or the comment
+/// they edited is gone. None of them is about the text, which is theirs.
+///
+/// The object is named rather than searched for, and that is the point of
+/// `annots::Comment::object` --- a scan-order id could not survive the round
+/// trip through the frontend and back, because inserting a comment anywhere
+/// earlier renumbers every later one.
+///
+/// # Errors
+///
+/// The object not being in the document, not being a dictionary, or not being an
+/// annotation. The last is checked rather than assumed: a plan naming an
+/// arbitrary object would otherwise let a caller write `/Contents` onto a page,
+/// a font or the catalog, and `/Contents` means something else entirely on a
+/// page. Nothing in the application builds such a plan --- this runs in the
+/// worker, on a plan that crossed a process boundary, and a refusal is cheaper
+/// than reasoning about who could have sent it.
+fn write_note_edits(
+    incremental: &mut IncrementalDocument,
+    notes: &[crate::edits::PlannedNoteEdit],
+) -> Result<(), Refusal> {
+    for note in notes {
+        let id = (note.object.0, note.object.1);
+        incremental
+            .opt_clone_object_to_new_document(id)
+            .map_err(|e| {
+                Refusal::changed(format!(
+                    "the comment being edited is not in this document any more: {e}"
+                ))
+            })?;
+        let object = incremental
+            .new_document
+            .get_object_mut(id)
+            .map_err(|e| Refusal::changed(format!("that comment could not be read: {e}")))?;
+        let dictionary = object
+            .as_dict_mut()
+            .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+        if dictionary
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_err()
+        {
+            // Not "has the subtype we expect": any annotation has one, and the
+            // check that matters is that this is an annotation at all.
+            return Err("that comment is not an annotation".into());
+        }
+        dictionary.set("Contents", text_string(&note.body));
+        dictionary.set("M", text_string(&note.made));
+    }
+    Ok(())
+}
+
 /// A PDF text string: an ASCII literal, or UTF-16BE with a byte-order mark.
 ///
 /// The two encodings `annots.rs` reads are PDFDocEncoding and UTF-16BE, and this
@@ -4784,6 +4847,7 @@ mod tests {
                 })
                 .collect(),
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: Vec::new(),
         }
     }
@@ -4806,6 +4870,7 @@ mod tests {
                 })
                 .collect(),
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: Vec::new(),
         }
     }
@@ -7961,6 +8026,7 @@ mod tests {
                 crop: None,
             }],
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: vec![PlannedMark {
                 kind,
                 // The biconditional the model enforces, restated here because
@@ -7985,6 +8051,112 @@ mod tests {
 
     /// A copy of a fixture in scratch, with a marks-only plan against it.
     ///
+    /// A comment that came out of the file is overridden in place.
+    ///
+    /// The whole reason `annots::Comment::object` exists: an incremental update
+    /// writes a *new version of an object*, so editing somebody else's note
+    /// needs the object's own name and nothing else. The scan-order id could not
+    /// do it --- inserting a comment on an earlier page renumbers every later
+    /// one, and the plan crosses a process boundary.
+    ///
+    /// **Three assertions and none of them is "it did not error".** The body has
+    /// to be the new one, `/M` has to be the plan's date rather than the file's,
+    /// and the original bytes have to survive **byte for byte** as a prefix ---
+    /// which is what an append *is*, and the property that would break first if
+    /// this were quietly doing a rewrite.
+    #[test]
+    fn a_comment_out_of_the_file_is_overridden_by_its_object() {
+        use lopdf::dictionary;
+
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let annot = document.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "Contents" => Object::string_literal("before"),
+            "M" => Object::string_literal("D:20260101000000Z"),
+        });
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => vec![annot.into()],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog);
+        let mut original = Vec::new();
+        document
+            .save_to(&mut original)
+            .expect("the fixture must save");
+
+        let plan = Plan {
+            opened_as: None,
+            baseline: 1,
+            pages: vec![PageView {
+                id: 1,
+                source: 0,
+                turns: 0,
+                crop: None,
+            }],
+            marks: Vec::new(),
+            redactions: Vec::new(),
+            notes: vec![crate::edits::PlannedNoteEdit {
+                object: (annot.0, annot.1),
+                body: "after".into(),
+                made: "D:20260829120000Z".into(),
+            }],
+        };
+        assert!(
+            plan.is_appendable(),
+            "a plan carrying only a note edit must still be an append"
+        );
+
+        let built = append_update(original.clone(), &plan, None).expect("the append must build");
+
+        let mut whole = original.clone();
+        whole.extend_from_slice(&built.update);
+        assert_eq!(
+            &whole[..original.len()],
+            &original[..],
+            "an append must not rewrite a byte of the previous revision"
+        );
+
+        let after = Document::load_mem(&whole).expect("the appended file must parse");
+        let dictionary = after
+            .get_object(annot)
+            .expect("the annotation must still be there")
+            .as_dict()
+            .expect("and must still be a dictionary");
+        assert_eq!(
+            dictionary
+                .get(b"Contents")
+                .and_then(Object::as_str)
+                .expect("a body"),
+            b"after",
+            "the new body is what a reader typed"
+        );
+        assert_eq!(
+            dictionary
+                .get(b"M")
+                .and_then(Object::as_str)
+                .expect("a date"),
+            b"D:20260829120000Z",
+            "`/M` moves with the note, or every viewer shows somebody else's date"
+        );
+    }
+
     /// A copy rather than the fixture itself, and it is not tidiness: an append
     /// writes to the file it is given, so a test that pointed at `testdata/`
     /// would edit the corpus every other test reads.
@@ -8100,7 +8272,7 @@ mod tests {
     ///
     /// The plan is held fixed and marks-only throughout, so the only thing
     /// moving is the size --- otherwise a `Rewrite` here would be evidence about
-    /// `only_adds_marks` rather than about the bound.
+    /// `is_appendable` rather than about the bound.
     #[test]
     fn a_marks_only_plan_is_rewritten_once_the_file_is_too_large_to_parse_twice() {
         let mut marked = plan_of(&[0, 0, 0]);
@@ -9625,6 +9797,7 @@ mod tests {
                 },
             ],
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
@@ -9675,6 +9848,7 @@ mod tests {
                 })
                 .collect(),
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
@@ -9729,6 +9903,7 @@ mod tests {
                 crop: None,
             }],
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: Vec::new(),
         };
         assert!(plain.is_identity());
@@ -9741,7 +9916,7 @@ mod tests {
     /// mentions a redaction unless somebody adds the clause. `is_identity` is
     /// what lets the print path hand the original bytes over; a plan with a
     /// redaction answering `true` there would produce a "redacted" print of the
-    /// document with every word in it. `only_adds_marks` is what routes a save
+    /// document with every word in it. `is_appendable` is what routes a save
     /// to the append, which writes an update section and never touches a content
     /// stream --- so the same plan answering `true` there writes a file that has
     /// been added to and had nothing taken out.
@@ -9762,6 +9937,7 @@ mod tests {
                 crop: None,
             }],
             redactions: Vec::new(),
+            notes: Vec::new(),
             marks: Vec::new(),
         };
         assert!(plan.is_identity(), "the control: nothing is edited");
@@ -9781,7 +9957,7 @@ mod tests {
             "a redaction is a change the file does not have"
         );
         assert!(
-            !plan.only_adds_marks(),
+            !plan.is_appendable(),
             "and it is not something an append could do"
         );
         assert_eq!(
@@ -9791,7 +9967,7 @@ mod tests {
         );
 
         // **A mark AND a redaction**, which is the only input where the
-        // redaction clause of `only_adds_marks` decides anything. Without it the
+        // redaction clause of `is_appendable` decides anything. Without it the
         // predicate is short-circuited by the empty marks and a mutation
         // deleting the clause survived --- the trap about a guard whose
         // neighbour refuses the same input, arriving in the predicate that
@@ -9800,7 +9976,7 @@ mod tests {
         // touches a content stream, so that save would be written, be bigger,
         // and have nothing taken out of it.
         let mut both = plan_with_mark(one_quad());
-        assert!(both.only_adds_marks(), "the control: a mark alone appends");
+        assert!(both.is_appendable(), "the control: a mark alone appends");
         both.redactions = vec![crate::edits::PlannedRedaction {
             source: 0,
             shows: vec![0],
@@ -9813,7 +9989,7 @@ mod tests {
             image_objects: 0,
         }];
         assert!(
-            !both.only_adds_marks(),
+            !both.is_appendable(),
             "a mark beside a redaction is not an append"
         );
         assert!(!both.is_identity(), "and it is not the file either");

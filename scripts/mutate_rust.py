@@ -207,6 +207,14 @@ class Mutation:
     only_on: str | None = None
 
 
+# `Plan::is_appendable`'s body, which two mutations aim at and which has now moved
+# twice. Named once so that the next clause added to the predicate re-aims both.
+MUT_APPENDABLE = (
+    "        (!self.marks.is_empty() || !self.notes.is_empty())\n"
+    "            && self.redactions.is_empty()\n"
+    "            && self.pages_are_the_file()"
+)
+
 MUTATIONS = [
     Mutation(
         # Show the engine a control no scale can render, as the gate did until
@@ -3451,8 +3459,8 @@ MUTATIONS = [
         # worker above roughly 350 MB.
         "append: let a document of any size be prepared in the worker",
         "src/save.rs",
-        "    if plan.only_adds_marks() && source_bytes <= APPEND_MAX_BYTES {",
-        "    if plan.only_adds_marks() && source_bytes <= u64::MAX {",
+        "    if plan.is_appendable() && source_bytes <= APPEND_MAX_BYTES {",
+        "    if plan.is_appendable() && source_bytes <= u64::MAX {",
         "a_marks_only_plan_is_rewritten_once_the_file_is_too_large_to_parse_twice",
     ),
     Mutation(
@@ -5342,11 +5350,15 @@ MUTATIONS += [
         # Call every plan with a mark appendable, so a deletion, a move, a turn
         # or a crop is written as an update section --- edits an update section
         # cannot express, and which spike 0.6 never put to any parser.
-        # Re-aimed 2026-08-26, when a redaction clause joined the predicate.
+        # Re-aimed 2026-08-26, when a redaction clause joined the predicate, and
+        # again 2026-08-29, when note edits did and it was renamed
+        # `only_adds_marks` -> `is_appendable`. Twice in three days is the
+        # argument for the anchor gate rather than against the predicate: both
+        # times the mutation was still exactly right and pointed at nothing.
         "append: append any plan that carries a mark",
         "src/edits.rs",
-        "        !self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
-        "        !self.marks.is_empty() && self.redactions.is_empty()",
+        MUT_APPENDABLE,
+        "        (!self.marks.is_empty() || !self.notes.is_empty())\n            && self.redactions.is_empty()",
         "a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten",
     ),
     Mutation(
@@ -5661,13 +5673,43 @@ MUTATIONS += [
         "a_plan_that_only_redacts_is_neither_the_file_nor_an_append",
     ),
     Mutation(
+        # A note edit that writes no body. The append still builds, the file is
+        # still valid, and the comment still says what it said -- which is the
+        # shape of failure a reader reports as "my edit did not save" and no
+        # length or fingerprint check can see.
+        "notes: build the append without writing the new body",
+        "src/save.rs",
+        '        dictionary.set("Contents", text_string(&note.body));',
+        '        let _ = &note.body;',
+        "a_comment_out_of_the_file_is_overridden_by_its_object",
+    ),
+    Mutation(
+        # `/M` left as the file had it. Every viewer shows that date, so the
+        # reader's own words appear over somebody else's timestamp.
+        "notes: leave the modification date the file had",
+        "src/save.rs",
+        '        dictionary.set("M", text_string(&note.made));',
+        '        let _ = &note.made;',
+        "a_comment_out_of_the_file_is_overridden_by_its_object",
+    ),
+    Mutation(
+        # The write skipped entirely. Aimed at the CALL rather than at the body,
+        # because a guard is only covered when a mutation removes the call ---
+        # `docs/TRAPS.md` has that one, from a deploy that locked an account.
+        "notes: never call the note writer at all",
+        "src/save.rs",
+        "    write_note_edits(&mut incremental, &plan.notes)?;",
+        "    let _ = &plan.notes;",
+        "a_comment_out_of_the_file_is_overridden_by_its_object",
+    ),
+    Mutation(
         # The mirror, one predicate over: route a redaction to the append. An
         # update section adds objects and never touches a content stream, so the
         # file is written, is bigger, and has nothing taken out of it.
         "redact: let a plan carrying a redaction be appended",
         "src/edits.rs",
-        "        !self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
-        "        !self.marks.is_empty() && self.pages_are_the_file()",
+        MUT_APPENDABLE,
+        "        (!self.marks.is_empty() || !self.notes.is_empty())\n            && self.pages_are_the_file()",
         "a_plan_that_only_redacts_is_neither_the_file_nor_an_append",
     ),
     Mutation(

@@ -905,6 +905,7 @@ fn form_plan(
             images: Vec::new(),
             image_objects: 0,
         }],
+        notes: Vec::new(),
     }
 }
 
@@ -954,6 +955,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             images: Vec::new(),
             image_objects: 0,
         }],
+        notes: Vec::new(),
     }
 }
 

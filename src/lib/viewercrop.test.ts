@@ -143,6 +143,7 @@ function comment(rect: [number, number, number, number]): Comment {
     date: null,
     rect,
     quads: [],
+    object: null,
     reply_to: null,
     hidden: false,
   };

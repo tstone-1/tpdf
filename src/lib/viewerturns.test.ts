@@ -64,6 +64,7 @@ function comment(): Comment {
     date: null,
     rect: RECT,
     quads: [],
+    object: null,
     reply_to: null,
     hidden: false,
   };

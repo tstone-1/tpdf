@@ -4630,6 +4630,50 @@ state" from "this fixture meets a documented gap" in a single build.
 **What is deliberately not here:** creating, editing or deleting a comment, and any change to
 the file. That is Phase 2 and needs the working document.
 
+##### Naming one so it can be edited --- the model and the write, 2026-08-29
+
+The README says a note somebody else wrote is read-only *because the model knows nothing about
+it*, and the blocker was narrower and more specific than that: `Comment::id` is **a position in
+one scan**. Inserting a comment on an earlier page renumbers every later one, and the plan
+crosses a process boundary --- so an id cannot name the thing a reader edited by the time the
+edit is written.
+
+The file already has a name for it. `Comment::object` is the annotation's own object as
+`[number, generation]`, and it was in hand the whole time: the scan matched it to resolve
+`/IRT`, then threw it away. The two readings are one expression now, so "this annotation has no
+name" cannot mean different things in two places.
+
+**`None` is a structural limit, not a gap.** PDF permits an annotation to be a *direct
+dictionary* inside a page's `/Annots` array rather than an object of its own, and this scan
+accepts those --- they are on the page and somebody wrote them. Such an annotation has no object
+number, so an incremental update has nothing to override: changing it means rewriting the page
+that contains it. That is also why it can never be an `/IRT` target, which is a property the
+scan has always had and nobody had written down.
+
+The write is `save::write_note_edits`, in the worker, on the append path. It needed no new
+machinery: an incremental update *is* a new version of an object, so bringing the annotation
+across with `opt_clone_object_to_new_document` --- the same call each page's `/Annots` already
+uses --- and setting `/Contents` and `/M` is the whole of it. `/M` moves because the note did;
+every viewer shows that date, and a reader whose own words appear over somebody else's timestamp
+has been told something false. The date is carried **in the plan** rather than read from a clock
+in the worker, exactly as `PlannedMark::made` is, so the same plan writes the same bytes.
+
+`Plan::only_adds_marks` became `Plan::is_appendable` in the same commit, and the rename is the
+lesson rather than tidying: it asked *does this plan only add marks*, which was the same question
+as *can this be an append* only while marks were the only thing an append could write. A
+predicate named after the population it happens to cover is renamed by every kind somebody adds.
+Two mutations were aimed at its body and had already been re-aimed once, three days earlier, for
+a redaction clause --- so the anchor now lives in one named constant, and the next clause moves
+one string rather than two.
+
+**Not done: nothing constructs such a plan.** There is no command, so no reader can edit a
+comment yet --- the model does not hold note edits, which is where undo and the journal come in.
+What exists is proved rather than merely present: `a_comment_out_of_the_file_is_overridden_by_its_object`
+drives `append_update` end to end and asserts the new body, the new `/M`, **and that the original
+bytes survive byte for byte as a prefix**, which is what an append is and the property that would
+break first if this were quietly rewriting. Three mutations are registered and all three are
+caught.
+
 #### Multilingual search — corpus done 2026-08-01
 
 `testdata/multilingual.pdf`, four pages with one property each, and `examples/search-probe`
