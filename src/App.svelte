@@ -420,6 +420,8 @@
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
     canEditComment: () => viewer?.commentEditable ?? false,
     editComment: () => viewer?.editComment(),
+    canReplyToComment: () => viewer?.commentReplyable ?? false,
+    replyToComment: () => viewer?.replyToComment(),
     setMarkColor: (id) => chooseMarkColor(id),
     markColor: () => markColor.id,
     saveDocument: () => void saveDocument(),
@@ -2595,6 +2597,18 @@
           const page = edits?.map.idOf(comment.page);
           if (!object || page === undefined) return;
           void applyEdit((e) => e.rewrite(object, page, body));
+        },
+        // The reply's own icon goes on the parent's rectangle, which is why
+        // this callback needs a third thing off the comment where the one above
+        // needs two. `comment.page` is a slot and `idOf` turns it into the page
+        // identity the model addresses --- the translation that exists because
+        // an id and a slot are both `number`, which this repository has paid
+        // for once.
+        onCommentReply: (comment, body) => {
+          const object = comment.object;
+          const page = edits?.map.idOf(comment.page);
+          if (!object || page === undefined) return;
+          void applyEdit((e) => e.reply(page, object, comment.rect, body));
         },
         onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
         // A colour picked in the swatch row, or by a `Colour:` command with a

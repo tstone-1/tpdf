@@ -366,6 +366,7 @@ export class Edits {
     note = "",
     chosen: MarkColor | null = null,
     stamp: StampName | null = null,
+    replyTo: readonly [number, number] | null = null,
   ): Promise<EditState> {
     // A page the model has never mentioned, or one that has gone since the
     // gesture started. Nothing is sent, which is what the slot lookup used to
@@ -384,12 +385,43 @@ export class Edits {
           // that predates stamps keeps working, and the model refuses a name on
           // the wrong kind rather than drawing one.
           stamp,
+          // The comment this one answers, for a reply. Defaulted and sent as
+          // `null` otherwise, for `stamp`'s reason above; the model refuses a
+          // parent on a kind that cannot carry one, and the writer refuses one
+          // naming an object that is not an annotation.
+          reply_to: replyTo,
           color: colorFor(kind, chosen),
           author: "",
           note,
         },
       }),
     );
+  }
+
+  /**
+   * Adds a comment answering one the file already carries.
+   *
+   * **A name over {@link Edits.mark} rather than a command of its own**, because
+   * a reply *is* a comment: the same subtype, the same body, the same colour,
+   * the same removal and the same undo. What the file gains is one key, `/IRT`,
+   * which is why nothing new crosses the boundary --- see `Mark::reply_to`,
+   * whose own note argues the case for reusing the machinery rather than
+   * duplicating it to express one extra field.
+   *
+   * `at` is the parent's own rectangle, so the reply's icon lands on the comment
+   * it answers. A reader dragging nothing has chosen no position, and putting it
+   * anywhere else would make the thread's two halves sit apart on the page.
+   *
+   * `parent` is the annotation's object, never a scan position, for the reason
+   * {@link Comment.object} gives.
+   */
+  async reply(
+    page: PageId,
+    parent: readonly [number, number],
+    at: readonly [number, number, number, number],
+    body: string,
+  ): Promise<EditState> {
+    return this.mark("note", page, [...at], [], body, null, null, parent);
   }
 
   /**

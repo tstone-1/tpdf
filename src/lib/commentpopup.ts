@@ -66,6 +66,20 @@ export interface CommentPopupOptions {
    * repository has already paid for once. The caller translates.
    */
   onRewrite: (comment: Comment, body: string) => void;
+  /**
+   * A reply was typed and the editor is closing. Only ever with text in it.
+   *
+   * The whole comment for {@link CommentPopupOptions.onRewrite}'s reason: the
+   * caller needs the parent's object *and* its page *and* its rectangle, and
+   * three bare numbers in a row is the mistake this repository has paid for.
+   *
+   * **Separate from `onRewrite` rather than a mode flag on it.** They are two
+   * different operations on two different objects --- one overrides an
+   * annotation the file wrote, the other adds one of the reader's own --- and a
+   * boolean deciding which would put the distinction in the caller, where a
+   * wrong value silently edits somebody else's comment instead of answering it.
+   */
+  onReply: (comment: Comment, body: string) => void;
 }
 
 /** The note shown for one comment, with its replies under it. */
@@ -78,6 +92,15 @@ export class CommentPopup {
   private subject: Comment | null = null;
   /** Its replies, kept because arming the editor repaints the whole popup. */
   private replies: readonly Comment[] = [];
+  /**
+   * Which operation the open editor commits to, or `null` when none is open.
+   *
+   * **The discriminator, and it is not a second copy of "is the editor open".**
+   * `editor` is the element and this is what it means; both go to `null`
+   * together, in {@link CommentPopup.commit}, so there is one place they can
+   * disagree and it is three lines long.
+   */
+  private mode: "body" | "reply" | null = null;
   /** The editor, present only while a comment is armed. */
   private editor: HTMLTextAreaElement | null = null;
   /** What the body said when the editor opened, so an unchanged one sends nothing. */
@@ -147,6 +170,7 @@ export class CommentPopup {
     this.subject = comment;
     this.replies = replies;
     this.editor = null;
+    this.mode = null;
     this.paint();
     this.element.style.display = "block";
     this.place(at);
@@ -177,13 +201,54 @@ export class CommentPopup {
    * the reader has typed by rebuilding the box around it.
    */
   edit(): void {
-    if (!this.editable || this.editing) return;
+    this.arm("body");
+  }
+
+  /**
+   * Whether the comment on show can be answered.
+   *
+   * The same two conditions {@link CommentPopup.editable} states, and for the
+   * same reason in the second one: `/IRT` names an object, so a comment the file
+   * wrote as a direct dictionary has nothing for a reply to point at. That they
+   * agree today is not a reason to share a getter --- the two answer different
+   * questions and the next condition either grows will not be shared.
+   */
+  get replyable(): boolean {
+    return this.shown !== null && this.subject?.object != null;
+  }
+
+  /**
+   * Opens an empty editor whose text becomes a new comment answering this one.
+   *
+   * {@link CommentPopup.edit}'s twin, and the arming is shared --- what differs
+   * is where the words go, which is the one thing a reader would not forgive
+   * getting wrong.
+   */
+  reply(): void {
+    this.arm("reply");
+  }
+
+  /**
+   * Builds the editor for whichever operation is being armed.
+   *
+   * Does nothing for a comment that cannot take it, and nothing when an editor
+   * is already open --- a second press would otherwise throw away what the
+   * reader has typed by rebuilding the box around it, and *switching* mode
+   * mid-typing would send their words to the wrong place, which is worse.
+   */
+  private arm(mode: "body" | "reply"): void {
+    const allowed = mode === "body" ? this.editable : this.replyable;
+    if (!allowed || this.editing) return;
     const comment = this.subject;
     if (!comment) return;
-    this.was = comment.body;
+    // A reply starts empty and a rewrite starts at what the comment says. `was`
+    // is what a commit compares against, so for a reply it is the empty string
+    // --- which is what makes an editor closed untouched send nothing.
+    this.was = mode === "body" ? comment.body : "";
+    this.mode = mode;
     const box = document.createElement("textarea");
-    box.value = comment.body;
-    box.setAttribute("aria-label", "Comment text");
+    box.value = this.was;
+    box.setAttribute("aria-label", mode === "body" ? "Comment text" : "Your reply");
     box.rows = 4;
     box.style.cssText =
       "width:100%;box-sizing:border-box;resize:vertical;font:inherit;" +
@@ -214,22 +279,38 @@ export class CommentPopup {
     this.subject = null;
     this.replies = [];
     this.editor = null;
+    this.mode = null;
     this.element.style.display = "none";
     this.element.replaceChildren();
   }
 
-  /** Sends the body if the editor is open and it changed. */
+  /** Sends what the editor holds, to whichever destination armed it. */
   private commit(): void {
     const comment = this.subject;
     const box = this.editor;
-    if (!comment || !box) return;
+    const mode = this.mode;
+    if (!comment || !box || !mode) return;
     const now = box.value;
     // Cleared first: `hide` calls this and then rebuilds, and a caller that
     // committed twice would journal the same text twice.
     this.editor = null;
+    this.mode = null;
     if (now === this.was) return;
     this.was = now;
-    this.opts.onRewrite(comment, now);
+    if (mode === "body") {
+      this.opts.onRewrite(comment, now);
+      return;
+    }
+    // **An empty reply is not a reply, where an empty rewrite is a legitimate
+    // clearing of a body.** The two operations differ here and nowhere else,
+    // which is why the check is at the destination rather than in `arm`: a
+    // reader who opens a reply box, types, deletes it all and closes has
+    // decided not to answer, and adding an empty comment to somebody's thread
+    // is the one outcome they did not ask for. `was` is `""` for a reply, so
+    // the untouched case is already caught above; this is the touched-then-
+    // emptied one.
+    if (!now.trim()) return;
+    this.opts.onReply(comment, now);
   }
 
   /**
@@ -251,7 +332,7 @@ export class CommentPopup {
       // Absent rather than disabled for a comment the file wrote as a direct
       // dictionary --- see the module note. Gone while the editor is open,
       // because arming what is already armed is not an action.
-      ...(comment.object && !box ? [this.editButton()] : []),
+      ...(comment.object && !box ? [this.editButton(), this.replyButton()] : []),
       ...this.replies.map((reply) => replyBlock(reply)),
     );
   }
@@ -264,20 +345,45 @@ export class CommentPopup {
    * something people quote far more often than they change.
    */
   private editButton(): HTMLElement {
+    return this.armButton("Edit", () => this.edit());
+  }
+
+  /**
+   * One button, for both affordances that arm the editor.
+   *
+   * Shared for the reason the builder above is shared: two copies of this would
+   * be free to drift in padding, in opacity, and --- the one that matters --- in
+   * whether they stop the press reaching the page, where it would close the
+   * popup the reader is pressing inside.
+   */
+  private armButton(label: string, arm: () => void): HTMLElement {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Edit";
+    button.textContent = label;
     button.style.cssText =
-      "margin-top:0.35rem;font:inherit;font-size:0.85em;cursor:default;" +
-      "background:none;color:inherit;opacity:0.75;padding:0.1rem 0.4rem;" +
+      "margin-top:0.35rem;margin-right:0.3rem;font:inherit;font-size:0.85em;" +
+      "cursor:default;background:none;color:inherit;opacity:0.75;" +
+      "padding:0.1rem 0.4rem;" +
       "border:1px solid color-mix(in srgb, currentColor 30%, transparent);" +
       "border-radius:4px;";
     button.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.edit();
+      arm();
     });
     return button;
+  }
+
+  /**
+   * The affordance that arms a reply.
+   *
+   * Beside Edit rather than replacing it: answering a comment and changing what
+   * it says are different acts on different objects, and a reader who meant one
+   * would be badly served by discovering they did the other. Built by the same
+   * helper so the two cannot drift apart in look or in behaviour.
+   */
+  private replyButton(): HTMLElement {
+    return this.armButton("Reply", () => this.reply());
   }
 
   /**

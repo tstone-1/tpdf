@@ -10,8 +10,8 @@ on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
 deleted, cropped and extracted; text can be highlighted, underlined, struck out or
 squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
-comment on it, move what you put there, erase any of it, rewrite a comment somebody else
-left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
+comment on it, move what you put there, erase any of it, rewrite or answer a comment somebody
+else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and in-place
 text editing is the one that matters.
@@ -119,6 +119,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   page rather than as an object of its own cannot be edited --- there is nothing to
   override --- and those offer no Edit button rather than one that fails.
   <!-- built: edit.editForeignMark -->
+- **Reply to a comment somebody else left.** The answer is a comment of your own, written
+  into the file's own thread rather than beside it: it carries `/IRT`, which is the key
+  every PDF reader uses to nest a reply under the note it answers, so Acrobat and Preview
+  show it in the thread and not as a stray second note. It goes on the parent's own
+  rectangle, so the two halves of a thread sit together on the page. Like an edit, it is
+  journalled and undoable, and it is written by adding to the file rather than rewriting
+  it. A blank reply is not sent --- opening the box and changing your mind adds nothing.
+  <!-- built: edit.replyToComment -->
 - **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
   content measures where the ink actually is rather than reading the page's objects, so it
   works on a scan --- where every object union is the whole sheet --- as well as on a page of

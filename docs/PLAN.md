@@ -4769,10 +4769,73 @@ same treatment its six siblings get, and the sweep's own comment says why. And t
 finding the body and swapping the editor over it, would have worked in a browser and thrown
 under the unit suite. The popup repaints its children instead, which needs neither.
 
-**Not done:** replying to a comment, changing its author or its subject, and deleting one.
-Those are three more commands over the same object; nothing about the model or the writer
-stops them. The panel's own rows are still not editable --- the editor is in the popup, and a
-reader reaches it from the page or from the row.
+~~**Not done:** replying to a comment, changing its author or its subject, and deleting one.~~
+The first of those is done --- see below. Changing an author or a subject, and deleting a
+comment somebody else wrote, are not. The panel's own rows are still not editable --- the
+editor is in the popup, and a reader reaches it from the page or from the row.
+
+##### Answering a comment, which is a comment --- 2026-08-29
+
+**A reply is a `MarkKind::Note` with a parent, and nothing else is new.** That variant's own
+doc comment already argued the case for this shape --- *"It reuses the rest of the machinery
+deliberately... A parallel type would have duplicated all of it to express one absent
+field"* --- and a reply is the same argument one field further on. It is a `/Text` annotation
+the reader authored, so removal, body editing, colour, undo, the id table and the whole state
+reply come free, and it saves through the append path that already existed. The journal did
+not change at all: `Command::Annotate` carries identities only, so `Mark::reply_to` lives on
+the mark body in `Doc`'s table and the enum stays `Copy`.
+
+**The refusal is one-directional, which is the thing to be careful about.** `Mark::strokes`
+and `Mark::stamp` are biconditionals --- the field is present exactly when the kind says so.
+A parent is not: a comment with no parent is an ordinary sticky note and is what almost every
+comment is, so `Doc::annotate` refuses a parent on a kind that cannot carry one and refuses
+nothing in the other direction. A test asserting both halves would have been asserting
+something the model deliberately does not do.
+
+**The writer's guard is a proof token rather than a comment, and that is not decoration.**
+`check_replies` cannot live inside `write_marks`, because the two save paths hand that
+function different documents: the rewrite gives it the one being written, and the append gives
+it a *new, empty* one whose previous revision holds the annotation being answered. So the
+lookup happens once in each path --- and a refusal with two call sites is exactly the shape
+`docs/TRAPS.md` records drifting, where one caller reaches the writer directly and never meets
+the guard its sibling has. `write_marks` takes a `RepliesChecked` as an argument, so a third
+save path cannot write a mark until it has produced one.
+
+**Where that guard goes was a finding, and it has its own trap entry.** Placed above
+`write_marks`, which is the obvious spot, it refused correctly and diagnosed wrongly: by then
+`materialise` had unlinked the dropped page and `sweep::collect` had deleted it, so a reply
+naming a page was refused with *"the comment being answered is not in this document any
+more"* --- a true sentence about the file being built, and the one explanation about the
+reader's own document that is certainly wrong. It belongs beside `rewrite_note_edits`, which
+had learned the same thing one increment earlier and carries a comment saying so. Both
+placements refuse, so only an assertion on the refusal's *wording* can tell them apart.
+
+**Read back through `annots.rs`, never through PDFium.** `pdfium-render` does not expose
+`/IRT` at all --- which is why comments are read through `lopdf` in the first place --- so a
+reply that failed to set it would arrive through that reader as an unrelated second note by
+another author, with nothing going red. `annots.rs` is a separate implementation from
+`save.rs`, which is what makes the round trip a differential rather than the writer agreeing
+with itself. `/RT` is asserted separately, because the scan never reads it and the dictionary
+comment calling it belt and braces is the sort of claim that stays true only while something
+checks it.
+
+**In the popup, one editor with two destinations.** `edit()` and `reply()` share the arming;
+what differs is where the words go, which is the one thing a reader would not forgive getting
+wrong. A reply opens **empty** where a rewrite opens at what the comment says --- a reply box
+pre-filled with somebody else's words is the shape of mistake that gets sent. And an empty
+reply is not sent, where an empty rewrite is a legitimate clearing of a body: that is the only
+place the two operations differ at the destination, and it has a test on each side.
+
+Thirteen mutations, seven in Rust and six in the frontend, all caught by the test named for
+them. The harness's own flag for the reply is separate from the edit's on purpose: the two
+guards ask the same question today, and one flag driving both would let a mutation that swaps
+them survive.
+
+**Not done:** changing a comment's author or its subject, and deleting one somebody else
+wrote. The first two are fields beside the body and would go through the same override; the
+third cannot be an append at all, because an append only adds --- so it forces the full
+rewrite for what a reader will read as a small edit, which is a design question rather than
+an increment. The panel's rows are still not editable.
 
 #### Multilingual search — corpus done 2026-08-01
 

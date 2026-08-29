@@ -5806,6 +5806,88 @@ MUTATIONS += [
         "a_comment_with_no_object_of_its_own_is_refused_here_and_spends_nothing",
     ),
     Mutation(
+        # Let a highlight answer a comment. `/IRT` on a text-markup annotation
+        # is not a thread, it is a stray key -- and the mark would be written
+        # with it, so every reader that threads would show a highlight nested
+        # under a note.
+        "reply: let a mark that is not a comment answer one",
+        "src/docmodel.rs",
+        "        if mark.reply_to.is_some() && mark.kind != MarkKind::Note {\n"
+        "            return Err(Refusal::ReplyMismatch(mark.kind));\n"
+        "        }",
+        "",
+        "only_a_comment_may_answer_a_comment",
+    ),
+    Mutation(
+        # Drop the parent on the way into the model. The reply is made, it is
+        # saved, and it answers nobody -- and the file is perfectly valid, so
+        # nothing downstream complains.
+        "reply: forget the comment a reply names",
+        "src/edits.rs",
+        "                    reply_to: want\n"
+        "                        .reply_to\n"
+        "                        .map(|(number, generation)| ObjectId::new(number, generation)),",
+        "                    reply_to: None,",
+        "a_reply_carries_the_comment_it_answers_all_the_way_to_the_plan",
+    ),
+    Mutation(
+        # Drop the parent on the way out to the writer. The other end of the
+        # same crossing, and its own mutation because a single test asserting
+        # both would pass with either half working.
+        "reply: forget the comment a reply names, on the way out",
+        "src/edits.rs",
+        "                    reply_to: body\n"
+        "                        .reply_to\n"
+        "                        .map(|object| (object.number(), object.generation())),",
+        "                    reply_to: None,",
+        "a_reply_carries_the_comment_it_answers_all_the_way_to_the_plan",
+    ),
+    Mutation(
+        # Write no `/IRT` at all. The reply becomes an unrelated second note by
+        # another author, which is exactly what `pdfium-render` not exposing
+        # the key means nobody would notice through that reader.
+        "reply: write a reply that names nothing",
+        "src/save.rs",
+        '        dictionary.set("IRT", Object::Reference((number, generation)));',
+        "",
+        "a_reply_is_written_as_one_and_reads_back_as_one",
+    ),
+    Mutation(
+        # Say the relationship is a group rather than a reply. A reader that
+        # honours `/RT` then shows the two comments as one annotation instead of
+        # as a thread, and `annots.rs` -- which never reads the key -- agrees
+        # with itself either way.
+        "reply: call the relationship a group",
+        "src/save.rs",
+        '        dictionary.set("RT", Object::Name(b"R".to_vec()));',
+        '        dictionary.set("RT", Object::Name(b"Group".to_vec()));',
+        "a_reply_is_written_as_one_and_reads_back_as_one",
+    ),
+    Mutation(
+        # Let a reply name anything at all. The guard the writer has that the
+        # model cannot: a plan naming a page, a font or the catalog would thread
+        # a reply onto it.
+        "reply: let a reply name something that is not an annotation",
+        "src/save.rs",
+        '            return Err("that comment is not an annotation".into());\n'
+        "        }\n"
+        "    }\n"
+        "    Ok(RepliesChecked)",
+        "        }\n    }\n    Ok(RepliesChecked)",
+        "a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths",
+    ),
+    Mutation(
+        # Check the replies after the page surgery instead of before it. The
+        # ordering finding: `materialise` unlinks a dropped page's annotations
+        # and `sweep::collect` deletes them, so the refusal stops being about
+        # the plan and becomes a true sentence about the file being built.
+        "reply: check a reply's parent after the pages have been removed",
+        "src/save.rs",
+        "    let replies = check_replies(&doc, &plan.marks)?;",
+        "    let replies = check_replies(&doc, &[])?;",
+        "a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths",
+    ),
+    Mutation(
         # The mirror, one predicate over: route a redaction to the append. An
         # update section adds objects and never touches a content stream, so the
         # file is written, is bigger, and has nothing taken out of it.
