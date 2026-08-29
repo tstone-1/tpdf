@@ -216,10 +216,36 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     // somewhere else, which is what the SIGTRAP measurement is about. An absent
     // image was never going to be the proof.
     let images = tpdf_lib::images::mapped();
+    // **The control, and it asserts something known to be there rather than a
+    // count.** This read `images.len() > 100` until 2026-08-29, which is a macOS
+    // number wearing a portable check's clothes: a macOS process maps 600-odd
+    // dylibs and a Windows debug binary maps 37, so widening this probe to
+    // Windows turned a working enumeration into a red row and blamed the loader.
+    // `backend-probe` had the right shape the whole time --- its control is that
+    // the scan *finds* the library it knows is mapped, and the count is printed
+    // as evidence and asserted about by nothing.
+    //
+    // A process maps its own executable on both platforms: it is dyld's image 0
+    // and Toolhelp's first module. So this proves the table was read and that
+    // what came back is *this* process's, which no threshold can say --- and it
+    // is what makes the tesseract row below mean an absence rather than a scan
+    // that matched nothing.
+    let own = std::env::current_exe().ok().and_then(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+    });
     r.check(
-        images.len() > 100,
-        "the loader's table can be read at all",
-        format!("{} image(s)", images.len()),
+        own.as_deref().is_some_and(|name| {
+            images
+                .iter()
+                .any(|image| image.to_lowercase().ends_with(name))
+        }),
+        "the loader's table names this process's own executable",
+        format!(
+            "{} image(s), looking for {}",
+            images.len(),
+            own.as_deref().unwrap_or("(no path for this process)")
+        ),
     );
     // macOS only, and not an omission on Windows. This row is a statement about
     // **static linkage**: `objc2-vision` links the framework, so it is in the

@@ -18651,3 +18651,44 @@ platforms and a step written with a backslash would otherwise be invisible to it
 The general form: **a check that compares two artifacts to each other cannot see a mistake
 present in both.** When the artifacts are copies by construction, the invariant worth asserting
 is against something outside the pair --- here, whether the file named can exist at all.
+
+### An emptiness control written as a threshold is a measurement of the platform it was written on
+
+`ocr-worker-probe` reads the loader's image table, asserts the table was read, and then
+asserts that nothing in it is named `tesseract` --- the second row being the interesting one,
+and the first existing so that "no image is named tesseract" means an absence rather than a
+scan that matched nothing. The control was `images.len() > 100`.
+
+That number is macOS. A macOS process maps 600-odd dylibs, so the check passed by a factor of
+six and looked like a healthy margin. A Windows debug binary maps **37**, so widening this
+probe to both platforms on 2026-08-29 turned a perfectly good enumeration into a red row whose
+message reads as the loader failing --- `[FAIL] the loader's table can be read at all  37
+image(s)`. Nothing was wrong with the table, the probe, the worker or the engine; the other ten
+rows passed, including the one this control exists to protect.
+
+**The sibling probe already had the right shape, and it did not transfer.** `backend-probe`
+asks the same kind of question about the same table and never asserts a count: its control is
+that the scan *finds* `pdfium`, a library it knows is mapped, and the image count appears only
+as printed evidence that nothing asserts against. That is a positive assertion about a known
+presence, and it is portable because it does not depend on how many things a platform happens
+to load.
+
+The replacement asserts the table names **this process's own executable** --- dyld's image 0
+and Toolhelp's first module are both it, so it is true on both platforms and needs no number
+at all. Two mutations, both red where the old check could not be:
+
+  * the table read as empty --- caught by the old check too.
+  * the table read as **300 plausible entries, none of them ours** --- passes `len() > 100`
+    and fails this. A count cannot distinguish "the loader's table" from "a list of the right
+    size", and the whole point of the row is that what came back is *this* process's.
+
+So the replacement is strictly stronger as well as portable, which is the tell that the
+threshold was never the right instrument rather than merely the wrong number. **Lowering the
+constant to something both platforms clear would have been the tempting repair and the worse
+one**: it keeps a bound that no correct input is measured against, on a quantity that varies
+with the build profile, the platform and the linker.
+
+The general form: **an emptiness control should assert a presence you can name, not a
+quantity.** A threshold encodes what the machine you wrote it on happened to have, and it
+fails on the machine that has less while being satisfied by anything that has more --- including
+a result that is entirely wrong.
