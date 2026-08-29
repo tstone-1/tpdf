@@ -167,6 +167,18 @@ jobs:
       - name: Quality gates
         run: python -u scripts/gates.py
 
+      # NOT a gate: it measures rather than asserting, and its exit code says
+      # whether it could measure, never whether the answer was convenient. It is
+      # here because the artifact already exists -- `bins` above builds every
+      # example -- so running it costs seconds and no rebuild, and because the
+      # question it answers can only be answered on a machine nobody configured.
+      # `docs/PLAN.md` §9.10 ranks `Windows.Media.Ocr` first for adding no
+      # package; whether a stock runner carries a recogniser language pack at all
+      # decides whether that ranking survives. Read the `[verdict]` lines.
+      - name: Measure Windows OCR availability
+        if: runner.os == 'Windows'
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example win-ocr-probe
+
   # Creates the one draft release both build legs upload into, and hands them
   # its id.
   #
