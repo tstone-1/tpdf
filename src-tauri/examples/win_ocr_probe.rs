@@ -29,6 +29,14 @@
 //!    be honoured here is a question about this engine's behaviour, not about its
 //!    API surface, so it is measured rather than argued.
 //!
+//! **Both strings are read at two sizes, and the second one is the point.** The
+//! first run of this probe drew at 44 px and both came back verbatim, which is a
+//! reading taken about 3x above `ocr_gate::MIN_CONTROL_PX` --- a control easier
+//! than the check, which `docs/TRAPS.md` has an entry about. A corrector's effect
+//! is largest on marginal input, and marginal is exactly what the gate hands an
+//! engine: a control sized from the smallest box a redaction covered. So the
+//! second size is that floor.
+//!
 //! **What it cannot say.** It runs at whatever integrity the shell gave it. The
 //! parser worker runs at low integrity inside a job object, and macOS already
 //! taught this lesson in the mirror: Vision is killed by SIGTRAP under

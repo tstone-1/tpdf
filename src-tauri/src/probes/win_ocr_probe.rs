@@ -1,5 +1,6 @@
 //! The body of `examples/win_ocr_probe.rs`. See that file for what this answers.
 
+use tpdf_lib::ocr_gate::MIN_CONTROL_PX;
 use windows::core::HSTRING;
 use windows::Globalization::Language;
 use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
@@ -18,10 +19,17 @@ use windows::Win32::Graphics::Gdi::{
 /// it --- `docs/TRAPS.md` has an entry per direction of that mistake.
 const PROBE_W: i32 = 640;
 const PROBE_H: i32 = 160;
-/// Character height in pixels. At 96 dpi this is a little over 30 pt, which is
-/// far above anything the gate has ever had to render, on purpose: this probe is
-/// asking whether the engine works at all.
-const GLYPH_PX: i32 = 44;
+/// The two character heights every string is read at.
+///
+/// **Two, because one would be a control easier than the check.** The first is
+/// far above anything the gate has to render --- it asks whether the engine works
+/// at all, and a blank reading there is a broken probe rather than a finding. The
+/// second is [`MIN_CONTROL_PX`] itself, the floor the gate will not render a
+/// control below, which is where its own recent measurements say the engine goes
+/// silent. Borrowed from `ocr_gate` rather than copied: nothing is asserted
+/// against it, so there is no check to make unfalsifiable, and a second copy of a
+/// constant is how the floor and the probe of the floor drift apart.
+const SIZES_PX: [i32; 2] = [44, MIN_CONTROL_PX as i32];
 
 /// A word, and a string no dictionary holds.
 ///
@@ -117,28 +125,44 @@ pub fn main() {
         Err(e) => say("max image dimension", &format!("unreadable ({e})")),
     }
 
-    for text in [REAL_WORD, NON_WORD] {
-        match read_back(&engine, text) {
-            Ok(got) => {
-                let verbatim = got.split_whitespace().any(|w| w == text);
-                say(
-                    &format!("read back {text:?}"),
-                    &format!("{got:?}  {}", if verbatim { "VERBATIM" } else { "DIFFERS" }),
-                );
+    for px in SIZES_PX {
+        for text in [REAL_WORD, NON_WORD] {
+            match read_back(&engine, text, px) {
+                Ok(got) => {
+                    // Three outcomes, not two. Nothing read is what the gate's own
+                    // silent regions look like, and folding it into DIFFERS would
+                    // report a size the engine cannot see as a correction it made.
+                    let verdict = if got.trim().is_empty() {
+                        "NOTHING READ"
+                    } else if got.split_whitespace().any(|w| w == text) {
+                        "VERBATIM"
+                    } else {
+                        "DIFFERS"
+                    };
+                    say(
+                        &format!("{px:>3} px  read {text:?}"),
+                        &format!("{got:?}  {verdict}"),
+                    );
+                }
+                Err(why) => say(
+                    &format!("{px:>3} px  read {text:?}"),
+                    &format!("failed: {why}"),
+                ),
             }
-            Err(why) => say(&format!("read back {text:?}"), &format!("failed: {why}")),
         }
     }
 
     println!(
-        "[verdict] a non-word reading that DIFFERS means Options::language_correction \
-         cannot be honoured here"
+        "[verdict] a non-word that DIFFERS means Options::language_correction cannot be \
+         honoured here; at {} px that is the gate's own floor, where a corrector bites \
+         hardest",
+        SIZES_PX[1]
     );
 }
 
 /// Draws `text` into a bitmap and asks the engine to read it.
-fn read_back(engine: &OcrEngine, text: &str) -> Result<String, String> {
-    let bgra = draw(text)?;
+fn read_back(engine: &OcrEngine, text: &str, px: i32) -> Result<String, String> {
+    let bgra = draw(text, px)?;
 
     // `DataWriter` with no stream behind it: `DetachBuffer` is the shortest route
     // from a Rust slice to an `IBuffer`, and it sidesteps the trap about a
@@ -167,7 +191,7 @@ fn read_back(engine: &OcrEngine, text: &str) -> Result<String, String> {
 }
 
 /// Black `text` on white, centred, as top-down BGRA.
-fn draw(text: &str) -> Result<Vec<u8>, String> {
+fn draw(text: &str, px: i32) -> Result<Vec<u8>, String> {
     // SAFETY: every handle created below is deleted on the way out, and the bits
     // pointer is owned by the DIB section for as long as the bitmap lives --- the
     // copy out happens before it is deleted.
@@ -220,7 +244,7 @@ fn draw(text: &str) -> Result<Vec<u8>, String> {
         core::ptr::write_bytes(bits.cast::<u8>(), 0xFF, len);
 
         let font = CreateFontW(
-            -GLYPH_PX,
+            -px,
             0,
             0,
             0,
