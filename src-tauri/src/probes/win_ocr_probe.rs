@@ -200,6 +200,23 @@ pub fn main() {
         }
     };
 
+    // Restored 2026-08-29 after the containment rung's restructure dropped both
+    // of them: they were `say` calls inline in `main`, and the extraction of
+    // `languages`/`make_engine` replaced the region they sat in. The run still
+    // printed a healthy-looking report and `BUILD.md` still carried the number,
+    // so nothing anywhere disagreed. See the trap of that name.
+    match engine.RecognizerLanguage().and_then(|l| l.LanguageTag()) {
+        Ok(tag) => say("engine language", &tag.to_string()),
+        Err(e) => say("engine language", &format!("unreadable ({e})")),
+    }
+    match OcrEngine::MaxImageDimension() {
+        // A real bound on `ocr::Pixels`: the gate composites a probe image and
+        // hands it over whole, so a limit below a page at render scale is a
+        // constraint on the caller rather than a detail of the binding.
+        Ok(max) => say("max image dimension", &max.to_string()),
+        Err(e) => say("max image dimension", &format!("unreadable ({e})")),
+    }
+
     let here = take_readings(&engine);
     for reading in &here {
         say(&reading.label(), &reading.value());

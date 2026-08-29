@@ -12041,6 +12041,46 @@ hunts for into the file doing the hunting. The question to ask when adding one i
 checker is in the set it scans, and if it is, whether the exemption is scoped to the tokens
 that have to be there rather than to the file.
 
+### A readings table outlived the code that produced it, and every document still agreed
+
+`win-ocr-probe` printed six things: the installed languages, where the engine came from, the
+engine's own language, `MaxImageDimension`, and the read-backs. `BUILD.md` and `docs/PLAN.md`
+§9.10 recorded four of them as measured, `MaxImageDimension` at **10000 px**, with an argument
+attached --- it is a real bound on `ocr::Pixels`, because the gate composites a probe image and
+hands it over whole.
+
+Adding the containment rung meant extracting `languages()` and `make_engine()` out of `main`,
+because the contained child needs both and must print nothing. The extraction replaced a region
+of `main`, and two `say` calls sat inside that region:
+
+```rust
+match engine.RecognizerLanguage().and_then(|l| l.LanguageTag()) { ... }
+match OcrEngine::MaxImageDimension() { ... }
+```
+
+They went with it. Nothing failed. The Windows cross-check was clean, all 19 gates passed, CI
+was green on both legs, and the probe printed a report that looks complete --- the language rows,
+the verdicts, the four read-backs, the new contained rows. It was found by diffing the new CI
+output against the previous run's, which is not a check anybody had planned to make.
+
+**The damage is not the missing lines, it is that a document now held a measurement no
+instrument takes.** 10000 px stayed in `BUILD.md` as a measured value with a date on it, correct
+on the day it was written and unrefreshable from then on. A stale number at least has a
+mechanism that could produce a new one; this had none, and nothing in the repository could
+notice, because the documents and the code did not disagree about anything --- the code simply
+stopped having an opinion.
+
+**Two habits, and the second is the general one.** After a refactor that *replaces a region*
+rather than moving it, diff the program's own output against the previous run, not just the
+diff of the source: the source diff shows deleted lines among many others and reads as part of
+the restructure. And when a document records a number, the thing to protect is the *call that
+produces it*, which is a different object from the number --- ask what would still take this
+reading tomorrow, and where.
+
+The distinction from the accounting-observable entry below is worth keeping: there an
+observable existed and no test read it. Here the observable was read, by a document, and the
+producer was the half that vanished.
+
 ### An accounting observable nobody reads is the same as not having one
 
 `Doc::ink_bodies` was added with the eraser for the stated reason that a version kept after

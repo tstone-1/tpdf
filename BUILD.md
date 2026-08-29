@@ -2381,8 +2381,19 @@ rungs to find which one PDFium survives; that question is answered and the answe
 `Containment::default()` implements, so a second ladder here would be a second copy of
 security-critical code --- and the copy that drifts is the one nobody ships.
 
-**Not yet measured.** The rung is written and cross-checked from a Mac; its first reading is
-the next CI run.
+**Measured `windows-2025`, 2026-08-29: `reads IDENTICALLY to uncontained`.** All four readings
+come back the same under job object plus low integrity as outside it, so `Windows.Media.Ocr`
+does **not** repeat what Vision does on macOS --- the engine needs no separate containment story
+and can run where the parser worker runs. That is the last thing standing between the interface
+and a Windows implementation of `ocr::Recogniser`.
+
+⚠ **That run also revealed a regression this probe had shipped one commit earlier**, and it was
+found by diffing the CI output against the previous run rather than by any check: extracting
+`languages()` and `make_engine()` replaced a region of `main` that two `say` calls sat in, so
+`engine language` and `max image dimension` stopped being printed while `BUILD.md` went on
+recording 10000 px as measured. Restored the same day. See the trap about a readings table
+outliving the code that produced it, and note what it costs to write a measurement down: the
+thing to protect is the call, not the number.
 
 ### `ocr-sandbox-probe`: what is left of a process under each profile
 
