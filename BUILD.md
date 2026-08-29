@@ -2325,17 +2325,27 @@ the whole point of taking it there:
 | `TryCreateFromUserProfileLanguages` | an engine, `en-US` |
 | `MaxImageDimension` | **10000** px |
 | 44 px, `"REDACTED"` / `"qwrtzp"` | both **VERBATIM** |
+| 16 px, `"REDACTED"` / `"qwrtzp"` | both **VERBATIM** |
 
 So the gating question is answered and answered well: a stock Windows carries a pack, and the
 in-box engine is a feature that ships rather than one that needs the machine set up first.
 
-⚠ **The non-word reading was taken at 44 px, which is about 3x `ocr_gate::MIN_CONTROL_PX`, so
-it is a control easier than the check and certifies less than it looks.** A corrector's effect
-is largest on marginal input, and marginal is exactly what this gate hands an engine --- a
-control sized from the smallest box a redaction covered. The probe reads both strings at both
-sizes as of 2026-08-29 for that reason; the 16 px row is the one that bears on
-`Options::language_correction`, and 10000 px is a real ceiling on `ocr::Pixels` worth knowing
+The 16 px row was added the same day because the 44 px one alone is a control easier than the
+check: 44 is about 3x `ocr_gate::MIN_CONTROL_PX`, a corrector's effect is largest on marginal
+input, and marginal is exactly what this gate hands an engine --- a control sized from the
+smallest box a redaction covered. 10000 px is a real ceiling on `ocr::Pixels`, worth knowing
 before a page is composited at render scale.
+
+**No correction was observed anywhere the probe looked**, which is the better of the two
+answers `Options::language_correction` could have had. It is support rather than proof, and the
+gap is specific: at 16 px this engine read clean synthetic text *exactly*, so it was never
+operating near its limit, and a corrector only shows where a recogniser is struggling. What the
+gate actually hands an engine is harder than this in a way size does not capture --- a control
+composited beside real page ink, at whatever contrast the document has. **The remaining risk
+therefore moved rather than closed**: it is no longer "the API exposes no switch, so the
+contract may be silently broken" but "we have not yet seen this engine read anything it found
+difficult". The instrument for that is the corpus sweep the macOS side already has
+(`redact-reach-probe`), not another synthetic string.
 
 ⚠ **A blank reading for *both* strings is a suspect probe before it is a suspect engine.** GDI
 writes RGB into a 32-bit DIB and leaves the alpha byte alone, so the buffer forces alpha to 255

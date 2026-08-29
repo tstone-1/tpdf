@@ -12206,20 +12206,26 @@ that it presented several genuinely unresolved questions as settled architecture
    **not as a gate**: it measures, and its exit code says whether it could measure rather than
    whether the answer was convenient.
 
-   **What that run did *not* settle is `language_correction`, and the reason is worth stating
-   because the reading looks like an answer.** That option is documented as off for
-   verification **always**, since a corrector turns marks it cannot read into plausible words;
-   Vision honours it through `setUsesLanguageCorrection` and `Windows.Media.Ocr` exposes no
-   such switch. The probe read back `"REDACTED"` and the non-word `"qwrtzp"` and got both
-   **verbatim** --- which says the engine does not second-guess an easy image, and that is all
-   it says. It was drawn at 44 px, about 3x `ocr_gate::MIN_CONTROL_PX`, so it is a control
-   easier than the check: a corrector bites hardest on marginal input, and marginal is exactly
-   what this gate hands an engine, a control sized from the smallest box a redaction covered.
-   The probe reads both strings at both sizes as of the same day, and the floor row is the one
-   that bears on the contract. If a non-word comes back as something else there, a verdict
-   from this engine means something different from a verdict from Vision, and that is a
-   decision about whether `Options` says the same thing on both platforms rather than a
-   doc-comment fix.
+   **`language_correction` came back the better way, and the risk moved rather than closed.**
+   That option is documented as off for verification **always**, since a corrector turns marks
+   it cannot read into plausible words; Vision honours it through `setUsesLanguageCorrection`
+   and `Windows.Media.Ocr` exposes no such switch, which is why it was the open question here
+   rather than a doc-comment fix. Measured: `"REDACTED"` and the non-word `"qwrtzp"` both read
+   back **verbatim at 44 px and again at 16 px**, `ocr_gate::MIN_CONTROL_PX` itself. No
+   correction anywhere the probe looked.
+
+   The first run took that reading only at 44 px, about 3x the floor, and recording it as an
+   answer would have been a control easier than the check --- the entry `docs/TRAPS.md` carries
+   under that name, arriving in a probe written to measure a gate whose own recent increments
+   are all about controls too small to render. The floor row was added the same day.
+
+   **What is still open is narrower and worth naming exactly.** At 16 px this engine read
+   clean synthetic text *exactly*, so it was never near its limit, and a corrector only shows
+   where a recogniser is struggling. The gate's real input is harder in a way size does not
+   capture: a control composited beside real page ink, at the document's own contrast. So the
+   open question is no longer *does the API let a corrector run* but *has this engine been
+   seen reading anything it found difficult* --- and the instrument for that is the corpus
+   sweep the macOS side already has in `redact-reach-probe`, not another synthetic string.
 
    **Not done, and it is the second measurement rather than a detail.** Whether the engine
    survives containment. The probe runs at whatever integrity the shell gave it; a real engine
