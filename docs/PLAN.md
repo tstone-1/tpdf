@@ -4650,7 +4650,8 @@ number, so an incremental update has nothing to override: changing it means rewr
 that contains it. That is also why it can never be an `/IRT` target, which is a property the
 scan has always had and nobody had written down.
 
-The write is `save::write_note_edits`, in the worker, on the append path. It needed no new
+The write is `save::write_note_edits`, in the worker, on the append path (the guard inside it
+became `save::set_note` the next day, when the rewrite path gained a caller). It needed no new
 machinery: an incremental update *is* a new version of an object, so bringing the annotation
 across with `opt_clone_object_to_new_document` --- the same call each page's `/Annots` already
 uses --- and setting `/Contents` and `/M` is the whole of it. `/M` moves because the note did;
@@ -4666,13 +4667,69 @@ Two mutations were aimed at its body and had already been re-aimed once, three d
 a redaction clause --- so the anchor now lives in one named constant, and the next clause moves
 one string rather than two.
 
-**Not done: nothing constructs such a plan.** There is no command, so no reader can edit a
-comment yet --- the model does not hold note edits, which is where undo and the journal come in.
+~~**Not done: nothing constructs such a plan.** There is no command, so no reader can edit a
+comment yet --- the model does not hold note edits, which is where undo and the journal come in.~~
+**The model holds them since 2026-08-29 --- see the subsection below.** What is still missing is
+narrower and is named there: no reader can reach the command.
 What exists is proved rather than merely present: `a_comment_out_of_the_file_is_overridden_by_its_object`
 drives `append_update` end to end and asserts the new body, the new `/M`, **and that the original
 bytes survive byte for byte as a prefix**, which is what an append is and the property that would
 break first if this were quietly rewriting. Three mutations are registered and all three are
 caught.
+
+##### The model holds the edit, and both writers write it --- 2026-08-29
+
+The half above could write a note edit and nothing could make one. The model holds them now:
+`Command::Rewrite` is a journal command like every other, so a rewritten comment is undoable,
+makes the document dirty, dies with its page, and reaches `Plan::notes` from the same walk the
+marks come from.
+
+**Three fields where `Renote` has two**, and the extra one carries the whole difference between
+editing your own mark and editing somebody else's comment. A mark's page is in a table this
+model owns; a foreign comment's is not, because the model has never read the file --- the scan
+runs in the worker. So the page comes in with the command, and it is what lets a deletion take
+the edit with it rather than leaving an instruction about a comment the written file does not
+contain.
+
+**What the model cannot check, it does not pretend to.** "No such object", "not a dictionary"
+and "not an annotation" are all refusals about *the file*, and they stay in
+`save::set_note`, where the bytes are. The one thing refused on this side is object **0**,
+which is the head of the free list and can never be an indirect object at all --- a plan naming
+it is a defect in tpdf rather than a document that changed under the reader. Everything else
+this layer refuses is about the page.
+
+**Undo has nothing to restore to, and that is the design rather than a gap.** A mark's note
+reverts to the previous `Renote` or to the `Annotate` that made it. There is no `Annotate`
+here, so undoing the first rewrite leaves the model with *nothing to say about that object* ---
+and a save then writes the file's own text, because `planned_notes` reports what the model
+holds and it holds nothing. There is no "revert this comment" command and none is needed.
+
+**The defect this increment actually fixed was in the other writer.** `Plan::notes` had one
+reader, on the append path, and `Plan::is_appendable` says no the moment the pages are not the
+file --- so *edit a comment, delete a page, save* wrote a successful file with the edit gone.
+`save::rewrite_note_edits` closes it, sharing `set_note` with the append so that the
+`/Subtype` guard cannot be lost by a second copy of the loop, and running **first** in the
+rewrite, before anything can make the annotation unreachable. `docs/TRAPS.md` has it under *a
+field added to a shared plan is read by one writer*.
+
+**The ordering is structural rather than sorted**, which was measured before it was written:
+with `Working::rewrites` as a `HashMap`, the test asserting reading order failed **7 runs in
+20** on correct code. A `BTreeMap` and the page walk make both orderings hold by construction,
+so the plan's bytes are the same on every save of an unchanged document and the mutation aimed
+at the walk dies every time rather than two runs in three. That entry is in the traps too.
+
+Twelve mutations, all caught by the test named for each: five in the model, four across the two
+writers, two at the `edits.rs` boundary, and one for the accounting observable that no document
+can otherwise distinguish. Two of the three the previous increment registered had to be
+re-aimed --- `set_note` moved their lines out of `write_note_edits` --- and the anchor gate is
+what said so.
+
+**Not done: no reader can reach it.** `annot_rewrite` is registered and nothing calls it. The
+comments panel lists what the scan found and does not yet join `EditState.notes` onto it, so an
+edited comment would read as unedited until the file is saved and reopened; and the README's
+`edit.editForeignMark` stays a *not-built* claim, because that marker names a **command id**
+and no command by any name is registered in the palette. Both are the same increment: the
+frontend one.
 
 #### Multilingual search — corpus done 2026-08-01
 

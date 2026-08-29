@@ -84,6 +84,14 @@ const NOT_COMMANDS: Record<string, string> = {
   // `file.splitDocument`, which is why the absence direction stayed green. The
   // prose is about the guess, so the guess has to be sayable.
   "edit.splitDocument": "named in the split section as the guess the README made and nothing used",
+  // The fourth, and the only one naming an id the README still claims as
+  // *not-built*. The plan's sentence is about that claim standing: the model
+  // and both writers can edit a foreign comment, and nothing in the palette
+  // can reach them, so the marker is correct and the id is deliberately
+  // unregistered. The day a command by that name ships, this line fails and
+  // says so.
+  "edit.editForeignMark":
+    "named as the README's still-standing not-built claim; the prose is about its absence",
   // A placeholder filename inside a command line: `TPDF_AUTOBENCH=<file.pdf>`
   // at :450 and `cupsfilter -d <queue> file.pdf` at :4349. The pattern cannot
   // tell a filename from an id without knowing every id, which is the thing it

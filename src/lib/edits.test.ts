@@ -40,6 +40,7 @@ function state(
     })),
     marks,
     redactions: [],
+    notes: [],
     can_undo: Object.keys(turns).length > 0,
     can_redo: false,
     dirty: Object.keys(turns).length > 0,

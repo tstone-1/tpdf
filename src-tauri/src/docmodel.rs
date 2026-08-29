@@ -88,7 +88,7 @@
 //! no file, no bytes and no `lopdf` object, and it is the better for it: it can
 //! be driven directly rather than through a document.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// How many commands may separate a snapshot from the next one.
 ///
@@ -395,6 +395,86 @@ pub struct InkId(u32);
 /// to check which kind of thing they were looking at.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct ColorId(u32);
+
+/// An annotation in the file the document was opened from, as its object number
+/// and generation.
+///
+/// **Not a model id, and that is the whole reason it is its own type.** Every
+/// other id in this module names something the reader made and the model
+/// numbered; this names something the *file* already numbered, which somebody
+/// else wrote. It comes from `annots::Comment::object`, and a comment that has
+/// none --- a direct dictionary inside a page's `/Annots` --- cannot be named
+/// here at all, which is a structural limit rather than a gap.
+///
+/// **The model cannot check that it names anything.** It has never parsed the
+/// file: the scan runs in the worker. So "no such object", "not a dictionary"
+/// and "not an annotation" are `save::set_note`'s refusals and not this
+/// layer's. What this layer does own is the *page*, which is why
+/// [`Command::Rewrite`] carries one beside the object.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct ObjectId {
+    number: u32,
+    generation: u16,
+}
+
+impl ObjectId {
+    /// The object as `lopdf` and the plan spell it.
+    pub fn new(number: u32, generation: u16) -> ObjectId {
+        ObjectId { number, generation }
+    }
+
+    /// The object number.
+    pub fn number(self) -> u32 {
+        self.number
+    }
+
+    /// The generation.
+    pub fn generation(self) -> u16 {
+        self.generation
+    }
+}
+
+/// One version of one foreign comment's body.
+///
+/// [`NoteId`]'s fourth twin, with the same allocator and the same argument: a
+/// [`Command::Rewrite`] names *what the comment said at a point in the journal*
+/// rather than carrying the text, so [`Command`] stays `Copy` and replay stays
+/// allocation-free.
+///
+/// It is a separate id from [`NoteId`] rather than a reuse, because the two
+/// tables hold different things: a note is a string, and this is a string **and
+/// the date it was typed**. `/M` moves when a comment's text does --- every
+/// viewer shows that date, and a reader whose words appear over somebody else's
+/// timestamp has been told something false.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct RewriteId(u32);
+
+/// What one version of one foreign comment says, and when it was typed.
+///
+/// The date is carried rather than read from a clock at save time for
+/// [`Mark::made`]'s reason exactly: a model with a clock in it needs the clock
+/// frozen to be tested, and a plan that writes different bytes on every attempt
+/// cannot be compared against itself.
+#[derive(Clone, PartialEq, Debug)]
+pub struct NoteEdit {
+    /// What the comment now says. Replaces `/Contents` whole.
+    pub body: String,
+    /// When it was typed, in PDF date form. Replaces `/M`.
+    pub made: String,
+}
+
+/// A foreign comment the reader has rewritten: which page, and which version.
+///
+/// The page is here so that deleting a page takes its rewrites with it, the way
+/// deleting a page takes its marks. Without it the model would keep an edit for
+/// a comment that is not in the document any more, and the plan would carry it
+/// to a writer that would either refuse a save the reader could not diagnose or
+/// write it into an object about to be swept.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Rewritten {
+    page: PageId,
+    edit: RewriteId,
+}
 
 /// Where a mark is now: its strokes, and the rectangles it occupies.
 ///
@@ -878,6 +958,28 @@ pub enum Command {
     /// each of them --- so this is the only member of the family whose subject
     /// is not narrowed by a kind check.
     Recolor { mark: MarkId, color: ColorId },
+    /// Replace what a comment **out of the file** says.
+    ///
+    /// [`Command::Renote`]'s counterpart for an annotation the model did not
+    /// make, and it takes that entry's argument once more: a whole body rather
+    /// than an edit to one, because the reader types in a box and commits it.
+    ///
+    /// **Three fields where `Renote` has two**, and the extra one is the point.
+    /// A mark's page is in the table this document owns; a foreign comment's is
+    /// not, because the model has never read the file. So the page comes in with
+    /// the command, and it is what makes a rewrite die with its page rather than
+    /// outliving it.
+    ///
+    /// Undoing back past the first `Rewrite` for an object leaves the model with
+    /// nothing to say about it, and the file's own text is what a save then
+    /// writes. There is no "revert this comment" command and none is needed: the
+    /// model never learned what the file said, so putting the original text back
+    /// is undo's job and not a command's.
+    Rewrite {
+        object: ObjectId,
+        page: PageId,
+        edit: RewriteId,
+    },
     /// Mark a region of a page for removal.
     ///
     /// [`Command::Annotate`]'s counterpart, and journalled the same way: the
@@ -915,6 +1017,7 @@ impl Command {
             | Command::Delete { page }
             | Command::Move { page, .. }
             | Command::Annotate { page, .. }
+            | Command::Rewrite { page, .. }
             | Command::Redact { page, .. } => Some(page),
             Command::Unannotate { .. }
             | Command::Renote { .. }
@@ -1069,6 +1172,20 @@ pub struct Working {
     /// naming it answers [`Refusal::RedactionRemoved`] rather than claiming it
     /// never existed.
     redaction_graves: HashSet<RedactionId>,
+    /// Which version of each rewritten foreign comment is current, and which
+    /// page it is on.
+    ///
+    /// Keyed by the object rather than by the page, unlike `marks`, because that
+    /// is the identity the reader edits by and the one the writer needs --- and
+    /// a comment has exactly one current body, where a page has a list of marks.
+    /// The page rides along so that a deletion can take its rewrites with it in
+    /// one pass.
+    ///
+    /// **There is no `rewrite_graves`, and nothing is missing.** A tombstone
+    /// exists so that naming a removed thing answers truthfully, and the only
+    /// way a rewrite goes is with its page --- where naming it again is refused
+    /// by [`Refusal::PageDeleted`], which is the better diagnosis anyway.
+    rewrites: BTreeMap<ObjectId, Rewritten>,
 }
 
 impl Working {
@@ -1100,6 +1217,7 @@ impl Working {
             colors: HashMap::new(),
             redactions: HashMap::new(),
             redaction_graves: HashSet::new(),
+            rewrites: BTreeMap::new(),
         }
     }
 
@@ -1261,6 +1379,39 @@ impl Working {
         self.notes.get(&mark).copied()
     }
 
+    /// Every rewritten foreign comment, with the page it is on, in page order,
+    /// and by object number within a page.
+    ///
+    /// **Both orderings are by construction rather than by a sort**, which is
+    /// the whole reason `rewrites` is a `BTreeMap`: the outer walk is the
+    /// reading order, exactly as [`all_marks`](Self::all_marks) walks it, and the
+    /// inner one is the map's own. A `HashMap` here would iterate differently
+    /// between runs, so the same document would put its note edits into a plan
+    /// in a different order each time and two saves of it would produce
+    /// different bytes with nothing wrong --- and a test for the ordering would
+    /// be a test that fails one run in six rather than every time.
+    ///
+    /// Quadratic in pages times rewrites, which is what [`all_marks`] avoids by
+    /// holding a list per page. It is not held that way here because the object
+    /// is the identity a reader edits by, and both factors are small: a document
+    /// has hundreds of pages and a reader edits a handful of comments.
+    pub fn all_rewrites(&self) -> Vec<(PageId, ObjectId, RewriteId)> {
+        self.order
+            .iter()
+            .flat_map(|page| {
+                self.rewrites
+                    .iter()
+                    .filter(move |(_, held)| held.page == *page)
+                    .map(move |(object, held)| (*page, *object, held.edit))
+            })
+            .collect()
+    }
+
+    /// Which version of a foreign comment's body is current, if any.
+    pub fn rewrite_of(&self, object: ObjectId) -> Option<RewriteId> {
+        self.rewrites.get(&object).map(|held| held.edit)
+    }
+
     /// Refuses unless the id names a live page, naming which of the two it is.
     fn live(&self, id: PageId) -> Result<(), Refusal> {
         if self.pages.contains_key(&id) {
@@ -1318,6 +1469,12 @@ impl Working {
                 for redaction in self.redactions.remove(&page).unwrap_or_default() {
                     self.redaction_graves.insert(redaction);
                 }
+                // And the rewrites, for the marks' reason with one difference:
+                // there is no tombstone, because naming the object again after
+                // the page has gone is answered by `PageDeleted` from the page
+                // check above. A walk rather than a lookup, since this map is
+                // keyed by the object --- see the field.
+                self.rewrites.retain(|_, held| held.page != page);
             }
             Command::Move { page, after } => {
                 self.live(page)?;
@@ -1388,6 +1545,12 @@ impl Working {
             Command::Recolor { mark, color } => {
                 self.live_mark(mark)?;
                 self.colors.insert(mark, color);
+            }
+            Command::Rewrite { object, page, edit } => {
+                // The page, and nothing about the object: this layer cannot ask
+                // whether the file holds it. See [`ObjectId`].
+                self.live(page)?;
+                self.rewrites.insert(object, Rewritten { page, edit });
             }
             Command::Redact { redaction, page } => {
                 self.live(page)?;
@@ -1490,6 +1653,13 @@ pub struct Doc {
     /// The next redaction id to issue. Only ever counts up, as
     /// [`next_mark`](Doc::next_mark) does and for its reason.
     next_redaction: u64,
+    /// What each version of each foreign comment's body is, keyed by the id its
+    /// command carries. `notes`' fourth twin, keyed by the version for its
+    /// reason --- and holding a date beside the text, which is what makes it a
+    /// table of its own rather than a reuse of `notes`. See [`RewriteId`].
+    rewrites: HashMap<RewriteId, NoteEdit>,
+    /// The next rewrite id to issue. Only ever counts up.
+    next_rewrite: u32,
 }
 
 impl Doc {
@@ -1511,6 +1681,8 @@ impl Doc {
             next_color: 1,
             redactions: HashMap::new(),
             next_redaction: 1,
+            rewrites: HashMap::new(),
+            next_rewrite: 1,
         }
     }
 
@@ -1746,6 +1918,43 @@ impl Doc {
         self.now.live_mark(mark)?;
         let note = self.issue_note(note);
         self.apply(Command::Renote { mark, note })
+    }
+
+    /// Replaces what a comment out of the file says.
+    ///
+    /// Takes the whole body for [`Command::Renote`]'s reason, and the page
+    /// beside the object for [`Command::Rewrite`]'s: this model has never read
+    /// the file, so the page is the only thing about the comment it can check
+    /// and the only thing that lets a deletion take the edit with it.
+    ///
+    /// `made` is the timestamp in PDF date form, passed in rather than taken
+    /// from a clock here for [`Doc::annotate`]'s reason.
+    ///
+    /// **Nothing here asks whether the object is really an annotation, or is
+    /// there at all.** Those are `save::set_note`'s refusals, and they
+    /// are refusals about the *file* --- the case a reader can act on, because
+    /// it means the document changed under them.
+    ///
+    /// # Errors
+    ///
+    /// The page does not exist, or was deleted.
+    pub fn rewrite(
+        &mut self,
+        object: ObjectId,
+        page: PageId,
+        body: String,
+        made: String,
+    ) -> Result<(), Refusal> {
+        // The page **before** the id is issued, which is `renote`'s arrangement
+        // with `live_mark` and matters for the same reason `redact`'s does: a
+        // refusal must leave the tables exactly as it found them, or a reader
+        // who names a deleted page grows `rewrites` by one body nothing will
+        // ever reach. `Working::apply` checks the page again, and that is not a
+        // second copy of the rule -- it is the same call, reached on the replay
+        // path where this pre-check does not run.
+        self.now.live(page)?;
+        let edit = self.issue_rewrite(NoteEdit { body, made });
+        self.apply(Command::Rewrite { object, page, edit })
     }
 
     /// Replaces what a drawing is made of --- the eraser's one command.
@@ -1994,6 +2203,37 @@ impl Doc {
         self.notes.len()
     }
 
+    /// Records a version of a foreign comment's body and returns its id.
+    fn issue_rewrite(&mut self, edit: NoteEdit) -> RewriteId {
+        let id = RewriteId(self.next_rewrite);
+        self.rewrites.insert(id, edit);
+        self.next_rewrite += 1;
+        id
+    }
+
+    /// What a foreign comment now says, or `None` for one nobody has edited.
+    ///
+    /// Reads the *working* document, so it answers what an undo has restored.
+    /// `None` rather than an empty body is the answer that matters: it is the
+    /// difference between "leave this comment alone" and "write an empty
+    /// `/Contents` over it", and a reader who selects a comment's text and
+    /// deletes it means the second.
+    pub fn rewrite_of(&self, object: ObjectId) -> Option<&NoteEdit> {
+        self.now
+            .rewrite_of(object)
+            .and_then(|edit| self.rewrites.get(&edit))
+    }
+
+    /// How many rewrite versions are held.
+    ///
+    /// The accounting observable for rewrites, and it exists for
+    /// [`note_bodies`](Doc::note_bodies)' reason --- with that entry's warning
+    /// attached: the colour table's version of this sat unread for a week, so
+    /// there is a test that reads it.
+    pub fn rewrite_bodies(&self) -> usize {
+        self.rewrites.len()
+    }
+
     /// Applies a command, or refuses and changes nothing.
     ///
     /// A successful apply **discards the redo tail**, which is what makes the
@@ -2017,6 +2257,9 @@ impl Doc {
                 }
                 Command::Recolor { color, .. } => {
                     self.colors.remove(&color);
+                }
+                Command::Rewrite { edit, .. } => {
+                    self.rewrites.remove(&edit);
                 }
                 Command::Redact { redaction, .. } => {
                     self.redactions.remove(&redaction);
@@ -3842,5 +4085,180 @@ mod tests {
         // Neither refusal spent an id, so the next acceptable region is the
         // first one.
         assert_eq!(doc.redaction_bodies(), 0);
+    }
+
+    /// A comment out of the file, for the rewrite tests.
+    fn object(number: u32) -> ObjectId {
+        ObjectId::new(number, 0)
+    }
+
+    /// Rewriting a foreign comment is undone by replaying without it.
+    ///
+    /// The property the journal exists for, asked of the one command whose
+    /// subject the model did not make. What makes it worth a test of its own is
+    /// that "before" is *not a value the model holds*: a mark's note reverts to
+    /// the previous `Renote` or to the `Annotate` that made it, and there is no
+    /// `Annotate` here --- the comment came out of the file, which this model has
+    /// never read. So undoing the first rewrite has to leave the model with
+    /// **nothing to say**, which is what makes a save write the file's own text.
+    #[test]
+    fn undoing_the_first_rewrite_leaves_the_model_with_nothing_to_say() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        doc.rewrite(object(7), page, "mine".into(), "D:2026".into())
+            .expect("rewrite");
+        doc.rewrite(object(7), page, "mine, again".into(), "D:2027".into())
+            .expect("rewrite");
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("mine, again")
+        );
+
+        assert!(doc.undo());
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("mine")
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.rewrite_of(object(7)), None);
+
+        // And forward again, to the same two bodies: the ids were never
+        // re-issued, so redo restores what each command named.
+        assert!(doc.redo());
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("mine")
+        );
+        assert!(doc.redo());
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.made.as_str()),
+            Some("D:2027")
+        );
+    }
+
+    /// Deleting a page takes the rewrites on it, and leaves the others.
+    ///
+    /// The reason [`Command::Rewrite`] carries a page at all. Without it the
+    /// model would hand a save an edit for a comment the file being written does
+    /// not contain --- and the two-page fixture is what makes the assertion say
+    /// that rather than "the map was emptied".
+    #[test]
+    fn deleting_a_page_takes_the_rewrites_on_it_and_no_others() {
+        let mut doc = Doc::open(2);
+        let [first, second] = [0, 1].map(|i| doc.working().order()[i]);
+        doc.rewrite(object(7), first, "on the first".into(), "D:2026".into())
+            .expect("rewrite");
+        doc.rewrite(object(9), second, "on the second".into(), "D:2026".into())
+            .expect("rewrite");
+
+        doc.apply(Command::Delete { page: first }).expect("delete");
+        assert_eq!(doc.rewrite_of(object(7)), None);
+        assert_eq!(
+            doc.rewrite_of(object(9)).map(|edit| edit.body.as_str()),
+            Some("on the second")
+        );
+
+        // Undo brings page and edit back together, because the journal replays
+        // rather than inverts --- the same property `Delete` has for marks.
+        assert!(doc.undo());
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("on the first")
+        );
+    }
+
+    /// A rewrite on a page that is gone says which of the two it is, and spends
+    /// nothing.
+    ///
+    /// The page is the *only* thing this layer can refuse a rewrite for --- the
+    /// object is a name out of a file the model has never parsed --- so the
+    /// diagnosis has to be the page's. The body count is the second half: a
+    /// refusal that had issued an id first would leave a version nothing can
+    /// ever reach, and no document would look any different.
+    #[test]
+    fn a_rewrite_on_a_page_that_is_gone_says_which_of_the_two_it_is() {
+        let mut doc = Doc::open(2);
+        let first = doc.working().order()[0];
+        doc.apply(Command::Delete { page: first }).expect("delete");
+
+        assert_eq!(
+            doc.rewrite(object(7), first, "mine".into(), "D:2026".into()),
+            Err(Refusal::PageDeleted(first))
+        );
+        let ghost = PageId::from_raw(9_999);
+        assert_eq!(
+            doc.rewrite(object(7), ghost, "mine".into(), "D:2026".into()),
+            Err(Refusal::NoSuchPage(ghost))
+        );
+        assert_eq!(doc.rewrite_bodies(), 0);
+    }
+
+    /// Rewrites are reported in reading order, and by object within a page.
+    ///
+    /// Both orderings are by construction --- the outer walk is the page order,
+    /// the inner one the `BTreeMap`'s --- so this fails every run rather than
+    /// one in six. The objects are inserted **out of order and off their pages'
+    /// order**, which is what makes the assertion about the walk rather than
+    /// about insertion.
+    #[test]
+    fn rewrites_come_back_in_reading_order_and_by_object() {
+        let mut doc = Doc::open(3);
+        let [first, second, third] = [0, 1, 2].map(|i| doc.working().order()[i]);
+        for (number, page) in [(9, third), (4, first), (2, third), (7, second)] {
+            doc.rewrite(object(number), page, "mine".into(), "D:2026".into())
+                .expect("rewrite");
+        }
+
+        let seen: Vec<(PageId, u32)> = doc
+            .working()
+            .all_rewrites()
+            .into_iter()
+            .map(|(page, object, _)| (page, object.number()))
+            .collect();
+        assert_eq!(seen, vec![(first, 4), (second, 7), (third, 2), (third, 9)]);
+
+        // And it is the *reading* order, not the file's: moving the last page to
+        // the front moves its two rewrites with it.
+        doc.apply(Command::Move {
+            page: third,
+            after: None,
+        })
+        .expect("move");
+        let moved: Vec<(PageId, u32)> = doc
+            .working()
+            .all_rewrites()
+            .into_iter()
+            .map(|(page, object, _)| (page, object.number()))
+            .collect();
+        assert_eq!(moved, vec![(third, 2), (third, 9), (first, 4), (second, 7)]);
+    }
+
+    /// A discarded redo tail takes its rewrite bodies with it.
+    ///
+    /// The accounting observable, read for the reason the trap index gives: a
+    /// body kept after the command naming it was thrown away, and one correctly
+    /// dropped, produce identical documents. Nothing else in this file can see
+    /// the difference, and the colour table's version of this sat unread for a
+    /// week.
+    #[test]
+    fn a_discarded_rewrite_takes_its_body_with_it() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        doc.rewrite(object(7), page, "first".into(), "D:2026".into())
+            .expect("rewrite");
+        doc.rewrite(object(7), page, "second".into(), "D:2026".into())
+            .expect("rewrite");
+        assert_eq!(doc.rewrite_bodies(), 2);
+
+        assert!(doc.undo());
+        // A command applied here discards the tail, and the body it named goes
+        // with it.
+        doc.apply(Command::Rotate { page, turns: 1 })
+            .expect("rotate");
+        assert_eq!(doc.rewrite_bodies(), 1);
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("first")
+        );
     }
 }

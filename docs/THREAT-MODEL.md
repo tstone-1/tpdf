@@ -1060,11 +1060,15 @@ same one the author field already goes through.
 **Two bounds it does not have**, stated because their absence is a decision rather than an
 oversight:
 
-- **No length limit.** A note is as long as the reader makes it. The memory it costs is one
-  copy per journalled version, in a process that already holds the document, and the file it
-  produces is one the reader asked for. `annots.rs` *does* bound what it reads back, so a
-  note longer than that clip is written whole and reported clipped on reopen --- visible to a
-  reader as a truncated note in the panel, which is a display limit and not a loss of the
+- ~~**No length limit.** A note is as long as the reader makes it.~~ **False since
+  2026-08-25**, and it stood here for four days after that: `edits::too_long` refuses a note
+  over `textbox::MAX_NOTE_CHARS` — 64 Ki characters — before the lock is taken, on
+  `annot_mark` and `annot_note` alike. Found on 2026-08-29 while writing §T6.13, by reading
+  the code the new command shares rather than the paragraph describing it. The rest of the
+  bullet is still true and is why the bound is generous rather than tight: the memory a note
+  costs is one copy per journalled version, in a process that already holds the document, and
+  `annots.rs` bounds what it reads *back* independently — so a note longer than that clip is
+  written whole and reported clipped on reopen, which is a display limit and not a loss of the
   file's bytes.
 - **No content rules.** Control characters, right-to-left overrides and anything else a
   keyboard can produce go through. They are the reader's own bytes in the reader's own file;
@@ -1427,6 +1431,46 @@ size is known, and residual risk 7 already bounds who can call this at all.
 the four kinds anchored to words a reader selected, because a wash dragged off its line
 marks nothing; the model will move any mark, and that asymmetry is deliberate and stated in
 `markband.ts`.
+
+#### T6.13 — Editing a comment the file came with, added 2026-08-29
+
+**One genuinely new thing, and it is not the string.** `annot_rewrite` takes a document
+handle, a page identity, a body and — unlike every command before it — **an object number
+out of the document's own graph**. Every other write command names something this
+application issued and numbered; this one names something the *file* numbered, because
+`annots::Comment::id` is a position in one scan and the identity has to survive a round trip
+through the webview and back into a worker.
+
+So the argument selects a target inside the document, and the question is what a wrong or
+hostile one can reach. Three bounds, in the order they apply:
+
+- **Object 0 is refused at the wire boundary**, in `edits::rewrite`, before the model sees
+  it. It is the head of the free list and can never be an indirect object, so a plan naming
+  it is a defect in tpdf rather than a file that changed.
+- **The page is refused by the model.** A rewrite names a page as well as an object, and one
+  naming a page that does not exist or has been deleted is refused there — which is also
+  what makes the edit die with its page rather than reaching a writer as an instruction about
+  a comment the written file does not contain.
+- **`save::set_note` refuses anything that is not an annotation**, against the bytes, in the
+  worker. This is the bound that matters: without it a plan naming a page object would write
+  `/Contents` onto the page, where the key means the page's content stream, and the save
+  would report success over a destroyed document. It is one function shared by both writers
+  precisely so that adding the second caller could not lose it.
+
+**No new authority otherwise.** The command mutates a `HashMap` in the app process, opens no
+file, writes none and reaches no worker; the write happens later, on the save path already
+covered by §T6.1 and §T6.7, and in the worker for the reason residual risk 18 gives.
+
+**The body is the reader's own string**, treated exactly as §T6.4's is and bounded by the
+same `edits::too_long` — 64 Ki characters, refused before the lock is taken. It is checked
+here rather than inherited because this is a second route into `/Contents`, and a bound
+enforced on one of two routes is not enforced.
+
+**What it does not do is read the comment first.** The model has never parsed the document,
+so it cannot tell the reader's new body from the old one, cannot know whether a rewrite
+changes anything, and cannot restore the file's own text. Undo is what restores it, by
+replaying without the command — which is the same mechanism every other edit uses, and is why
+there is no "revert" command with a document read behind it.
 
 ### T7 — Distribution and update
 
