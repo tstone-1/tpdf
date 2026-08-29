@@ -12195,25 +12195,31 @@ that it presented several genuinely unresolved questions as settled architecture
    one thing that would force it is a language the in-box engines lack, which has not been
    demonstrated.
 
-   **Cost is not availability, and that is what `examples/win_ocr_probe.rs` measures**
-   (2026-08-29). `OcrEngine` needs an installed recogniser language pack, which
-   `RecogniseError::Unavailable`'s doc comment has said since the interface was written
-   without anyone measuring how often that state is the normal one. If a stock Windows carries
-   no pack, the in-box engine is not a feature that ships but one that works on machines
-   somebody set up, and the ranking above changes. The probe runs on the Windows leg of both
-   workflows --- **not as a gate**: it measures, and its exit code says whether it could
-   measure rather than whether the answer was convenient.
+   **Cost is not availability, and `examples/win_ocr_probe.rs` measured it on 2026-08-29:
+   a stock `windows-2025` runner carries `en-US`, and the engine reads.** That was the
+   question the ranking turned on, and it comes back in the in-box engine's favour --- there
+   is no *set the machine up first* caveat to attach to it. `RecogniseError::Unavailable`'s
+   doc comment has warned about the missing-pack state since the interface was written; it is
+   a real state, and it is not the normal one. `MaxImageDimension` reads **10000** px, which
+   is a real ceiling on `ocr::Pixels` rather than a curiosity: the gate composites a probe
+   image and hands it over whole. The probe runs on the Windows leg of both workflows ---
+   **not as a gate**: it measures, and its exit code says whether it could measure rather than
+   whether the answer was convenient.
 
-   Two further readings come out of the same run, and the second is the one that matters to
-   the interface rather than to the ranking. `MaxImageDimension` is a real bound on
-   `ocr::Pixels`, since the gate composites a probe image and hands it over whole. And
-   `Options::language_correction` is documented as off for verification **always**, because a
-   corrector turns marks it cannot read into plausible words: Vision honours it
-   (`ocr_vision.rs`'s `setUsesLanguageCorrection`) and `Windows.Media.Ocr` exposes no such
-   switch. So the probe reads back a word and a non-word. If the non-word comes back as
-   something else, the contract cannot be honoured on Windows, and a verdict from that engine
-   means something different from a verdict from Vision --- which is a decision about whether
-   `Options` says the same thing on both platforms, not a doc-comment fix.
+   **What that run did *not* settle is `language_correction`, and the reason is worth stating
+   because the reading looks like an answer.** That option is documented as off for
+   verification **always**, since a corrector turns marks it cannot read into plausible words;
+   Vision honours it through `setUsesLanguageCorrection` and `Windows.Media.Ocr` exposes no
+   such switch. The probe read back `"REDACTED"` and the non-word `"qwrtzp"` and got both
+   **verbatim** --- which says the engine does not second-guess an easy image, and that is all
+   it says. It was drawn at 44 px, about 3x `ocr_gate::MIN_CONTROL_PX`, so it is a control
+   easier than the check: a corrector bites hardest on marginal input, and marginal is exactly
+   what this gate hands an engine, a control sized from the smallest box a redaction covered.
+   The probe reads both strings at both sizes as of the same day, and the floor row is the one
+   that bears on the contract. If a non-word comes back as something else there, a verdict
+   from this engine means something different from a verdict from Vision, and that is a
+   decision about whether `Options` says the same thing on both platforms rather than a
+   doc-comment fix.
 
    **Not done, and it is the second measurement rather than a detail.** Whether the engine
    survives containment. The probe runs at whatever integrity the shell gave it; a real engine

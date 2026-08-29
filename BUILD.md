@@ -2316,9 +2316,26 @@ plausible words; Vision honours it (`ocr_vision.rs`'s `setUsesLanguageCorrection
 `Windows.Media.Ocr` exposes no such switch. A non-word coming back as something else means a
 verdict from that engine means something different from a verdict from Vision.
 
-**No measurements are recorded here yet** --- the probe has never run. The first CI run on the
-Windows leg is the first reading, and this table gets its numbers from that rather than from an
-expectation written before it.
+**First reading, `windows-2025`, 2026-08-29** --- the runner image as GitHub ships it, which is
+the whole point of taking it there:
+
+| reading | value |
+|---|---|
+| recogniser languages | **1**, `en-US` (English (United States)) |
+| `TryCreateFromUserProfileLanguages` | an engine, `en-US` |
+| `MaxImageDimension` | **10000** px |
+| 44 px, `"REDACTED"` / `"qwrtzp"` | both **VERBATIM** |
+
+So the gating question is answered and answered well: a stock Windows carries a pack, and the
+in-box engine is a feature that ships rather than one that needs the machine set up first.
+
+⚠ **The non-word reading was taken at 44 px, which is about 3x `ocr_gate::MIN_CONTROL_PX`, so
+it is a control easier than the check and certifies less than it looks.** A corrector's effect
+is largest on marginal input, and marginal is exactly what this gate hands an engine --- a
+control sized from the smallest box a redaction covered. The probe reads both strings at both
+sizes as of 2026-08-29 for that reason; the 16 px row is the one that bears on
+`Options::language_correction`, and 10000 px is a real ceiling on `ocr::Pixels` worth knowing
+before a page is composited at render scale.
 
 ⚠ **A blank reading for *both* strings is a suspect probe before it is a suspect engine.** GDI
 writes RGB into a 32-bit DIB and leaves the alpha byte alone, so the buffer forces alpha to 255
