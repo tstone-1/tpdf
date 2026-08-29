@@ -1233,6 +1233,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A `[SKIP]` whose stated reason is true can be the check you most need (the reason was true, the conclusion inverted, and the skip is what made it findable)
 - A capability absent through a struct default has no defect to find (`nMinPage == nMaxPage` greyed out the Windows print panel's Pages field; no wrong output, no log line, and the harness that drives the whole print path cannot reach a dialog --- and the flag two lines above states the rule the fix has to close)
 - A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary (571 bytes in git against 603 on disk, `qpdf --check` clean against *file is damaged, xref not found*; `git status` said unmodified and was not lying, because the filter normalises on read as well as on write --- and the load that would have failed returns silently. `eol=lf` alone does not close it: name the binary formats)
+- A platform gate widened in one of three copies, and the two left behind blamed the engine (the child fell through into the PARENT's argument parser, so a worker that was never reached was reported as an engine that crashed; the control is free, because removing the arm on a Mac is what the cfg does off it --- 8/8 to 5/8 --- and the fix is one function with no platform gate at all)
 
 ### Fixtures
 - The test fixtures are generated, not committed

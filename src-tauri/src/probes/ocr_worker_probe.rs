@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tpdf_lib::document::OpenDocument;
 use tpdf_lib::ocr::{Options, Pixels, RecogniseError, RecognisedItem, Recogniser};
 use tpdf_lib::ocr_vision::Vision;
-use tpdf_lib::ocr_worker::{OcrWorker, OCR_WORKER_ARGV, PIXELS_CAPACITY, REPLY_DEADLINE};
+use tpdf_lib::ocr_worker::{OcrWorker, PIXELS_CAPACITY, REPLY_DEADLINE};
 use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 
 /// Verdicts, padded the way every other probe here pads them.
@@ -53,9 +53,7 @@ pub fn main() {
     // which for a probe is the probe --- the same arrangement `pool-bench` uses,
     // and the reason it is here rather than the probe carrying a private copy of
     // the child: what is under test has to be the shipped one.
-    if std::env::args().any(|a| a == OCR_WORKER_ARGV) {
-        tpdf_lib::ocr_worker::child_main();
-    }
+    tpdf_lib::ocr_worker::child_main_if_asked(&std::env::args().collect::<Vec<_>>());
 
     let mut file = PathBuf::new();
     let mut library = PathBuf::from("vendor/pdfium/lib");

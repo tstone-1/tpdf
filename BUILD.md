@@ -2699,6 +2699,19 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-gate-p
 `PDFIUM_SUBDIR` --- `bin` on Windows, where `lib` exists, holds the *import* library and binds
 to nothing.
 
+**It runs on both CI legs since 2026-08-29, and it had to.** Until then it was a thing a human
+ran by hand on a Mac --- and it is the only instrument on either platform that drives the OCR
+gate end to end through a worker process. The `child_main_if_asked` dispatch it needs was
+widened to Windows in `lib.rs` alone, so on Windows this probe scored **5/8**: the child found
+no marker, fell through into the *parent's* argument parser and exited, and every region came
+back `the engine crashed`. Nothing in that sentence is about the engine. The step uses the
+debug artifact the `bins` gate already built --- **33.6 s on macOS against 1 s for the release
+build**, which is the debug PDFium render and is the price of not building twice.
+
+It is deliberately **not** a `scripts/gates.py` gate: the gate list has to pass on a fresh
+checkout, where `testdata/` is empty because the fixtures are generated and gitignored. This
+needs a real document, so it belongs after the step that writes one.
+
 | fixture | result |
 |---|---|
 | `columns`, `text-base14`, `text-marked`, `rotated`, `links`, `text-cid`, `outline-simple` | 8/8 |

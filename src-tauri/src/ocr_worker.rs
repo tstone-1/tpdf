@@ -531,6 +531,32 @@ impl Drop for OcrWorker {
 
 // ---------------------------------------------------------------- the child
 
+/// Becomes an OCR worker and never returns, if this argv asks for one.
+///
+/// **The one place that decides which platforms have an OCR child**, and it is
+/// one place because it was three and they drifted. `lib.rs` was widened to
+/// Windows when the engine landed; `redact_gate_probe` and `redact_reach_probe`
+/// carry the same dispatch --- each re-execs itself as its own worker --- and
+/// were not, so on Windows their child found no marker, fell through into the
+/// *parent's* argument parser, printed a usage line and exited. Measured on
+/// 2026-08-29 by removing this arm on a Mac, which is exactly what a
+/// `cfg(target_os = "macos")` does off it: `redact-gate-probe` went 8/8 to 5/8,
+/// with `the engine crashed: ... Broken pipe` on every region. Nothing there is
+/// about the engine.
+///
+/// **No platform gate at all**, for the reason the parser worker's dispatch
+/// beneath it in `lib.rs` records: the refusal that matters belongs in the
+/// child, where [`child_main`] returns [`NO_ENGINE`] on a platform
+/// with neither recogniser. Refusing here as well would read as belt and braces
+/// while hiding which of the two is load-bearing --- and it is this one that
+/// went wrong, in the direction where a worker that was never reached is
+/// reported as an engine that crashed.
+pub fn child_main_if_asked(args: &[String]) {
+    if args.iter().any(|a| a == OCR_WORKER_ARGV) {
+        child_main();
+    }
+}
+
 /// The child's entry point. Never returns.
 ///
 /// **The order of the first two steps is the whole of the containment.** The

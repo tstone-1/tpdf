@@ -12283,6 +12283,17 @@ that it presented several genuinely unresolved questions as settled architecture
    carries it. The instrument is the corpus sweep `redact-reach-probe` already does on macOS,
    run against real documents on Windows.
 
+   ⚠ **That sweep could not have run, and would have reported an answer.** `redact_reach_probe`
+   and `redact_gate_probe` each re-exec themselves as their own OCR worker, and both kept the
+   dispatch behind `cfg(target_os = "macos")` when `lib.rs` was widened --- so on Windows the
+   child fell through into the *parent's* argument parser, and every region came back
+   `NotVerifiedCause::EngineCrashed`. A table of those rows reads exactly like a measurement of
+   `Windows.Media.Ocr`. Fixed 2026-08-29: one `ocr_worker::child_main_if_asked` with no platform
+   gate at all, four call sites, and `redact-gate-probe` on both CI legs so the next such drift
+   is a red run rather than a plausible table. Measured by removing the arm on a Mac --- 8/8 to
+   5/8 --- and `docs/TRAPS.md` has the entry. **The corpus is the reader's own documents, so the
+   sweep itself is still a thing to run on a Windows machine by hand.**
+
 11. **Should tpdf ever open a web link, and how would it have to show one?** Opened
     2026-08-16 with *Following links*, which currently refuses `/URI` outright — the same
     policy `outline.rs` has always had, chosen so that one class of action does not get two
