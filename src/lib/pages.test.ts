@@ -163,7 +163,11 @@ describe("PageMap", () => {
   });
 
   describe("commentsIn", () => {
-    function comment(id: number, page: number): Comment {
+    function comment(
+      id: number,
+      page: number,
+      object: [number, number] | null = null,
+    ): Comment {
       return {
         id,
         page,
@@ -174,16 +178,76 @@ describe("PageMap", () => {
         date: null,
         rect: [0, 0, 10, 10],
         quads: [],
-        object: null,
+        object,
         reply_to: null,
         hidden: false,
       };
+    }
+
+    /** One rewrite of `object`, saying `body`, dated `shown`. */
+    function edited(
+      object: [number, number],
+      body: string,
+      shown: string | null = "2026-08-29 12:00",
+    ) {
+      return { object, page: pageId(1), body, made: "D:20260829120000Z", shown };
     }
 
     it("moves a comment to the slot its page is in and drops the rest", () => {
       const pages = map([1, 0], [3, 2]);
       expect(commentsIn([comment(1, 2), comment(2, 1)], pages)).toEqual([
         { ...comment(1, 2), page: 1 },
+      ]);
+    });
+
+    it("writes a reader's rewrite over the comment it names, and no other", () => {
+      // Two comments with objects, one rewrite. The second is the control and
+      // it is what makes this about *matching* rather than about applying: a
+      // join that ignored the object would change both, and a join that ignored
+      // the edit would change neither.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, [12, 0]), comment(2, 0, [34, 0])];
+      const [first, second] = commentsIn(items, pages, [
+        edited([34, 0], "what I think"),
+      ]);
+      expect(first?.body).toBe("b");
+      expect(first?.date).toBeNull();
+      expect(second?.body).toBe("what I think");
+      // The date moves with the body, or a reader sees their own words over
+      // somebody else's timestamp.
+      expect(second?.date).toBe("2026-08-29 12:00");
+    });
+
+    it("matches on the object, never on the id or the generation", () => {
+      // The whole reason `Comment.object` exists. Every comment here has id 1
+      // and sits on the same page, so an id-matching join would rewrite the
+      // wrong one -- and the generation is the half a `[0]`-only comparison
+      // would miss.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, [12, 0]), comment(1, 0, [12, 1])];
+      const [zero, one] = commentsIn(items, pages, [
+        edited([12, 1], "the later generation"),
+      ]);
+      expect(zero?.body).toBe("b");
+      expect(one?.body).toBe("the later generation");
+    });
+
+    it("leaves a comment with no object of its own alone", () => {
+      // A direct dictionary inside `/Annots`. It has no name an incremental
+      // update could override, so nothing can be addressed to it -- and a join
+      // that treated `null` as a wildcard would rewrite every one of them.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, null), comment(2, 0, null)];
+      const joined = commentsIn(items, pages, [edited([12, 0], "not for you")]);
+      expect(joined.map((one) => one.body)).toEqual(["b", "b"]);
+    });
+
+    it("is the scan unchanged when nothing has been rewritten", () => {
+      // The default. A document opened and not edited must read exactly as the
+      // file does, which is the case every other consumer assumes.
+      const pages = map([1, 0]);
+      expect(commentsIn([comment(1, 0, [12, 0])], pages)).toEqual([
+        { ...comment(1, 0, [12, 0]), page: 0 },
       ]);
     });
   });

@@ -986,6 +986,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A fixture where the right rule and the wrong rule agree cannot tell them apart (every ingredient present, the discrimination absent --- a surviving mutation indicts the fixture as often as the assertion)
 - `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one (the filesystem kept NFC and AppKit decomposed; the assertion to write is a resolution, not an equality)
 - Reading a decision back out of the DOM makes the test double part of the logic (right in the browser, wrong under test --- the worst direction)
+- The fake DOM supports what has been needed before, and nothing else (`replaceWith` is absent and `querySelector` matches tag names only, so the obvious swap-in-place throws in one direction and silently does nothing in the other --- both work in a browser; the double's method set is a record of what this frontend has already done, so grep it before reaching, and prefer the operation the module already makes over extending it)
 - A leak no behaviour can see needs an accounting observable, not a cleverer assertion
 - The window reads the status and the tests read the viewer, so the copy between them is untested (the reading a reader sees was the uncovered one; the fix is one expression, not a cleverer test)
 - A bound stops discriminating when the behaviour around it changes, and its test keeps passing (`drawArmed` implied the bound only while the tool was one-shot)

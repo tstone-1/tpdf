@@ -189,6 +189,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // make a mark stay together above it.
       "edit.erase",
       "edit.removeMark",
+      // After the reader's own marks, because its subject is somebody else's
+      // annotation and grouping it with them would read as a fifth way to
+      // change your own. Nothing arms it and nothing about it is destructive:
+      // it turns a note into a box you can type in.
+      "edit.editForeignMark",
       SEPARATOR,
       // A group of their own, and the whole palette rather than a selection of
       // it: a menu that offered four of the six colours the swatch row shows

@@ -1042,6 +1042,13 @@ pub fn sanitize_body(body: &str, limit: usize) -> (String, bool) {
 
 /// Parses a PDF date and re-emits it as `YYYY-MM-DD HH:MM`.
 ///
+/// **`pub(crate)` for one caller and not for tidiness.** `edits.rs` reports a
+/// rewritten comment's new `/M` to the panel, which shows it in the same byline
+/// as a comment nobody has edited --- so the two dates have to be built the same
+/// way or a reader sees one comment's date in a different shape from its
+/// neighbour's. A second formatter would be the *two copies drift* trap on a
+/// string a reader reads side by side.
+///
 /// **The output is built here from parsed numbers, and that is the point.** A
 /// date is a string in the file like everything else, and passing it through
 /// would put an attacker-chosen value in a field the frontend renders. Nothing
@@ -1053,7 +1060,7 @@ pub fn sanitize_body(body: &str, limit: usize) -> (String, bool) {
 /// rejected: showing a local time in the document's own zone is what a reader
 /// expects from a comment, and converting it to theirs would relabel a note
 /// somebody wrote at nine in the morning.
-fn parse_date(raw: &[u8]) -> Option<String> {
+pub(crate) fn parse_date(raw: &[u8]) -> Option<String> {
     let text = raw.strip_prefix(b"D:").unwrap_or(raw);
     let digits: Vec<u8> = text
         .iter()

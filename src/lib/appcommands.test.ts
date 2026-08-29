@@ -42,6 +42,10 @@ function harness(
   dirty = false,
   history: { back?: boolean; forward?: boolean } = {},
   matched = false,
+  // Default false for `markOpen`'s reason: a document opens with no comment
+  // popup on show, so the withheld direction is what a test that says nothing
+  // about comments exercises.
+  commentEditable = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -116,6 +120,8 @@ function harness(
     setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
     markColor: () => "default",
     hasOpenMark: () => markOpen,
+    canEditComment: () => commentEditable,
+    editComment: () => fired.push("editComment"),
     // Default false, on the reasoning the journal pair above states: a document
     // opens with nothing to save, so a test that says nothing about edits
     // exercises the direction where Save is withheld.
@@ -326,7 +332,8 @@ describe("every registered command", () => {
     // Built with an update on offer, a journal in both directions, a live
     // selection, an open note and unsaved changes, because otherwise
     // `app.installUpdate`, `edit.undo`, `edit.redo`, `edit.highlightSelection`,
-    // `edit.removeMark` and `file.save` are correctly disabled and this sweep
+    // `edit.removeMark`, `edit.editForeignMark` and `file.save` are correctly
+    // disabled and this sweep
     // would read a working guard as a no-op command. The sweep asks "does every
     // command reach an action", which presumes each is in a state where it is
     // allowed to run; the guards themselves are asserted above, in both
@@ -340,8 +347,11 @@ describe("every registered command", () => {
       true,
       { back: true, forward: true },
       // A search with matches, so `edit.redactMatches` is in a state where it
-      // is allowed to run --- the last argument added, and the comment above is
-      // why each of them is here rather than the guard being subtracted.
+      // is allowed to run.
+      true,
+      // An editable comment on show, so `edit.editForeignMark` is too --- the
+      // last argument added, and the comment above is why each of them is here
+      // rather than the guard being subtracted.
       true,
     );
     const shell = registry
@@ -524,6 +534,37 @@ describe("the page operations", () => {
         .find((c) => c.id === "edit.redactSelection")
         ?.enabled?.(),
     ).toBe(true);
+  });
+
+  it("withholds editing a comment when none is on show that can be", () => {
+    // The guard is the popup's, and this asserts the command reads it. With no
+    // comment open --- or one the file wrote without an object of its own ---
+    // there is nothing to name, and a command that runs and does nothing reads
+    // as a broken command. The control is the same registry built with an
+    // editable comment, without which a registry that withheld it always would
+    // pass.
+    const editable = (commentEditable: boolean) =>
+      harness(true, {}, {}, false, false, false, {}, false, commentEditable)
+        .registry.all()
+        .find((c) => c.id === "edit.editForeignMark")
+        ?.enabled?.();
+    expect(editable(false)).toBe(false);
+    expect(editable(true)).toBe(true);
+  });
+
+  it("withholds editing a comment with no document, however editable", () => {
+    // The other half of the conjunction, and it needs its own case for the
+    // reason the trap index gives: a test that only ever varies one operand of
+    // an `&&` covers the whole and is unfalsifiable in each half. Here the
+    // popup claims a comment is editable while no document is open, which is
+    // not a state the application reaches -- and is exactly what a defect in
+    // the ordering would produce.
+    expect(
+      harness(false, {}, {}, false, false, false, {}, false, true)
+        .registry.all()
+        .find((c) => c.id === "edit.editForeignMark")
+        ?.enabled?.(),
+    ).toBe(false);
   });
 
   it("reaches the pattern command's own action rather than a sibling's", () => {
@@ -899,6 +940,8 @@ describe("the window shortcuts for editing", () => {
       setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
       markColor: () => "default",
       hasOpenMark: () => false,
+      canEditComment: () => false,
+      editComment: () => 0,
       saveDocument: () => fired.push("saveDocument"),
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),

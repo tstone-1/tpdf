@@ -10,8 +10,8 @@ on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
 deleted, cropped and extracted; text can be highlighted, underlined, struck out or
 squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
-comment on it, move what you put there, erase any of it, and save --- over the open file or
-to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
+comment on it, move what you put there, erase any of it, rewrite a comment somebody else
+left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and in-place
 text editing is the one that matters.
@@ -110,6 +110,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
   mark whose note you have opened can be removed from the note box instead, which is how
   you take off the one you have named rather than the ones you cross.
   <!-- built: edit.erase edit.removeMark -->
+- **Edit a comment somebody else wrote.** Open it and press Edit --- or ask for it by name
+  from the palette --- and the note becomes a box you can type in. What you write replaces
+  the comment's text and its date, so the next reader is not shown your words over
+  somebody else's timestamp. It is journalled like every other edit, so undo takes it back,
+  and it is written by adding to the file rather than rewriting it: the revision the
+  comment came in is still there, byte for byte. A comment the file wrote directly into a
+  page rather than as an object of its own cannot be edited --- there is nothing to
+  override --- and those offer no Edit button rather than one that fails.
+  <!-- built: edit.editForeignMark -->
 - **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
   content measures where the ink actually is rather than reading the page's objects, so it
   works on a scan --- where every object union is the whole sheet --- as well as on a page of
@@ -264,9 +273,6 @@ unbuilt while they shipped.
 
 - The rest of the page operations: insert
   <!-- not-built: edit.insertPages -->
-- Editing a comment that came out of a file. Your own marks are yours to change; a note
-  somebody else wrote is read-only, because the model knows nothing about it.
-  <!-- not-built: edit.editForeignMark -->
 - A region over a **drawing** is reported rather than removed --- a vector rule under a line
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn

@@ -5745,6 +5745,106 @@ MUTATIONS += [
         "    this.redacting = false;\n    this.cropping = true;",
         "puts the drawing tool away, and the drawing tool puts it away",
     ),
+    Mutation(
+        # Join a rewrite onto every comment rather than onto the one it names.
+        # The reader edits one note and finds their words on all of them, which
+        # is the shape a join keyed on nothing produces -- and every test that
+        # rewrites a single comment on a single-comment fixture passes.
+        "comments: apply a rewrite to whichever comment comes first",
+        "src/lib/pages.ts",
+        "    const edit = comment.object\n"
+        "      ? notes.find(\n"
+        "          (note) =>\n"
+        "            note.object[0] === comment.object?.[0] &&\n"
+        "            note.object[1] === comment.object[1],\n"
+        "        )\n"
+        "      : undefined;",
+        "    const edit = comment.object ? notes[0] : undefined;",
+        "writes a reader's rewrite over the comment it names, and no other",
+    ),
+    Mutation(
+        # Match on the object number and ignore the generation. Two objects that
+        # differ only there are rare in a real file and legal, and the wrong one
+        # is rewritten silently.
+        "comments: match a rewrite on the object number alone",
+        "src/lib/pages.ts",
+        "            note.object[0] === comment.object?.[0] &&\n"
+        "            note.object[1] === comment.object[1],",
+        "            note.object[0] === comment.object?.[0],",
+        "matches on the object, never on the id or the generation",
+    ),
+    Mutation(
+        # Take the new body and leave the old date. Every viewer shows `/M`, so
+        # the reader's own words appear under somebody else's timestamp -- and
+        # the file that gets saved says the same thing.
+        "comments: keep the file's date when the body is rewritten",
+        "src/lib/pages.ts",
+        "        ? { ...comment, page: slot, body: edit.body, date: edit.shown }",
+        "        ? { ...comment, page: slot, body: edit.body }",
+        "writes a reader's rewrite over the comment it names, and no other",
+    ),
+    Mutation(
+        # Let a comment with no object be edited. There is nothing an
+        # incremental update could override, so the reader types into a box
+        # whose text can never reach the file -- and nothing tells them.
+        "comments: offer the editor for a comment with no object of its own",
+        "src/lib/commentpopup.ts",
+        "    return this.shown !== null && this.subject?.object != null;",
+        "    return this.shown !== null;",
+        "offers no editor for a comment the file wrote without an object",
+    ),
+    Mutation(
+        # Send the body whether it changed or not. A reader who opens the
+        # editor and closes it again gets an undo step in front of them for
+        # nothing, and the document is reported dirty.
+        "comments: send the body even when the reader changed nothing",
+        "src/lib/commentpopup.ts",
+        "    if (now === this.was) return;",
+        "    if (false) return;",
+        "sends nothing when the editor closes with the text it opened with",
+    ),
+    Mutation(
+        # Rebuild the editor on a second arming. The reader presses Edit twice
+        # -- or the command after the button -- and what they have typed is
+        # replaced by the file's own words with no warning.
+        "comments: let a second arming rebuild the editor",
+        "src/lib/commentpopup.ts",
+        "    if (!this.editable || this.editing) return;",
+        "    if (!this.editable) return;",
+        "does not throw away what is typed when Edit is pressed twice",
+    ),
+    Mutation(
+        # Commit on a suppressed hide. A document being closed, or a comment
+        # disappearing out from under the popup, would then send text to an
+        # object nobody is looking at.
+        "comments: commit the body even when the caller said not to",
+        "src/lib/commentpopup.ts",
+        "  hide(commit = true): void {\n    if (commit) this.commit();",
+        "  hide(commit = true): void {\n    if (commit || true) this.commit();",
+        "sends nothing when the popup is hidden without committing",
+    ),
+    Mutation(
+        # Drop the commit that runs when a second comment takes the box over.
+        # The reader opens another note and what they typed into the first is
+        # gone -- silently, because the popup looks the same either way.
+        "comments: let a second comment take the box without committing the first",
+        "src/lib/commentpopup.ts",
+        "    this.commit();\n    this.shown = comment.id;",
+        "    this.shown = comment.id;",
+        "commits the first comment when a second one takes the box over",
+    ),
+    Mutation(
+        # Offer the command with no document open. The other half of the
+        # conjunction, and the half a test that only varies the popup cannot
+        # see.
+        "comments: offer Edit this comment with no document open",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.canEditComment(),\n"
+        "      run: () => actions.editComment(),",
+        "      enabled: () => actions.canEditComment(),\n"
+        "      run: () => actions.editComment(),",
+        "withholds editing a comment with no document, however editable",
+    ),
 ]
 
 

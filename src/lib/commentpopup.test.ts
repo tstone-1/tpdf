@@ -55,12 +55,23 @@ describe("CommentPopup", () => {
     dom.restore();
   });
 
+  /** Every rewrite the popup sent, so a test can say it sent none. */
+  let rewrites: { object: [number, number]; body: string }[] = [];
+
   function popup(): CommentPopup {
     // A host with a size, since the placement clamps against it.
     dom.root.clientWidth = 900;
     dom.root.clientHeight = 700;
-    return new CommentPopup(dom.root as unknown as HTMLElement, () => {
-      closed += 1;
+    rewrites = [];
+    return new CommentPopup(dom.root as unknown as HTMLElement, {
+      onClose: () => {
+        closed += 1;
+      },
+      onRewrite: (comment, body) => {
+        // Recorded rather than asserted here: a recorder that threw would fail
+        // the test that *provoked* the call rather than the one reading it.
+        if (comment.object) rewrites.push({ object: comment.object, body });
+      },
     });
   }
 
@@ -190,6 +201,99 @@ describe("CommentPopup", () => {
       { key: "a" },
     );
     expect(closed).toBe(1);
+  });
+
+  /** The popup's editor, or `null` while the body is text. */
+  function editorOf(note: CommentPopup) {
+    const found = (note.node as unknown as { children: { tagName: string }[] }).children.find(
+      (child) => child.tagName === "textarea",
+    );
+    return (found ?? null) as unknown as { value: string; focused: boolean } | null;
+  }
+
+  it("offers no editor for a comment the file wrote without an object", () => {
+    // The structural limit, and it is what `editable` answers. An Edit button
+    // here would be a promise the file cannot keep.
+    const note = popup();
+    note.show(comment({ id: 1 }), [], anchor(), false);
+    expect(note.editable).toBe(false);
+    expect(words(note)).not.toContain("Edit");
+    // And arming it anyway does nothing rather than throwing: the command's
+    // `enabled` is a guard, not the only one.
+    note.edit();
+    expect(editorOf(note)).toBeNull();
+  });
+
+  it("arms an editor over the body and sends the new text when it closes", () => {
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    expect(note.editable).toBe(true);
+    expect(note.editing).toBe(false);
+
+    note.edit();
+    const box = editorOf(note);
+    expect(box?.value).toBe("Check this figure.");
+    // The keyboard goes into the box, or the reader has to click it as well as
+    // press Edit.
+    expect(box?.focused).toBe(true);
+    expect(note.editing).toBe(true);
+    // Nothing is sent while it is open: a journal entry between every two
+    // letters is what makes undo useless.
+    expect(rewrites).toEqual([]);
+
+    if (box) box.value = "what I think";
+    note.hide();
+    expect(rewrites).toEqual([{ object: [12, 0], body: "what I think" }]);
+  });
+
+  it("sends nothing when the editor closes with the text it opened with", () => {
+    // The control for the test above, and it is the case a reader reaches by
+    // pressing Edit and changing their mind. An undo step for nothing is worse
+    // than no undo step.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.edit();
+    note.hide();
+    expect(rewrites).toEqual([]);
+  });
+
+  it("sends nothing when the popup is hidden without committing", () => {
+    // What a document being closed does, and what a comment disappearing out
+    // from under the popup does. The text is lost, which is the smaller harm --
+    // the alternative writes it to an object nobody is looking at.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.edit();
+    const box = editorOf(note);
+    if (box) box.value = "typed and thrown away";
+    note.hide(false);
+    expect(rewrites).toEqual([]);
+  });
+
+  it("commits the first comment when a second one takes the box over", () => {
+    // A reader who opens another note has finished with this one, and the
+    // words are already typed. `markpopup.ts` makes the same call.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.edit();
+    const box = editorOf(note);
+    if (box) box.value = "about the first";
+    note.show(comment({ id: 2, object: [34, 0] }), [], anchor(), false);
+    expect(rewrites).toEqual([{ object: [12, 0], body: "about the first" }]);
+    // And the second opens read-only rather than inheriting the editor.
+    expect(note.editing).toBe(false);
+  });
+
+  it("does not throw away what is typed when Edit is pressed twice", () => {
+    // A second arming must not rebuild the box around the text. The failure is
+    // silent: the reader keeps typing into a box whose value was just reset.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note.edit();
+    const box = editorOf(note);
+    if (box) box.value = "half a sentence";
+    note.edit();
+    expect(editorOf(note)?.value).toBe("half a sentence");
   });
 
   it("takes the keyboard only when asked", () => {

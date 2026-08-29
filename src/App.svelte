@@ -418,6 +418,8 @@
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
+    canEditComment: () => viewer?.commentEditable ?? false,
+    editComment: () => viewer?.editComment(),
     setMarkColor: (id) => chooseMarkColor(id),
     markColor: () => markColor.id,
     saveDocument: () => void saveDocument(),
@@ -886,7 +888,11 @@
     // be read", which is a different thing to tell a reader than "not yet". The
     // failing path still says it, from the `catch` that knows.
     if (rawComments) {
-      const items = commentsIn(rawComments.items, pages);
+      // The scan, with the reader's own rewrites over it. `refreshTargets` runs
+      // after every state reply, which is what makes an edited comment reach
+      // the panel and the popup at all --- the scan is a reading of the file on
+      // disk and knows nothing of what has been typed since.
+      const items = commentsIn(rawComments.items, pages, edits?.state.notes);
       viewer?.setComments(items);
       sidebar?.setComments({ ...rawComments, items });
       // After, because `setComments` is a rebuild and drops what the panel knew.
@@ -941,7 +947,11 @@
         // every slot after it --- so a list captured up front would read slot 4's
         // text and hand it to the comment that used to be there. Wrong words on
         // a real row, which is the failure that looks entirely plausible.
-        const items = commentsIn(source.items, edits?.map ?? NO_PAGES);
+        const items = commentsIn(
+          source.items,
+          edits?.map ?? NO_PAGES,
+          edits?.state.notes,
+        );
         const page = pagesNeedingWords(items, wordsAsked)[0];
         if (page === undefined) return;
         // The document that was open when this page was asked for. A second file
@@ -2570,6 +2580,22 @@
         // its box closed. A command like any other: it lands in the journal, so
         // undo steps over it and the document is dirty until it is saved.
         onMarkNote: (mark, note) => void applyEdit((e) => e.renote(mark, note)),
+        // Somebody else's comment, rewritten. The one edit command addressed by
+        // the **object** the file gave the annotation rather than by an id this
+        // application issued --- `Comment.id` is a position in one scan, and a
+        // save crosses a process boundary.
+        //
+        // The page is this viewer's slot and the model wants an identity, so
+        // the translation happens here, where the map is. A comment on a page
+        // the model no longer has translates to nothing and is dropped: it is
+        // the same guard `Edits.mark` states, and the reader cannot have got
+        // here anyway --- `setComments` closes a popup whose comment has gone.
+        onCommentEdit: (comment, body) => {
+          const object = comment.object;
+          const page = edits?.map.idOf(comment.page);
+          if (!object || page === undefined) return;
+          void applyEdit((e) => e.rewrite(object, page, body));
+        },
         onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
         // A colour picked in the swatch row, or by a `Colour:` command with a
         // note open. A command like the note above it, and undone the same way.

@@ -9,7 +9,8 @@
  *
  * The two callers are `commentpopup.ts`, which shows what a stranger wrote in
  * the file, and `markpopup.ts`, which edits what the reader wrote themselves.
- * They share nothing else: one is read-only and one is a form.
+ * They share nothing else: one is a document with an editor a reader has to
+ * arm, the other is a form that is a form from the moment it opens.
  */
 
 /** Width of a popup, in CSS pixels. */
