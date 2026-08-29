@@ -2951,14 +2951,11 @@ pub fn run() {
     // The OCR worker, checked first because it is the narrower marker and
     // because it shares nothing with the parser worker but this dispatch: it
     // maps no PDF library, opens no document, and applies a different profile.
-    // Both platforms with an engine, since 2026-08-29. Widening this is what
-    // makes the Windows worker reachable at all: `OcrWorker::spawn` puts the
-    // marker in the child's command line, and without a dispatch that matches it
-    // the child would start, find no marker, and go on to build a window.
-    #[cfg(any(target_os = "macos", windows))]
-    if args.iter().any(|a| a == ocr_worker::OCR_WORKER_ARGV) {
-        ocr_worker::child_main();
-    }
+    // Through the helper rather than spelled out here, because this dispatch is
+    // not unique to the application --- the two probes that re-exec themselves
+    // as their own OCR worker carry it too, and the platform gate that used to
+    // be written on this line was widened here and nowhere else.
+    ocr_worker::child_main_if_asked(&args);
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
         // No platform gate here any more. The refusal that mattered was never
         // this one --- it is `establish_boundary`, inside the worker, which fails

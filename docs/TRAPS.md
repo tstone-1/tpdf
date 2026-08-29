@@ -18314,3 +18314,62 @@ is policing, and a check whose failure mode is a wait. What is specific to timin
 wrong answer is **invisible in the verdict** --- the suite is green, the only tell is a
 duration nobody reads. Whenever an assertion is about *how long*, write both ends.
 
+
+### A platform gate widened in one of three copies, and the two left behind blamed the engine
+
+`Windows.Media.Ocr` landed behind `ocr::Recogniser`, and the dispatch that turns this
+executable into an OCR worker was widened from `cfg(target_os = "macos")` to
+`cfg(any(target_os = "macos", windows))`. In `lib.rs`. There were three copies of that
+dispatch: `redact_gate_probe` and `redact_reach_probe` each re-exec themselves as their own
+OCR worker --- deliberately, so that what is under test is the shipped child rather than a
+private one --- and both stayed narrow.
+
+What that does on Windows is not "the OCR half is skipped". The child starts, does not match
+the marker, **falls through into the parent's argument parser**, prints the parent's usage line
+and exits 2. The parent then reports:
+
+```
+[FAIL] the control: the unredacted file is reported legible
+       the engine crashed: the OCR worker stopped listening: Broken pipe (os error 32)
+[FAIL] the redacted file is certified
+       the engine crashed: the OCR worker stopped without answering
+```
+
+**Nothing in that is about the engine.** The message names the one component that was never
+reached, and the corpus sweep this was blocking would have produced a table of
+`NotVerifiedCause::EngineCrashed` rows that reads exactly like a measurement of
+`Windows.Media.Ocr`.
+
+Measured rather than reasoned about, and the control is free: removing the arm on a Mac is
+byte-for-byte what a `cfg(target_os = "macos")` does off it. `redact-gate-probe` went **8/8 to
+5/8**, and the transcript carried the parent's own usage line four times --- once per spawn ---
+which is the tell, because a usage message is a thing only the parent prints.
+
+Three things generalise.
+
+**A `#[cfg]` on a dispatch is a copy of a distinction, and copies drift.** This repository
+already records *two copies of a distinction drift, and a mutation of one survives*; a platform
+gate is the same shape with a worse tell, because the copies live in different files and no
+platform compiles both spellings at once. The fix is one function, `ocr_worker::child_main_if_asked`,
+called from all four sites.
+
+**It has no platform gate at all now**, which is the second half. The refusal belongs in the
+child, where `serve()`'s third arm returns `NO_ENGINE` and the process says so on stderr. A
+gate at the dispatch and a refusal in the child would read as belt and braces while hiding
+which one is load-bearing --- and it was the dispatch that went wrong, in the direction where
+the safe-looking outcome (a refusal, never a false certification) is produced by a mechanism
+nobody intended. The parser worker's dispatch beneath it in `lib.rs` already carried that
+argument in a comment; it did not transfer to the OCR one two lines above.
+
+**And nothing could have caught it, because nothing ran the probe.** `redact-gate-probe` is the
+only instrument on either platform that drives the OCR gate end to end through a worker, and it
+was a thing a human ran by hand. It is a CI step on both legs now. It is deliberately not a
+`gates.py` gate: the gate list has to pass on a fresh checkout, where `testdata/` is empty
+because the fixtures are generated, and this needs a real document.
+
+**There is no mutation to register for it either, and that is the fact rather than an
+omission.** `scripts/mutate_rust.py` runs `cargo test --lib`, so a mutation has to be caught by
+a unit test, and the only observable here is a child process that answers or does not. The
+by-hand removal above *is* the mutation; the CI step is what makes the next one loud. When a
+defect's only observable is a process, say so --- a mutation entry naming a test that cannot
+see it reports SURVIVED and reads as a gap in the suite.

@@ -66,13 +66,7 @@ pub fn main() {
     if args.iter().any(|a| a == worker::WORKER_ARGV) {
         worker_child::main(&args);
     }
-    #[cfg(target_os = "macos")]
-    if args
-        .iter()
-        .any(|a| a == tpdf_lib::ocr_worker::OCR_WORKER_ARGV)
-    {
-        tpdf_lib::ocr_worker::child_main();
-    }
+    tpdf_lib::ocr_worker::child_main_if_asked(&args);
 
     let mut file: Option<PathBuf> = None;
     let mut library = PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
