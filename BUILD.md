@@ -2284,6 +2284,53 @@ text rather than a drawn token, so a fixture whose lines are too close together 
 usable strip and the gate checks `[SKIP]` rather than failing --- `columns` is that case. And
 `[SKIP]` here means the harness could not construct the input, never that the gate passed.
 
+### `win-ocr-probe`: can `Windows.Media.Ocr` be the Windows engine at all
+
+Windows only, and it runs **in CI** --- the Windows leg of both `ci.yml` and `release.yml`, as a
+step after the gates. That is the point of it: the question is what a machine nobody configured
+carries, and the developer machines are all configured. Read the two `[verdict]` lines in the
+job log.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example win-ocr-probe
+```
+
+**Not a gate.** It measures, and its exit code says whether it could *measure* --- 0 for any
+answer including "no language packs", 2 for a call that failed. A probe that reddened CI for
+reporting an inconvenient truth is one somebody switches off, and the answer would go with it.
+The cost of that choice is the one `AGENTS.md` records about `18/19 gates passed`: a step that
+always exits 0 is a step nobody reads, so the verdict lines are written to be grepped.
+
+Four readings, and the last two are why this is not an enumeration:
+
+| reading | what it decides |
+|---|---|
+| `AvailableRecognizerLanguages` | whether the in-box engine ships at all, which is `docs/PLAN.md` §9.10's ranking |
+| `TryCreateFromUserProfileLanguages` | whether the call an implementation would make comes back |
+| `MaxImageDimension` | a real bound on `ocr::Pixels`, since the gate hands over a composited image whole |
+| a word and a **non-word**, read back | whether `Options::language_correction` can be honoured here |
+
+The last row is the one that reaches the interface rather than the ranking. That option is
+documented as off for verification *always*, because a corrector turns marks it cannot read into
+plausible words; Vision honours it (`ocr_vision.rs`'s `setUsesLanguageCorrection`) and
+`Windows.Media.Ocr` exposes no such switch. A non-word coming back as something else means a
+verdict from that engine means something different from a verdict from Vision.
+
+**No measurements are recorded here yet** --- the probe has never run. The first CI run on the
+Windows leg is the first reading, and this table gets its numbers from that rather than from an
+expectation written before it.
+
+⚠ **A blank reading for *both* strings is a suspect probe before it is a suspect engine.** GDI
+writes RGB into a 32-bit DIB and leaves the alpha byte alone, so the buffer forces alpha to 255
+after drawing; if that were wrong every glyph would be transparent and the engine would honestly
+report no text. The comment in `draw` says so. Vary the fixture --- a larger `GLYPH_PX`, a
+different face --- before concluding anything about `Windows.Media.Ocr`.
+
+**What it cannot say: containment.** It runs at whatever integrity the shell gave it, and a real
+engine would run at low integrity inside a job object. macOS answered the mirror of that
+question with *no* --- see `ocr-sandbox-probe` below --- so expect a rung ladder like
+`win-sandbox-probe`, not a flag.
+
 ### `ocr-sandbox-probe`: what is left of a process under each profile
 
 macOS only. Three rungs, each a re-exec'd child that renders a page **before** the profile

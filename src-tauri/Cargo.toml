@@ -220,6 +220,16 @@ windows = { version = "0.61", features = [
     "Data_Pdf",
     # Blocking on the WinRT async operations the loader returns.
     "Foundation",
+    # `Language`, which is how WinRT names a BCP-47 tag. `OcrEngine` takes one
+    # and reports the installed set as a vector of them, so it is not separable
+    # from `Media_Ocr` below.
+    "Globalization",
+    # `OcrEngine`, for `win-ocr-probe` only -- there is no Windows engine behind
+    # `ocr::Recogniser` yet, and whether there can be one is the question that
+    # probe exists to answer. `docs/PLAN.md` §9.10 ranks the in-box engine first
+    # on the strength of adding no package, and this is that claim being spent:
+    # two features on a crate already here for the print path, 0 new packages.
+    "Media_Ocr",
     # `BitmapEncoder::BmpEncoderId`, which is the load-bearing choice here: asking
     # for BMP rather than the default PNG means the rendered page arrives as a DIB
     # that `StretchDIBits` accepts as-is, so the print path needs no image decoder
@@ -385,6 +395,10 @@ path = "examples/fdpass_probe.rs"
 [[example]]
 name = "win-sandbox-probe"
 path = "examples/win_sandbox_probe.rs"
+
+[[example]]
+name = "win-ocr-probe"
+path = "examples/win_ocr_probe.rs"
 
 [[example]]
 name = "print-probe"

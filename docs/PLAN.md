@@ -12178,13 +12178,49 @@ that it presented several genuinely unresolved questions as settled architecture
    an `Illegible` verdict, so "OCR the pre-redaction image and reinstate the secret as an
    invisible text layer" does not compile rather than being forbidden in a comment.
 
-   What is **not** answered, and is the next decision: which engines. `Windows.Media.Ocr`
-   needs only a feature on the already-declared `windows` crate; macOS Vision needs
-   `objc2-vision`, whose licence must be checked with `cargo metadata` before it is added,
-   not assumed from the rest of the `objc2` family. Tesseract is Apache-2.0 and therefore
-   permitted, but it would add roughly 30 MB of language data to an 8.0 MB installer and a
-   second C++ image parser, so the in-box engines are the candidates unless a language they
-   lack forces it.
+   ~~What is **not** answered, and is the next decision: which engines.~~ **Half answered,
+   and this paragraph stated the other half as open for longer than it was.** macOS is done:
+   `ocr_vision.rs` drives Vision through `objc2-vision 0.3.2`, whose licence *was* checked
+   with `cargo metadata` over the whole tree rather than assumed from the rest of the `objc2`
+   family, and is `Zlib OR Apache-2.0 OR MIT`. The sentence above kept asking for a check that
+   had already been made and passed, which is the shape `docs/TRAPS.md` records as a *Not
+   done* note outliving the work that closes it --- and it is the more expensive direction,
+   because a decision recorded as open is one somebody re-opens.
+
+   **Windows is the open half, and the argument for the in-box engine is about cost only.**
+   `Windows.Media.Ocr` needs two features on the already-declared `windows` crate ---
+   `Media_Ocr` and `Globalization`, measured 2026-08-29 as **0 new packages** --- against
+   Tesseract's roughly 30 MB of language data on an 8.0 MB installer and a second C++ image
+   parser inside the trust boundary. Tesseract is Apache-2.0 and therefore permitted, and the
+   one thing that would force it is a language the in-box engines lack, which has not been
+   demonstrated.
+
+   **Cost is not availability, and that is what `examples/win_ocr_probe.rs` measures**
+   (2026-08-29). `OcrEngine` needs an installed recogniser language pack, which
+   `RecogniseError::Unavailable`'s doc comment has said since the interface was written
+   without anyone measuring how often that state is the normal one. If a stock Windows carries
+   no pack, the in-box engine is not a feature that ships but one that works on machines
+   somebody set up, and the ranking above changes. The probe runs on the Windows leg of both
+   workflows --- **not as a gate**: it measures, and its exit code says whether it could
+   measure rather than whether the answer was convenient.
+
+   Two further readings come out of the same run, and the second is the one that matters to
+   the interface rather than to the ranking. `MaxImageDimension` is a real bound on
+   `ocr::Pixels`, since the gate composites a probe image and hands it over whole. And
+   `Options::language_correction` is documented as off for verification **always**, because a
+   corrector turns marks it cannot read into plausible words: Vision honours it
+   (`ocr_vision.rs`'s `setUsesLanguageCorrection`) and `Windows.Media.Ocr` exposes no such
+   switch. So the probe reads back a word and a non-word. If the non-word comes back as
+   something else, the contract cannot be honoured on Windows, and a verdict from that engine
+   means something different from a verdict from Vision --- which is a decision about whether
+   `Options` says the same thing on both platforms, not a doc-comment fix.
+
+   **Not done, and it is the second measurement rather than a detail.** Whether the engine
+   survives containment. The probe runs at whatever integrity the shell gave it; a real engine
+   runs at low integrity inside a job object. macOS taught this in the mirror --- Vision is
+   killed by SIGTRAP under `SANDBOX_PROFILE` and needs general `file-read`, which is why OCR
+   is a separate process under `OCR_SANDBOX_PROFILE` --- so expect the same shape of surprise
+   and a rung ladder like `win_sandbox_probe.rs`, not a flag.
 
 11. **Should tpdf ever open a web link, and how would it have to show one?** Opened
     2026-08-16 with *Following links*, which currently refuses `/URI` outright — the same
