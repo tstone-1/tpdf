@@ -36,7 +36,11 @@
 // below, and importing them here made three compile gates red on Windows and
 // green on a Mac --- `docs/TRAPS.md` records that an unused-import warning on one
 // platform is not an unused import. They are imported where they are used.
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
+// Not on Windows, where `OcrProcess` and `OcrStdin` are a `Contained` and a
+// `File`: `spawn_contained` builds the child suspended with a token and a job
+// rather than through `Command`, so there is no `Child` to take a stdin from.
+#[cfg(not(windows))]
 use std::process::{Child, ChildStdin};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -52,6 +56,15 @@ pub const OCR_WORKER_ARGV: &str = "--ocr-worker";
 /// Three, the first free number after the standard streams, and the same choice
 /// [`crate::worker::DOC_FD`] makes for the same reason.
 pub const PIXELS_FD: i32 = 3;
+
+/// How the pixel buffer's handle reaches the child on Windows.
+///
+/// There is no `dup2` here, so the number cannot be agreed in advance the way
+/// [`PIXELS_FD`] is: the parent lists the handle in the child's inherit list and
+/// names its value on the command line, which is what
+/// [`crate::worker::TILE_HANDLE_ARGV`] does for the parser worker's tile.
+#[cfg(windows)]
+pub const PIXELS_HANDLE_ARGV: &str = "--pixels-handle";
 
 /// How large a probe image the buffer will hold.
 ///
@@ -189,6 +202,62 @@ fn room_for(pixels: &Pixels<'_>, capacity: usize) -> Result<(), RecogniseError> 
     Ok(())
 }
 
+/// The child process. See [`crate::worker::Worker`], which types its own the same
+/// way and for the same reason: on Windows the child is not a
+/// `std::process::Child`, because `spawn_contained` builds it suspended with a
+/// token and a job rather than through `Command`.
+#[cfg(not(windows))]
+type OcrProcess = Child;
+/// The child process. See the other arm.
+#[cfg(windows)]
+type OcrProcess = crate::sandbox_win::Contained;
+
+/// What the parent writes requests to.
+///
+/// A `File` on Windows: with no `Child` there is no `ChildStdin` to take, the
+/// pipe end arrives from `CreatePipe` as a bare handle, and `File` is the
+/// standard library's owner for one. Closing it is what the child reads as end of
+/// input, which is how [`serve_loop`] is asked to stop.
+#[cfg(not(windows))]
+type OcrStdin = ChildStdin;
+/// What the parent writes requests to. See the other arm.
+#[cfg(windows)]
+type OcrStdin = std::fs::File;
+
+/// Reads reply lines off the child and hands them to a channel.
+///
+/// **A thread rather than a blocking read, so that `recognise` can bound its
+/// wait.** There is nowhere else to put that bound: the engine ignores the
+/// deadline it is handed --- `VNImageRequestHandler` has no timeout and neither
+/// does `RecognizeAsync` --- so a wedged child cannot enforce one on itself, and
+/// only the parent survives it. See [`REPLY_DEADLINE`].
+///
+/// Generic over the reader because the two platforms hand over different types
+/// for the same pipe: a `ChildStdout` where there is a `Child`, a `File` where
+/// the handle came from `CreatePipe`.
+fn reply_thread<R: Read + Send + 'static>(stdout: R) -> Receiver<std::io::Result<String>> {
+    let (tx, replies) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if tx.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+    replies
+}
+
 /// A process holding an OCR engine.
 ///
 /// **Not a [`crate::ocr::Recogniser`]**, and the difference is not tidiness. That
@@ -197,8 +266,8 @@ fn room_for(pixels: &Pixels<'_>, capacity: usize) -> Result<(), RecogniseError> 
 /// before the first reply there is nothing to report. So [`recognise`](Self::recognise)
 /// returns the id beside the items rather than promising one in advance.
 pub struct OcrWorker {
-    child: Child,
-    stdin: ChildStdin,
+    child: OcrProcess,
+    stdin: OcrStdin,
     replies: Receiver<std::io::Result<String>>,
     pixels: Shm,
     /// Set once the process has been given up on, so a second call says why
@@ -213,9 +282,93 @@ impl OcrWorker {
     ///
     /// Creating the mapping or spawning; and on any platform with no engine,
     /// always --- see [`NO_ENGINE`].
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn spawn() -> Result<Self, String> {
         Err(NO_ENGINE.into())
+    }
+
+    /// Starts one, contained the way the parser worker is.
+    ///
+    /// **The containment is `sandbox_win::Containment::default()` --- job object
+    /// plus low integrity --- and that it is enough was measured before this was
+    /// written**, not assumed from the parser worker's use of it.
+    /// `examples/win_ocr_probe.rs` reads the same strings inside it and outside
+    /// it and gets identical answers (`BUILD.md`, 2026-08-29). macOS needed a
+    /// profile of its own because Vision is killed by SIGTRAP under
+    /// `SANDBOX_PROFILE`; this engine needs none, so there is no
+    /// `OCR_SANDBOX_PROFILE` counterpart here and its absence is a result rather
+    /// than an omission.
+    ///
+    /// **The child is created suspended and resumed after the job is applied**,
+    /// which `spawn_contained` arranges: a limit applied to a process that is
+    /// already running is a race the process can win.
+    ///
+    /// # Errors
+    ///
+    /// Creating the mapping, the pipes, containing or spawning the child.
+    #[cfg(windows)]
+    pub fn spawn() -> Result<Self, String> {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+
+        use crate::sandbox_win::{pipe, spawn_contained, Containment, Stdio};
+        use crate::worker_argv::command_line;
+
+        let pixels = Shm::create(PIXELS_CAPACITY)?;
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+        let handle = pixels.raw_handle();
+        let command = command_line(&[
+            &exe.to_string_lossy(),
+            OCR_WORKER_ARGV,
+            PIXELS_HANDLE_ARGV,
+            &handle.to_string(),
+        ]);
+
+        // Two pipes, four ends, and which end goes where is the protocol: the
+        // child reads requests and writes replies, so it gets the *read* end of
+        // one and the *write* end of the other.
+        let (requests_read, requests_write) = pipe()?;
+        let (replies_read, replies_write) = pipe()?;
+        // SAFETY: four fresh handles from `CreatePipe`, owned by nothing else.
+        // Wrapped now rather than after the spawn, so an error on any branch
+        // added later still closes them.
+        let (stdin, stdout, child_stdin, child_stdout) = unsafe {
+            (
+                std::fs::File::from_raw_handle(requests_write.cast()),
+                std::fs::File::from_raw_handle(replies_read.cast()),
+                std::fs::File::from_raw_handle(requests_read.cast()),
+                std::fs::File::from_raw_handle(replies_write.cast()),
+            )
+        };
+
+        // Inherited, as the parser worker's is and as the macOS arm's is: a
+        // containment refusal or a fatal exception has to be visible somewhere.
+        let stdio = Stdio::with_inherited_stderr(
+            child_stdin.as_raw_handle().cast(),
+            child_stdout.as_raw_handle().cast(),
+        )?;
+        let child = spawn_contained(
+            &command,
+            &[handle as windows_sys::Win32::Foundation::HANDLE],
+            &Containment::default(),
+            Some(&stdio),
+        )?;
+
+        // Closed in the parent *before* the child runs. Not hygiene: while this
+        // process holds a copy of the reply pipe's write end that pipe never
+        // reaches end of file, so a worker that died looks like one still
+        // thinking, and the deadline below would be spent on a corpse.
+        drop(child_stdin);
+        drop(child_stdout);
+
+        child.resume()?;
+        let replies = reply_thread(stdout);
+        Ok(Self {
+            child,
+            stdin,
+            replies,
+            pixels,
+            dead: None,
+        })
     }
 
     /// Starts one.
@@ -229,7 +382,6 @@ impl OcrWorker {
     /// Creating the mapping, or spawning.
     #[cfg(target_os = "macos")]
     pub fn spawn() -> Result<Self, String> {
-        use std::io::{BufRead, BufReader};
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
 
@@ -266,29 +418,7 @@ impl OcrWorker {
         let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
         let stdin = child.stdin.take().ok_or("the OCR worker has no stdin")?;
         let stdout = child.stdout.take().ok_or("the OCR worker has no stdout")?;
-        let (tx, replies) = std::sync::mpsc::channel();
-        // A thread rather than a blocking read, so that `recognise` can bound its
-        // wait. There is nowhere else to put the bound: the engine ignores the
-        // deadline it is handed, so the child cannot enforce one on itself.
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if tx.send(Ok(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Err(e));
-                        break;
-                    }
-                }
-            }
-        });
-
+        let replies = reply_thread(stdout);
         Ok(Self {
             child,
             stdin,
@@ -299,9 +429,20 @@ impl OcrWorker {
     }
 
     /// The child's process id, for a harness that wants to look at it.
+    ///
+    /// Two arms because the two child types spell it differently, and for no
+    /// deeper reason: `Child::id()` is a method, `Contained::pid` a field.
     #[must_use]
+    #[cfg(not(windows))]
     pub fn pid(&self) -> u32 {
         self.child.id()
+    }
+
+    /// The child's process id, for a harness that wants to look at it.
+    #[must_use]
+    #[cfg(windows)]
+    pub fn pid(&self) -> u32 {
+        self.child.pid
     }
 
     /// Reads text off an image, in the other process.
@@ -396,7 +537,6 @@ impl Drop for OcrWorker {
 /// mapping is adopted while the process still has the authority to, and the
 /// profile goes on before a single request is read --- so there is no request
 /// this process can be asked to serve from outside its boundary.
-#[cfg(target_os = "macos")]
 pub fn child_main() -> ! {
     let code = match serve() {
         Ok(()) => 0,
@@ -415,10 +555,14 @@ pub fn child_main() -> ! {
 }
 
 /// Maps the buffer, puts the profile in force, and answers until stdin closes.
+///
+/// **The order of the first two steps is the whole of the containment**, which is
+/// why this is per-platform and [`serve_loop`] is not: what a child must do to
+/// become contained has no cross-platform spelling, and pretending otherwise is
+/// how one platform quietly ends up doing less.
 #[cfg(target_os = "macos")]
 fn serve() -> Result<(), String> {
-    use crate::ocr::{Recogniser, OCR_SANDBOX_PROFILE};
-    use std::io::{BufRead, BufReader};
+    use crate::ocr::OCR_SANDBOX_PROFILE;
 
     // SAFETY: the parent dup2'd a live descriptor to this number before exec, and
     // nothing else in this process owns it. Read-only: the child never writes
@@ -427,7 +571,60 @@ fn serve() -> Result<(), String> {
 
     crate::worker_child::apply_sandbox(OCR_SANDBOX_PROFILE)?;
 
-    let engine = crate::ocr_vision::Vision;
+    serve_loop(&crate::ocr_vision::Vision, &pixels)
+}
+
+/// Adopts the buffer, checks the containment, and answers until stdin closes.
+///
+/// **A check where macOS has an application, and the asymmetry is real rather
+/// than a shortcut.** `apply_sandbox` *causes* the macOS child to lose authority.
+/// Here the decision was taken by whoever called `sandbox_win::spawn_contained`
+/// before this process ran an instruction, and nothing it does can change it ---
+/// so `assert_contained` is all there is, and it is what turns "the parent is
+/// supposed to contain us" into something that fails when the parent stopped.
+///
+/// **Measured before it was built**: `examples/win_ocr_probe.rs` reads the same
+/// strings inside this containment and outside it and gets identical answers
+/// (`BUILD.md`, 2026-08-29). Windows needs no profile of its own, which is the
+/// opposite of what macOS needed, and it is a measurement rather than an
+/// expectation.
+#[cfg(windows)]
+fn serve() -> Result<(), String> {
+    let handle = crate::worker_argv::pixels_handle_arg(&std::env::args().collect::<Vec<_>>())
+        .ok_or("an OCR worker was started with no pixel buffer handle")?;
+    // SAFETY: the parent created the mapping, listed this handle in the child's
+    // inherit list and passed its value on the command line; nothing else here
+    // owns it. Read-only, as on macOS and for the same reason.
+    let pixels = unsafe { Shm::from_handle(handle, PIXELS_CAPACITY, false)? };
+
+    crate::sandbox_win::assert_contained()?;
+
+    // Flattened to a sentence rather than carried as a `RecogniseError`: this is
+    // the child's `main`, its only channel is the stderr the parent inherited,
+    // and `Unavailable("no OCR recogniser language pack is installed")` is
+    // already the whole message a reader needs.
+    let engine = crate::ocr_windows::WindowsOcr::new().map_err(|e| e.to_string())?;
+    serve_loop(&engine, &pixels)
+}
+
+/// A platform with no engine, refusing rather than serving nothing.
+///
+/// Unreachable through the application --- [`OcrWorker::spawn`] refuses first, so
+/// the marker this dispatches on never appears in an argv. It is here because a
+/// `serve` that did not exist would make `child_main` fail to compile rather than
+/// fail to run, and the refusal a reader needs is the one with a sentence in it.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn serve() -> Result<(), String> {
+    Err(NO_ENGINE.into())
+}
+
+/// The request loop, which is the same on every platform.
+///
+/// Shared deliberately. The protocol, the framing, the refusal on a request that
+/// does not parse and the flush after every reply are properties of `Ask` and
+/// `Said`, not of an operating system --- and `docs/TRAPS.md` records what a
+/// second copy of a distinction costs: a mutation of one survives.
+fn serve_loop<E: crate::ocr::Recogniser>(engine: &E, pixels: &Shm) -> Result<(), String> {
     let id = engine.id();
     let named = Named {
         name: id.name.to_string(),
@@ -449,7 +646,7 @@ fn serve() -> Result<(), String> {
             Err(e) => Said::Failed(RecogniseError::MalformedInput(format!(
                 "the request did not parse: {e}"
             ))),
-            Ok(ask) => answer(&engine, &named, &pixels, &ask),
+            Ok(ask) => answer(engine, &named, pixels, &ask),
         };
         let encoded =
             serde_json::to_string(&said).map_err(|e| format!("the reply will not encode: {e}"))?;
@@ -460,10 +657,10 @@ fn serve() -> Result<(), String> {
 }
 
 /// One request, against the bytes at the front of the mapping.
-#[cfg(target_os = "macos")]
-fn answer(engine: &crate::ocr_vision::Vision, named: &Named, pixels: &Shm, ask: &Ask) -> Said {
-    use crate::ocr::Recogniser;
-
+///
+/// Generic over the engine rather than naming one, which is what lets both
+/// platforms share it. It named `ocr_vision::Vision` while there was only one.
+fn answer<E: crate::ocr::Recogniser>(engine: &E, named: &Named, pixels: &Shm, ask: &Ask) -> Said {
     let rgba = match frame_of(pixels.as_slice(), ask) {
         Ok(rgba) => rgba,
         Err(why) => return Said::Failed(why),
@@ -688,9 +885,19 @@ mod tests {
         assert!(format!("{why}").contains("buffer holds 23"), "{why}");
     }
 
-    /// Off macOS the spawn refuses rather than returning a worker that answers
-    /// nothing. A caller that got one would report *no text survived*.
-    #[cfg(not(target_os = "macos"))]
+    /// On a platform with no engine the spawn refuses rather than returning a
+    /// worker that answers nothing. A caller that got one would report *no text
+    /// survived*.
+    ///
+    /// ⚠ **This now runs on neither supported platform**, and saying so is the
+    /// point of this paragraph. It was `not(target_os = "macos")`, so Windows ran
+    /// it; Windows got an engine on 2026-08-29 and the condition had to widen,
+    /// which leaves the test compiled by nothing macOS or Windows builds. It is
+    /// kept because the arm it covers is still real code --- `spawn` and `serve`
+    /// both have a `not(any(macos, windows))` branch, and a third platform would
+    /// compile them --- but a reader must not take its presence as evidence that
+    /// the refusal is covered here. Nothing in CI executes it.
+    #[cfg(not(any(target_os = "macos", windows)))]
     #[test]
     fn a_platform_with_no_engine_refuses_to_spawn() {
         // Matched rather than `expect_err`, which would need `OcrWorker: Debug`

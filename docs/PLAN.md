@@ -12246,12 +12246,42 @@ that it presented several genuinely unresolved questions as settled architecture
    `describe_exit` before the answer is parsed, because this class of engine aborts its host
    rather than refusing.
 
-   **So nothing measurable is left in front of a Windows `ocr::Recogniser`.** The trait is one
-   method, `ocr_worker::KNOWN_ENGINES` already reserves `"windows-ocr"`, and
-   `RecognisedItem::confidence` was declared `Option<f32>` for this engine specifically. What
-   remains open is the one thing above that a synthetic string cannot settle --- whether this
-   engine corrects when it is genuinely struggling --- and that wants the corpus sweep, not
-   another probe.
+   ~~**So nothing measurable is left in front of a Windows `ocr::Recogniser`.**~~ **Built
+   2026-08-29**: `src-tauri/src/ocr_windows.rs` is `WindowsOcr`, and `OcrWorker::spawn` has a
+   Windows arm that contains its child with `sandbox_win::Containment::default()` --- the same
+   containment the parser worker gets, not a relaxed one. `ocr_gate` therefore runs on both
+   platforms, which closes the last sentence of `docs/THREAT-MODEL.md` residual risk 19.
+
+   Three things about the shape of it, none guessable from the macOS arm:
+
+   - **The coordinate conversion is the easy one here, and that is the trap.** Vision reports
+     a box normalised 0..1 with the origin bottom-left, so `ocr_vision.rs` flips and carries a
+     long warning about it. `OcrWord::BoundingRect` is already pixels, origin top-left, y down
+     --- this codebase's own convention --- so `pixels_to_points` divides by `scale` and does
+     **not** flip. A reader arriving from `ocr_vision.rs` and adding one for symmetry breaks
+     it, which is why the test is named for the flip that must not be there.
+   - **`ocr_worker`'s request loop is now shared.** `serve_loop` and `answer` are generic over
+     `Recogniser`; only `serve` is per-platform, because what a child must do to *become*
+     contained has no cross-platform spelling and pretending otherwise is how one platform
+     quietly does less. The parts that are genuinely the same --- framing, the refusal on a
+     request that does not parse, the flush after every reply --- are properties of `Ask` and
+     `Said`, and a second copy of those is what `docs/TRAPS.md` warns costs a surviving
+     mutation.
+   - **The pixel conversion has a unit test and the end-to-end path structurally cannot.**
+     `Pixels` is RGBA and `SoftwareBitmap` wants BGRA, so red and blue exchange --- and black
+     text on white is *unchanged* by exchanging two channels, so no OCR reading can detect a
+     missing swap. `rgba_to_bgra_opaque` is tested directly against a colour whose channels
+     differ, with a grey-pixel control that passes with the conversion deleted and is named
+     for being unable to fail.
+
+   `win-ocr-probe` now drives `WindowsOcr` rather than calling WinRT itself, so every CI run
+   exercises the shipping engine end to end, contained and uncontained, instead of a parallel
+   copy agreeing with itself.
+
+   **Still open, and it is the one thing a synthetic string cannot settle**: whether this
+   engine corrects when it is genuinely struggling. `docs/THREAT-MODEL.md` residual risk 20
+   carries it. The instrument is the corpus sweep `redact-reach-probe` already does on macOS,
+   run against real documents on Windows.
 
 11. **Should tpdf ever open a web link, and how would it have to show one?** Opened
     2026-08-16 with *Following links*, which currently refuses `/URI` outright — the same

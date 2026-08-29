@@ -2381,6 +2381,14 @@ rungs to find which one PDFium survives; that question is answered and the answe
 `Containment::default()` implements, so a second ladder here would be a second copy of
 security-critical code --- and the copy that drifts is the one nobody ships.
 
+**Since 2026-08-29 this drives the shipping engine**, `ocr_windows::WindowsOcr`, rather than
+calling WinRT itself. So every CI run exercises `WindowsOcr::recognise` end to end --- bitmap
+construction, the word walk, the coordinate conversion --- contained and uncontained, instead of
+a parallel copy of the same calls agreeing with itself. One thing it still cannot see: the probe
+draws black on white, and exchanging two channels leaves black and white unchanged, so a missing
+RGBA-to-BGRA swap is invisible to any reading here. `ocr_windows`'s own unit test is the
+instrument for that, and has to be.
+
 **Measured `windows-2025`, 2026-08-29: `reads IDENTICALLY to uncontained`.** All four readings
 come back the same under job object plus low integrity as outside it, so `Windows.Media.Ocr`
 does **not** repeat what Vision does on macOS --- the engine needs no separate containment story

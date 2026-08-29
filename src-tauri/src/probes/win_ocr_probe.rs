@@ -2,13 +2,12 @@
 
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 
+use tpdf_lib::ocr::{Options, Pixels, Recogniser};
 use tpdf_lib::ocr_gate::MIN_CONTROL_PX;
+use tpdf_lib::ocr_windows::{rgba_to_bgra_opaque, WindowsOcr};
 use tpdf_lib::sandbox_win::{self, Containment, Stdio};
 use windows::core::HSTRING;
-use windows::Globalization::Language;
-use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
 use windows::Media::Ocr::OcrEngine;
-use windows::Storage::Streams::DataWriter;
 use windows::Win32::Foundation::{COLORREF, RECT};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GdiFlush,
@@ -80,7 +79,7 @@ impl Reading {
 }
 
 /// Every string at every size, as data.
-fn take_readings(engine: &OcrEngine) -> Vec<Reading> {
+fn take_readings(engine: &WindowsOcr) -> Vec<Reading> {
     let mut out = Vec::new();
     for px in SIZES_PX {
         for text in [REAL_WORD, NON_WORD] {
@@ -136,25 +135,6 @@ fn languages() -> Result<Vec<(String, String)>, String> {
         .collect())
 }
 
-/// An engine, and where it came from.
-fn make_engine(tags: &[(String, String)]) -> Result<(OcrEngine, String), String> {
-    match OcrEngine::TryCreateFromUserProfileLanguages() {
-        Ok(engine) => Ok((engine, "an engine".into())),
-        // A real and interesting state: packs are installed but none matches the
-        // profile's languages. Naming which one was used keeps every reading
-        // below attributable to a language.
-        Err(why) => {
-            let (tag, _) = tags
-                .first()
-                .ok_or("no recogniser language to fall back to")?;
-            let engine = Language::CreateLanguage(&HSTRING::from(tag.as_str()))
-                .and_then(|l| OcrEngine::TryCreateFromLanguage(&l))
-                .map_err(|e| format!("no engine from any listed language: {e} (profile: {why})"))?;
-            Ok((engine, format!("no profile engine; fell back to {tag}")))
-        }
-    }
-}
-
 pub fn main() {
     if std::env::args().any(|a| a == CONTAINED_ARGV) {
         contained_child();
@@ -189,9 +169,13 @@ pub fn main() {
         return;
     }
 
-    let engine = match make_engine(&tags) {
-        Ok((engine, source)) => {
-            say("from user profile", &source);
+    let engine = match WindowsOcr::new() {
+        Ok(engine) => {
+            // The shipping engine, not a second copy of the WinRT calls. What CI
+            // exercises here is `ocr_windows::WindowsOcr::recognise` itself ---
+            // bitmap construction, the word walk and the coordinate conversion
+            // --- rather than a probe that agrees with itself.
+            say("engine", &engine.id().to_string());
             engine
         }
         Err(why) => {
@@ -205,10 +189,6 @@ pub fn main() {
     // `languages`/`make_engine` replaced the region they sat in. The run still
     // printed a healthy-looking report and `BUILD.md` still carried the number,
     // so nothing anywhere disagreed. See the trap of that name.
-    match engine.RecognizerLanguage().and_then(|l| l.LanguageTag()) {
-        Ok(tag) => say("engine language", &tag.to_string()),
-        Err(e) => say("engine language", &format!("unreadable ({e})")),
-    }
     match OcrEngine::MaxImageDimension() {
         // A real bound on `ocr::Pixels`: the gate composites a probe image and
         // hands it over whole, so a limit below a page at render scale is a
@@ -362,8 +342,8 @@ fn contained_child() -> ! {
         println!("{why}");
         std::process::exit(NOT_CONTAINED_EXIT as i32);
     }
-    let engine = match languages().and_then(|tags| make_engine(&tags)) {
-        Ok((engine, _)) => engine,
+    let engine = match WindowsOcr::new() {
+        Ok(engine) => engine,
         Err(why) => {
             println!("no engine under containment: {why}");
             std::process::exit(2);
@@ -381,33 +361,44 @@ fn contained_child() -> ! {
 }
 
 /// Draws `text` into a bitmap and asks the engine to read it.
-fn read_back(engine: &OcrEngine, text: &str, px: i32) -> Result<String, String> {
+fn read_back(engine: &WindowsOcr, text: &str, px: i32) -> Result<String, String> {
     let bgra = draw(text, px)?;
 
-    // `DataWriter` with no stream behind it: `DetachBuffer` is the shortest route
-    // from a Rust slice to an `IBuffer`, and it sidesteps the trap about a
-    // `DataWriter` closing the stream it was created over.
-    let writer = DataWriter::new().map_err(|e| format!("DataWriter: {e}"))?;
-    writer
-        .WriteBytes(&bgra)
-        .map_err(|e| format!("WriteBytes: {e}"))?;
-    let buffer = writer
-        .DetachBuffer()
-        .map_err(|e| format!("DetachBuffer: {e}"))?;
+    // GDI writes BGRA and `ocr::Pixels` is documented RGBA, so the bytes are
+    // swapped here and swapped back inside `WindowsOcr::recognise`. That reads as
+    // waste and is the opposite: routing the probe through the *shipping*
+    // conversion is what makes this an end-to-end exercise of the engine rather
+    // than a second copy of the WinRT calls agreeing with itself.
+    //
+    // `rgba_to_bgra_opaque` is its own inverse for the channel exchange, which is
+    // why it can be used in this direction --- and note what it means for this
+    // probe's evidence: a *missing* swap would be invisible here, because black
+    // on white is unchanged by exchanging two channels. The unit test in
+    // `ocr_windows` is the instrument for that, and it has to be.
+    let rgba = rgba_to_bgra_opaque(&bgra).ok_or("the drawn buffer is not whole pixels")?;
 
-    let bitmap =
-        SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, PROBE_W, PROBE_H)
-            .map_err(|e| format!("CreateCopyFromBuffer: {e}"))?;
+    let width = u32::try_from(PROBE_W).map_err(|_| "probe width is negative")?;
+    let height = u32::try_from(PROBE_H).map_err(|_| "probe height is negative")?;
+    let items = engine
+        .recognise(
+            Pixels {
+                rgba: &rgba,
+                width,
+                height,
+                // One pixel per point, so a rectangle comes back in the units it
+                // was drawn in and a wrong `scale` would be visible rather than
+                // divided away.
+                scale: 1.0,
+            },
+            &Options::default(),
+        )
+        .map_err(|why| why.to_string())?;
 
-    let result = engine
-        .RecognizeAsync(&bitmap)
-        .map_err(|e| format!("RecognizeAsync: {e}"))?
-        .get()
-        .map_err(|e| format!("awaiting RecognizeAsync: {e}"))?;
-    result
-        .Text()
-        .map(|t| t.to_string())
-        .map_err(|e| format!("Text: {e}"))
+    Ok(items
+        .into_iter()
+        .map(|item| item.text)
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 /// Black `text` on white, centred, as top-down BGRA.

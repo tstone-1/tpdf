@@ -17,6 +17,8 @@
 use std::path::PathBuf;
 
 #[cfg(windows)]
+use crate::ocr_worker::PIXELS_HANDLE_ARGV;
+#[cfg(windows)]
 use crate::worker::{DOC_HANDLE_ARGV, OUT_HANDLE_ARGV, TILE_HANDLE_ARGV};
 
 /// Where the worker's PDFium library lives, given the parent's own.
@@ -58,6 +60,18 @@ pub fn tile_handle_arg(args: &[String]) -> Option<usize> {
 #[must_use]
 pub fn out_handle_arg(args: &[String]) -> Option<usize> {
     value_of(args, OUT_HANDLE_ARGV).and_then(|v| v.parse().ok())
+}
+
+/// The pixel buffer an OCR worker was given, as an inherited handle.
+///
+/// Windows only, and it is the counterpart of macOS passing
+/// [`crate::ocr_worker::PIXELS_FD`] by number: there is no `dup2` here, so the
+/// parent lists the handle in the child's inherit list and names its value on the
+/// command line.
+#[cfg(windows)]
+#[must_use]
+pub fn pixels_handle_arg(args: &[String]) -> Option<usize> {
+    value_of(args, PIXELS_HANDLE_ARGV).and_then(|v| v.parse().ok())
 }
 
 /// Joins arguments into the single command line `CreateProcess` takes.
