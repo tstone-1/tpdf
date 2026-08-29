@@ -18412,3 +18412,37 @@ answer, not silence.
 
 **And the order is now load-bearing for nothing**, which is what the replacement says. If a
 future change wants the spawn first, it may have it.
+
+### A predicate named after the population it covers is renamed by every kind you add
+
+`Plan::only_adds_marks` decided whether a save could be an incremental append. The name was
+exactly right when it was written: an append could write marks and nothing else, so *does this
+plan only add marks* and *can this be an append* were the same question asked two ways.
+
+They stopped being the same question the first time an append learned to write something that
+is not a mark --- here, an edit to a comment that came out of the file. The predicate then had
+to say yes to a plan carrying **no marks at all**, and its name said the opposite of what it
+did. It is now `is_appendable`.
+
+**The tell is available before the rename is needed**, which is what makes this worth stating
+rather than shrugging at: a predicate whose name enumerates its subjects has a name that is a
+*list*, and a list is wrong the moment somebody adds to it. A predicate named after the
+**answer** is not. The same distinction is already here for a test name --- *a test named for
+the population it covers is renamed by every kind you add* --- and it did not transfer, because
+the two look nothing alike at the call site: one is `#[test] fn`, the other is an `if`.
+
+The renaming is the cheap part. What it cost was **four mutation anchors**, two of them aimed
+at the predicate's body and two at its call sites, and the body's two had *already been
+re-aimed once, three days earlier*, when a redaction clause joined the same expression. Twice
+in three days is an argument for the anchor gate rather than against the predicate: both times
+the mutation was still exactly the right mutation and pointed at nothing, and nothing but the
+gate would have said so --- a drifted anchor is invisible in `git status` and reports SURVIVED.
+
+So the body's anchor is now a named constant that both mutations read, and the next clause
+added to the predicate moves one string instead of two. That is worth doing at the second
+re-aim, not the first: one occurrence is a fact, two is a pattern, and a constant introduced
+for a single caller is its own kind of noise.
+
+One thing this is **not**: an argument for leaving the old name and documenting the
+discrepancy. A name that lies is read far more often than the comment beneath it, and this one
+is read at four call sites, in a test name, and in two documents.

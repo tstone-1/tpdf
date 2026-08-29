@@ -53,6 +53,20 @@ export type CommentKind =
 /** One comment, as `document_comments` returns it. */
 export interface Comment {
   id: number;
+  /**
+   * The object this annotation is in the file, as `[number, generation]`.
+   *
+   * {@link Comment.id} is a position in one scan, so it cannot survive a save:
+   * inserting a comment on an earlier page renumbers every later one. This is
+   * what the file itself calls the annotation, and it is the only name an
+   * incremental update can override.
+   *
+   * `null` means the annotation is a direct dictionary inside the page's
+   * `/Annots` array rather than an object of its own, which PDF permits. Such a
+   * comment **cannot be edited in place** -- there is nothing to override -- and
+   * that is a structural limit rather than a gap. See `annots.rs`.
+   */
+  object: [number, number] | null;
   page: number;
   kind: CommentKind;
   author: string;

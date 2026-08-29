@@ -1438,6 +1438,7 @@ describe("the eraser on marks that have no strokes", () => {
         date: null,
         rect: [100, 300, 300, 400],
         quads: [],
+        object: null,
         reply_to: null,
         hidden: false,
       },

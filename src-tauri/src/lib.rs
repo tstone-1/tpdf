@@ -1116,7 +1116,7 @@ async fn redact_copy(
 /// [`save_document`] asks `save::mode_for_source` whether a plan can be appended;
 /// this does not ask, because an append adds objects and never touches a content
 /// stream, so appending a redaction would write a file with every word still in
-/// it. `Plan::only_adds_marks` refuses a plan carrying a redaction for exactly
+/// it. `Plan::is_appendable` refuses a plan carrying a redaction for exactly
 /// that reason and has a test named for it --- so the property holds at the
 /// predicate as well as here, and neither place is relying on the other.
 ///

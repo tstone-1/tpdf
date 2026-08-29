@@ -8,6 +8,9 @@ import { installFakeDom, type FakeDom } from "./testdom";
 function comment(over: Partial<Comment> & { id: number }): Comment {
   return {
     page: 0,
+    // Null by default: a fixture that is not about editing should not silently
+    // claim its comment is editable. A test that IS about it says so.
+    object: null,
     kind: "text",
     author: "Timo",
     body: "Check this figure.",

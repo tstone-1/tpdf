@@ -998,6 +998,10 @@ impl Edits {
             pages,
             // Empty, always. See the field.
             redactions: Vec::new(),
+            // Always empty out of the model, for the reason `redactions` is:
+            // nothing here has read a comment out of the file. The one command
+            // that edits a foreign note fills this in from a scan.
+            notes: Vec::new(),
         })
     }
 
@@ -1118,6 +1122,10 @@ impl Edits {
             pages,
             marks,
             redactions: Vec::new(),
+            // Always empty out of the model, for the reason `redactions` is:
+            // nothing here has read a comment out of the file. The one command
+            // that edits a foreign note fills this in from a scan.
+            notes: Vec::new(),
         })
     }
 }
@@ -1206,10 +1214,46 @@ pub struct Plan {
     /// `#[serde(default)]` so a plan written before this existed still parses as
     /// the un-redacted one it meant. It crosses the worker boundary with the
     /// rest of the plan for an append, where it is always empty: a plan carrying
-    /// a redaction is never an append, which [`Plan::only_adds_marks`] is what
+    /// a redaction is never an append, which [`Plan::is_appendable`] is what
     /// enforces.
     #[serde(default)]
     pub redactions: Vec<PlannedRedaction>,
+    /// Bodies to write over comments that came out of the file.
+    ///
+    /// Not marks: a mark is an annotation tpdf created and owns, addressed by
+    /// [`MarkId`]. These address an annotation **the file already had**, by the
+    /// object it is --- which is the only name that survives a save, because
+    /// `annots::Comment::id` is a position in one scan.
+    ///
+    /// `#[serde(default)]` for the reason [`Plan::redactions`] has it: a plan
+    /// written before this existed parses as the one it meant.
+    #[serde(default)]
+    pub notes: Vec<PlannedNoteEdit>,
+}
+
+/// One edit to a comment that came out of the file.
+///
+/// The object is `annots::Comment::object`, which is `None` for an annotation
+/// written as a direct dictionary inside a page's `/Annots` array --- so a
+/// caller with such a comment has nothing to put here, and that is the
+/// structural limit rather than a gap. An incremental update overrides an
+/// *object*; a dictionary with no object of its own cannot be overridden
+/// without rewriting the page that contains it.
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PlannedNoteEdit {
+    /// The annotation object, as `[number, generation]`.
+    pub object: (u32, u16),
+    /// The text to write into `/Contents`.
+    pub body: String,
+    /// The modification date, as a PDF date string, for `/M`.
+    ///
+    /// Carried in the plan rather than read from a clock in the worker, exactly
+    /// as [`PlannedMark::made`] is: a plan crossing the process boundary is
+    /// fully determined, so the same plan writes the same bytes and a test does
+    /// not have to freeze time. `/M` moves because the note did --- a reader who
+    /// edits a note and sees somebody else's date beside their own words has
+    /// been told something false, and every viewer shows that date.
+    pub made: String,
 }
 
 /// One baseline page and the regions marked on it.
@@ -1387,13 +1431,22 @@ impl Plan {
     /// of a page walk is how one of them comes to disagree about the crop, which
     /// is a thing that has already happened here once.
     #[must_use]
-    pub fn only_adds_marks(&self) -> bool {
-        !self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
+    pub fn is_appendable(&self) -> bool {
+        // **Renamed from `only_adds_marks` when note edits landed, and the name
+        // is the lesson.** It asked "does this plan only add marks", which was
+        // the same question as "can this be an append" for exactly as long as
+        // marks were the only thing an append could write. A predicate named
+        // after the population it happens to cover is renamed by every kind
+        // somebody adds; one named after the answer is not. `docs/TRAPS.md`
+        // records the same shape in a test name.
+        (!self.marks.is_empty() || !self.notes.is_empty())
+            && self.redactions.is_empty()
+            && self.pages_are_the_file()
     }
 
     /// Whether the pages are the file's, in the file's order and shape.
     ///
-    /// The half [`Plan::is_identity`] and [`Plan::only_adds_marks`] share. It
+    /// The half [`Plan::is_identity`] and [`Plan::is_appendable`] share. It
     /// says nothing about marks, which is all that separates them.
     fn pages_are_the_file(&self) -> bool {
         self.pages.len() == self.baseline as usize

@@ -261,6 +261,25 @@ pub struct Comment {
     /// still something somebody wrote, and it is on the page's `/Annots` either
     /// way.
     pub hidden: bool,
+    /// The object this annotation **is**, as `[number, generation]`.
+    ///
+    /// [`Comment::id`] cannot survive a save: it is a position in one scan, so
+    /// inserting a comment on an earlier page renumbers every later one. An
+    /// object number is what the file itself calls this annotation, and it is
+    /// what an incremental update overrides --- so it is the only name by which
+    /// a reader's edit to somebody else's note can be written back.
+    ///
+    /// **`None` is a structural limit rather than a gap.** PDF permits an
+    /// annotation to be a *direct dictionary* inside the page's `/Annots` array
+    /// rather than a reference to an object of its own, and this scan accepts
+    /// those --- they are on the page and somebody wrote them. Such a comment
+    /// has no object number, so an incremental update has nothing to override:
+    /// changing it means rewriting the page that contains it. A consumer must
+    /// therefore treat `None` as *this one cannot be edited in place*, not as
+    /// *this one was missed*. The same annotation can never be an `/IRT` target
+    /// either, for the same reason, which is why `ids` below has always skipped
+    /// it.
+    pub object: Option<(u32, u16)>,
 }
 
 /// What the bounds cut off, so the UI can say the list is incomplete.
@@ -449,8 +468,17 @@ fn read_page(
             continue;
         };
 
+        // Matched once and used twice: `/IRT` needs it to name a parent, and
+        // `Comment::object` needs it because a scan-order id cannot outlive the
+        // scan. A direct dictionary has no object of its own and gets `None`
+        // from the same expression, which is what keeps the two readings of
+        // "this annotation has no name" from drifting apart.
+        let own = match entry {
+            Object::Reference(id) => Some(*id),
+            _ => None,
+        };
         let id = items.len() as u32;
-        items.push(comment(
+        let mut built = comment(
             annot,
             document,
             id,
@@ -463,13 +491,15 @@ fn read_page(
                 origin: (ox, oy),
             },
             limits,
-        ));
+        );
+        built.object = own;
+        items.push(built);
         parents.push(match annot.get(b"IRT") {
             Ok(Object::Reference(target)) => Some(*target),
             _ => None,
         });
-        if let Object::Reference(own) = entry {
-            ids.insert(*own, id);
+        if let Some(own) = own {
+            ids.insert(own, id);
         }
         on_this_page += 1;
     }
@@ -517,6 +547,11 @@ fn comment(
         // Filled in by `resolve_replies`, which is the only place that can know
         // whether a link would loop.
         reply_to: None,
+        // Filled in by the caller, which is the only place that holds the
+        // `/Annots` entry --- this function is given the dictionary, and a
+        // dictionary does not know whether it reached here through a reference
+        // or was written inline in the array.
+        object: None,
         hidden: annot
             .get(b"F")
             .ok()
@@ -1101,6 +1136,144 @@ mod tests {
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).expect("the fixture must save");
         bytes
+    }
+
+    /// One `/Annots` entry, in the two shapes PDF allows.
+    ///
+    /// `document_with` above writes every annotation as a reference, which is
+    /// what real producers do and what every other test here needs. It therefore
+    /// cannot express the case [`Comment::object`] is `None` for, and a fixture
+    /// that cannot produce both shapes cannot tell them apart.
+    enum Entry {
+        Referenced(Dictionary),
+        Inline(Dictionary),
+    }
+
+    /// A one-page document whose `/Annots` holds these entries in this order,
+    /// with every referenced object created in the **reverse** of it.
+    ///
+    /// The reversal is the discriminating property and not decoration. A scan
+    /// assigns `Comment::id` by array position, so in an ordinary document the
+    /// ids and the object numbers ascend together --- and a field that merely
+    /// echoed the position, or that was off by a constant, would agree with the
+    /// object numbers on every fixture in this module. Here they run in opposite
+    /// directions, so only a value taken from the file itself can pass.
+    fn scan_entries(entries: Vec<Entry>) -> Comments {
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+
+        // Reverse, so that array position and object number disagree.
+        let mut assigned: Vec<Option<lopdf::ObjectId>> = vec![None; entries.len()];
+        let mut dicts: Vec<Option<Dictionary>> = Vec::with_capacity(entries.len());
+        for entry in &entries {
+            dicts.push(match entry {
+                Entry::Referenced(_) => None,
+                Entry::Inline(d) => Some(d.clone()),
+            });
+        }
+        for (i, entry) in entries.into_iter().enumerate().rev() {
+            if let Entry::Referenced(annot) = entry {
+                assigned[i] = Some(document.add_object(annot));
+            }
+        }
+
+        let array: Vec<Object> = assigned
+            .iter()
+            .zip(dicts)
+            .map(|(id, inline)| match (id, inline) {
+                (Some(id), _) => Object::Reference(*id),
+                (None, Some(d)) => Object::Dictionary(d),
+                (None, None) => unreachable!("every entry is one shape or the other"),
+            })
+            .collect();
+
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => Object::Array(array),
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog);
+
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("the fixture must save");
+        scan(&bytes, 1, None).expect("the fixture must parse")
+    }
+
+    /// A comment is named by the object it is, and an inline one has no name.
+    ///
+    /// `Comment::id` is a position in one scan, so it cannot survive a save ---
+    /// which is the whole reason this field exists. The three entries are
+    /// deliberately mixed: two referenced and one written straight into the
+    /// `/Annots` array, because a fixture carrying only the first shape would
+    /// pass with `object` hardcoded to `Some(...)` and one carrying only the
+    /// second would pass with it hardcoded to `None`.
+    #[test]
+    fn a_comment_is_named_by_its_object_and_an_inline_one_is_not() {
+        let comments = scan_entries(vec![
+            Entry::Referenced(note("first")),
+            Entry::Inline(note("second")),
+            Entry::Referenced(note("third")),
+        ]);
+        assert_eq!(comments.items.len(), 3, "all three are on the page");
+
+        let objects: Vec<Option<(u32, u16)>> = comments.items.iter().map(|c| c.object).collect();
+        assert!(
+            objects[0].is_some(),
+            "a referenced annotation has an object"
+        );
+        assert_eq!(
+            objects[1], None,
+            "an annotation written into the array is not an object, so nothing \
+             can override it in an incremental update"
+        );
+        assert!(objects[2].is_some(), "and so does the third");
+        assert_ne!(
+            objects[0], objects[2],
+            "two annotations are two objects --- one value for both would satisfy \
+             every other assertion here"
+        );
+    }
+
+    /// An id ascends with position; an object number does not have to.
+    ///
+    /// The fixture writes its `/Annots` array in the reverse of the order the
+    /// objects were created, so the two orderings run opposite ways. A field
+    /// that echoed the scan position --- or the position plus a constant ---
+    /// agrees with the object numbers on every ordinary document and fails only
+    /// here.
+    #[test]
+    fn an_id_is_a_position_and_an_object_is_a_name() {
+        let comments = scan_entries(vec![
+            Entry::Referenced(note("first")),
+            Entry::Referenced(note("second")),
+            Entry::Referenced(note("third")),
+        ]);
+        let ids: Vec<u32> = comments.items.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![0, 1, 2], "ids are the array order");
+
+        let numbers: Vec<u32> = comments
+            .items
+            .iter()
+            .map(|c| c.object.expect("all three are referenced").0)
+            .collect();
+        assert!(
+            numbers[0] > numbers[1] && numbers[1] > numbers[2],
+            "the objects were created in reverse, so their numbers descend \
+             while the ids ascend: {numbers:?}"
+        );
     }
 
     /// Scans a synthetic document holding exactly these annotations.
@@ -1901,6 +2074,7 @@ mod tests {
             quads: vec![1.0, 2.0, 3.0, 4.0],
             reply_to: Some(0),
             hidden: false,
+            object: Some((7, 0)),
         };
 
         let Comment {
@@ -1915,6 +2089,7 @@ mod tests {
             quads,
             reply_to,
             hidden,
+            object,
         } = comment;
 
         // The three fields carrying document text. They are *shown*, never
@@ -1933,6 +2108,12 @@ mod tests {
             id.to_string(),
             page.to_string(),
             format!("{kind:?}"),
+            // Two integers the *file* chose, which is worth one line rather than
+            // a shrug: a document controls its own object numbers, so this is
+            // attacker-influenced like everything else here. It cannot be a URL
+            // because it cannot be text at all --- the type is the argument, and
+            // the `Debug` below is what the assertion actually reads.
+            format!("{object:?}"),
             date.unwrap_or_default(),
             format!("{rect:?}"),
             // Geometry the document chose the *numbers* of and this file chose
