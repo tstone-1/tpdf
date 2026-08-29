@@ -12227,12 +12227,31 @@ that it presented several genuinely unresolved questions as settled architecture
    seen reading anything it found difficult* --- and the instrument for that is the corpus
    sweep the macOS side already has in `redact-reach-probe`, not another synthetic string.
 
-   **Not done, and it is the second measurement rather than a detail.** Whether the engine
-   survives containment. The probe runs at whatever integrity the shell gave it; a real engine
-   runs at low integrity inside a job object. macOS taught this in the mirror --- Vision is
-   killed by SIGTRAP under `SANDBOX_PROFILE` and needs general `file-read`, which is why OCR
-   is a separate process under `OCR_SANDBOX_PROFILE` --- so expect the same shape of surprise
-   and a rung ladder like `win_sandbox_probe.rs`, not a flag.
+   ~~**Not done, and it is the second measurement rather than a detail.** Whether the engine
+   survives containment.~~ **Measured 2026-08-29, and it is the answer that clears the way:
+   `reads IDENTICALLY to uncontained`.** The probe re-execs itself through
+   `sandbox_win::spawn_contained` at `Containment::default()` --- the containment that ships,
+   job object plus low integrity --- and all four readings come back unchanged. So
+   `Windows.Media.Ocr` does *not* repeat what Vision does here: macOS needs OCR in a separate
+   process under `OCR_SANDBOX_PROFILE` because Vision is killed by SIGTRAP under
+   `SANDBOX_PROFILE` and wants general `file-read`; this engine needs no containment story of
+   its own and can run where the parser worker runs.
+
+   The rung reuses `sandbox_win` rather than building a ladder. `win_sandbox_probe.rs` built
+   six rungs to find which one PDFium survives; that is answered, and the answer is what
+   `Containment::default()` implements, so a second ladder would be a second copy of
+   security-critical code. Three properties make the reading worth trusting, in `BUILD.md`:
+   the child asserts containment *before* measuring, the verdict is a comparison against the
+   uncontained readings rather than a survival check, and the exit code is read through
+   `describe_exit` before the answer is parsed, because this class of engine aborts its host
+   rather than refusing.
+
+   **So nothing measurable is left in front of a Windows `ocr::Recogniser`.** The trait is one
+   method, `ocr_worker::KNOWN_ENGINES` already reserves `"windows-ocr"`, and
+   `RecognisedItem::confidence` was declared `Option<f32>` for this engine specifically. What
+   remains open is the one thing above that a synthetic string cannot settle --- whether this
+   engine corrects when it is genuinely struggling --- and that wants the corpus sweep, not
+   another probe.
 
 11. **Should tpdf ever open a web link, and how would it have to show one?** Opened
     2026-08-16 with *Following links*, which currently refuses `/URI` outright — the same
