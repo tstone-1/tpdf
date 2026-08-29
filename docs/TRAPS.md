@@ -18446,3 +18446,77 @@ for a single caller is its own kind of noise.
 One thing this is **not**: an argument for leaving the old name and documenting the
 discrepancy. A name that lies is read far more often than the comment beneath it, and this one
 is read at four call sites, in a test name, and in two documents.
+
+### A field added to a shared plan is read by one writer, and nothing says which
+
+`Plan::notes` landed on 2026-08-28 with `save::write_note_edits` behind it, and the append
+path called it. The rewrite path takes the same `&Plan`, never mentioned `notes`, and
+therefore **wrote a successful save with the reader's edit missing from it**. The reachable
+case is ordinary rather than exotic: edit a comment, delete a page, press save.
+`Plan::is_appendable` says no the moment the pages are not the file, so the save leaves the
+append and goes through the full serialiser --- which read every other field of the plan and
+not that one.
+
+Nothing could go red. A field nobody reads compiles, serialises, crosses the process boundary
+and arrives intact; the only observable is a byte in the written file that a test would have
+to already be looking for. The suite was green, the anchors were green, and the append's own
+three mutations all died correctly, because they are aimed at the writer that *does* read it.
+
+**The tell was in the commit that created the gap, and it read as a reason not to worry.** Its
+own *Not done* said *"nothing constructs such a plan"* --- true, and it turned "one of the two
+writers ignores this field" into a to-do about the frontend. A field with no producer yet has
+no defect yet; it has a defect the day a producer arrives, and by then the note saying so is
+three commits back.
+
+The sibling entry --- *two writers for one document, and the printer got the older one* ---
+recommends the mechanism that would catch this: **a predicate over a struct should destructure
+it**, so a new field is `error[E0027]` until somebody says which half it is in. That does not
+reach here, and it is worth saying why rather than repeating the advice: `rewrite()`
+destructures `Checked`, not `Plan`, and `Plan` is passed by reference through eight functions
+that each read two or three of its fields. Destructuring it at any one of them would be
+noise, and at all eight would be a rule nobody keeps.
+
+What is cheap instead is **one mutation per writer, aimed at the call**: delete
+`write_note_edits(...)` from the append and delete `rewrite_note_edits(...)` from the rewrite,
+each named for the test on its own path. Two lines in the table, and the day a third writer
+appears its absence is a mutation with nowhere to point rather than a silent hole. That is the
+same lesson as *a guard is only covered when a mutation removes the CALL*, arriving where the
+thing being forgotten is not a guard but a whole capability.
+
+The shared half is one function, `set_note`, for the reason the *removing a refusal removes it
+for every caller* entry gives, read in the other direction: the `/Subtype` guard exists so a
+plan naming a page object cannot write `/Contents` onto the page --- where the key means the
+content stream --- and a second copy of that loop would have been free to be written without
+it.
+
+### An ordering asserted over a `HashMap` fails a third of the time, which reads as flake
+
+`Working::all_rewrites` reports the reader's foreign-comment edits in reading order, and by
+object within a page. Both orderings matter for a reason with no UI in it: the order goes into
+a plan, the plan is written, so an unstable one makes **two saves of one unchanged document
+produce different bytes** --- and every check that compares a file against itself becomes
+unreliable for a reason nobody can find.
+
+The obvious build is a `HashMap` keyed by the object, iterated and then sorted. Measured
+before the code was written, with `rewrites` as a `HashMap` and a four-entry fixture whose
+only ambiguity is two objects on one page: **7 failures in 20 runs** of the ordering test.
+Rust seeds each `HashMap`'s hasher per instance, so this is not a stale-state flake that a
+clean run clears --- it is a fresh coin toss every process, and the two outcomes are a green
+run and a red one on identical code.
+
+That is the worst shape a failure can have here. A test that always fails is a finding; a test
+that fails a third of the time is *deleted*, or loosened until it says nothing, and either way
+the property it was defending is gone. And a sort would not have fixed it either: a sort is a
+line somebody can delete, and the mutation aimed at that line has the same problem as the test
+--- it would report SURVIVED two runs in three.
+
+So the order is structural instead. `rewrites` is a `BTreeMap`, whose iteration is the object
+order by construction, and the outer walk is `self.order` --- the same walk `all_marks` makes.
+There is no sort to delete and no assertion that can pass by luck. It costs a walk of the
+pages per rewrite, which is two small numbers multiplied, and buys a test that fails **every**
+run when the walk is wrong: the mutation that reports every rewrite against every page dies
+each time it is run.
+
+The general form, and it is not only about maps: **before asserting an order, ask what
+produces it.** If the answer is anything with a random seed, a filesystem, or a thread pool in
+it, change the producer rather than the assertion.

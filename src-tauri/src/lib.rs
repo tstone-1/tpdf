@@ -1371,6 +1371,40 @@ async fn annot_note(
     edits.renote(doc, mark, note)
 }
 
+/// Replaces what a comment out of the file says.
+///
+/// [`annot_note`]'s counterpart for an annotation the reader did not make, and
+/// the parameters are where the two part company. A mark is named by an id this
+/// application issued; a foreign comment is named by the **object the file gave
+/// it**, because `annots::Comment::id` is a position in one scan and every id
+/// after an inserted comment moves. `object` is `annots::Comment::object`, sent
+/// back exactly as it arrived.
+///
+/// `page` is the model's identity for the page it sits on, which the frontend
+/// resolves from the comment's file page through the map it already holds. It is
+/// what makes a deleted page take the edit with it --- see
+/// [`docmodel::Command::Rewrite`].
+///
+/// The date is this application's clock, taken here, exactly as
+/// [`annot_mark`]'s is: the caller does not get to choose what a comment claims
+/// about when it was changed.
+#[tauri::command]
+async fn annot_rewrite(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    object: (u32, u16),
+    page: u64,
+    body: String,
+) -> Result<edits::EditState, String> {
+    edits.rewrite(
+        doc,
+        object,
+        page,
+        body,
+        save::pdf_date(std::time::SystemTime::now()),
+    )
+}
+
 /// Replaces what one mark is drawn in.
 ///
 /// The whole colour, not a channel --- see [`docmodel::Command::Recolor`]. Three
@@ -3179,6 +3213,7 @@ pub fn run() {
             redact_document,
             annot_erase,
             annot_note,
+            annot_rewrite,
             annot_recolor,
             annot_move,
             edit_undo,

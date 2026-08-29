@@ -209,6 +209,14 @@ class Mutation:
 
 # `Plan::is_appendable`'s body, which two mutations aim at and which has now moved
 # twice. Named once so that the next clause added to the predicate re-aims both.
+MUT_SUBTYPE_GUARD = (
+    "    if dictionary\n"
+    '        .get(b"Subtype")\n'
+    "        .and_then(Object::as_name)\n"
+    "        .is_err()\n"
+    "    {"
+)
+
 MUT_APPENDABLE = (
     "        (!self.marks.is_empty() || !self.notes.is_empty())\n"
     "            && self.redactions.is_empty()\n"
@@ -5679,8 +5687,8 @@ MUTATIONS += [
         # length or fingerprint check can see.
         "notes: build the append without writing the new body",
         "src/save.rs",
-        '        dictionary.set("Contents", text_string(&note.body));',
-        '        let _ = &note.body;',
+        '    dictionary.set("Contents", text_string(&note.body));',
+        '    let _ = &note.body;',
         "a_comment_out_of_the_file_is_overridden_by_its_object",
     ),
     Mutation(
@@ -5688,8 +5696,8 @@ MUTATIONS += [
         # reader's own words appear over somebody else's timestamp.
         "notes: leave the modification date the file had",
         "src/save.rs",
-        '        dictionary.set("M", text_string(&note.made));',
-        '        let _ = &note.made;',
+        '    dictionary.set("M", text_string(&note.made));',
+        '    let _ = &note.made;',
         "a_comment_out_of_the_file_is_overridden_by_its_object",
     ),
     Mutation(
@@ -5701,6 +5709,101 @@ MUTATIONS += [
         "    write_note_edits(&mut incremental, &plan.notes)?;",
         "    let _ = &plan.notes;",
         "a_comment_out_of_the_file_is_overridden_by_its_object",
+    ),
+    Mutation(
+        # The same omission on the other writer, and it is where the defect
+        # actually was: a reader who edits a comment and then deletes a page
+        # leaves the append path, and until this call existed the rewrite
+        # dropped the edit and reported a successful save. Aimed at the CALL for
+        # the reason the append's twin is.
+        "notes: never call the note writer on the rewrite path",
+        "src/save.rs",
+        "    rewrite_note_edits(&mut doc, &plan.notes)?;",
+        "    let _ = &plan.notes;",
+        "a_rewrite_writes_the_new_body_over_the_old",
+    ),
+    Mutation(
+        # The `/Subtype` guard, reached through the second caller. Without it a
+        # plan naming a page object writes `/Contents` onto the page, where the
+        # key is its content stream: the save reports success and the document is
+        # destroyed. Shared between the two writers precisely so that adding a
+        # caller could not lose it.
+        "notes: let a note edit name something that is not an annotation",
+        "src/save.rs",
+        MUT_SUBTYPE_GUARD,
+        "    if false {",
+        "a_rewrite_refuses_a_note_edit_that_names_a_page",
+    ),
+    Mutation(
+        # The latest version kept rather than the first. Undo of the second
+        # rewrite would then leave the second body in place, which is the one
+        # thing the journal exists to make impossible -- and every other rewrite
+        # test has one version per object, so this is the only one that can see
+        # it.
+        "rewrite: keep the first body an object was given, not the latest",
+        "src/docmodel.rs",
+        "                self.rewrites.insert(object, Rewritten { page, edit });",
+        "                self.rewrites.entry(object).or_insert(Rewritten { page, edit });",
+        "undoing_the_first_rewrite_leaves_the_model_with_nothing_to_say",
+    ),
+    Mutation(
+        # A deleted page leaves its rewrites behind. The plan then carries an
+        # edit for a comment the written file does not contain, and the reader is
+        # told the save failed for a reason about a document they cannot see.
+        "rewrite: leave a deleted page's rewrites in the model",
+        "src/docmodel.rs",
+        "                self.rewrites.retain(|_, held| held.page != page);",
+        "                let _ = page;",
+        "deleting_a_page_takes_the_rewrites_on_it_and_no_others",
+    ),
+    Mutation(
+        # The page checked only on the replay path. The refusal still arrives,
+        # from `Working::apply`, so nothing a reader sees changes -- and a body
+        # has been issued into a table nothing can ever reach again.
+        "rewrite: issue the body before the page is checked",
+        "src/docmodel.rs",
+        "        self.now.live(page)?;\n        let edit = self.issue_rewrite(NoteEdit { body, made });",
+        "        let edit = self.issue_rewrite(NoteEdit { body, made });",
+        "a_rewrite_on_a_page_that_is_gone_says_which_of_the_two_it_is",
+    ),
+    Mutation(
+        # Every rewrite reported for every page. The bodies are right and the
+        # order is nonsense, which is what a walk over the map rather than over
+        # the reading order would produce.
+        "rewrite: report every rewrite against every page",
+        "src/docmodel.rs",
+        "                    .filter(move |(_, held)| held.page == *page)",
+        "                    .filter(move |(_, _held)| true || *page == *page)",
+        "rewrites_come_back_in_reading_order_and_by_object",
+    ),
+    Mutation(
+        # A discarded redo tail keeps its bodies. Nothing about any document
+        # changes, which is the whole reason `rewrite_bodies` exists to be read.
+        "rewrite: keep the bodies of a discarded redo tail",
+        "src/docmodel.rs",
+        "                Command::Rewrite { edit, .. } => {\n                    self.rewrites.remove(&edit);\n                }",
+        "                Command::Rewrite { .. } => {}",
+        "a_discarded_rewrite_takes_its_body_with_it",
+    ),
+    Mutation(
+        # A subset carries every rewrite, including ones on pages it did not
+        # take. The extra edits land on objects the written file sweeps out, so
+        # the reader pays for a save that changes nothing it could show them.
+        "notes: carry every rewrite into a subset plan",
+        "src/edits.rs",
+        "        .filter(|(page, _, _)| kept.contains(page))",
+        "        .filter(|(_page, _, _)| true)",
+        "a_subset_takes_the_rewrites_on_the_pages_it_names_and_leaves_the_rest",
+    ),
+    Mutation(
+        # Object 0 accepted. It is the head of the free list and can never be an
+        # indirect object, so the model journals an edit that no writer can ever
+        # apply -- and the reader has an undo step for it.
+        "notes: accept a comment with no object of its own",
+        "src/edits.rs",
+        "        if object.0 == 0 {",
+        "        if false {",
+        "a_comment_with_no_object_of_its_own_is_refused_here_and_spends_nothing",
     ),
     Mutation(
         # The mirror, one predicate over: route a redaction to the append. An

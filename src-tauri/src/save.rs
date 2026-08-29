@@ -2452,6 +2452,23 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
         encryption,
     } = checked;
 
+    // **First, and the position is load-bearing in one direction only.** A note
+    // edit changes an annotation's own dictionary and depends on nothing else
+    // here, so it could sit almost anywhere; what it must not sit after is
+    // anything that can make the object unreachable. `materialise` unlinks a
+    // dropped page's annotations and `sweep::collect` deletes them, so a note
+    // edit written later would be refused with "this comment is not in the
+    // document any more" -- true of the file this rewrite is building, and a
+    // wrong thing to tell a reader about the document they are looking at.
+    //
+    // Writing it into an object that is then dropped costs a dictionary entry
+    // nobody reads. That is the right trade: the reader deleted the page the
+    // comment was on, so the edit is theirs to lose. `planned_notes` already
+    // leaves out anything on a page the *plan* does not carry, so this only
+    // reaches a page that is being kept -- unless the reader deleted it in the
+    // same breath, which is the case this ordering forgives.
+    rewrite_note_edits(&mut doc, &plan.notes)?;
+
     // What goes and in what order, in the one sequence both writers share ---
     // see `pagetree::materialise`, which carries why the outline is dropped for
     // a deletion and kept for a move, and why turning pages is *not* part of it.
@@ -3855,33 +3872,77 @@ fn write_note_edits(
     notes: &[crate::edits::PlannedNoteEdit],
 ) -> Result<(), Refusal> {
     for note in notes {
-        let id = (note.object.0, note.object.1);
+        // The one thing an append does that a rewrite does not: an incremental
+        // update writes only the objects it holds, so the annotation has to be
+        // brought across before it can be changed. `opt_clone_*` is
+        // clone-if-absent, which is what each page's `/Annots` already uses.
         incremental
-            .opt_clone_object_to_new_document(id)
+            .opt_clone_object_to_new_document((note.object.0, note.object.1))
             .map_err(|e| {
                 Refusal::changed(format!(
                     "the comment being edited is not in this document any more: {e}"
                 ))
             })?;
-        let object = incremental
-            .new_document
-            .get_object_mut(id)
-            .map_err(|e| Refusal::changed(format!("that comment could not be read: {e}")))?;
-        let dictionary = object
-            .as_dict_mut()
-            .map_err(|_| Refusal::from("that comment is not an annotation"))?;
-        if dictionary
-            .get(b"Subtype")
-            .and_then(Object::as_name)
-            .is_err()
-        {
-            // Not "has the subtype we expect": any annotation has one, and the
-            // check that matters is that this is an annotation at all.
-            return Err("that comment is not an annotation".into());
-        }
-        dictionary.set("Contents", text_string(&note.body));
-        dictionary.set("M", text_string(&note.made));
+        set_note(&mut incremental.new_document, note)?;
     }
+    Ok(())
+}
+
+/// [`write_note_edits`] for the rewrite path.
+///
+/// **The same bodies, written into the document itself**, because a rewrite
+/// serialises every object it holds and there is nothing to clone across. That
+/// is the whole difference, and sharing [`set_note`] is what keeps it the whole
+/// difference: the `/Subtype` guard exists so that a plan naming an arbitrary
+/// object cannot write `/Contents` onto a page, and a second copy of this loop
+/// would be free to be written without it. The trap index has that shape under
+/// removing a refusal for every caller; this is the same lesson arriving as a
+/// caller being *added*.
+///
+/// # Errors
+///
+/// [`set_note`]'s, one comment at a time.
+fn rewrite_note_edits(
+    doc: &mut Document,
+    notes: &[crate::edits::PlannedNoteEdit],
+) -> Result<(), Refusal> {
+    for note in notes {
+        set_note(doc, note)?;
+    }
+    Ok(())
+}
+
+/// Writes one planned body over the annotation it names.
+///
+/// # Errors
+///
+/// The object not being in the document, not being a dictionary, or not being an
+/// annotation. The last is checked rather than assumed: a plan naming an
+/// arbitrary object would otherwise let a caller write `/Contents` onto a page,
+/// a font or the catalog, and `/Contents` means something else entirely on a
+/// page.
+fn set_note(doc: &mut Document, note: &crate::edits::PlannedNoteEdit) -> Result<(), Refusal> {
+    let object = doc
+        .get_object_mut((note.object.0, note.object.1))
+        .map_err(|e| {
+            Refusal::changed(format!(
+                "the comment being edited is not in this document any more: {e}"
+            ))
+        })?;
+    let dictionary = object
+        .as_dict_mut()
+        .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+    if dictionary
+        .get(b"Subtype")
+        .and_then(Object::as_name)
+        .is_err()
+    {
+        // Not "has the subtype we expect": any annotation has one, and the
+        // check that matters is that this is an annotation at all.
+        return Err("that comment is not an annotation".into());
+    }
+    dictionary.set("Contents", text_string(&note.body));
+    dictionary.set("M", text_string(&note.made));
     Ok(())
 }
 
@@ -8154,6 +8215,164 @@ mod tests {
                 .expect("a date"),
             b"D:20260829120000Z",
             "`/M` moves with the note, or every viewer shows somebody else's date"
+        );
+    }
+
+    /// A two-page document with one annotation, on the second page.
+    ///
+    /// Two pages so that a plan keeping one of them is **not** an append, which
+    /// is the only way the rewrite path is reached at all --- and the annotation
+    /// is on the page that survives, so a refusal here would be about the
+    /// comment rather than about the page it went with.
+    fn document_with_a_comment_on_the_second_page() -> (Vec<u8>, lopdf::ObjectId) {
+        use lopdf::dictionary;
+
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let annot = document.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "Contents" => Object::string_literal("before"),
+            "M" => Object::string_literal("D:20260101000000Z"),
+        });
+        let first = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        });
+        let second = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => vec![annot.into()],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![first.into(), second.into()],
+                "Count" => 2,
+            }),
+        );
+        let catalog = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("the fixture must save");
+        (bytes, annot)
+    }
+
+    /// A rewrite writes the note edits an append would, on a plan no append can
+    /// take.
+    ///
+    /// **The path a reader reaches by editing a comment and then deleting a
+    /// page**, which is the case `write_note_edits` alone does not cover:
+    /// [`Plan::is_appendable`] says no the moment the pages are not the file, so
+    /// the save goes through the full serialiser instead --- and until this
+    /// wiring existed it went through it *silently*, dropping the edit and
+    /// reporting a successful save.
+    #[test]
+    fn a_rewrite_writes_the_new_body_over_the_old() {
+        let (original, annot) = document_with_a_comment_on_the_second_page();
+
+        let mut plan = plan_of(&[0, 0]);
+        // Keep only the second page, which is what makes this a rewrite.
+        plan.pages = vec![PageView {
+            id: 2,
+            source: 1,
+            turns: 0,
+            crop: None,
+        }];
+        plan.notes = vec![crate::edits::PlannedNoteEdit {
+            object: (annot.0, annot.1),
+            body: "after".into(),
+            made: "D:20260829120000Z".into(),
+        }];
+        assert!(
+            !plan.is_appendable(),
+            "the premise: a plan that drops a page cannot be an append, so this \
+             test exercises the writer the append test cannot reach"
+        );
+
+        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
+        assert_eq!(after.get_pages().len(), 1, "one page was kept");
+
+        // Found by walking the surviving page rather than by the object id: a
+        // rewrite renumbers nothing today, and a test that assumed so would be
+        // asserting the writer's bookkeeping instead of what a reader sees.
+        let page = *after.get_pages().values().next().expect("the kept page");
+        let annots = after
+            .get_dictionary(page)
+            .expect("the page")
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("the page keeps its annotations");
+        assert_eq!(annots.len(), 1);
+        let dictionary = after
+            .get_object(annots[0].as_reference().expect("an indirect annotation"))
+            .expect("the annotation")
+            .as_dict()
+            .expect("a dictionary");
+        assert_eq!(
+            dictionary
+                .get(b"Contents")
+                .and_then(Object::as_str)
+                .expect("a body"),
+            b"after",
+            "the rewrite must carry the note edit the append carries"
+        );
+        assert_eq!(
+            dictionary
+                .get(b"M")
+                .and_then(Object::as_str)
+                .expect("a date"),
+            b"D:20260829120000Z",
+            "`/M` moves on this path too, or the two writers disagree about one \
+             comment"
+        );
+    }
+
+    /// A note edit naming something that is not an annotation is refused, on the
+    /// rewrite path as on the append.
+    ///
+    /// The `/Subtype` guard, reached through the second caller. It is the reason
+    /// [`set_note`] is shared rather than copied: without it a plan could write
+    /// `/Contents` onto a page object, where the key means the page's content
+    /// stream, and the document would be destroyed by a save that reported
+    /// success.
+    #[test]
+    fn a_rewrite_refuses_a_note_edit_that_names_a_page() {
+        let (original, _) = document_with_a_comment_on_the_second_page();
+        let page_object = Document::load_mem(&original)
+            .expect("the fixture parses")
+            .get_pages()
+            .into_iter()
+            .next()
+            .expect("a page")
+            .1;
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.pages = vec![PageView {
+            id: 2,
+            source: 1,
+            turns: 0,
+            crop: None,
+        }];
+        plan.notes = vec![crate::edits::PlannedNoteEdit {
+            object: (page_object.0, page_object.1),
+            body: "after".into(),
+            made: "D:20260829120000Z".into(),
+        }];
+
+        let refused = rewrite_update(&original, &plan, NO_VIEW_TURN, None)
+            .expect_err("a page is not a comment");
+        assert!(
+            refused.message.contains("not an annotation"),
+            "the refusal must say what is wrong: {refused:?}"
         );
     }
 

@@ -109,6 +109,28 @@ export interface Split {
   paths: string[];
 }
 
+/**
+ * One comment out of the file that the reader has rewritten. Mirrors
+ * `edits::NoteEditView`.
+ */
+export interface NoteEdited {
+  /**
+   * The annotation object, as `[number, generation]`.
+   *
+   * The file's name for it, not a model id, and the reason is `Comment.id`:
+   * that is a position in one scan, so inserting a comment anywhere earlier
+   * renumbers every later one. A comment whose `object` is `null` cannot be
+   * edited at all --- see `comments.ts`.
+   */
+  object: [number, number];
+  /** The page it is on, by `PageView.id` --- never a position. */
+  page: number;
+  /** What the comment now says. */
+  body: string;
+  /** When the reader typed it, in PDF date form. */
+  made: string;
+}
+
 /** Mirrors `edits::EditState`. */
 export interface EditState {
   pages: PageView[];
@@ -122,6 +144,16 @@ export interface EditState {
    * an apply destroys. See {@link RedactionView}.
    */
   redactions: RedactionView[];
+  /**
+   * Every comment out of the file the reader has rewritten, in page order.
+   *
+   * The only thing in this state that is about somebody else's annotation. The
+   * comments panel lists what a scan of the file found, and the scan does not
+   * know what has been typed since --- joining the two on {@link
+   * NoteEdited.object} is what stops an edited comment reading as unedited until
+   * the document is saved and opened again.
+   */
+  notes: NoteEdited[];
   can_undo: boolean;
   can_redo: boolean;
   /** Whether anything differs from the file on disk. */
@@ -133,6 +165,7 @@ export const NOTHING_OPEN: EditState = {
   pages: [],
   marks: [],
   redactions: [],
+  notes: [],
   can_undo: false,
   can_redo: false,
   dirty: false,
@@ -392,6 +425,38 @@ export class Edits {
   async renote(mark: number, note: string): Promise<EditState> {
     return this.adopt(
       await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),
+    );
+  }
+
+  /**
+   * Replaces what a comment **out of the file** says, by the object it is.
+   *
+   * {@link renote}'s counterpart for an annotation the reader did not make, and
+   * the caveat there carries over word for word: the model journals whatever it
+   * is told, so a caller must not send a body the comment already has.
+   *
+   * **Addressed by the file's object rather than by `Comment.id`**, because that
+   * id is a position in one scan and a plan crosses a process boundary --- see
+   * `annots::Comment::object`. A comment with no object of its own is not
+   * editable, and this is not the place that says so: a caller with `null` in
+   * hand has nothing to pass.
+   *
+   * `page` is the model's identity for the page, which the caller resolves from
+   * the comment's file page through {@link Edits.map}. Sending a page the model
+   * has deleted is refused there rather than predicted here.
+   */
+  async rewrite(
+    object: readonly [number, number],
+    page: PageId,
+    body: string,
+  ): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_rewrite", {
+        doc: this.doc,
+        object,
+        page,
+        body,
+      }),
     );
   }
 

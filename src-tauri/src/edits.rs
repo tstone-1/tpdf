@@ -48,8 +48,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
-    Command, Doc, Mark, MarkId, MarkKind, PageId, Point, Quad, Rect, Redaction, RedactionId,
-    Refusal, StampName, Stroke,
+    Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, Point, Quad, Rect, Redaction,
+    RedactionId, Refusal, StampName, Stroke,
 };
 use crate::fingerprint::Fingerprint;
 
@@ -209,6 +209,33 @@ pub struct RedactionView {
     pub area: [f32; 4],
 }
 
+/// One comment out of the file that the reader has rewritten.
+///
+/// **The only thing in [`EditState`] that is about somebody else's annotation.**
+/// Everything else there is something the reader made; this is a body written
+/// over something that was already in the document, which is why it is addressed
+/// by the *file's* name for it rather than by a model id.
+///
+/// The panel needs it because the comments it lists come from a scan of the file
+/// and the scan does not know what the reader has typed since. Joining the two
+/// on `object` is what stops an edited comment reading as unedited until the
+/// document is saved and opened again.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct NoteEditView {
+    /// The annotation object, as `[number, generation]`.
+    ///
+    /// A pair rather than a model id, for [`crate::docmodel::ObjectId`]'s
+    /// reason: the file numbered this, not us. It is what
+    /// `annots::Comment::object` reports, sent back verbatim.
+    pub object: (u32, u16),
+    /// The page it is on, by [`PageView::id`] --- never a position.
+    pub page: u64,
+    /// What the comment now says.
+    pub body: String,
+    /// When the reader typed it, in PDF date form.
+    pub made: String,
+}
+
 /// What the frontend asks for when a reader makes a mark.
 ///
 /// A struct rather than a parameter list, and not only because clippy counts to
@@ -312,6 +339,17 @@ pub struct EditState {
     ///
     /// Whole rather than per page, for `marks`' reason.
     pub redactions: Vec<RedactionView>,
+    /// Every comment out of the file the reader has rewritten, in page order.
+    ///
+    /// A third list rather than more entries in `marks`, for `redactions`'
+    /// reason applied the other way round: those two are things the reader made,
+    /// and this is a change to something that was already in the document. A
+    /// writer that walked one list would have to ask of every entry which of the
+    /// three it was.
+    ///
+    /// Empty for every document nobody has edited a foreign comment in, which is
+    /// almost all of them.
+    pub notes: Vec<NoteEditView>,
     /// Whether anything differs from the file on disk.
     ///
     /// Read from the journal cursor rather than by comparing the working
@@ -870,6 +908,61 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Replaces what a comment out of the file says, addressed by its object.
+    ///
+    /// [`renote`](Edits::renote)'s counterpart for an annotation the reader did
+    /// not make. Three things about it are not that method's, and each is a
+    /// consequence of the subject belonging to the file:
+    ///
+    /// - **The object comes in from outside**, as `annots::Comment::object`
+    ///   reported it. Nothing on this side can check it names an annotation ---
+    ///   the model has never parsed the document --- so the check that matters
+    ///   is `save::set_note`'s, in the worker, against the bytes. The one
+    ///   thing refused here is object **0**, which is the head of the free list
+    ///   and can never be an indirect object at all: a plan naming it is a
+    ///   defect on this side rather than a file that changed.
+    /// - **The page comes in beside it**, by the identity a state reply gave it,
+    ///   and is what a deleted page checks against. See
+    ///   [`Command::Rewrite`](crate::docmodel::Command::Rewrite).
+    /// - **There is no text-box check.** That one is about a note tpdf *draws*,
+    ///   in a font it chose; this body goes into `/Contents` as UTF-16 if it has
+    ///   to, and whatever draws it is the file's own appearance stream.
+    ///
+    /// `made` is the timestamp in PDF date form, taken from the application's
+    /// clock at the moment the command arrives --- [`annotate`](Edits::annotate)'s
+    /// arrangement, and for its reason.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the object number is zero; the body is
+    /// longer than [`crate::textbox::MAX_NOTE_CHARS`]; the page does not exist
+    /// or was deleted.
+    pub fn rewrite(
+        &self,
+        doc: u32,
+        object: (u32, u16),
+        page: u64,
+        body: String,
+        made: String,
+    ) -> Result<EditState, String> {
+        if object.0 == 0 {
+            return Err("that comment has no object to write over".to_string());
+        }
+        // Before the lock, for `renote`'s reason.
+        too_long(&body)?;
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .rewrite(
+                ObjectId::new(object.0, object.1),
+                PageId::from_raw(page),
+                body,
+                made,
+            )
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Replaces what one mark is drawn in, addressed by identity.
     ///
     /// [`renote`](Edits::renote)'s shape exactly, and not routed through
@@ -995,13 +1088,11 @@ impl Edits {
             // struct literal is evaluation order, so this reads the borrow while
             // there is still one to read.
             marks: planned_marks(model, &pages),
+            // Before `pages` too, and for its reason.
+            notes: planned_notes(model, &pages),
             pages,
             // Empty, always. See the field.
             redactions: Vec::new(),
-            // Always empty out of the model, for the reason `redactions` is:
-            // nothing here has read a comment out of the file. The one command
-            // that edits a foreign note fills this in from a scan.
-            notes: Vec::new(),
         })
     }
 
@@ -1116,16 +1207,14 @@ impl Edits {
         }
 
         let marks = planned_marks(model, &pages);
+        let notes = planned_notes(model, &pages);
         Ok(Plan {
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
             marks,
             redactions: Vec::new(),
-            // Always empty out of the model, for the reason `redactions` is:
-            // nothing here has read a comment out of the file. The one command
-            // that edits a foreign note fills this in from a scan.
-            notes: Vec::new(),
+            notes,
         })
     }
 }
@@ -1160,6 +1249,47 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     made: body.made.clone(),
                 }
             })
+        })
+        .collect()
+}
+
+/// The rewritten foreign comments that belong to `pages`, in page order.
+///
+/// [`planned_marks`]' twin, driven by `pages` for its reason --- which matters
+/// more here than there. A subset plan writes a file that holds only the pages
+/// it names, so an edit to a comment on a page the reader did not take would be
+/// written onto an object about to be swept out of that file: work thrown away,
+/// or, if the sweep ever stopped running, a comment in a document the reader
+/// cannot see the page of.
+///
+/// **It filters where [`planned_marks`] selects, and that asymmetry is the
+/// model's shape rather than a choice here.** Marks are held per page, so
+/// walking the pages reaches exactly the ones a subset keeps; rewrites are held
+/// per object, because that is the identity a reader edits by, so there is no
+/// per-page list to walk and the kept pages are a filter instead. The model
+/// keeps a rewrite's page beside it for exactly this --- see
+/// [`crate::docmodel::Command::Rewrite`].
+///
+/// The order is [`Working::all_rewrites`](crate::docmodel::Working::all_rewrites)',
+/// which is page order in the *whole* document. A subset is ascending ---
+/// `plan_subset` refuses anything else --- so filtering it leaves the subset's
+/// own order rather than needing a second sort.
+fn planned_notes(model: &Doc, pages: &[PageView]) -> Vec<PlannedNoteEdit> {
+    let working = model.working();
+    let kept: Vec<PageId> = pages.iter().map(|view| PageId::from_raw(view.id)).collect();
+    working
+        .all_rewrites()
+        .into_iter()
+        .filter(|(page, _, _)| kept.contains(page))
+        .map(|(_, object, _)| {
+            let edit = model
+                .rewrite_of(object)
+                .expect("a rewrite in the working document has a body");
+            PlannedNoteEdit {
+                object: (object.number(), object.generation()),
+                body: edit.body.clone(),
+                made: edit.made.clone(),
+            }
         })
         .collect()
 }
@@ -1630,11 +1760,32 @@ fn snapshot(model: &Doc) -> EditState {
         })
         .collect();
 
+    let notes = working
+        .all_rewrites()
+        .into_iter()
+        .map(|(page, object, _)| {
+            // Through the model's accessor rather than the id `all_rewrites`
+            // also hands back, for `MarkView::note`'s reason: what the comment
+            // says *now* is the working document's answer, and an undo has
+            // already changed it by the time this runs.
+            let edit = model
+                .rewrite_of(object)
+                .expect("a rewrite in the working document has a body");
+            NoteEditView {
+                object: (object.number(), object.generation()),
+                page: page.get(),
+                body: edit.body.clone(),
+                made: edit.made.clone(),
+            }
+        })
+        .collect();
+
     let (applied, _) = model.depth();
     EditState {
         pages,
         marks,
         redactions,
+        notes,
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,
@@ -2725,6 +2876,103 @@ mod tests {
         // A plan naming the model's id would name nothing `lopdf` knows.
         assert_eq!(plan.marks[0].source, 1);
         assert_eq!(plan.marks[0].author, "a reader");
+    }
+
+    #[test]
+    fn a_rewritten_comment_reaches_the_reply_and_the_plan_by_the_files_own_name() {
+        // Both directions in one test for the crop test's reason below: a reply
+        // that carried the new body and a plan that did not would show an
+        // edited comment in the panel and save the old words.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        edits
+            .rewrite(7, (12, 0), id, "what I think".into(), stamped())
+            .expect("the model takes the rewrite");
+
+        let state = edits.state(7).expect("state");
+        assert_eq!(state.notes.len(), 1);
+        assert_eq!(state.notes[0].object, (12, 0));
+        assert_eq!(state.notes[0].page, id);
+        assert_eq!(state.notes[0].body, "what I think");
+        assert_eq!(state.notes[0].made, stamped());
+        // A journalled command, so the document differs from the file --- which
+        // is what puts the save in front of the reader at all.
+        assert!(state.dirty);
+        assert!(state.can_undo);
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.notes.len(), 1);
+        // **The object, not a page and not a position.** Everything else in a
+        // plan is addressed by the page's place in the file; this is the one
+        // thing the file itself named, and it is what survives the round trip
+        // through the frontend that `annots::Comment::id` cannot.
+        assert_eq!(plan.notes[0].object, (12, 0));
+        assert_eq!(plan.notes[0].body, "what I think");
+        assert_eq!(plan.notes[0].made, stamped());
+        // The control: a plan that only rewrites a comment adds no mark, so a
+        // writer cannot mistake one for the other.
+        assert!(plan.marks.is_empty());
+    }
+
+    #[test]
+    fn a_subset_takes_the_rewrites_on_the_pages_it_names_and_leaves_the_rest() {
+        // The reason `planned_notes` is driven by the pages. A subset writes a
+        // file holding only what it names, so an edit to a comment on a page it
+        // did not take would be written onto an object that file sweeps out ---
+        // and the reader would have paid for a save that changed nothing.
+        let edits = opened();
+        let pages = edits.state(7).expect("state").pages;
+        edits
+            .rewrite(7, (12, 0), pages[0].id, "on the first".into(), stamped())
+            .expect("rewrite");
+        edits
+            .rewrite(7, (34, 0), pages[1].id, "on the second".into(), stamped())
+            .expect("rewrite");
+
+        let whole = edits.plan(7).expect("plan");
+        assert_eq!(whole.notes.len(), 2);
+
+        let subset = edits.plan_subset(7, &[1, 2]).expect("subset");
+        assert_eq!(
+            subset
+                .notes
+                .iter()
+                .map(|note| note.object)
+                .collect::<Vec<_>>(),
+            vec![(34, 0)]
+        );
+    }
+
+    #[test]
+    fn a_comment_with_no_object_of_its_own_is_refused_here_and_spends_nothing() {
+        // Object 0 is the head of the free list and can never be an indirect
+        // object, so a plan naming it is a defect on this side rather than a
+        // file that changed under the reader. Refused here because this is the
+        // boundary the number arrives at --- the model has never read the file
+        // and could not tell object 0 from object 12.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[0].id;
+        assert_eq!(
+            edits.rewrite(7, (0, 0), id, "mine".into(), stamped()),
+            Err("that comment has no object to write over".to_string())
+        );
+        let state = edits.state(7).expect("state");
+        assert!(state.notes.is_empty());
+        // Nothing was journalled, so the reader has no undo step in front of
+        // them for a command that was refused.
+        assert!(!state.dirty);
+    }
+
+    #[test]
+    fn a_body_longer_than_a_note_may_be_is_refused_before_the_lock() {
+        // The same bound `renote` applies, and it is here rather than inherited:
+        // this is a second route into `/Contents`, and a bound enforced on one
+        // of two routes is not enforced.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[0].id;
+        let too_much = "x".repeat(crate::textbox::MAX_NOTE_CHARS + 1);
+        assert!(edits.rewrite(7, (12, 0), id, too_much, stamped()).is_err());
+        assert!(edits.state(7).expect("state").notes.is_empty());
     }
 
     #[test]
