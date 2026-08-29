@@ -161,6 +161,17 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "ci.yml and release.yml no longer run the same gates job",
         ),
         (
+            # Beside parity rather than folded into it, because parity is
+            # structurally blind to this: it compares the two workflows against
+            # each other, so four identical wrong fixture paths are perfect
+            # parity. That is what happened on 2026-08-29 -- both legs red on the
+            # first push that carried them, and the release copies would have
+            # blocked a tag.
+            "fixtures",
+            [sys.executable, str(ROOT / "scripts" / "check_workflow_fixtures.py")],
+            "a workflow step names a fixture a runner cannot generate",
+        ),
+        (
             "anchors",
             [sys.executable, str(ROOT / "scripts" / "check_mutation_anchors.py")],
             "a mutation is aimed at code that is gone, or a killed harness left its edit behind",

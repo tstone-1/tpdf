@@ -18600,3 +18600,54 @@ removed`), and it is caught by that assertion and by nothing else.
 The general form: **a guard's placement is decided by which state of the subject it is asking
 about, not by which line consumes its answer.** When the subject is mutated between the two,
 those are different questions, and the wrong one can be perfectly true.
+
+### A workflow step is the one source no local gate reads, and mine named a file that cannot exist
+
+Four steps landed across `ci.yml` and `release.yml` on 2026-08-29, each passing
+`testdata/text-base14.pdf` to a probe. `scripts/ci_fixtures.py` does not generate that file,
+and not by oversight --- it comes from `make_text_pdf.py`, which embeds a **system** font that
+differs per runner, and the exclusion is written out in that script under a heading announcing
+what it deliberately does not produce. A runner starts from a fresh checkout with `testdata/`
+gitignored and empty, so all four steps were **born red**: they had never run anywhere, on any
+machine, in any workflow.
+
+The local evidence was uniformly green while this was true. `scripts/gates.py` reported 19/19,
+`scripts/check_windows.py` passed, 1,074 Rust tests and 1,346 frontend tests passed, and the
+mutation harnesses caught every mutation aimed at them. None of that is a contradiction:
+**nothing in the gate list reads a workflow's `run:` lines.** A workflow file is the one kind
+of source in this repository that only a workflow run exercises.
+
+The check that looks like it should have caught it is the one that structurally cannot.
+`check_workflow_parity.py` compares the two workflows **against each other**, so four
+identical wrong paths are perfect parity --- it went green on exactly the drift it exists to
+find, because the drift was not between the files. A comparison between two copies is evidence
+about agreement and never about correctness, which is the same shape as a differential between
+two readers that share an implementation.
+
+What let it ship is the ordinary-looking part and is the half worth carrying. The commits
+carrying those steps sat **unpushed** for a day --- five of them, deliberately, since pushing
+is a separate ask --- so no run existed to be red. A handover note recorded "the unpushed
+commits have no CI" as a fact, and it was read as bookkeeping rather than as a gap. **An
+unpushed commit that edits CI has had strictly less checking than one that does not**, and the
+difference is invisible from every local instrument.
+
+The `release.yml` copies are the more expensive half and were the same edit. A release run that
+fails publishes nothing, so a tag would have been blocked outright at a step that had never
+worked --- found, if at all, at the moment of shipping.
+
+The repair is `scripts/check_workflow_fixtures.py`, a gate that reads every `testdata/*.pdf` a
+workflow `run:` line names and asserts `ci_fixtures.py` generates it. Three failure modes,
+all three proved red by mutation before it was trusted: a workflow naming an ungeneratable
+fixture, the generated list reading empty, and the `run:` matcher matching nothing. The last
+two are emptiness controls, and the second of them is the one that matters --- a matcher that
+stopped matching would report no problems and look identical to a clean tree.
+
+Two details in that checker are themselves the traps next door. It scans **`run:` lines only**,
+not the whole file, because its own docstring names `text-base14.pdf` twice --- a whole-file
+scan would report the checker as the defect, which is the scanner reading its own exemption
+table. And it matches `testdata[/\\]`, both slash directions, because a workflow runs on two
+platforms and a step written with a backslash would otherwise be invisible to it.
+
+The general form: **a check that compares two artifacts to each other cannot see a mistake
+present in both.** When the artifacts are copies by construction, the invariant worth asserting
+is against something outside the pair --- here, whether the file named can exist at all.
