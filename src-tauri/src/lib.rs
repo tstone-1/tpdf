@@ -32,6 +32,8 @@ pub mod ocr;
 pub mod ocr_gate;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
+#[cfg(windows)]
+pub mod ocr_windows;
 pub mod ocr_worker;
 pub mod outline;
 pub mod pagetree;
@@ -2949,7 +2951,11 @@ pub fn run() {
     // The OCR worker, checked first because it is the narrower marker and
     // because it shares nothing with the parser worker but this dispatch: it
     // maps no PDF library, opens no document, and applies a different profile.
-    #[cfg(target_os = "macos")]
+    // Both platforms with an engine, since 2026-08-29. Widening this is what
+    // makes the Windows worker reachable at all: `OcrWorker::spawn` puts the
+    // marker in the child's command line, and without a dispatch that matches it
+    // the child would start, find no marker, and go on to build a window.
+    #[cfg(any(target_os = "macos", windows))]
     if args.iter().any(|a| a == ocr_worker::OCR_WORKER_ARGV) {
         ocr_worker::child_main();
     }

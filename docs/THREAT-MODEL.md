@@ -1743,6 +1743,36 @@ It stays a separate **process** for a reason unrelated to authority: the first r
 engine aborting its host. Anything that can do that must not share a process with unsaved
 annotations, whatever it is allowed to read.
 
+**Windows, since 2026-08-29, and it needs no profile of its own.** `src-tauri/src/ocr_windows.rs`
+drives `Windows.Media.Ocr`, and `OcrWorker::spawn` contains its child with
+`sandbox_win::Containment::default()` — a job object plus low integrity, which is **the same
+containment the parser worker gets**, not a relaxed one. That it is enough was measured before
+the engine was written rather than assumed from the parser worker's use of it:
+`examples/win_ocr_probe.rs` reads the same strings inside that containment and outside it and
+gets identical answers (`BUILD.md`, 2026-08-29). So the table above has no Windows column,
+because there was no ladder to climb — the first rung tried was the one that ships.
+
+Three differences from the macOS arm are worth stating rather than leaving to be inferred:
+
+- **A check where macOS has an application.** `apply_sandbox` *causes* the macOS child to lose
+  authority and fails loudly if it cannot. By the time the Windows child runs an instruction
+  the decision was taken by whoever spawned it, so `serve` calls `sandbox_win::assert_contained`
+  instead — which is what turns "the parent is supposed to contain us" into something that
+  fails when the parent stopped doing so.
+- **The abort risk is inherited reasoning, not a Windows measurement.** The paragraph above —
+  an engine that can abort its host must not share a process with unsaved annotations — is why
+  this is a separate process on both platforms. On macOS the abort was observed; on Windows it
+  has not been, and keeping the process boundary there is a decision to pay for a boundary
+  whose necessity is untested rather than to discover it in a crash report.
+- **`Options::language_correction` cannot be honoured.** Vision has
+  `setUsesLanguageCorrection`; this engine has an internal language model and no switch. It
+  matters here because a corrector turns marks it cannot read into plausible words, which is
+  the wrong bias when the question is whether anything is readable. Measured 2026-08-29: no
+  correction observed at 44 px or at `ocr_gate::MIN_CONTROL_PX`. That is support and not proof
+  — at both sizes the engine read clean text exactly, so it was never near its limit, and a
+  corrector only shows where a recogniser is struggling. Listed in the residual risks for that
+  reason.
+
 **This narrows T5's claim rather than widening it.** OCR is the only check that can speak about
 an image carrier, since a byte scan cannot see into a `/DCTDecode` stream. `ocr.rs` therefore
 makes "clean" unreachable except through a positive control the engine had to read back from
@@ -2247,8 +2277,35 @@ which is what makes it evidence rather than a milestone.
 
     Two things narrow it further and neither is closed. **The gate reads the region, not the
     page**, so a `/DCTDecode` image outside every region is still `verify::Report::deferred`
-    --- bytes nobody read, reported. And on a platform with no engine there is no gate at
-    all: Windows gets one sentence saying so, which is honest and is not a mitigation.
+    --- bytes nobody read, reported. And ~~on a platform with no engine there is no gate at
+    all: Windows gets one sentence saying so, which is honest and is not a mitigation.~~
+    **Closed 2026-08-29**: `ocr_windows.rs` drives `Windows.Media.Ocr` behind
+    `ocr::Recogniser` and `OcrWorker::spawn` has a Windows arm, so both platforms run the
+    gate. The remaining no-engine sentence is now reachable only on a platform this project
+    does not target --- and the test that covered it is compiled by neither, which
+    `ocr_worker.rs` says out loud rather than leaving as an apparent coverage.
+
+20. **The Windows engine cannot be told not to correct what it read**, added 2026-08-29 with
+    the engine. `ocr::Options::language_correction` is documented as off for verification
+    *always*, because a corrector turns marks it cannot read into plausible words --- which is
+    the wrong bias when the question is whether anything is readable at all, and it can also
+    repair the control token into something else and fail the check for the wrong reason.
+    macOS Vision honours it through `setUsesLanguageCorrection`. `Windows.Media.Ocr` has an
+    internal language model and no switch, so on that platform the field is documentation
+    rather than a setting.
+
+    **Measured, and the measurement is support rather than proof.** `win-ocr-probe` reads a
+    word and a non-word at 44 px and again at `ocr_gate::MIN_CONTROL_PX`; all four came back
+    verbatim on `windows-2025`, so no correction was observed anywhere it looked. What that
+    does not establish is the case the option exists for: at both sizes the engine read clean
+    synthetic text *exactly*, so it was never near its limit, and a corrector only shows where
+    a recogniser is struggling. What the gate hands an engine is harder in a way size does not
+    capture --- a control composited beside real page ink, at the document's own contrast.
+
+    So a *not verified* from this engine means the same as one from Vision, and a *clean* rests
+    on a control the engine may in principle have reconstructed rather than read. The
+    instrument that would narrow it is the corpus sweep `redact-reach-probe` already does on
+    macOS, run against real documents on Windows; it has not been.
 
 ## 8. How to re-verify any of this
 
