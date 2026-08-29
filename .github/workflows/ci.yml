@@ -159,6 +159,20 @@ jobs:
       - name: The redaction gate, end to end through a worker
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example redact-gate-probe -- testdata/text-base14.pdf
 
+      # The other half of the row above, and the one that made this probe
+      # portable worth doing: that one drives the redaction gate through a
+      # worker, this one measures the worker itself -- engine identity across the
+      # wire, a second call reusing the process, two refusals that must leave it
+      # usable, and a killed worker reporting inside its deadline rather than
+      # blocking on a pipe nobody will write to.
+      #
+      # It was macOS-only until 2026-08-29 because its in-process baseline named
+      # `ocr_vision::Vision` directly, so the platform whose OCR worker is newest
+      # was the one platform that could not measure it. 12.7 s in the debug build
+      # the `bins` gate leaves behind.
+      - name: The OCR worker, measured against an in-process baseline
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example ocr-worker-probe -- testdata/text-base14.pdf
+
       # NOT a gate: it measures rather than asserting, and its exit code says
       # whether it could measure, never whether the answer was convenient. It is
       # here because the artifact already exists -- `bins` above builds every

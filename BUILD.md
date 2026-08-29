@@ -2433,19 +2433,39 @@ perfectly contained ladder.
 
 ### `ocr-worker-probe`: does the engine work from a process of its own
 
-macOS only, and the binary is **its own worker**: `OcrWorker::spawn` re-execs `current_exe`,
-so what is under test is the shipped child rather than a copy of it. Same arrangement
-`pool-bench` uses.
+**Both platforms since 2026-08-29**, and the binary is **its own worker**: `OcrWorker::spawn`
+re-execs `current_exe`, so what is under test is the shipped child rather than a copy of it.
+Same arrangement `pool-bench` uses.
 
 ```
 cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-worker-probe -- \
-    testdata/text-base14.pdf --lib vendor/pdfium/lib
+    testdata/text-base14.pdf
 ```
+
+**No `--lib`, and not for brevity**: the default joins `PDFIUM_SUBDIR` --- `bin` on Windows,
+where `lib` exists, holds the *import* library and binds to nothing. It hardcoded `lib` until
+this became portable, and `only_the_macos_spikes_hardcode_the_library_directory` is the rule
+that caught it, which is what that test is for.
+
+**It was macOS-only for one line.** The in-process baseline named `ocr_vision::Vision`
+directly; `WindowsOcr` is behind the same `ocr::Recogniser`, so only the engine's
+*construction* is per-platform now and everything after it is the trait. That mattered more
+than it sounds: this probe measures the **worker**, the Windows worker is the newest thing in
+the subsystem, and Windows was the one platform that could not measure it. A spike is
+macOS-only when its subject is, never when one line of its scaffolding is.
+
+It runs on both CI legs, at **12.7 s** in the debug build the `bins` gate leaves behind.
 
 | fixture | result |
 |---|---|
 | `text-base14`, `text-marked`, `rotated`, `links`, `columns`, `encodings` | 12/12 |
 | `vector-heavy` | 0/0, 1 skipped --- A0 at scale 2 is 128 MB against a 16 MB buffer |
+
+The check **set** is the invariant, not the total: on Windows the *engine is mapped from launch*
+row is absent, because it is a statement about static linkage --- `objc2-vision` links Vision,
+while `Windows.Media.Ocr` is WinRT activated through `combase` at the first call. What its
+images are and when they arrive is a different question and **unmeasured**; a row asserting a
+name nobody has measured would be a guess wearing a check's clothes.
 
 **The baseline is the same program reading the same bytes in-process**, because a worker that
 reads nothing and an engine that reads nothing produce identical output. Everything else is a

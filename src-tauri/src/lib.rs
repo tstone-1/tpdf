@@ -3321,15 +3321,18 @@ mod tests {
     fn only_the_macos_spikes_hardcode_the_library_directory() {
         /// The ones where `lib` is simply correct, because they do not build
         /// anywhere else: `fdpass-probe` carries a POSIX `SCM_RIGHTS` handover,
-        /// and the three OCR spikes drive macOS Vision --- `ocr-probe` the
-        /// binding, `ocr-sandbox-probe` the SBPL profiles it runs under, and
-        /// `ocr-worker-probe` the process that holds it.
-        const MAC_ONLY: [&str; 4] = [
-            "fdpass_probe.rs",
-            "ocr_probe.rs",
-            "ocr_sandbox_probe.rs",
-            "ocr_worker_probe.rs",
-        ];
+        /// and the two remaining OCR spikes drive macOS Vision itself ---
+        /// `ocr-probe` the binding, `ocr-sandbox-probe` the SBPL profiles it runs
+        /// under.
+        ///
+        /// **`ocr-worker-probe` left this list on 2026-08-29** and the shape of
+        /// why is worth keeping: it measures the *worker*, not the engine, and it
+        /// was pinned here only because its in-process baseline named `Vision`
+        /// directly. With `WindowsOcr` behind the same `ocr::Recogniser` the
+        /// baseline is three lines of platform and the rest is the trait --- so a
+        /// spike is macOS-only when its *subject* is, never when one line of its
+        /// scaffolding is.
+        const MAC_ONLY: [&str; 3] = ["fdpass_probe.rs", "ocr_probe.rs", "ocr_sandbox_probe.rs"];
 
         let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
         let mut found: Vec<String> = Vec::new();
