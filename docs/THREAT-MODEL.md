@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- six of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- eight of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -81,11 +81,12 @@ Four principals, each trusting only what is below it in the table.
 since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
 `core:default`, `dialog:allow-open`, `dialog:allow-save` and `updater:default`, and the two
 dialog permissions open panels and write nothing. But it can issue `save_copy`,
-`save_document`, `extract_pages`, `merge_documents` and `print_document`, and all five write
-a file at the process's authority with a path the caller chose. So the accurate statement is
-that the webview cannot touch the filesystem *itself* and can ask for five specific writes;
-the flat version reads as the stronger claim, and a reader who stops at this table gets the
-wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
+`save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
+`redact_copy` and `redact_document`, and all eight write a file at the process's authority
+with a path the caller chose.
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for eight specific writes; the flat version reads as the
+stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
 **It said "four" until 2026-08-24, and `merge_documents` had been the fifth since 2026-08-24.**
@@ -95,6 +96,19 @@ the moment a command is added until somebody reads this sentence again. The list
 claim and the number follows it --- and the standing rule that a count in prose has nothing
 checking it applies here as much as it does to the trap index. A new file-writing command
 belongs in this list, in §T6.1, and in the coordinator-parsing entry at residual risk 18.
+
+⚠ **And it happened again, in both halves at once, found by the release checklist on
+2026-08-30.** The row said **six** while the list beneath it named **five**, so the two
+disagreed with each other on adjacent lines --- and the row was not the wrong one for the
+reason it looked: the true count is **eight**. `split_document` had never been added to the
+list, and `redact_copy` and `redact_document` were in neither. All three are named elsewhere
+in this document --- the two redaction writers at §T6.11, the split at §T6.9 and at residual
+risk 18 --- so nothing was undisclosed; what was wrong was the one place a reader goes to find
+out *how many* ways the webview can cause a write, and it was wrong in the direction that
+under-claims. **"The list is the claim and the number follows it" is a rule that needs
+somebody to apply it**, and three commands landed without anybody doing so. The check that
+would have caught it is mechanical and does not exist: enumerate the registered commands that
+reach a writer, and diff that set against this list.
 
 **"No network" was wrong in the same way and for longer.** `updater:default` is granted to
 this window, and it is the *frontend* that spends it: `App.svelte` imports
@@ -673,6 +687,14 @@ summary row is exactly the thing that stops agreeing with the section beneath it
 **four** as of 2026-08-19, when `save_document` landed --- see §T6.7. The sentence is left as
 it was written rather than silently re-pointed, because what it is about is a count in a
 summary going stale, and re-pointing it every time would erase its own evidence.)
+
+**The current list lives in §3 and is the authority; do not count from this section.** It is
+**eight** as of 2026-08-30, and it reached eight without anybody adding three of them here or
+there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
+entries and absent from the one place that answers *how many*. That is this paragraph's own
+subject arriving a third time, which is the argument for the mechanical check §3 now names ---
+enumerate the registered commands reaching a writer and diff the set --- rather than for
+another sentence telling the next person to remember.
 
 **What bounds that is the same thing that bounds `spike_exit`, and no more.** The CSP is
 `default-src 'self'` with no `'unsafe-inline'`, so the only script that runs is the one that
@@ -1533,6 +1555,33 @@ every entry sits inside the range. A caller bypassing the frontend can therefore
 width in `0.25..=24` — which is a correctness question about a file rather than a reach, and
 residual risk 7 already bounds who can call `annot_mark` at all.
 
+#### T6.16 — The gesture an erasure belongs to, added 2026-08-30
+
+**No new command and no new authority.** Grouping an eraser sweep adds no Tauri command:
+`annot_erase` and `annot_remove` each gain one field, and both already existed with the reach
+§T6.4 states. Nothing here opens a file, writes one or reaches a worker.
+
+**One new number off the wire, and it is the smallest of the family.** `sweep` is a `u64` the
+frontend mints, one per release of the pointer. Unlike `Mark::width` it reaches no content
+stream and no file: nothing is written from it, no table is keyed by it, and no lookup uses
+it. The model's only question is whether two *adjacent* journal entries carry the same value.
+`edits::gesture` is the door, and what it buys is a type: `SweepId` is a `NonZeroU64`, so
+*belongs to a gesture* and *is gesture number nothing* cannot be the same value, and zero is
+the wire's spelling of the second.
+
+**What a hostile caller gets is worth stating exactly, because it is nearly nothing.** Sending
+an arbitrary number groups commands it issued back to back into one press of undo — which it
+could equally have achieved by not issuing them. The number cannot reach a command it did not
+send, because grouping is adjacency in the journal and the journal only holds what was
+accepted. The worst outcome is a reader pressing undo once and losing more of their own recent
+editing than they meant to, recoverable with redo, and residual risk 7 already bounds who can
+call these commands at all.
+
+**Why the frontend mints it rather than the backend.** The backend sees a sequence of
+commands and cannot see where a gesture ends; a backend-minted grouping would have to be a
+timer, which is a decision about the clock rather than about what the reader did. The trust
+this places in the webview is the trust already placed in it to send the commands at all.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -2310,9 +2359,22 @@ which is what makes it evidence rather than a milestone.
     **What is not closed.** `save::Here` still parses in the coordinator, and it is what a
     platform with no sandbox gets --- refusing would make such a platform useless rather
     than uncontained, which is the rule `Backend::default_here` already follows, and
-    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. **The two copy
+    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. **The copy
     paths, Split, Merge and the print job are unchanged and are the rest of this entry**:
-    all four go through `save::planned_bytes`, which reads the file and parses it here. The
+    `write_copy`, `write_split` and `write_merged` go through `save::planned_bytes`, which
+    reads the file and parses it here, and `print_bytes` reads the source itself.
+
+    ⚠ **That sentence said "the two copy paths ... all four go through `planned_bytes`"
+    until 2026-08-30, and it was wrong twice** --- found by the release checklist's step 6,
+    in the same pass that found §3's row disagreeing with its own list. There are **three**
+    commands on the copy path, not two: `save_copy`, `extract_pages` and `redact_copy` all
+    reach `write_copy`. And the print job is not one of the functions going through
+    `planned_bytes` at all --- `print_bytes` calls `std::fs::read` on the source directly,
+    which is the same exposure by a different route and is why the correction names the
+    functions rather than counting the commands. A list and a count in one sentence,
+    disagreeing with each other, is this document's third instance of the same defect; the
+    `writers` gate covers §3's list and nothing covers this one, because what it enumerates
+    is a property of the code that no marker states. The
     seam they need is the one that now exists, so the work is wiring rather than design ---
     but a copy's destination is chosen by the reader in a file dialog, and handing a worker
     a descriptor to a file it did not create is a decision this entry has not made yet.

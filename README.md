@@ -8,10 +8,10 @@ SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for 
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
-deleted, cropped and extracted, and a blank one inserted; text can be highlighted, underlined, struck out or
+deleted, cropped and extracted, and a blank one inserted at the size you name; text can be highlighted, underlined, struck out or
 squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
-comment on it, move what you put there, erase any of it, rewrite or answer a comment somebody
-else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
+comment on it, move what you put there, erase any of it, rewrite, answer or delete a comment
+somebody else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and in-place
 text editing is the one that matters.
@@ -27,8 +27,8 @@ project conventions.
 - Every document is parsed and rendered in **sandboxed worker processes** with no
   filesystem or network authority --- a pool per document, and a worker that dies is
   replaced and its request retried. Saving over a document is prepared and written
-  there too. Save a copy, Extract, Split, Merge and Print still read the file in the
-  app process; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in one place
+  there too, and so is a redaction applied to it. Save a copy, Redact to a copy,
+  Extract, Split, Merge and Print still read the file in the app process; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in one place
   rather than leaving the first sentence to be read as covering them.
 - Tiled rendering behind a virtual scroller; zoom --- in, out, actual size, fit-width,
   fit-page, or a figure you type; view rotation; and page inversion for reading on a dark

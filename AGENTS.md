@@ -502,8 +502,8 @@ workflow-parity check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
-doc-comment check, a command-classification check, `npm run check`, `npm run test`,
-`npm run build`, and a third-party-notices check. Two of them are
+doc-comment check, a command-classification check, a file-writer check, `npm run check`,
+`npm run test`, `npm run build`, and a third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
@@ -559,6 +559,12 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   `undriven` table. That harness asserts it already; it needs a screen and is run by hand,
   so two commands shipped unclassified on 2026-08-29 and the check was red for a day with
   every gate green. This one reads the source text and buys the day, not the certainty.
+- `writers` --- every registered command that reaches one of `save.rs`'s six terminal writers
+  is named in `docs/THREAT-MODEL.md` §3's list, and the row's count agrees. That row is the one
+  place answering *how many ways can the webview cause a write*, and it was wrong three times in
+  two weeks, always under-claiming: it said six against a list of five when the answer was eight.
+  The section's own rule --- *the list is the claim and the number follows it* --- had nobody
+  applying it.
 - `dates` --- no date in a tracked file may be later than today. Provenance here is written as
   dated measurements, and on 2026-08-28 there were **70** stamps reading a day or two ahead,
   every one written by a commit dated 2026-08-28. A stamp in the future does not merely
@@ -1317,6 +1323,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A tripwire that promised to go red could not, because three carriers answer one needle (the check's doc comment named the day it would fire, and its observable is one boolean over the whole file that any of three copies satisfies; found by reading the fixture generator rather than by running it, because a green tripwire and an unarmed one print the same line)
 - A fixed point is invisible when the fixture is written in dependency order (two links in the chain and the loop still could not fail; the ordering is the discriminating property and reading order is the one that hides it --- plus the mirror survivor from the same run, where SURVIVED was correct because the call was redundant)
 - A refusal promised in the plan and never built emits nothing to grep for (a promised feature leaves a dead call site; a promised refusal leaves a correct-looking file and a confident report --- and this one made the subsystem claim MORE than it could prove; the check is a grep over the plan's "is refused" sentences, not over the code)
+- A paragraph that names its own failure mode reads as coverage, and the count went stale three more times (§3's row said SIX against a list of FIVE when the answer was EIGHT, and the paragraph beneath it already said the list is the claim and the number follows it --- three writers landed while that sentence was being read, because self-awareness reads as having dealt with it; the remedy is keyed on the CALLEE, six terminal writers in `save.rs`, so it is not a hand-maintained list checked against a hand-maintained list. When a document explains why one of its own numbers cannot be trusted, that is a specification for a check)
 - A sweep that stays inside one drawing really is one undo, and four files said that meant every sweep was (the eraser sends one command per mark, so five drawings cost five presses; every one of the four comments is true of the narrow gesture, which is the gesture the existing test used, and `docs/PLAN.md` ranked the nib as a QUESTION rather than a defect on the strength of the general reading. Plus two survivors from the repair: an `Option` equality reading the field directly beside an accessor is the *Two mechanisms* entry in one line, and a mutation aimed at `command_in` while the test takes `reink_in` is aimed at a route rather than at the rule)
 - The unchecked clause of a two-sided decision was the one carrying the cost, and checking it inverted the answer (*"those readers use `/C` correctly"* sat unmeasured for ten days inside an otherwise measured paragraph, and it is true --- PDFKit moves 439 px between two files differing only in `/C` and PDFium moves 0, so an appearance stream would make tpdf right BY MAKING PREVIEW WRONG, and the "A or B" framing hid a third option that repairs the renderer rather than the file. Plus: a byte comparison beats a hue, a finding gets pinned from both ends once measured, and the negative half needs the highlight control --- one colour sent twice reddens three checks and leaves *PDFium ignores it* green)
 

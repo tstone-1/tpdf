@@ -17,7 +17,52 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.12] - Unreleased
+## [26.8.12] - 2026-08-30
+
+### Fixed: one sweep of the eraser is one press of undo
+
+Drag the eraser across five drawings and let go, and putting them back took five
+presses of undo. It now takes one, which is what every other gesture in tpdf
+already cost and what four places in the source said this one cost.
+
+They were all true of a sweep that stayed inside a single drawing, which is the
+ordinary case and is why nobody noticed. The eraser sends the backend one
+instruction per mark it touched --- a drawing loses strokes, a highlight goes
+whole --- so a wide sweep was always several separate edits, each with its own
+undo. They now carry the number of the gesture that made them, and undo crosses
+the whole gesture at once. Redo does the same, in the same one press.
+
+**The entry for 26.8.6 above says "One sweep is one undo, however many strokes it
+took", and 26.8.8 widened the eraser to take marks of any kind without anyone
+revisiting it.** It is true now. It was true of strokes within one drawing when
+it was written, and it stopped being a complete description the moment a sweep
+could cross a highlight and a stamp as well.
+
+### Added: deleting a comment somebody else left
+
+Open a comment the file arrived with and there is a **Delete** button beside
+Edit and Reply, and *Delete comment* in the palette. The comment goes off the
+page and its bytes go out of the file: the words are not left behind unreachable,
+which is what removing a reference alone would do.
+
+Two consequences worth knowing, because both are visible. Unlike an edit or a
+reply, a deletion cannot be written by adding to the file --- so a save after one
+rewrites the document instead of appending to it, and the earlier revision is not
+kept. And a comment that one of your own replies answers is refused until you
+delete the reply first: a reply names its parent by object number, and a thread
+whose parent is gone is a file no reader shows correctly.
+
+### Added: choosing how thick a drawing is
+
+**Fine, medium, broad** or **marker**, in the Edit menu and the palette. Every
+drawing made after it is that thick --- on screen and in the file, so another
+reader opens it at the weight you chose. The preview under your hand is drawn at
+that weight too.
+
+Unlike a colour, it applies to the next drawing rather than to one already made:
+a drawing's rectangle is derived from its strokes and the width they are drawn
+at, so changing the width of a mark that exists is a different operation and is
+not offered.
 
 ### Added: inserting a page of a size you name
 
