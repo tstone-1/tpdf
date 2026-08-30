@@ -39,6 +39,7 @@ import {
   parseSplitPoints,
 } from "./pageranges";
 import { PALETTE } from "./markcolors";
+import { PAGE_SIZES, PAGE_SIZE_NAMES, type PageSizeName } from "./pagesizes";
 import type { MarkKind, StampName } from "./pages";
 import type { Tab } from "./sidebar";
 import type { Viewer } from "./viewer";
@@ -140,6 +141,16 @@ export interface AppActions {
    * the page in front of the reader is. See `edits.ts`.
    */
   insertBlankPage(): void;
+  /**
+   * Put a blank page of a named size after the one the reader is on.
+   *
+   * The sibling of {@link AppActions.insertBlankPage} and deliberately not a
+   * parameter on it: one of the two asks the scroller how big the page in front
+   * of the reader is and the other asks a table, so they share a destination
+   * and nothing else. See `pagesizes.ts` for why the sizes are a menu of names
+   * rather than a prompt for two numbers.
+   */
+  insertSizedPage(name: PageSizeName): void;
   /**
    * Crop the page the reader is on to the box its ink occupies, or put the
    * file's own box back.
@@ -1031,6 +1042,26 @@ export function registerAppCommands(
       enabled: withDocument,
       run: () => actions.insertBlankPage(),
     },
+    ...PAGE_SIZE_NAMES.map((name) => ({
+      // **One command per size, and the alternative was one that asks.** The
+      // same argument `edit.stamp.*` makes and this follows its spelling: a
+      // reader who wants A4 has a name, not two numbers, and typing the name
+      // into a prompt is slower than typing it into the palette that is already
+      // open.
+      //
+      // No ellipsis, unlike the stamps: nothing further is asked of the reader
+      // and the page appears, which is what the entry above promises too.
+      //
+      // The title puts the size *inside* "Insert blank ... page" rather than
+      // after it, so no title here is a strict prefix of another --- that tie is
+      // decided by registration order, and `docs/TRAPS.md` records it shipping
+      // once. The whole-title bonus in `commands.ts` would settle it anyway;
+      // this costs nothing and does not lean on it.
+      id: `edit.insertPage.${name}`,
+      title: `Insert blank ${PAGE_SIZES[name].title} page`,
+      enabled: withDocument,
+      run: () => actions.insertSizedPage(name),
+    })),
     {
       // No binding either, and for a different reason than the deletion above:
       // there is no chord left that reads as "move a page" rather than as "move

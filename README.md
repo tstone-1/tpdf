@@ -81,12 +81,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   file states none of them on the page itself --- a PDF lets a page inherit those from the
   group it sits in, and that is where moving one silently changes it.
   <!-- built: edit.movePageUp edit.movePageDown -->
-- **Insert a blank page** after the one you are reading, the size of the page you are
-  looking at rather than a fixed A4. It turns, moves and deletes like any other page. You
-  cannot yet mark one or crop it: a mark is attached to a page of the file and a crop box
-  is measured against one, and a page tpdf made is in no file --- so both are refused when
-  you try rather than lost when you save.
-  <!-- built: edit.insertBlankPage -->
+- **Insert a blank page** after the one you are reading --- the size of the page you are
+  looking at, or A3, A4, A5, US Letter or US Legal by name. It turns, moves, deletes and
+  takes marks like any other page. You cannot crop one or redact it: a crop box is
+  measured against a page of the file and a redaction removes content, and a page tpdf
+  made has neither --- so both are refused when you try rather than lost when you save.
+  <!-- built: edit.insertBlankPage edit.insertPage.a4 edit.insertPage.a3 edit.insertPage.a5 edit.insertPage.letter edit.insertPage.legal -->
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
   file on disk.
