@@ -11890,6 +11890,54 @@ above and is the obvious next increment; a page inserted from another file, whic
 is the *Not done* this section sits under; and choosing a size other than the page
 you are looking at.
 
+#### Marking an inserted page --- done 2026-08-30
+
+The first of those three, and it is one field. `PlannedMark` addressed a page object
+by its **baseline number**; a page tpdf made has none, so there was nothing to put
+in the plan and the model refused the mark at the moment the reader drew it. It
+addresses a page by its **position in the plan** now, which both kinds have.
+
+The writer needed nothing new. `save::rewrite` already builds `order` --- every
+position resolved to the object that will hold it --- because `pagetree::materialise`
+needs the same list, and `make_blank_pages` runs above both precisely so the made
+pages exist to be named. What changed is which list `mark_sites` resolves against.
+Its shared-page-object refusal moved with it and got simpler: it counts how many
+positions in the document being written hold this page object, rather than how many
+kept baseline numbers point at it. A made page is its own object and answers one, so
+it needs no case.
+
+**The append builds the same list explicitly rather than taking it to be the
+baseline pages, which it is.** `Plan::is_appendable` requires `pages_are_the_file`,
+so position *n* is baseline page *n* and the loop is the identity today. Written out
+because an append that ever carried something else would misaddress every mark while
+every existing test passed --- and the arm for a page tpdf made is a second reader of
+the fact that such a plan is not appendable.
+
+`Checked` lost a field. `kept` held one-based baseline numbers for the pages the plan
+keeps, and its own doc comment recorded that it and `slots` "were the same list under
+two names until a page could be inserted". Its last reader was the mark resolution;
+that reader reads `slots`' resolved ids now, so the second list is gone rather than
+carried unread.
+
+**One test in the repository could tell the two addressings apart**, and it existed
+already: `a_marks_reply_names_the_page_by_identity_and_the_plan_by_position` moves the
+third page to the front and marks it, so its position is 0 and its baseline number is
+2. Everywhere else the plan is the file and the two are the same number --- the
+property that holds by construction, which is why the mutation for this change is
+aimed there. Its assertion message used to say *"the writer was given a position
+rather than the page"*, which was false when it was written and is true now.
+
+**The refusal split, and it is the finding rather than the feature.** `Refusal::MadePage`
+had three callers and therefore one string, and the string was *"tpdf cannot mark a page
+it made yet"* --- shown to a reader who had dragged a **redaction** on a blank page, because
+`onRedacted` has no frontend guard. The crop caller has one and has never been reached. It is
+two variants now, `CropOnMadePage` and `RedactionOnMadePage`, with two sentences that say what
+is true of the page. `docs/TRAPS.md` has the entry.
+
+**Not done:** a page inserted from another file, which is the *Not done* this section
+sits under; choosing a size other than the page you are looking at; and redacting or
+cropping one, both of which are refused for reasons that do not expire.
+
 #### Upgrading from 26.8.8 on Windows --- done 2026-08-24
 
 26.8.9 fixed what the bundle *contains*. It could not fix what a machine already

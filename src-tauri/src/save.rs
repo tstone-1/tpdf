@@ -1176,10 +1176,32 @@ pub fn append_update(
         )));
     }
 
-    // Every page is kept --- `is_appendable` said so --- and the one-based
-    // numbering is `write_marks`' shared-object refusal's, not a page selection.
-    let kept: Vec<u32> = (1..=u32::try_from(pages.len()).unwrap_or(u32::MAX)).collect();
-    let sites = mark_sites(&prev, &pages, &kept, &plan.marks)?;
+    // **Built from the plan rather than taken to be `pages`, which it is.**
+    // `is_appendable` requires `pages_are_the_file`, so position *n* of the plan
+    // is baseline page *n* and this loop is the identity today. It is written
+    // out because a mark is addressed by its position and the resolution is
+    // what makes that address mean a page object --- an append that ever
+    // carried something other than the file's own pages, in the file's own
+    // order, would otherwise put every mark on the wrong page while every
+    // existing test went on passing. The refusal is the guard for that, not a
+    // case a reader can reach: a plan with a page tpdf made in it is not
+    // appendable, and this is the second reader of that fact.
+    let sheet: Vec<ObjectId> = plan
+        .pages
+        .iter()
+        .map(|page| match page.source {
+            PageSource::Baseline(number) => pages.get(number as usize).copied().ok_or_else(|| {
+                Refusal::from(format!(
+                    "a mark names page {}, which this document does not have",
+                    number + 1
+                ))
+            }),
+            PageSource::Blank(_) => Err(Refusal::from(
+                "a save that only adds marks cannot carry a page tpdf made".to_string(),
+            )),
+        })
+        .collect::<Result<_, Refusal>>()?;
+    let sites = mark_sites(&prev, &sheet, &plan.marks)?;
 
     // **Moved rather than copied, and this buys nothing --- it is written this
     // way so that the one copy is visible at the caller instead of hidden here.**
@@ -2099,18 +2121,18 @@ struct Checked {
     doc: Document,
     /// Every page object, in document order, as the file has them.
     pages: Vec<lopdf::ObjectId>,
-    /// One-based numbers of the pages the plan keeps, in the reader's order.
-    kept: Vec<u32>,
     /// One-based numbers of the pages the plan drops, empty for a plan that
     /// keeps everything --- which is what the rewrite branches on.
     dropped: Vec<u32>,
     /// What each output page is and the quarter turns it should end up with, in
     /// the reader's order.
     ///
-    /// **One entry per page the reader sees**, where `kept` has one per page of
-    /// the *file* the reader kept. The two were the same list under two names
-    /// until a page could be inserted; they are now different lengths whenever
-    /// one has been, and the difference is exactly the pages no file supplies.
+    /// **One entry per page the reader sees**, which since 2026-08-30 is the
+    /// only such list this struct carries. There was a `kept` beside it holding
+    /// one-based baseline numbers, and it survived the arrival of inserted pages
+    /// as a second, shorter list of the same thing --- read by exactly one
+    /// caller, to resolve a mark's page. That caller reads this instead now, so
+    /// the second list is gone rather than carried unread.
     slots: Vec<(Slot, u8)>,
     /// Whether the reader moved anything, so the page tree has to be rebuilt.
     moved: bool,
@@ -2481,7 +2503,6 @@ fn checked(
     Ok(Checked {
         doc,
         pages,
-        kept,
         dropped,
         slots,
         moved,
@@ -2506,7 +2527,6 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     let Checked {
         mut doc,
         pages,
-        kept,
         dropped,
         slots,
         moved,
@@ -2567,7 +2587,10 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // Read and written in two steps, which on this path is one document twice
     // over --- the borrow checker will not have it both ways, and the append
     // genuinely needs two. See `mark_sites`.
-    let sites = mark_sites(&doc, &pages, &kept, &plan.marks)?;
+    // `order` rather than the baseline pages: it is every position in the plan
+    // resolved to the object that will hold it, made pages included, and it
+    // exists a few lines up because `materialise` needs the same list.
+    let sites = mark_sites(&doc, &order, &plan.marks)?;
     let written = write_marks(&mut doc, &plan.marks, &sites, replies)?;
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
@@ -3106,16 +3129,15 @@ enum AnnotsSite {
 /// more than one kept page number names; or a mark whose quads map to nothing.
 fn mark_sites(
     read: &Document,
-    pages: &[ObjectId],
-    kept: &[u32],
+    sheet: &[ObjectId],
     marks: &[PlannedMark],
 ) -> Result<Vec<MarkSite>, String> {
     let mut sites = Vec::with_capacity(marks.len());
     for mark in marks {
-        let page = *pages.get(mark.source as usize).ok_or_else(|| {
+        let page = *sheet.get(mark.at as usize).ok_or_else(|| {
             format!(
                 "a mark names page {}, which this document does not have",
-                mark.source + 1
+                mark.at + 1
             )
         })?;
 
@@ -3124,16 +3146,18 @@ fn mark_sites(
         // would appear on page 7 as well when `/Kids` names one object twice.
         // `docs/TRAPS.md` has this shape twice already, once live in `print.rs`
         // for months.
-        if kept
-            .iter()
-            .filter(|number| pages.get(**number as usize - 1) == Some(&page))
-            .count()
-            > 1
-        {
+        //
+        // Counted over `sheet` rather than over the kept baseline numbers, which
+        // is what this did while a mark was addressed by one. The question is
+        // the same and is now asked of the thing it is really about: how many
+        // positions in the document being written hold this page object. A page
+        // tpdf made is its own object and can never collide, so it answers one
+        // and passes without a case of its own.
+        if sheet.iter().filter(|id| **id == page).count() > 1 {
             return Err(format!(
                 "page {} is the same page object as another page in this file, so a mark on it \
                  would appear on both. tpdf will not write it.",
-                mark.source + 1
+                mark.at + 1
             ));
         }
 
@@ -3261,7 +3285,7 @@ fn write_marks(
         if quads.is_empty() {
             return Err(format!(
                 "a mark on page {} covers no area in that page's own space",
-                mark.source + 1
+                mark.at + 1
             ));
         }
 
@@ -4844,7 +4868,7 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
         let Some(want) = page.crop else { continue };
         // **Unreachable, and the arm has to exist**: `Command::Crop` refuses a
         // box on a page tpdf made, so no plan carries one --- see
-        // `Refusal::MadePage`. The match must be exhaustive, so this is where
+        // `Refusal::CropOnMadePage`. The match must be exhaustive, so this is where
         // the model's refusal is written down on the writer's side, and it is
         // also the right answer if that refusal is ever lifted: this function
         // exists for one hazard, two positions that are one *object*, and a made
@@ -8325,7 +8349,7 @@ mod tests {
                 // would be measuring the wrong kind.
                 stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
                 reply_to: None,
-                source: 0,
+                at: 0,
                 quads,
                 strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
@@ -8587,7 +8611,7 @@ mod tests {
     /// found. The control is the file's own first page, which took no turn.
     ///
     /// There is no crop here because a made page cannot have one --- see
-    /// `Refusal::MadePage`.
+    /// `Refusal::CropOnMadePage`.
     #[test]
     fn a_made_page_is_turned_like_any_other() {
         let (original, _) = document_with_a_comment_on_the_second_page();
@@ -8618,6 +8642,98 @@ mod tests {
         // about the made page rather than about the writer turning everything.
         let first = after.get_dictionary(pages[0]).expect("the first page");
         assert!(!first.has(b"Rotate"));
+    }
+
+    /// A mark on a page tpdf made lands on that page and on no other.
+    ///
+    /// **The reason `PlannedMark` names a page by its position rather than by
+    /// its baseline number.** A made page has no baseline number, so under the
+    /// old addressing there was nothing to put in the plan --- which is why the
+    /// model refused the mark at the moment the reader drew it, rather than
+    /// letting the save be the first thing to say no.
+    ///
+    /// Two assertions and both are needed. That the made page carries the
+    /// annotation is what the increment is for; that the file's own pages do
+    /// not is what says the mark went where the reader put it, because a writer
+    /// that resolved the position against the wrong list would still have
+    /// written *a* mark somewhere and the first assertion alone cannot see that.
+    /// The plan puts the made page last, so its position (2) is a number no
+    /// baseline page in this two-page document has --- under the old addressing
+    /// this is a refusal rather than a wrong page, and the test is written to
+    /// pass only on the right one.
+    #[test]
+    fn a_mark_on_a_page_tpdf_made_is_written_onto_that_page() {
+        let (original, _) = document_with_a_comment_on_the_second_page();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.pages.push(PageView {
+            id: 99,
+            source: PageSource::Blank(crate::docmodel::Size {
+                width: 200.0,
+                height: 400.0,
+            }),
+            turns: 0,
+            crop: None,
+        });
+        plan.marks = vec![PlannedMark {
+            kind: MarkKind::Highlight,
+            stamp: None,
+            reply_to: None,
+            at: 2,
+            quads: vec![crate::docmodel::Quad {
+                left: 10.0,
+                top: 10.0,
+                right: 100.0,
+                bottom: 40.0,
+            }],
+            strokes: Vec::new(),
+            color: [1.0, 0.9, 0.2],
+            author: "Reader".into(),
+            note: String::new(),
+            made: "D:20260830120000Z".into(),
+        }];
+        assert!(
+            !plan.is_appendable(),
+            "the premise: a plan carrying a page tpdf made is not the file, so \
+             this goes out through the rewrite"
+        );
+
+        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
+        let pages = ordered_pages(&after);
+        assert_eq!(
+            pages.len(),
+            3,
+            "two of the file's pages and the one tpdf made"
+        );
+
+        let subtypes = |page: lopdf::ObjectId| -> Vec<String> {
+            let Ok(dictionary) = after.get_dictionary(page) else {
+                return Vec::new();
+            };
+            let Ok(annots) = dictionary.get(b"Annots").and_then(Object::as_array) else {
+                return Vec::new();
+            };
+            annots
+                .iter()
+                .filter_map(|entry| {
+                    let object = after.get_object(entry.as_reference().ok()?).ok()?;
+                    let subtype = object.as_dict().ok()?.get(b"Subtype").ok()?;
+                    Some(String::from_utf8_lossy(subtype.as_name().ok()?).into_owned())
+                })
+                .collect()
+        };
+
+        assert_eq!(subtypes(pages[2]), vec!["Highlight".to_string()]);
+        assert!(
+            subtypes(pages[0]).is_empty(),
+            "the first page of the file has nothing on it"
+        );
+        assert_eq!(
+            subtypes(pages[1]),
+            vec!["Text".to_string()],
+            "and the second keeps the comment it came with, and gains nothing"
+        );
     }
 
     /// A rewrite writes the note edits an append would, on a plan no append can
@@ -8714,7 +8830,7 @@ mod tests {
         let mut plan = plan_of(&[0, 0]);
         plan.marks = vec![PlannedMark {
             kind: MarkKind::Note,
-            source: 1,
+            at: 1,
             quads: vec![crate::docmodel::Quad {
                 left: 10.0,
                 top: 10.0,
@@ -8795,7 +8911,7 @@ mod tests {
         let mut plan = plan_of(&[0, 0]);
         plan.marks = vec![PlannedMark {
             kind: MarkKind::Note,
-            source: 1,
+            at: 1,
             quads: vec![crate::docmodel::Quad {
                 left: 10.0,
                 top: 10.0,
@@ -8844,7 +8960,7 @@ mod tests {
 
         let reply_naming = |object: lopdf::ObjectId| PlannedMark {
             kind: MarkKind::Note,
-            source: 1,
+            at: 1,
             quads: vec![crate::docmodel::Quad {
                 left: 10.0,
                 top: 10.0,
@@ -8989,7 +9105,7 @@ mod tests {
             kind: MarkKind::Highlight,
             stamp: None,
             reply_to: None,
-            source: 0,
+            at: 0,
             quads: one_quad(),
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
@@ -10591,7 +10707,7 @@ mod tests {
                 kind: MarkKind::Highlight,
                 stamp: None,
                 reply_to: None,
-                source: 0,
+                at: 0,
                 quads: one_quad(),
                 strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
@@ -10643,7 +10759,7 @@ mod tests {
                 kind: MarkKind::Highlight,
                 stamp: None,
                 reply_to: None,
-                source: 2,
+                at: 2,
                 quads: one_quad(),
                 strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
@@ -12641,7 +12757,7 @@ mod tests {
             kind,
             stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
             reply_to: None,
-            source: 0,
+            at: 0,
             quads: vec![quad],
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],

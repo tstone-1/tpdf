@@ -18992,3 +18992,58 @@ Worth noting what did *not* need it. `matchQuadsByPage` has the identical shape 
 `return null`, and it is unreachable: `search.ts` skips a slot with no page behind it, so no
 match ever names a blank page. It was left alone rather than given a guard for a case that
 cannot arise.
+
+### One refusal, three callers, one string --- and the string named one of them
+
+`Refusal::MadePage` was raised by three places in `docmodel.rs`: a mark, a redaction and a
+crop, each on a page tpdf had inserted. Its doc comment argued the naming at length and argued
+it correctly:
+
+> **Named for the fact rather than for the reason**, because its two callers refuse for
+> different reasons and only one of them is temporary.
+
+Two things are wrong with that sentence and only one of them is the count. There were **three**
+callers, not two --- which is the ordinary way a comment about how many places do something
+goes stale. The load-bearing mistake is the conclusion: one variant is one arm in
+`edits::describe`, so it is **one string**, and the string was
+
+> tpdf cannot mark a page it made yet
+
+A reader dragging a redaction across a blank page was told that. It is a true sentence about a
+different operation, which is the worst shape a refusal can take: it is not obviously wrong, so
+they go looking for the mark they did not make.
+
+**The crop caller could not reach it and the redaction caller had nothing in the way.**
+`App.svelte` refuses a crop on a made page itself, with its own wording, and returns before any
+IPC --- so that arm of the model has never been seen by anybody. `onRedacted` goes straight
+through. So of the three callers sharing one message, one was correct, one was unreachable, and
+one showed a reader a sentence about something they had not done, and nothing distinguished
+them from the variant's own definition.
+
+The repair is two variants and two sentences --- *"a blank page has nothing to crop to"* and
+*"a blank page has nothing to remove"* --- each stating what is true of the page rather than
+naming a limit of tpdf's. The naming argument in that doc comment survives intact; what it did
+not say is that **a refusal a reader sees is not one fact, it is one fact plus what they were
+trying to do**, and only the second half tells them what to do next. A variant shared by
+callers that want different sentences is a variant with a defect on a timer.
+
+The general check, and it is a grep rather than a judgement: **for every arm of a
+refusal-to-string function, count the places that construct it.** More than one is fine when
+they want the same sentence, and the moment they do not, the arm is wrong for all but one of
+them and nothing goes red.
+
+A second thing came out of the same edit, in the other direction. `planned_marks` dropped the
+pages tpdf made and carried this:
+
+```rust
+// **Asserted rather than skipped quietly.** ... the day that refusal is lifted, a
+// silent skip would drop every mark on an inserted page while the save reported
+// success.
+debug_assert!(working.marks_on(id).is_empty(), ...);
+```
+
+Today was that day. The comment named the exact defect the edit would otherwise have caused,
+in the place the edit had to be made, and it is the reason the filter was deleted rather than
+left as a thing that quietly stopped being true. **A tripwire for a change that has not happened
+yet costs one assertion and one sentence**, and it is worth writing at the moment you refuse
+something temporarily, not later.

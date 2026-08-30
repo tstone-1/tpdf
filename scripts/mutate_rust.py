@@ -3081,7 +3081,10 @@ MUTATIONS = [
         # something the file records as a mistake.
         "save: allow a mark on a page two numbers share",
         "src/save.rs",
-        "        if kept\n            .iter()\n            .filter(|number| pages.get(**number as usize - 1) == Some(&page))\n            .count()\n            > 1\n        {",
+        # Re-aimed 2026-08-30: a mark is addressed by its position in the plan
+        # now, so the count is over the plan's own page objects rather than over
+        # the kept baseline numbers.
+        "        if sheet.iter().filter(|id| **id == page).count() > 1 {",
         "        if false {",
         "a_mark_on_a_page_two_numbers_share_is_refused",
     ),
@@ -3091,8 +3094,11 @@ MUTATIONS = [
         # ordinary case, where one malformed page makes the rest unmarkable.
         "save: refuse a mark anywhere in a file that has a shared page",
         "src/save.rs",
-        "            .filter(|number| pages.get(**number as usize - 1) == Some(&page))",
-        "            .filter(|number| pages.iter().filter(|p| Some(*p) == pages.get(**number as usize - 1)).count() > 1)",
+        # Re-aimed 2026-08-30 with its sibling above, onto the same line and for
+        # the same reason. The over-scoping is spelled differently and means
+        # exactly what it did: refuse if *anything* in this document is shared.
+        "        if sheet.iter().filter(|id| **id == page).count() > 1 {",
+        "        if sheet.iter().any(|id| sheet.iter().filter(|other| *other == id).count() > 1) {",
         "a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written",
     ),
     Mutation(
@@ -3123,8 +3129,10 @@ MUTATIONS = [
         # implemented rather than one that was lost on the way.
         "edits: leave the marks out of a plan",
         "src/edits.rs",
-        "    pages\n        .iter()\n        .filter_map(|view| {",
-        "    pages\n        .iter()\n        .take(0)\n        .filter_map(|view| {",
+        # Re-aimed 2026-08-30: the `filter_map` that dropped the pages tpdf made
+        # is an `enumerate` now, because every page carries marks.
+        "    pages\n        .iter()\n        .enumerate()",
+        "    pages\n        .iter()\n        .take(0)\n        .enumerate()",
         "a_mark_is_carried_into_the_plan_for_the_page_it_is_on",
     ),
     Mutation(
@@ -6872,24 +6880,48 @@ MUTATIONS += [
         "            next_page: 1,",
         "a_made_page_is_never_given_a_baseline_page_s_id",
     ),
-    Mutation(
-        # Let a mark onto a page tpdf made. It is accepted, it reaches the plan,
-        # and `planned_marks` then drops it silently --- so the reader draws a
-        # highlight, saves successfully, and it is not in the file.
-        "docmodel: let a mark onto a page tpdf made",
-        "src/docmodel.rs",
-        "        if let Some(page) = self.now.page(mark.page) {\n            if let PageSource::Blank(_) = page.source {\n                return Err(Refusal::MadePage(mark.page));\n            }\n        }",
-        "        let _ = mark.page;",
-        "a_page_tpdf_made_takes_no_mark_and_no_redaction",
-    ),
+    # **Deleted 2026-08-30: "docmodel: let a mark onto a page tpdf made".** It
+    # watched a guard that has been removed on purpose --- a mark on a page tpdf
+    # made is written now, and the addressing that made it impossible is gone.
+    # Deleted rather than re-aimed, for the reason `docs/TRAPS.md` records about
+    # a seam that removes a class of defect: there is no guard left for a
+    # mutation to delete. What replaced its coverage is `save: resolve a mark
+    # against the file's pages rather than the plan's`, below, which is the
+    # defect the old guard existed to make unreachable.
     Mutation(
         # And a redaction, which puts a row in the review list certifying the
         # removal of nothing from a page that has nothing on it.
         "docmodel: let a redaction onto a page tpdf made",
         "src/docmodel.rs",
-        "        if let Some(page) = self.now.page(redaction.page) {\n            if let PageSource::Blank(_) = page.source {\n                return Err(Refusal::MadePage(redaction.page));\n            }\n        }",
+        "        if let Some(page) = self.now.page(redaction.page) {\n            if let PageSource::Blank(_) = page.source {\n                return Err(Refusal::RedactionOnMadePage(redaction.page));\n            }\n        }",
         "        let _ = redaction.page;",
-        "a_page_tpdf_made_takes_no_mark_and_no_redaction",
+        "a_page_tpdf_made_takes_a_mark_and_no_redaction",
+    ),
+    Mutation(
+        # Resolve a mark against the file's own pages rather than the plan's.
+        # This is the addressing that made a mark on an inserted page impossible
+        # --- a made page is in no file, so it has no number here at all. On a
+        # plan that inserts, the mark's position names a page the baseline list
+        # does not have and the save is refused; on one that only moves, it
+        # names a different page and the mark is written onto it.
+        "save: resolve a mark against the file's pages rather than the plan's",
+        "src/save.rs",
+        "    let sites = mark_sites(&doc, &order, &plan.marks)?;",
+        "    let sites = mark_sites(&doc, &pages, &plan.marks)?;",
+        "a_mark_on_a_page_tpdf_made_is_written_onto_that_page",
+    ),
+    Mutation(
+        # Put the baseline page number in the plan instead of the position, which
+        # is what this field held until the addressing was widened. Every plan
+        # that is the file agrees with itself, so the only thing that can see it
+        # is a plan whose pages have moved --- and the 0 for a page tpdf made is
+        # the other half: it would put every mark on an inserted page onto the
+        # first page of the document.
+        "edits: address a mark by its baseline page rather than its position",
+        "src/edits.rs",
+        "            let at = u32::try_from(at).unwrap_or(u32::MAX);",
+        "            let at = match view.source {\n                PageSource::Baseline(number) => number,\n                PageSource::Blank(_) => 0,\n            };",
+        "a_marks_reply_names_the_page_by_identity_and_the_plan_by_position",
     ),
     Mutation(
         # And a crop, which the frontend cannot even measure for such a page ---

@@ -1220,7 +1220,7 @@ impl Edits {
                 // a second reason: it has no number in the file, and nothing on
                 // it to remove. `Doc::redact` refuses a region on one, so this
                 // arm is unreachable for that case rather than merely correct
-                // --- see `Refusal::MadePage`.
+                // --- see `Refusal::RedactionOnMadePage`.
                 continue;
             };
             match out.iter_mut().find(|target| target.source == source) {
@@ -1320,30 +1320,21 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
     let working = model.working();
     pages
         .iter()
-        .filter_map(|view| {
+        .enumerate()
+        // **Every page, and the filter that used to be here is the reason this
+        // is one line.** It dropped the pages tpdf made and carried a
+        // `debug_assert` saying that a silent skip would, the day the model
+        // stopped refusing a mark on one, drop every such mark while the save
+        // reported success. That day is today. The assert was the tripwire for
+        // exactly this edit and it is what made the edit safe to make.
+        .flat_map(|(at, view)| {
             let id = PageId::from_raw(view.id);
-            match view.source {
-                PageSource::Baseline(source) => Some((id, source)),
-                // **Asserted rather than skipped quietly.** `Doc::annotate`
-                // refuses a mark on a page tpdf made, so there is nothing here
-                // to drop --- and the day that refusal is lifted, a silent skip
-                // would drop every mark on an inserted page while the save
-                // reported success. See `Refusal::MadePage`.
-                PageSource::Blank(_) => {
-                    debug_assert!(
-                        working.marks_on(id).is_empty(),
-                        "a mark on a page tpdf made reached the plan: {id:?}"
-                    );
-                    None
-                }
-            }
-        })
-        .flat_map(|(id, source)| {
+            let at = u32::try_from(at).unwrap_or(u32::MAX);
             working.marks_on(id).iter().map(move |mark| {
                 let body = model.mark(*mark).expect("a live mark has a body");
                 PlannedMark {
                     kind: body.kind,
-                    source,
+                    at,
                     // `snapshot`'s reason, and the consequence here is the
                     // one that reaches a file: `/Rect` and `/InkList` are
                     // written from these.
@@ -1600,8 +1591,20 @@ pub struct PlannedRedaction {
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PlannedMark {
     pub kind: MarkKind,
-    /// Which baseline page this goes on, zero-based.
-    pub source: u32,
+    /// Which page of the **plan** this goes on, zero-based --- a position in
+    /// [`Plan::pages`], not a page of the file.
+    ///
+    /// **It was the baseline page number until 2026-08-30, and that is why a
+    /// mark on an inserted page was refused by the model.** A page tpdf made has
+    /// no number in any file, so there was nothing to put here; the position is
+    /// the one address both kinds have. The writer resolves it against the list
+    /// it builds anyway --- `save::rewrite` has every page's object id in plan
+    /// order by the time marks are written, because `make_blank_pages` runs
+    /// first precisely so that the made pages exist to be named.
+    ///
+    /// One-based when it reaches a reader, and it is now the number they are
+    /// looking at rather than the number the page had before they edited.
+    pub at: u32,
     /// Display space, as the model holds it. Mapped into the page's own space by
     /// the writer --- see [`Edits::annotate`].
     pub quads: Vec<Quad>,
@@ -1747,11 +1750,15 @@ fn describe(why: Refusal) -> String {
         Refusal::LastPage(_) => "a document must keep at least one page".into(),
         Refusal::DegenerateCrop(_) => "that crop encloses no area".into(),
         Refusal::DegeneratePage(_) => "a page must have a width and a height".into(),
-        // Worded for what the reader can do about it, which differs by what they
-        // were trying: both callers of this refusal are about a page tpdf made,
-        // and neither of them is something a reader should have to reason about
-        // from the model's vocabulary. See `Refusal::MadePage`.
-        Refusal::MadePage(_) => "tpdf cannot mark a page it made yet".into(),
+        // **Two variants because they are two sentences.** They were one, and
+        // its string was "tpdf cannot mark a page it made yet" --- shown, among
+        // other things, to a reader who had dragged a redaction on a blank page,
+        // which is a true fact about a different operation. Each says what is
+        // true of the page and lets the reader draw the conclusion, rather than
+        // naming a limit of tpdf's: there is nothing to crop to, and nothing to
+        // remove. See `Refusal::CropOnMadePage`.
+        Refusal::CropOnMadePage(_) => "a blank page has nothing to crop to".into(),
+        Refusal::RedactionOnMadePage(_) => "a blank page has nothing to remove".into(),
         Refusal::NoSuchMark(_) => "no such mark".into(),
         Refusal::MarkRemoved(_) => "that mark has already been removed".into(),
         Refusal::EmptyMark => "that mark covers nothing".into(),
@@ -3169,9 +3176,13 @@ mod tests {
 
         let plan = edits.plan(7).expect("plan");
         assert_eq!(plan.marks.len(), 1);
-        // The *baseline* page, which is what a writer walking the page tree has.
-        // A plan naming the model's id would name nothing `lopdf` knows.
-        assert_eq!(plan.marks[0].source, 1);
+        // The page's *position in the plan*, which is what the writer resolves
+        // against the list of page objects it builds. A plan naming the model's
+        // id would name nothing `lopdf` knows; a plan naming the baseline page
+        // could not name a page tpdf made at all. Unedited here, so the position
+        // and the baseline number agree --- which is why the moved-page test
+        // below is the one that can tell them apart.
+        assert_eq!(plan.marks[0].at, 1);
         assert_eq!(plan.marks[0].author, "a reader");
     }
 
@@ -3535,7 +3546,7 @@ mod tests {
             1,
             "a mark on a page nobody extracted came along"
         );
-        assert_eq!(plan.marks[0].source, 0);
+        assert_eq!(plan.marks[0].at, 0);
     }
 
     #[test]
@@ -3576,10 +3587,18 @@ mod tests {
     #[test]
     fn a_marks_reply_names_the_page_by_identity_and_the_plan_by_position() {
         // The two vocabularies, on one mark. The frontend is handed the page's
-        // *id*, because that is what it sends back; the writer is handed the
-        // baseline *source*, because that is what a page tree is indexed by.
-        // The same number today, and the whole reason this layer exists is that
-        // they stop being the same the moment a page moves.
+        // *id*, because that is what it sends back; the writer is handed its
+        // *position in the plan*, because that is what the writer resolves
+        // against the list of page objects it builds --- and because a page tpdf
+        // made has a position and no other number at all.
+        //
+        // **This test is what tells the two addressings apart**, and it is the
+        // only one that could: the mark is on the page the reader moved to the
+        // front, so its position is 0 and its baseline number is 2. Everywhere
+        // else in this file the plan is the file, and the two are the same
+        // number --- the property that holds by construction, which
+        // `docs/TRAPS.md` records as the least conspicuous way an assertion
+        // stops discriminating.
         let edits = opened();
         let pages = edits.state(7).expect("state").pages;
         edits
@@ -3595,8 +3614,9 @@ mod tests {
 
         let plan = edits.plan(7).expect("plan");
         assert_eq!(
-            plan.marks[0].source, 2,
-            "the writer was given a position rather than the page"
+            plan.marks[0].at, 0,
+            "the writer is given the page's position in the plan, and the page \
+             the reader marked is now the first one"
         );
     }
 

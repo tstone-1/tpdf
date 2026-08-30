@@ -1163,34 +1163,34 @@ pub enum Refusal {
     /// the trap about one predicate answering two questions, refused before it
     /// could be made.
     DegeneratePage(Size),
-    /// The page is one tpdf made rather than one out of the file.
+    /// A crop box on a page tpdf made.
     ///
-    /// **Named for the fact rather than for the reason**, because its two
-    /// callers refuse for different reasons and only one of them is temporary. A
-    /// predicate named after why one caller happens to use it is renamed by the
-    /// second, which `docs/TRAPS.md` records twice.
+    /// The box cannot be measured: a reader drags a rectangle in display space
+    /// and `crop.ts` asks PDFium to turn it into a box in the page's own space,
+    /// naming a page of the file. There is no page of the file to name, so
+    /// accepting a crop here would mean holding one nothing could have produced.
+    /// **Clearing a crop is not refused**, and nothing is missing: a made page
+    /// has none to clear, so the refusal would be about an operation with no
+    /// effect.
     ///
-    /// [`Doc::annotate`] refuses because a mark is written by attaching it to a
-    /// page *object*, and [`crate::edits::PlannedMark`] addresses that object by
-    /// its baseline number --- which a page no file supplies does not have.
-    /// Widening that addressing is the increment after this one, and the honest
-    /// place to refuse until then is the moment the reader draws, rather than
-    /// the save that would otherwise be the first thing to say no.
+    /// ⚠ **This and [`RedactionOnMadePage`](Refusal::RedactionOnMadePage) were
+    /// one variant, `MadePage`, whose doc argued at length that it should be
+    /// "named for the fact rather than for the reason" because its callers
+    /// refuse for different reasons.** The argument was right about naming and
+    /// wrong about the consequence: one variant becomes one string in
+    /// [`crate::edits::describe`], and the string it had was *"tpdf cannot mark
+    /// a page it made yet"* --- which was a sentence about marking, shown to a
+    /// reader who had dragged a redaction. A refusal a reader sees is not one
+    /// fact, it is one fact plus what they were trying to do, and only the
+    /// second of those tells them what to do next.
+    CropOnMadePage(PageId),
+    /// A region marked for removal on a page tpdf made.
     ///
-    /// [`Doc::redact`] refuses for a reason that does not expire: a blank page
-    /// has no content, so a region on one removes nothing. That is
+    /// A blank page has no content, so a region on one removes nothing. That is
     /// [`EmptyRedaction`](Refusal::EmptyRedaction)'s argument --- a row in the
     /// review list certifying the removal of nothing --- reaching the same
     /// conclusion by a different route.
-    ///
-    /// [`Command::Crop`] refuses because the box cannot be measured: a reader
-    /// drags a rectangle in display space and `crop.ts` asks PDFium to turn it
-    /// into a box in the page's own space, naming a page of the file. There is
-    /// no page of the file to name, so accepting a crop here would mean holding
-    /// one nothing could have produced. **Clearing a crop is not refused**, and
-    /// nothing is missing: a made page has none to clear, so the refusal would
-    /// be about an operation with no effect.
-    MadePage(PageId),
+    RedactionOnMadePage(PageId),
     /// No mark has ever had this id.
     NoSuchMark(MarkId),
     /// The id names a mark that was taken off the page. Distinct from
@@ -1584,8 +1584,8 @@ impl Working {
             }
             Command::Crop { page, to } => {
                 self.live(page)?;
-                // **The third caller of `Refusal::MadePage`, and this one is
-                // forced rather than chosen.** A crop box is in the page's own
+                // **Forced rather than chosen**, unlike the refusal that used
+                // to sit beside it in `annotate`. A crop box is in the page's own
                 // unrotated space and the reader drags a rectangle in display
                 // space; `crop.ts` asks PDFium to convert between them, naming a
                 // page of the *file*. A page tpdf made is in no file, so the
@@ -1594,7 +1594,7 @@ impl Working {
                 // have measured.
                 if let Some(page_now) = self.pages.get(&page) {
                     if matches!(page_now.source, PageSource::Blank(_)) && to.is_some() {
-                        return Err(Refusal::MadePage(page));
+                        return Err(Refusal::CropOnMadePage(page));
                     }
                 }
                 if let Some(r) = to {
@@ -2051,7 +2051,7 @@ impl Doc {
         // page gets the better diagnosis, and before the id is issued.
         if let Some(page) = self.now.page(redaction.page) {
             if let PageSource::Blank(_) = page.source {
-                return Err(Refusal::MadePage(redaction.page));
+                return Err(Refusal::RedactionOnMadePage(redaction.page));
             }
         }
 
@@ -2143,15 +2143,16 @@ impl Doc {
             return Err(Refusal::EmptyMark);
         }
         self.now.live(mark.page)?;
-        // **A stated limit rather than a rule about marks** --- see
-        // [`Refusal::MadePage`]. It is here, after the liveness check, because a
-        // deleted page is the better diagnosis for an id naming one; and before
-        // the id is issued, so a refused mark spends nothing.
-        if let Some(page) = self.now.page(mark.page) {
-            if let PageSource::Blank(_) = page.source {
-                return Err(Refusal::MadePage(mark.page));
-            }
-        }
+        // **A page tpdf made takes a mark like any other**, and until
+        // 2026-08-30 this is where it did not. The refusal here was never about
+        // marks: `PlannedMark` addressed a page object by its *baseline number*,
+        // which a page no file supplies does not have, so the honest place to
+        // say no was the moment the reader drew rather than the save. The plan
+        // addresses a page by its position now, which both kinds have.
+        //
+        // The two refusals that remain --- `Refusal::CropOnMadePage` and
+        // `Refusal::RedactionOnMadePage` --- do not expire, and both say
+        // something about the page rather than about tpdf.
 
         let id = MarkId(self.next_mark);
         let page = mark.page;
@@ -2854,7 +2855,7 @@ mod tests {
 
     /// A crop on a made page is refused, and clearing one is not.
     ///
-    /// The asymmetry is the point and it is stated on `Refusal::MadePage`: a box
+    /// The asymmetry is the point and it is stated on `Refusal::CropOnMadePage`: a box
     /// cannot be measured for a page no file supplies, and clearing a crop that
     /// does not exist is an operation with no effect rather than an error. The
     /// control is the same box on a page out of the file.
@@ -2869,7 +2870,7 @@ mod tests {
                 page: made,
                 to: Some(rect(0.0, 0.0, 100.0, 200.0)),
             }),
-            Err(Refusal::MadePage(_))
+            Err(Refusal::CropOnMadePage(_))
         ));
         doc.apply(Command::Crop {
             page: ordinary,
@@ -2885,24 +2886,25 @@ mod tests {
         assert_eq!(doc.working().page(made).expect("live").crop, None);
     }
 
-    /// The two refusals `Refusal::MadePage` carries, one per caller.
+    /// A region marked for removal on a made page is refused, and a mark is not.
     ///
-    /// Written as one test because they are one rule about one kind of page and
-    /// differ only in which entry point asks. The controls beside each are what
-    /// say the refusal is about *this* page rather than about marking at all ---
-    /// without them a model that refused every mark would pass.
+    /// The two halves used to be one rule and are now the difference between a
+    /// refusal that expired and one that does not. The control beside the
+    /// redaction is what says it is about *this* page rather than about
+    /// redacting at all; the mark's control is the mark landing on the made page
+    /// and being **on** it afterwards, because "did not return an error" is
+    /// satisfied by a model that accepted it onto nothing.
     #[test]
-    fn a_page_tpdf_made_takes_no_mark_and_no_redaction() {
+    fn a_page_tpdf_made_takes_a_mark_and_no_redaction() {
         let mut doc = Doc::open(2);
         let made = doc.insert(None, A4).expect("insert");
         let ordinary = doc.working().order()[1];
 
-        assert!(matches!(
-            doc.annotate(mark_on(made), String::new()),
-            Err(Refusal::MadePage(_))
-        ));
-        doc.annotate(mark_on(ordinary), String::new())
-            .expect("the same mark on a page out of the file");
+        let mark = doc
+            .annotate(mark_on(made), String::new())
+            .expect("a mark on a page tpdf made");
+        assert_eq!(doc.working().marks_on(made), vec![mark]);
+        assert!(doc.working().marks_on(ordinary).is_empty());
 
         assert!(matches!(
             doc.redact(Redaction {
@@ -2914,7 +2916,7 @@ mod tests {
                     bottom: 40.0,
                 },
             }),
-            Err(Refusal::MadePage(_))
+            Err(Refusal::RedactionOnMadePage(_))
         ));
         doc.redact(Redaction {
             page: ordinary,
