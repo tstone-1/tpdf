@@ -10580,7 +10580,7 @@ Also not done: grouping or filtering by kind, page or colour; and a count, delib
 status line saying "9 marks" is derivable from the rows, so a check asserting the two agree
 would be the panel agreeing with itself.
 
-#### The comments panel lists a highlight by the words it covers
+#### The comments panel lists a highlight by the words it covers --- done 2026-08-21
 
 The other half of the increment above, and the half the note said would need real work. A
 document somebody reviewed opens with nine rows reading *"Highlight, no comment"*: the file
@@ -11885,8 +11885,9 @@ it: a row that needs no tile has to record itself done and pump the next one, or
 every row below a blank page stays empty, and the test written for it asserted
 `fetchTile` was not called, which is true of the fix and of the stall.
 
-**Not done:** marking an inserted page, which is the addressing change described
-above and is the obvious next increment; a page inserted from another file, which
+**Not done:** ~~marking an inserted page, which is the addressing change described
+above and is the obvious next increment~~ (done 2026-08-30 --- see *Marking an
+inserted page*, immediately below); a page inserted from another file, which
 is the *Not done* this section sits under; and choosing a size other than the page
 you are looking at.
 
@@ -11937,6 +11938,71 @@ is true of the page. `docs/TRAPS.md` has the entry.
 **Not done:** a page inserted from another file, which is the *Not done* this section
 sits under; choosing a size other than the page you are looking at; and redacting or
 cropping one, both of which are refused for reasons that do not expire.
+
+#### The importer takes a selection --- done 2026-08-30
+
+The first of the four costs *Not done: inserting pages from another file* lists, and
+the only one that needs neither a window nor a second worker pool: *a save has to
+import the graph this module already knows how to import*. It is built here, under
+merge, on the same reasoning that put the blank page before the imported one --- an
+increment carrying a model change, a render-path change, a second worker pool, undo
+identity and a graph import at once tells you very little about which of the five is
+wrong.
+
+`merge::append` is now `merge::import` plus the graft it always did. `import` takes
+positions in the second document's page order and answers the object id each one has
+in the destination, in the order asked for, and it **places nothing** --- the pages
+are objects of the document and are in no `/Kids`. That is the shape the writer needs:
+`save::rewrite` decides an order in `materialise` and would have to undo a graft.
+`append` asks for all of them and hangs the answer off the root, so the whole-document
+path is unchanged and its own tests are the control for it.
+
+##### The bound was a property of taking everything
+
+The walk that decides what an incoming page needs is bounded by orphaning: a detached
+page has no `/Parent`, so the only way out of it is downward. That is true, tested,
+and true **because every page came across**.
+
+Seed the walk with a subset and a `/Dest` from a page somebody asked for to a page
+they did not is followed to that page's *real* dictionary, `/Parent` and all, and the
+walk climbs the tree node and comes back down into the whole file. Measured on a
+three-page fixture, seeding one page: **10 objects reached against 5** --- both other
+pages and both their content streams, from one link. The output would be a document
+reporting one page and carrying the text of three, which is the leak `docs/TRAPS.md`
+records under a shipped *Extract pages* that reported one page and carried eight.
+
+The fix is one set, `left`: the pages staying behind, which the walk steps over rather
+than into. A reference to one is shifted with everything else and left dangling, which
+is the module's existing position for a destination reached by *name* arriving for one
+reached by *reference*. Importing the page instead is the leak; dropping the reference
+would mean editing an object nobody asked to change.
+
+`without_the_wall_one_page_reaches_the_whole_file` runs the walk with an empty barrier
+on a one-page seed and pins both ends, because the sentence *asking for fewer pages
+makes the walk reach more* reads as plausible whichever way it points.
+
+##### What is refused, and one clause that cannot be tested
+
+A position the document does not have, an empty selection, and **the same page twice**
+--- the last because two positions holding one page *object* is the hazard
+`save::mark_sites` refuses a mark on and `pagetree` refuses a deletion of, and lifting
+it means copying objects rather than importing them, which is a different operation.
+
+The clause excluding the taken pages from `left` is unfalsifiable and is kept anyway:
+a page being taken is in `seen` and in the queue before the walk starts, so putting it
+in the barrier as well changes nothing any test could observe. It is there so the set
+means what its name says. It has no mutation, deliberately, with the reason written
+beside the five that do.
+
+Five mutations, each caught by the test named for it, and the five that already aimed
+at `append` were re-run as the regression check on rewriting it: 10 of 10.
+
+**Not done:** the other three costs, and none of them is smaller than this one.
+`PageSource` has to name a document as well as a page; the model has to own the second
+file's identity across undo; the render path has to ask some other worker for a tile;
+and the second document's bytes have to reach the worker that writes, which today is
+handed exactly one descriptor. Nothing in the application can reach `import`'s
+selection yet --- its live caller is `append`, asking for everything.
 
 #### Upgrading from 26.8.8 on Windows --- done 2026-08-24
 

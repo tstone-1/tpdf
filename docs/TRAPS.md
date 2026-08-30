@@ -2220,6 +2220,56 @@ only rewritten and then certified.** `%%EOF` count is the cheap test. Note this 
 different failure from an object the update merely *dropped from the page* — that one is
 still in the cross-reference table and a graph walk does see it, as an orphan.
 
+### Asking for fewer pages made the walk reach more, because the bound was a property of taking all of them
+
+`merge.rs` brings a second document's pages into this one, and the object walk that decides
+what a page needs is bounded by orphaning: every incoming page is detached from its tree
+first, so its `/Parent` is not there to follow and *the only way out of a page is downward*.
+That is stated in the module note, it is tested by
+`the_walk_does_not_leave_the_page_it_started_from`, and it is correct.
+
+It is correct **because every page came across**. Generalising the importer to take a
+*selection* --- which is what inserting pages from another file needs --- keeps every line of
+that walk and silently removes the bound. A `/Dest` or a `/Link` from a page you asked for to
+a page you did not is followed to that page's **real** dictionary, which still has its
+`/Parent`, and from there the walk climbs the tree node and comes back down into every other
+page of the file.
+
+**Measured on a three-page fixture, seeding one page: 10 objects reached against 5.** Both
+other pages and both their content streams, from one link. The output is a document reporting
+one page and carrying the text of three --- which is the leak this file already records under
+a shipped *Extract pages* that reported one page and carried eight, arriving by a different
+route and one refactor after that one was fixed.
+
+**The direction is what makes it hard to see.** Every instinct says a narrower input produces
+a narrower output, and here narrowing the seed set is exactly what widens the reachable set:
+the pages you dropped from the seeds are the ones that stop being orphans. Nothing about the
+walk changed, no assertion moved, and `append`'s own tests --- which are the right control for
+the whole-document path and the reason the refactor was safe --- pass identically either way,
+because `append` passes an empty barrier and cannot reach the case.
+
+The fix is one set: the pages staying behind, which the walk steps over rather than into. The
+reference to one is shifted with everything else and left dangling, which is the module's
+existing position for a destination reached by name, arriving for one reached by reference.
+
+**Two things worth copying rather than the specific bug.** When a function that took
+everything learns to take some, list what used to be true *by construction* --- this repository
+has the same lesson recorded for a length that was one number under two names when one
+function did both halves of a save. And write the measurement as an assertion: the sentence
+*asking for fewer pages makes the walk reach more* reads as plausible either way, so
+`without_the_wall_one_page_reaches_the_whole_file` runs the walk with an empty barrier on a
+one-page seed and pins both ends of it.
+
+**Coda, and it is the opposite kind of finding.** The barrier is built as *the pages not being
+taken*, and the clause that excludes the taken ones is unfalsifiable: a page being taken is in
+`seen` and in the queue before the walk starts, so putting it in the barrier as well changes
+nothing any test could observe. It is kept, because the set means what its name says and a
+later reader needs that, and it has **no mutation** --- deliberately, with the reason written
+beside the others in `scripts/mutate_rust.py`, since a mutation that reddens nothing indicts
+the harness rather than the code.
+
+Paid for on 2026-08-30.
+
 ### A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
 
 `qpdf in out` re-encodes stream data by default, so it fully decodes a stream that inflates
