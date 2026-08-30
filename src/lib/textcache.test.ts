@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { filePage } from "./pages";
 import {
   TEXT_CACHE_CHARS,
   TEXT_CACHE_FLOOR,
@@ -22,6 +23,17 @@ import {
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
+
+/**
+ * A page number, named as a page of the *file*.
+ *
+ * Every number in this file is one already --- these tests build a cache with
+ * no document and no page map behind it, so there are no slots here to confuse
+ * it with. Stated once as a helper rather than at each of the sixty-five call
+ * sites, which would say the same thing sixty-five times and hide what each
+ * test is actually about.
+ */
+const fp = filePage;
 
 /** A page of `chars` characters, each with a box, laid out left to right. */
 function page(chars: number): PageText {
@@ -55,17 +67,17 @@ describe("TextCache eviction", () => {
   it("holds everything that fits under the bound", async () => {
     const cache = new TextCache(1);
     const pages = Math.floor(TEXT_CACHE_CHARS / SMALL) - 1;
-    for (let p = 0; p < pages; p++) await cache.load(p);
+    for (let p = 0; p < pages; p++) await cache.load(fp(p));
     expect(cache.cachedPages).toBe(pages);
     expect(cache.cachedChars).toBe(pages * SMALL);
     // The control for every eviction assertion below: without it, a cache that
     // dropped each page as it arrived would satisfy all of them.
-    expect(cache.peek(0)).not.toBeNull();
+    expect(cache.peek(fp(0))).not.toBeNull();
   });
 
   it("drops pages once the bound is passed", async () => {
     const cache = new TextCache(1);
-    for (let p = 0; p < OVER; p++) await cache.load(p);
+    for (let p = 0; p < OVER; p++) await cache.load(fp(p));
     expect(cache.cachedChars).toBeLessThanOrEqual(TEXT_CACHE_CHARS);
     expect(cache.cachedPages).toBeLessThan(OVER);
   });
@@ -76,11 +88,11 @@ describe("TextCache eviction", () => {
       // Page 0 is read on every step, so it is the oldest *arrival* throughout
       // and never the least recently *used*. A cache evicting by arrival order
       // drops it first; one evicting by use drops page 1.
-      if (p > 0) cache.peek(0);
-      await cache.load(p);
+      if (p > 0) cache.peek(fp(0));
+      await cache.load(fp(p));
     }
-    expect(cache.peek(0)).not.toBeNull();
-    expect(cache.peek(1)).toBeNull();
+    expect(cache.peek(fp(0))).not.toBeNull();
+    expect(cache.peek(fp(1))).toBeNull();
   });
 
   it("counts a load of a page it already has as a use", async () => {
@@ -89,26 +101,26 @@ describe("TextCache eviction", () => {
     // leave a page a reader keeps returning to looking untouched.
     const cache = new TextCache(1);
     for (let p = 0; p < OVER; p++) {
-      if (p > 0) await cache.load(0);
-      await cache.load(p);
+      if (p > 0) await cache.load(fp(0));
+      await cache.load(fp(p));
     }
-    expect(cache.peek(0)).not.toBeNull();
-    expect(cache.peek(1)).toBeNull();
+    expect(cache.peek(fp(0))).not.toBeNull();
+    expect(cache.peek(fp(1))).toBeNull();
   });
 
   it("never evicts the page that has just arrived", async () => {
     const cache = new TextCache(1);
-    for (let p = 0; p < OVER; p++) await cache.load(p);
+    for (let p = 0; p < OVER; p++) await cache.load(fp(p));
     // The scan starts at the old end, so the newest page survives however far
     // over the bound its arrival put the cache. A cache that dropped it would
     // re-fetch the page it is about to draw, every time.
-    expect(cache.peek(OVER - 1)).not.toBeNull();
+    expect(cache.peek(fp(OVER - 1))).not.toBeNull();
   });
 
   it("keeps a floor of pages larger than the bound itself", async () => {
     const cache = new TextCache(1);
     core.invoke.mockImplementation(() => Promise.resolve(page(TEXT_CACHE_CHARS)));
-    for (let p = 0; p < TEXT_CACHE_FLOOR + 2; p++) await cache.load(p);
+    for (let p = 0; p < TEXT_CACHE_FLOOR + 2; p++) await cache.load(fp(p));
     // Every page on its own fills the budget, so a bound without a floor would
     // hold exactly one and re-fetch both halves of a two-page viewport forever.
     expect(cache.cachedPages).toBe(TEXT_CACHE_FLOOR);
@@ -119,10 +131,10 @@ describe("TextCache eviction", () => {
     // The other half of what eviction means, and the reason re-fetching is an
     // acceptable price: a dropped page must come back, not come back empty.
     const cache = new TextCache(1);
-    for (let p = 0; p < OVER; p++) await cache.load(p);
-    expect(cache.peek(0)).toBeNull();
+    for (let p = 0; p < OVER; p++) await cache.load(fp(p));
+    expect(cache.peek(fp(0))).toBeNull();
     const calls = core.invoke.mock.calls.length;
-    const again = await cache.load(0);
+    const again = await cache.load(fp(0));
     expect(again?.codes.length).toBe(SMALL);
     expect(core.invoke.mock.calls.length).toBe(calls + 1);
   });
@@ -131,10 +143,10 @@ describe("TextCache eviction", () => {
     const cache = new TextCache(1);
     cache.setTurns(1);
     for (let p = 0; p < OVER; p++) {
-      await cache.load(p);
+      await cache.load(fp(p));
       // `view` memoises on first use, so the turned copy only exists once
       // somebody has asked for the page. Reading it is what puts it in the map.
-      cache.peek(p);
+      cache.peek(fp(p));
     }
     // Asserted on the *count*, not through `peek`. A stale turned view is
     // unreachable behaviourally --- `view` consults `pages` first and never
@@ -142,10 +154,10 @@ describe("TextCache eviction", () => {
     // evicted page reads as null passes whether or not the view was dropped,
     // and the leak it is meant to catch stays invisible.
     expect(cache.retainedViews).toBe(cache.cachedPages);
-    expect(cache.peek(0)).toBeNull();
+    expect(cache.peek(fp(0))).toBeNull();
     // And the pages that survived are still turned, so eviction has not quietly
     // reset the rotation for them.
-    expect(cache.peek(OVER - 1)?.quarter_turns).toBe(1);
+    expect(cache.peek(fp(OVER - 1))?.quarter_turns).toBe(1);
   });
 });
 
@@ -159,75 +171,75 @@ describe("TextCache eviction", () => {
 describe("TextCache page turns", () => {
   it("turns only the page the edit named", async () => {
     const cache = new TextCache(1);
-    await cache.load(0);
-    await cache.load(1);
-    cache.setPageTurns(0, 1);
+    await cache.load(fp(0));
+    await cache.load(fp(1));
+    cache.setPageTurns(fp(0), 1);
 
-    expect(cache.peek(0)?.quarter_turns).toBe(1);
+    expect(cache.peek(fp(0))?.quarter_turns).toBe(1);
     // The assertion that separates a page turn from a view rotation. A
     // `setPageTurns` that called `setTurns` would satisfy the line above.
-    expect(cache.peek(1)?.quarter_turns).toBe(0);
+    expect(cache.peek(fp(1))?.quarter_turns).toBe(0);
   });
 
   it("composes the page's turn with the view's", async () => {
     const cache = new TextCache(1);
-    await cache.load(0);
-    await cache.load(1);
+    await cache.load(fp(0));
+    await cache.load(fp(1));
     cache.setTurns(1);
-    cache.setPageTurns(0, 1);
+    cache.setPageTurns(fp(0), 1);
 
-    expect(cache.peek(0)?.quarter_turns).toBe(2);
-    expect(cache.peek(1)?.quarter_turns).toBe(1);
+    expect(cache.peek(fp(0))?.quarter_turns).toBe(2);
+    expect(cache.peek(fp(1))?.quarter_turns).toBe(1);
   });
 
   it("swaps the turned page's dimensions and leaves its neighbour's", async () => {
     const cache = new TextCache(1);
-    const raw = await cache.load(0);
-    await cache.load(1);
+    const raw = await cache.load(fp(0));
+    await cache.load(fp(1));
     if (!raw) throw new Error("fixture");
     const width = raw.width_pt;
     const height = raw.height_pt;
 
-    cache.setPageTurns(1, 3);
-    expect(cache.peek(0)?.width_pt).toBe(width);
-    expect(cache.peek(1)?.width_pt).toBe(height);
-    expect(cache.peek(1)?.height_pt).toBe(width);
+    cache.setPageTurns(fp(1), 3);
+    expect(cache.peek(fp(0))?.width_pt).toBe(width);
+    expect(cache.peek(fp(1))?.width_pt).toBe(height);
+    expect(cache.peek(fp(1))?.height_pt).toBe(width);
   });
 
   it("drops only that page's turned view when its turn changes", async () => {
     const cache = new TextCache(1);
     cache.setTurns(1);
-    await cache.load(0);
-    await cache.load(1);
-    cache.peek(0);
-    cache.peek(1);
+    await cache.load(fp(0));
+    await cache.load(fp(1));
+    cache.peek(fp(0));
+    cache.peek(fp(1));
     expect(cache.retainedViews).toBe(2);
 
-    cache.setPageTurns(0, 1);
+    cache.setPageTurns(fp(0), 1);
     // One dropped, one kept. A `setPageTurns` that cleared the whole map would
     // be correct and wasteful, and this is the accounting observable that can
     // tell --- through `peek` the two are indistinguishable, since a dropped
     // view is simply rebuilt.
     expect(cache.retainedViews).toBe(1);
-    expect(cache.peek(1)?.quarter_turns).toBe(1);
+    expect(cache.peek(fp(1))?.quarter_turns).toBe(1);
   });
 
   it("returns the document's own text once a turn is taken back", async () => {
     const cache = new TextCache(1);
-    const raw = await cache.load(0);
+    const raw = await cache.load(fp(0));
     if (!raw) throw new Error("fixture");
-    cache.setPageTurns(0, 2);
-    expect(cache.peek(0)?.quarter_turns).toBe(2);
-    cache.setPageTurns(0, 0);
-    expect(cache.peek(0)?.quarter_turns).toBe(0);
-    expect(cache.peek(0)?.width_pt).toBe(raw.width_pt);
+    cache.setPageTurns(fp(0), 2);
+    expect(cache.peek(fp(0))?.quarter_turns).toBe(2);
+    cache.setPageTurns(fp(0), 0);
+    expect(cache.peek(fp(0))?.quarter_turns).toBe(0);
+    expect(cache.peek(fp(0))?.width_pt).toBe(raw.width_pt);
   });
 
   it("normalises a negative turn", async () => {
     const cache = new TextCache(1);
-    await cache.load(0);
-    cache.setPageTurns(0, -1);
-    expect(cache.peek(0)?.quarter_turns).toBe(3);
+    await cache.load(fp(0));
+    cache.setPageTurns(fp(0), -1);
+    expect(cache.peek(fp(0))?.quarter_turns).toBe(3);
   });
 });
 
@@ -238,13 +250,13 @@ describe("TextCache crops", () => {
     // an answer in another space. Dropped and re-asked rather than translated,
     // because the backend's answer under the new box is the renderer's own.
     const cache = new TextCache(1);
-    await cache.load(0);
+    await cache.load(fp(0));
     expect(core.invoke).toHaveBeenCalledTimes(1);
     expect(core.invoke.mock.calls[0]?.[1]).toEqual({ doc: 1, page: 0, crop: null });
 
-    cache.setPageCrop(0, [10, 20, 300, 400]);
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
     expect(cache.cachedPages).toBe(0);
-    await cache.load(0);
+    await cache.load(fp(0));
     expect(core.invoke.mock.calls[1]?.[1]).toEqual({
       doc: 1,
       page: 0,
@@ -258,20 +270,20 @@ describe("TextCache crops", () => {
     // time a reader turned one --- correct, and an IPC round trip per page for
     // nothing.
     const cache = new TextCache(1);
-    cache.setPageCrop(0, [10, 20, 300, 400]);
-    await cache.load(0);
-    cache.setPageCrop(0, [10, 20, 300, 400]);
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    await cache.load(fp(0));
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
     expect(cache.cachedPages).toBe(1);
   });
 
   it("keeps its neighbours when one page's crop changes", async () => {
     // The scope, and the same one `setPageTurns` has: a crop is one page's.
     const cache = new TextCache(1);
-    await cache.load(0);
-    await cache.load(1);
-    cache.setPageCrop(0, [10, 20, 300, 400]);
+    await cache.load(fp(0));
+    await cache.load(fp(1));
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
     expect(cache.cachedPages).toBe(1);
-    expect(cache.peek(1)).not.toBeNull();
+    expect(cache.peek(fp(1))).not.toBeNull();
   });
 
   it("drops the page again when the crop is taken off", async () => {
@@ -279,9 +291,82 @@ describe("TextCache crops", () => {
     // out would serve the cropped extraction for an uncropped page, which is the
     // same defect with the sign reversed and looks like it fixed itself.
     const cache = new TextCache(1);
-    cache.setPageCrop(0, [10, 20, 300, 400]);
-    await cache.load(0);
-    cache.setPageCrop(0, undefined);
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    await cache.load(fp(0));
+    cache.setPageCrop(fp(0), undefined);
     expect(cache.cachedPages).toBe(0);
+  });
+});
+
+/**
+ * Whether a repaint should spend a round trip on a page.
+ *
+ * The question the frame loop asks, and it lives here because the cache is what
+ * *forgets*. `viewer.ts` used to keep the answer as a set of its own, which
+ * nothing cleared: a crop dropped the page's extraction and the set went on
+ * saying it had been asked for, so the page was never fetched again and no
+ * caret could be placed on it for the rest of the session. Measured through the
+ * viewer --- see `viewertext.test.ts` --- but the rule is this class's.
+ */
+describe("TextCache, on whether asking again is worth a round trip", () => {
+  it("says yes for a page nobody has asked about", () => {
+    // The control every "no" below is a departure from. Without it a method
+    // that always answered false would satisfy the three of them.
+    expect(new TextCache(1).worthAsking(fp(0))).toBe(true);
+  });
+
+  it("says no while the extraction is in flight", () => {
+    const cache = new TextCache(1);
+    // Deliberately not awaited: in flight is the state under test, and the
+    // frame loop's whole reason for asking is that it runs while one is.
+    void cache.load(fp(0));
+    expect(cache.worthAsking(fp(0))).toBe(false);
+  });
+
+  it("says no for a page whose text has arrived", async () => {
+    const cache = new TextCache(1);
+    await cache.load(fp(0));
+    expect(cache.worthAsking(fp(0))).toBe(false);
+  });
+
+  it("says no for a page that came back with nothing", async () => {
+    // A failure caches no text, so this is the one "no" that cannot be read off
+    // the cache's contents --- and it is the one that matters, because the
+    // caller is the frame loop. Without it a damaged page issues a fresh
+    // `page_text` every frame for the life of the document.
+    const cache = new TextCache(1);
+    core.invoke.mockRejectedValueOnce(new Error("no text"));
+    expect(await cache.load(fp(0))).toBeNull();
+    expect(cache.worthAsking(fp(0))).toBe(false);
+  });
+
+  it("says yes again once a crop drops the extraction", async () => {
+    const cache = new TextCache(1);
+    await cache.load(fp(0));
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    expect(cache.worthAsking(fp(0))).toBe(true);
+  });
+
+  it("says yes again once a crop drops a failure", async () => {
+    // The pair of the two above, and the reason `forget` clears the failure
+    // rather than only the text: a new crop box is a different question, so a
+    // page that could not be read under the old one says nothing about the new.
+    const cache = new TextCache(1);
+    core.invoke.mockRejectedValueOnce(new Error("no text"));
+    await cache.load(fp(0));
+    expect(cache.worthAsking(fp(0))).toBe(false);
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    expect(cache.worthAsking(fp(0))).toBe(true);
+  });
+
+  it("says yes again for a page the bound evicted", async () => {
+    const cache = new TextCache(1);
+    for (let p = 0; p < OVER; p++) await cache.load(fp(p));
+    expect(cache.peek(fp(0))).toBeNull();
+    expect(cache.worthAsking(fp(0))).toBe(true);
+    // The control: the page that was *not* evicted is still not worth asking
+    // about, so this is a statement about eviction rather than about a method
+    // that answers true for everything once the cache is full.
+    expect(cache.worthAsking(fp(OVER - 1))).toBe(false);
   });
 });

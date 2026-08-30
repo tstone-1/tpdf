@@ -61,6 +61,39 @@ export function pageId(value: number): PageId {
 }
 
 /**
+ * A page of the *file*, as opposed to a slot on screen or a {@link PageId}.
+ *
+ * The third number in this module, and the one that had no name until a drag
+ * stopped selecting text. `TextCache` is keyed by page of the file, deliberately
+ * --- a page's text is a property of the document, so a deletion above it must
+ * not make it be fetched again --- and `viewer.ts` translated at three of its
+ * eighteen call sites. The other fifteen passed a slot, so on any document with
+ * an edit in it the paint path looked under one key while the loader stored
+ * under another: measured, a drag that selects `"ab"` on an untouched document
+ * selects nothing at all once the first page is deleted.
+ *
+ * A slot and a page of the file are both `number` and are equal on every
+ * document nobody has edited, which is why nothing caught it and why a rule
+ * ("translate at the call sites") was the wrong instrument. This is the
+ * mechanism: {@link PageMap.sourceOf} is the only thing that mints one, so a
+ * slot reaching the cache is now a type error rather than a silent miss.
+ */
+export type FilePage = number & { readonly __filePage: unique symbol };
+
+/**
+ * Names a number as a page of the file.
+ *
+ * {@link pageId}'s counterpart, and the same honest limit: a cast with a name on
+ * it. Callers outside this module should be getting one from
+ * {@link PageMap.sourceOf} rather than minting it --- what needs this are the
+ * places holding a number that came from the file in the first place, which is
+ * `unedited` here and the harnesses that build a document by hand.
+ */
+export function filePage(value: number): FilePage {
+  return value as FilePage;
+}
+
+/**
  * What kind of mark a reader made. The names are the wire format --- see
  * `MarkKind` in `docmodel.rs`, which is where the set is closed.
  *
@@ -318,8 +351,8 @@ export type PageSource =
  * wire shape and has no methods; and named for the answer rather than for the
  * question, so a caller reads it as "which page of the file is this".
  */
-export function baselineOf(source: PageSource): number | undefined {
-  return "baseline" in source ? source.baseline : undefined;
+export function baselineOf(source: PageSource): FilePage | undefined {
+  return "baseline" in source ? filePage(source.baseline) : undefined;
 }
 
 /**
@@ -433,7 +466,7 @@ export class PageMap {
    * in exactly the case this class exists for --- so a caller that cannot handle
    * a missing slot must not ask for a tile rather than ask for the wrong one.
    */
-  sourceOf(slot: number): number | undefined {
+  sourceOf(slot: number): FilePage | undefined {
     const view = this.views[slot];
     return view === undefined ? undefined : baselineOf(view.source);
   }
@@ -465,7 +498,7 @@ export class PageMap {
    * file, which for a real document means the reader is on a made page at the
    * very front.
    */
-  nearestSourceAt(slot: number): number | undefined {
+  nearestSourceAt(slot: number): FilePage | undefined {
     for (let at = Math.min(slot, this.views.length - 1); at >= 0; at--) {
       const view = this.views[at];
       const source = view === undefined ? undefined : baselineOf(view.source);
@@ -520,7 +553,7 @@ export class PageMap {
    * `[0, 2, 3]` says what a deletion did, where three separate `sourceOf`
    * calls say it three times.
    */
-  sources(): (number | undefined)[] {
+  sources(): (FilePage | undefined)[] {
     return this.views.map((page) => baselineOf(page.source));
   }
 

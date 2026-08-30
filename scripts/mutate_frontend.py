@@ -4954,6 +4954,14 @@ TEST_FILES = [
     # table's entry said had never been true.
     "src/lib/redactlist.test.ts",
     "src/lib/sidebar.test.ts",
+    # Added 2026-08-30 with the slot-versus-page mutations, in the same edit.
+    # Eleventh time, and for once the list was grown by the person who wrote the
+    # tests rather than a step later --- because this suite is new and the guard
+    # above was fresh in mind. The pattern in the notes above is about the
+    # ordering of two jobs, not about carelessness, so the way to stop meeting
+    # it is to write the mutation and the list entry in the commit that adds
+    # the suite.
+    "src/lib/viewertext.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
@@ -6001,6 +6009,159 @@ MUTATIONS += [
         "      enabled: () => withDocument() && actions.canReplyToComment(),",
         "      enabled: () => actions.canReplyToComment(),",
         "withholds replying to a comment with no document, however replyable",
+    ),
+]
+
+MUTATIONS += [
+    # Slot versus page of the file, 2026-08-30. Each of these reverts one
+    # translation between the two -- putting a slot back where a page of the
+    # file belongs, which is what fifteen call sites did until `FilePage` made
+    # it a type error. They do not need to type-check: the harness runs vitest,
+    # which strips types without checking them, so what each one measures is
+    # whether the test can see the wrong page being asked about.
+    #
+    # Seven mutations for nine of the sixteen sites -- two of them put a slot
+    # back in both halves of one function. The other seven sites are held by the
+    # type rather than by a test: `npm run check` is a gate, and a slot reaching
+    # `TextCache` is an error in it, so a mutation for one of those would be
+    # measuring the compiler. These nine are the ones with a behavioural
+    # observable.
+    Mutation(
+        # The measured defect, in the place a reader meets it first: press on a
+        # page and nothing happens, on any document with an edit in it.
+        "viewer: place a caret from the cache under the slot's number",
+        "src/lib/viewer.ts",
+        "    const text = this.textOn(page);\n"
+        "    if (!text) {\n"
+        "      this.requestText(page);",
+        "    const text = this.text.peek(page);\n"
+        "    if (!text) {\n"
+        "      this.requestText(page);",
+        "selects what the pointer dragged over, after the page above went",
+    ),
+    Mutation(
+        # Select-all-on-page, which reaches the cache by a different route --
+        # `loadOn` rather than a press -- and so needs its own mutation.
+        "viewer: select a whole page under the slot's number",
+        "src/lib/viewer.ts",
+        "    const text = this.textOn(page);\n"
+        "    if (!text) {\n"
+        "      void this.loadOn(page).then((arrived) => {",
+        "    const text = this.text.peek(page);\n"
+        "    if (!text) {\n"
+        "      void this.text.load(page).then((arrived) => {",
+        "selects a whole page, after the page above went",
+    ),
+    Mutation(
+        # The status line's count. Wrong in the quiet direction: a selection
+        # that is drawn and copies correctly while the count beside it says 0.
+        "viewer: count the selection's characters under the slot's number",
+        "src/lib/viewer.ts",
+        "      const range = this.selection.rangeOn(page);\n"
+        "      const text = range && this.textOn(page);",
+        "      const range = this.selection.rangeOn(page);\n"
+        "      const text = range && this.text.peek(page);",
+        "counts the selected characters, after the page above went",
+    ),
+    Mutation(
+        # The asking path, which a caller uses to read a page it has never
+        # visited -- the comment-words loop in `App.svelte` is the live one.
+        "viewer: ask for the unturned text of the slot's number",
+        "src/lib/viewer.ts",
+        "    await this.text.load(source);\n"
+        "    return this.text.peekUnturned(source);",
+        "    await this.text.load(slot);\n"
+        "    return this.text.peekUnturned(slot);",
+        "answers a page's unturned text, after the page above went",
+    ),
+    Mutation(
+        # The quads a mark is built from. Wrong here writes a highlight over
+        # another page's words, which outlives the session in the file.
+        "viewer: take a selection's quads from the slot's number",
+        "src/lib/viewer.ts",
+        "      const text = this.unturnedOn(page);",
+        "      const text = this.text.peekUnturned(page);",
+        "hands back a selection's quads by page, after the page above went",
+    ),
+    Mutation(
+        # Drop the crop under the slot. The extraction taken under the old box
+        # stays in the cache and goes on placing carets in the wrong space.
+        "viewer: drop the cropped extraction under the slot's number",
+        "src/lib/viewer.ts",
+        "      this.text.setPageCrop(source, want);",
+        "      this.text.setPageCrop(slot, want);",
+        "drops the cropped page's extraction, not the extraction at its slot",
+    ),
+    Mutation(
+        # `Selection` takes a lookup rather than the cache precisely so that it
+        # never meets the distinction. Handing it the cache back is the shape
+        # the code had, and it reads as tidier.
+        "viewer: give the selection the cache instead of a lookup",
+        "src/lib/viewer.ts",
+        "    return this.selection ? this.selection.text((page) => this.textOn(page)) : \"\";",
+        "    return this.selection ? this.selection.text((page) => this.text.peek(page)) : \"\";",
+        "selects what the pointer dragged over, after the page above went",
+    ),
+]
+
+MUTATIONS += [
+    # Whether asking again is worth a round trip, 2026-08-30. Four rules, one
+    # mutation each. The defect these replaced -- a record of what had been
+    # asked for, kept in `viewer.ts` where nothing could clear it, so a cropped
+    # page was never fetched again -- has no one-line mutation, because the
+    # whole of it was *where* the record lived. It was measured directly
+    # instead; `viewertext.test.ts` records the numbers.
+    Mutation(
+        # Forget that the page already answered with nothing. A damaged page
+        # then issues a fresh `page_text` on every frame for the life of the
+        # document, which is the loop `selectPage`'s comment describes meeting
+        # once before.
+        "text: ask again for a page that already came back with nothing",
+        "src/lib/text.ts",
+        "      !this.unreadable.has(page)",
+        "      true",
+        "does not ask again for a page that could not be read",
+    ),
+    Mutation(
+        # Forget that one is in flight. The frame loop attaches a fresh
+        # continuation to the same extraction every frame -- the request is
+        # deduplicated and the `.then` is not, which is what this guard is for.
+        "text: ask again for a page whose extraction is in flight",
+        "src/lib/text.ts",
+        "      !this.pending.has(page) &&",
+        "      true &&",
+        "says no while the extraction is in flight",
+    ),
+    Mutation(
+        # Forget that the text is already here. Every visible page is re-fetched
+        # on every frame, which is the cache doing nothing at all.
+        "text: ask again for a page whose text has already arrived",
+        "src/lib/text.ts",
+        "      !this.pages.has(page) &&",
+        "      true &&",
+        "says no for a page whose text has arrived",
+    ),
+    Mutation(
+        # Keep the failure across a crop. A new crop box is a different
+        # question, so this is the direction that reads as reasonable: it
+        # remembers a true fact about an extraction nobody is asking for
+        # any more.
+        "text: keep a page's failure when its crop changes",
+        "src/lib/text.ts",
+        "    this.unreadable.delete(page);",
+        "    if (false) this.unreadable.delete(page);",
+        "says yes again once a crop drops a failure",
+    ),
+    Mutation(
+        # Take a blank page for a page that could not be read. The copy is
+        # refused with a message naming pages that were read without
+        # difficulty, and the status line goes on showing the selection it
+        # will not hand over.
+        "viewer: refuse a copy because a page tpdf made has no text",
+        "src/lib/viewer.ts",
+        "          if (made) continue;",
+        "          if (false) continue;",
+        "copies a selection that runs across a page tpdf made",
     ),
 ]
 

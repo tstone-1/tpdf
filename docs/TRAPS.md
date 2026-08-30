@@ -18809,3 +18809,186 @@ every early return is a place the queue can stop**, the test for one must assert
 other mechanism reaches the same outcome. An absence assertion at the skip is satisfied by the
 skip working and by the machine having died; a presence assertion at the front of the queue is
 satisfied by whatever else happens to pump there.
+
+### A cache keyed by the page of the file, and every caller holding the slot
+
+`TextCache` is keyed by the page of the **file**, and the reason is good enough that it is
+written at the top of the class: a page's text is a property of the document, so deleting a
+page above it must not make it be fetched again. Everything in `viewer.ts` works in **slots**,
+because a slot is where the pointer went and where the scroller laid a page out. The comment
+finished:
+
+> and `viewer.ts` translates at the four call sites rather than this class holding a copy of
+> the order.
+
+There were **eighteen** calls into the cache from that file. One passes no page at all;
+**three** translated; **fourteen** passed the slot straight through, and `selection.ts` added
+two more by taking the cache itself. So the sentence naming the mechanism was a count of what
+somebody had checked, and it was wrong in the reassuring direction.
+
+The two numbers are equal on every document nobody has edited, which is the whole of why
+nothing caught it --- 1,360 frontend tests, twenty gates and a window harness, all green with
+the defect in. What it cost, measured with the same drag over the same two characters:
+
+| document | drag: asked / selected | select-all: asked / selected |
+|---|---|---|
+| untouched | page 0 / `"ab"` | page 0 / `"ab"` |
+| first page deleted | page **1** / `""` | page **0** / `"ab"` |
+
+Slot 0 draws page 1, which spells `"cd"`. Read the two columns of the second row together,
+because they are the two ways this goes wrong and they are not the same way:
+
+- **The drag asked for the right page and looked under the wrong key.** `requestText`
+  translated, so page 1's text arrived and was cached under 1; `pointFrom` called `peek(0)`,
+  found nothing, and asked again --- and the ask was refused, because page 1 was already
+  recorded as asked for. No caret, ever. Pressing on a page did nothing at all.
+- **Select-all asked for the wrong page and looked under the same wrong key**, because
+  `selectPage` reached `load` directly. That is *self-consistent*: it fetched page 0, cached it
+  under 0, read it back under 0, and selected `"ab"` --- the text of the page the reader had
+  deleted, on a page that spells `"cd"`. Ctrl-C then put it on the clipboard.
+
+The second is the worse one and it is the quiet one. **A silent absence and a silent wrong
+answer came out of one defect**, and which you get depends only on whether the path that asked
+and the path that read happened to make the same mistake. The search highlights were not drawn
+(the paint path reads by slot), Find next scrolled to an offset computed from another page's
+runs, and the status line's character count sat at zero.
+
+The instructive part is not the defect, it is that the remedy in the comment was a **rule**.
+"Translate at the call sites" is exactly as strong as whoever remembers it, and both numbers
+are `number`, so forgetting is silent and the type system agrees with you. What closes it is a
+brand:
+
+```ts
+export type FilePage = number & { readonly __filePage: unique symbol };
+```
+
+`PageMap.sourceOf` is the only thing that mints one --- it already had to answer `undefined`
+for a page tpdf made, which is the same question --- and the cache's parameters are now
+`FilePage`. Turning it on printed **sixteen** errors naming sixteen call sites, which is the
+enumeration the rule never got. Afterwards a slot reaching the cache is an error in
+`npm run check`, which is a gate.
+
+Two things worth carrying beyond this file:
+
+- **A comment that names how many places do something is a claim with no check behind it.**
+  This one had been read and believed for months. If the count matters, the compiler can hold
+  it; if it cannot, do not write the number.
+- **Nine of the sixteen have a behavioural test and seven do not, and that is the right
+  split.** Reverting one of the seven is a type error, so a mutation for it would be measuring
+  the compiler rather than the suite. Seven mutations cover the nine --- two of them put a slot
+  back in both halves of one function --- and each was written for a site where something a
+  reader can see goes wrong: a caret, a character count, a set of quads, an extraction dropped
+  under the wrong number.
+
+The other half of the repair was to stop `selection.ts` seeing the distinction at all. It took
+the cache and called `peek` with a caret's page, which is a slot; it now takes
+`(page: number) => PageText | null` and the viewer passes `textOn`, which is the translation.
+A class whose whole job is arithmetic in one space should not be handed an object keyed in
+another.
+
+### A record of what has been asked for, kept where it cannot see the answer being thrown away
+
+`viewer.ts` held a set called `textAsked`, and its doc comment gave a good reason:
+
+> `TextCache` already dedupes the request, but not the `.then` attached to it, and the frame
+> loop would attach a fresh one every frame of a scroll over a page still being extracted.
+> This is what stops that.
+
+Every word of that is true. Nothing cleared the set.
+
+`TextCache.setPageCrop` **drops** a page's extraction, and correctly: character boxes are
+measured from the displayed page's corner, a crop moves that corner, so the cached answer is
+not stale --- it is in another space. The page then had no text and a permanent record saying
+it had been asked for, so `requestText` returned early for ever. Measured on an **unedited**
+document, the same drag over the same two characters:
+
+| | `page_text` asked for | selected |
+|---|---|---|
+| before the crop | page 0 | `"ab"` |
+| after the crop | page 0 --- not asked again | `""` |
+
+**Crop any page of any document and you cannot place a caret on it again for the rest of the
+session.** Crop is a shipped command. Select-all-on-page went on working, because it calls
+`load` directly and never consults the set, which is the kind of partial survival that makes a
+report read as "selection is flaky".
+
+The eviction path is the same defect with a slower trigger: the cache is bounded, so a page
+dropped by the bound and scrolled back to has text nowhere and a record saying it was asked
+for.
+
+The repair is not a second place to clear the set. It is to keep the record **beside the thing
+that forgets**:
+
+```ts
+worthAsking(page: FilePage): boolean {
+  return (
+    !this.pages.has(page) && !this.pending.has(page) && !this.unreadable.has(page)
+  );
+}
+```
+
+Two of those three the cache already knew. The third had to be added, and it is the one worth
+naming: **a failure caches nothing, so "not here" and "asked, and there is nothing" are the
+same observation** --- and a caller on the frame loop that cannot tell them apart re-issues a
+`page_text` for a damaged page every frame, which is the loop `selectPage`'s own comment
+records meeting once before. `forget` clears it along with the text, because a new crop box is
+a different question and a page that could not be read under the old one says nothing about
+the new one.
+
+The general shape, and it is not about caches: **a memo about an operation must live where the
+operation's result lives**, or it outlives the result and starts answering for a state that no
+longer exists. The tell is a set or a flag whose only writer is an `add`, with no `delete`
+anywhere --- grep for that before believing a comment that says what the set is for. And the
+narrower one: expose the **question** the caller is asking (`worthAsking`) rather than the
+three facts it would otherwise have to combine, because a caller combining them is a caller
+that can forget one.
+
+**No single-line mutation reproduces this defect**, which is worth saying rather than papering
+over. The whole of it was *where* the record lived; once it sits beside the extraction, no edit
+to one line puts it back out of reach. What was measured is the code before the move, and the
+four rules it now rests on carry a mutation each.
+
+### The status line showed the selection and the copy refused it, over a page with nothing on it
+
+`Viewer.selectionText` returns `null` when any page of a selection could not be read, and
+`copySelection` turns that into *"Some of the selected pages' text could not be read, so
+nothing was copied."* The rule is right, and its reason is written down: a partial copy becomes
+a partial mark, which a reader then applies and is told is clean.
+
+A page tpdf made --- inserted blank --- has no page of the file behind it, so the load answers
+`null` too. Dragging from page 1 to page 3 across a blank page 2 therefore produced this,
+measured:
+
+| | |
+|---|---|
+| `viewer.selectedText` | `"ab\ncd"` |
+| `viewer.copySelection()` | `null`, clipboard untouched |
+| the reader is told | *"Some of the selected pages' text could not be read"* |
+
+**The status line shows the selection, and pressing Copy refuses it and blames two pages that
+were read without difficulty.** The two spellings of "the selected text" disagreed because one
+of them skips a page it cannot read and the other reports it, which is a deliberate difference
+between a status line and a clipboard --- and neither of them was wrong about its own job.
+
+The defect is that one `null` carries two facts. **"Could not be read" and "has nothing to
+read" are not the same outcome**, and a caller deriving the difference from the value cannot
+tell them apart, because the value is identical. What it costs to ask instead is one field:
+
+```ts
+made: this.pages.sourceOf(page) === undefined,
+```
+
+read *before* the load rather than after it, so the question is answered by the page map rather
+than by the absence.
+
+This is the third time in one increment that a `null` meant two things --- the cache's
+`worthAsking` draws the same line between "not here" and "asked, and there is nothing", and
+`thumbnails.ts` had already drawn it between an absent `sourceOf` callback and one answering
+`undefined`. The general form: **when an optional answer can be produced by more than one
+situation, and the situations want different handling, the branch belongs where the situations
+are still distinguishable.** Downstream of the merge there is nothing to recover.
+
+Worth noting what did *not* need it. `matchQuadsByPage` has the identical shape and the same
+`return null`, and it is unreachable: `search.ts` skips a slot with no page behind it, so no
+match ever names a blank page. It was left alone rather than given a guard for a case that
+cannot arise.

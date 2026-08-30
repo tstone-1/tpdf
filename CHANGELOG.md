@@ -19,6 +19,33 @@ have the binary.)
 
 ## [26.8.12] - Unreleased
 
+### Fixed: selecting text on a page you have edited or cropped
+
+**Two ways the pointer stopped selecting text, both of them silent.**
+
+Delete, move or insert a page, and text selection died on every page of the
+document: pressing on a page did nothing, dragging highlighted nothing, and the
+character count beside it stayed at zero. Search was hit in two ways --- the
+yellow highlights over the matches were not drawn, and Find next scrolled to a
+position worked out from a different page. **Select all on this page was the
+worst of them, because it looked like it worked**: it selected, and copied, the
+text of the page you had deleted rather than the page in front of you.
+
+The text had been read and was in memory the whole time. It was filed under the
+page's number in the file and looked up by where the page now sits on screen,
+and those two numbers stop being the same the moment you change the order.
+
+Crop a page, and the same thing happened to that page alone, on any document,
+edited or not. A crop moves the corner every character position is measured
+from, so the old measurements are correctly thrown away --- but nothing then
+asked for new ones, and the page could not be selected on again until the
+document was closed and reopened. Select all on that page went on working, which
+is why this reads as selection being unreliable rather than as a page being
+broken.
+
+Neither had anything to do with what is in your file, and no saved document was
+ever affected.
+
 ### Added: insert a blank page
 
 **Insert blank page** puts a new page after the one you are reading. It is the size

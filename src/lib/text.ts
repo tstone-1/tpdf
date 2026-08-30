@@ -19,6 +19,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import type { FilePage } from "./pages";
+
 /**
  * One run of text the document's own tags claim, as half-open character indices.
  *
@@ -244,12 +246,21 @@ export const TEXT_CACHE_FLOOR = 8;
  * while any other remains, because the scan starts at the old end and a page
  * just inserted is at the young one.
  *
- * **Every `page` below is a page of the *file*, not a slot on screen.** The two
- * were the same number until a page could be deleted, and the distinction is the
- * subject of `pages.ts`. It belongs this way round: a page's text is a property
- * of the document, so a deletion above it must not make it be fetched again ---
- * and `viewer.ts` translates at the four call sites rather than this class
- * holding a copy of the order.
+ * **Every `page` below is a page of the *file*, not a slot on screen**, and the
+ * type says so: {@link FilePage} is minted only by `PageMap.sourceOf`, so a slot
+ * arriving here is a compile error. It belongs this way round because a page's
+ * text is a property of the document, so a deletion above it must not make it be
+ * fetched again --- and the translation lives in `viewer.ts` rather than this
+ * class holding a copy of the order.
+ *
+ * ⚠ **This used to end "and `viewer.ts` translates at the four call sites",
+ * which was a count with nothing behind it.** There were eighteen calls into
+ * this class from that file; three translated. Text selection was therefore dead
+ * on every document with an edit in it --- the text arrived and was filed under
+ * the page's number, and the paint path looked under the slot's --- for as long
+ * as the sentence stood and was believed. The brand is what replaced the rule;
+ * `docs/TRAPS.md` has the entry, and the general form of it is that a comment
+ * naming how many places do something is a claim no gate can check.
  */
 export class TextCache {
   private readonly doc: number;
@@ -260,7 +271,7 @@ export class TextCache {
    * end, which is the whole of the LRU bookkeeping: {@link touch} deletes and
    * re-sets, and the eviction scan takes keys from the front.
    */
-  private readonly pages = new Map<number, PageText>();
+  private readonly pages = new Map<FilePage, PageText>();
   /**
    * Each page's crop box, sent with every extraction that has one.
    *
@@ -270,10 +281,26 @@ export class TextCache {
    * box, which is the one thing the cache must not do.
    */
   private readonly crops = new Map<
-    number,
+    FilePage,
     readonly [number, number, number, number]
   >();
-  private readonly pending = new Map<number, Promise<PageText | null>>();
+  private readonly pending = new Map<FilePage, Promise<PageText | null>>();
+  /**
+   * Pages whose extraction was asked for and came back with nothing.
+   *
+   * Held because a failure caches no text, so "not here" and "asked and there
+   * is nothing" are otherwise the same observation --- and a caller on the
+   * frame loop that cannot tell them apart issues a fresh `page_text` for a
+   * damaged page every frame, for the life of the document. That loop has
+   * happened here once already; see `selectPage`.
+   *
+   * Cleared by {@link forget}, so a crop --- which drops the extraction because
+   * it is measured in another space --- makes the page worth asking about
+   * again. The viewer used to hold this as a set of its own, which nothing
+   * cleared, so a cropped page's text was dropped and never re-fetched and the
+   * pointer could not place a caret on it for the rest of the session.
+   */
+  private readonly unreadable = new Set<FilePage>();
   /** Characters across `pages`, maintained rather than recomputed. */
   private chars = 0;
   /**
@@ -281,7 +308,7 @@ export class TextCache {
    * few thousand boxes on every pointer move. Dropped whole when the view
    * rotates, which is the only thing that can invalidate it.
    */
-  private readonly turned = new Map<number, PageText>();
+  private readonly turned = new Map<FilePage, PageText>();
   private turns = 0;
 
   /**
@@ -291,7 +318,7 @@ export class TextCache {
    * has edited, which is almost all of them, and because it is keyed by the same
    * page number the two caches above are.
    */
-  private readonly extra = new Map<number, number>();
+  private readonly extra = new Map<FilePage, number>();
 
   constructor(doc: number) {
     this.doc = doc;
@@ -326,7 +353,7 @@ export class TextCache {
    * difference from {@link setTurns}: a view rotation invalidates every page and
    * an edit invalidates one.
    */
-  setPageTurns(page: number, turns: number): void {
+  setPageTurns(page: FilePage, turns: number): void {
     const next = ((turns % 4) + 4) % 4;
     if ((this.extra.get(page) ?? 0) === next) return;
     if (next === 0) this.extra.delete(page);
@@ -347,7 +374,7 @@ export class TextCache {
    * for the same reason: a crop is one page's, unlike a view rotation.
    */
   setPageCrop(
-    page: number,
+    page: FilePage,
     crop: readonly [number, number, number, number] | undefined,
   ): void {
     const was = this.crops.get(page);
@@ -363,7 +390,11 @@ export class TextCache {
   }
 
   /** Drops one page's extraction, and everything derived from it. */
-  private forget(page: number): void {
+  private forget(page: FilePage): void {
+    // Including the record that asking was pointless. This is a page whose
+    // *question* changed --- a new crop box means a new extraction --- so a
+    // previous failure says nothing about the answer now.
+    this.unreadable.delete(page);
     const held = this.pages.get(page);
     if (held) {
       this.chars -= held.codes.length;
@@ -395,8 +426,32 @@ export class TextCache {
     return this.turned.size;
   }
 
+  /**
+   * Whether asking for this page could produce anything the cache does not
+   * already have.
+   *
+   * For a caller on the frame loop, which must not attach a fresh continuation
+   * to an extraction already in flight and must not re-issue one for a page
+   * that has already answered --- with text or with a failure. The three
+   * "no"s are different facts and are deliberately not distinguished here: the
+   * question a repaint asks is only whether to spend a round trip.
+   *
+   * **False becomes true again when the page is dropped**, by an eviction or by
+   * a crop, which is the whole reason this lives beside the cache rather than
+   * in the caller. A record of what has been asked for, kept anywhere that
+   * cannot see the answer being discarded, goes stale the first time something
+   * discards one.
+   */
+  worthAsking(page: FilePage): boolean {
+    return (
+      !this.pages.has(page) &&
+      !this.pending.has(page) &&
+      !this.unreadable.has(page)
+    );
+  }
+
   /** A page's text if it has already arrived, without asking for it. */
-  peek(page: number): PageText | null {
+  peek(page: FilePage): PageText | null {
     const text = this.pages.get(page);
     // Counted as a use. This is the paint path, so what is on screen stays the
     // youngest entry and cannot be evicted out from under the frame drawing it.
@@ -421,7 +476,7 @@ export class TextCache {
    * Counts as a use, as {@link peek} does, so a page a mark is being made on
    * cannot be evicted between the two calls.
    */
-  peekUnturned(page: number): PageText | null {
+  peekUnturned(page: FilePage): PageText | null {
     const text = this.pages.get(page);
     if (text === undefined) return null;
     this.touch(page);
@@ -429,7 +484,7 @@ export class TextCache {
   }
 
   /** Moves a page to the young end of the eviction order. */
-  private touch(page: number): void {
+  private touch(page: FilePage): void {
     const text = this.pages.get(page);
     if (text === undefined) return;
     this.pages.delete(page);
@@ -445,7 +500,7 @@ export class TextCache {
    * replaced was written here first and no mutation of it could go red, which is
    * what says it was unreachable rather than merely untested.
    */
-  private remember(page: number, text: PageText): void {
+  private remember(page: FilePage, text: PageText): void {
     this.pages.set(page, text);
     this.chars += text.codes.length;
 
@@ -463,7 +518,7 @@ export class TextCache {
   }
 
   /** The cached view of a page, turning and memoising it on first use. */
-  private view(page: number, text: PageText | undefined): PageText | null {
+  private view(page: FilePage, text: PageText | undefined): PageText | null {
     if (!text) return null;
     const turns = this.turns + (this.extra.get(page) ?? 0);
     if (turns % 4 === 0) return text;
@@ -482,7 +537,7 @@ export class TextCache {
    * page boundary asks on every frame until the answer lands, and without this
    * that is one extraction per frame queued behind the tiles.
    */
-  async load(page: number): Promise<PageText | null> {
+  async load(page: FilePage): Promise<PageText | null> {
     const cached = this.pages.get(page);
     if (cached) {
       this.touch(page);
@@ -504,7 +559,10 @@ export class TextCache {
         // read at the moment it is asked for, not at the moment it was sent.
         return this.view(page, text);
       })
-      .catch(() => null)
+      .catch(() => {
+        this.unreadable.add(page);
+        return null;
+      })
       .finally(() => this.pending.delete(page));
 
     this.pending.set(page, request);
@@ -530,7 +588,7 @@ export class TextCache {
    * quietly contributing nothing leaves a review list that understates what the
    * search found.
    */
-  async loadUnturned(page: number): Promise<PageText | null> {
+  async loadUnturned(page: FilePage): Promise<PageText | null> {
     await this.load(page);
     return this.peekUnturned(page);
   }

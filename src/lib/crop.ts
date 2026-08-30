@@ -28,6 +28,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import type { FilePage } from "./pages";
+
 /** A crop box's size and where it sits inside the page the file describes. */
 export interface CropGeometry {
   /** The cropped page's displayed width in points. */
@@ -101,7 +103,7 @@ export async function contentBox(
 /** Where a crop box lands inside the file's own page, and how big it is. */
 export async function pageGeometry(
   doc: number,
-  page: number,
+  page: FilePage,
   crop: readonly [number, number, number, number] | null,
 ): Promise<CropGeometry> {
   return await invoke<CropGeometry>("page_geometry", { doc, page, crop });

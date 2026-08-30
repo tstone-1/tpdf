@@ -28,6 +28,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { filePage, type FilePage } from "./pages";
+
 /**
  * A hit, as half-open character indices into the page's own text, plus the
  * words around it.
@@ -197,7 +199,7 @@ export class Search {
    * the viewer scrolls to. This is the one place the other vocabulary is needed:
    * `search_page` asks the backend about a page of the file. See `pages.ts`.
    */
-  private readonly sourceOf: (slot: number) => number | undefined;
+  private readonly sourceOf: (slot: number) => FilePage | undefined;
   /** Bumped by every `run` and `cancel`; replies from an older one are dropped. */
   private generation = 0;
 
@@ -291,7 +293,8 @@ export class Search {
     // real one. It is a default here and refused in `pages.ts` for the reason
     // that file gives: there the fallback would hide a wrong answer, and here
     // there is no order for it to disagree with.
-    sourceOf: (slot: number) => number | undefined = (slot) => slot,
+    sourceOf: (slot: number) => FilePage | undefined = (slot) =>
+      filePage(slot),
   ) {
     this.doc = doc;
     this.pageCount = pageCount;
@@ -357,7 +360,7 @@ export class Search {
    * judge --- unknown is not unreadable. Used by the accessibility layer, which
    * would otherwise read the guess aloud as though it were the page.
    */
-  unreadablePage(source: number): boolean {
+  unreadablePage(source: FilePage): boolean {
     // A page of the *file*, unlike everything else here: the mapping comes from
     // `document_mapping`, which reports one entry per page of the file, and it
     // does not change when a page is deleted.
