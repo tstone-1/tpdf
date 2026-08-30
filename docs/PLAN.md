@@ -12418,11 +12418,34 @@ a block on a declaration that already had one, so the stripped text matched and 
 *new* orphan appeared. Re-running the scan is what found them. The invariant says
 no code moved; only the scan says the comment landed on the right thing.
 
-**Not done:** the same rule for Rust, where it does not apply --- `///` lines
+**Not done:** ~~the same rule for Rust, where it does not apply --- `///` lines
 merge into one block, so the failure mode does not exist. And a doc comment on
 the *wrong* declaration, one that binds and describes something else: nothing
 mechanical can see that, and the script says so rather than leaving it to be
-discovered.
+discovered.~~
+
+⚠ **Both halves of that were closed on 2026-08-28, and it is worth saying exactly
+which half was wrong, because the sentence sounds like one claim and is two.**
+`///` lines really do merge, so nothing is *lost* --- that half is right and the
+gate's own docstring reaches it again in four experiments, three of which are
+compile errors and one of which this repository's `-D warnings` denies. What is
+wrong is the conclusion drawn from it. Take the blank line away and the two runs
+are **one comment**, so everything the first block said is rendered against the
+item below it: nothing is lost and the attribution is wrong, which is the second
+half this note called mechanically invisible. The `docs` gate has a Rust arm for
+exactly that, and its first run found **three live instances** --- one of them
+introduced while fixing the other two, which is the argument for the arm
+existing.
+
+**A *Not done* note that says a check cannot exist is the most expensive shape
+this document has**, because it is a recommendation not to try, and the only
+reader positioned to overturn it is somebody who ignored it. This one stood for
+two days after the arm was built and was found on 2026-08-30 by a sweep of every
+`**Not done` note in this file --- the fourth stale note found that day, and the
+only one of the thirty-three whose subject had been closed without the note being
+struck. The other stale ones were all in sections written the same week; this one
+was not, which is the argument for sweeping rather than for re-reading whatever
+is nearby.
 
 #### Every command classified against the README --- done 2026-08-24
 
