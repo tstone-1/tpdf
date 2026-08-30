@@ -798,7 +798,11 @@
     if (source === undefined) {
       // `cropToContent`'s reasoning, and here the refusal is the model's as
       // well: a crop box is measured against a page of the file, and there is
-      // none behind a page tpdf made --- see `Refusal::MadePage`.
+      // none behind a page tpdf made --- see `Refusal::CropOnMadePage`.
+      // This return is why that refusal has never reached a reader: the model
+      // has one and nothing gets that far. Its sibling for a redaction has no
+      // such guard, which is how the shared message it used to carry --- about
+      // marking --- was shown to somebody dragging a region.
       if (view !== undefined) say("A blank page cannot be cropped.");
       return;
     }

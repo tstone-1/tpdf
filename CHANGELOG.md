@@ -19,6 +19,13 @@ have the binary.)
 
 ## [26.8.12] - Unreleased
 
+### Fixed: what you are told when a blank page refuses something
+
+Marking a region for removal on a blank page said **"tpdf cannot mark a page it
+made yet"** --- a sentence about a different operation, which sent you looking for
+a highlight you had not made. Both things a blank page refuses now say what is
+true of the page: there is nothing to crop to, and nothing to remove.
+
 ### Fixed: selecting text on a page you have edited or cropped
 
 **Two ways the pointer stopped selecting text, both of them silent.**
@@ -53,11 +60,13 @@ of the page you are looking at rather than a fixed A4, so a blank page in a US
 Letter document is Letter --- and it turns, moves and deletes like any other page,
 with undo and redo throughout.
 
-Two things it cannot do yet, and both are refused when you try rather than lost
-when you save. You cannot mark one: a mark is written by attaching it to a page of
-the file, and a page tpdf made is in no file until it is saved. You cannot crop
-one: a crop box is measured against a page of the file by the PDF engine, so there
-is nothing to measure it against.
+**You can mark one** --- highlight, underline, strike out, a note, a stamp, ink ---
+and it is written onto that page when you save, like a mark on any other.
+
+Two things a blank page still will not take, and both are refused when you try
+rather than lost when you save. You cannot crop one: a crop box is measured against
+a page of the file by the PDF engine, and there is nothing to measure it against.
+You cannot mark a region on one for removal: there is nothing on it to remove.
 
 Inserting pages **from another file** is a different piece of work and is not this.
 It needs a second document open behind the one you are reading, which every tile,
