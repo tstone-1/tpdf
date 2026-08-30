@@ -19295,3 +19295,71 @@ which is a different path to the same model call --- so the mutation was aimed a
 test never takes. **A mutation aimed at one route into a rule is not aimed at the rule**, and
 the fix is a test that takes the other route: a sweep that takes two marks *whole* is the only
 thing in this subsystem that reaches `command_in`.
+
+---
+### The unchecked clause of a two-sided decision was the one carrying the cost, and checking it inverted the answer
+
+`docs/PLAN.md` open question 8 recorded a real defect --- a comment's icon is drawn in the
+reader's colour on screen and in PDFium's yellow in the saved file --- and then closed it as a
+decision rather than a defect, on this argument:
+
+> Closing it means writing an appearance stream for a comment, which `save.rs` argues against
+> on grounds that have nothing to do with this: a hand-drawn speech bubble looks foreign in
+> Acrobat and in Preview, **and those readers use `/C` correctly**. So the choice is between
+> agreeing with ourselves and agreeing with everyone else.
+
+Every clause of that was written carefully. The bolded one had never been measured, and it is
+the one the sentence after it rests on: if those readers *do not* use `/C`, then nothing shows
+the reader's colour and an appearance stream is the only way anything does; if they do, then
+writing one takes a correct native icon away from every conforming reader.
+
+It is true. **PDFKit moves 439 pixels between two files differing only in `/C`; PDFium moves
+0.** So the framing was right about the facts and wrong about the cost: the two sides are not
+comparable goods. Writing an appearance stream would make tpdf right **by making Preview
+wrong**, to fix the one renderer that has the defect --- which happens to be ours.
+
+**And the framing hid a third option by assuming the answer was in the file.** The icon could
+be drawn in tpdf's own overlay from the `/C` that `annots.rs` reads, leaving the document
+alone. That is not cheap --- `annots.rs` does not read `/C`, and `FPDF_ANNOT` is per-render
+rather than per-annotation --- but it is the option that repairs the reader who is wrong
+instead of the file that is right. A decision written as "A or B" is worth one pass asking
+what makes it a pair.
+
+**The decision that came out of it is the same word and a different thing.** tpdf still writes
+no appearance stream for a comment --- but before the measurement that was a choice between two
+goods, and after it, it is a refusal to take a correct icon away from every conforming reader
+in order to fix the one that is wrong. The word in the document did not move; what moved is
+that the defect is now located, in the *view* rather than in the file, which is what makes the
+overlay the ranked repair instead of `/AP`. **A measurement that leaves the decision where it
+was is not a measurement that changed nothing** --- it changed what the next increment is aimed
+at, and an argument nobody can check does not survive contact with the person who has to act
+on it.
+
+The general check: **in any recorded decision, find the clause that is a claim about somebody
+else's software, and ask whether anybody ran it.** Ours sat for ten days inside an argument
+that was otherwise entirely measured, which is what made it invisible --- a paragraph full of
+numbers reads as a paragraph that was measured.
+
+Three things about the instrument are worth keeping.
+
+**The observable is a byte comparison, not a hue.** The original measurement classified by
+hue --- 224 degrees on screen against 60 in the file. Two files differing only in `/C`,
+rendered and compared byte for byte, needs no colour model, no threshold and no classifier,
+and a hue read off a 25 px antialiased icon is exactly the kind of number that is wrong
+quietly. The two agree, which is worth something precisely because they are not the same
+instrument.
+
+**The finding is pinned as a check, from both ends.** The first run printed it as a finding,
+which is right for a question being asked for the first time and wrong afterwards: a renderer
+that changed its mind would print a different sentence and exit 0. Both readings are assertions
+now --- PDFKit *does* read it, PDFium *does not* --- so the day either changes, the mode goes
+red, and the paragraph in `docs/PLAN.md` stops being quietly false.
+
+**And the negative half needs a control, which the mode runs first.** *PDFium moved 0 pixels*
+is satisfied by nothing having happened at all --- the two files being identical, the render
+being blank, the comparison reading the wrong buffer. So the mode runs the same two-colour
+comparison on a **highlight** first, whose appearance stream carries the colour, where both
+readers must move: 3379 and 3546. The demonstration that this is not ceremony is one hand
+mutation --- sending the same colour twice turns three checks red and leaves *PDFium ignores
+it* **green**, correctly, because PDFium genuinely moved nothing. On its own that assertion
+cannot tell the finding from a broken instrument.
