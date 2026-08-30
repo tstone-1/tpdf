@@ -12926,6 +12926,55 @@ that it presented several genuinely unresolved questions as settled architecture
    agreeing with ourselves and agreeing with everyone else, and it is a decision rather than a
    defect to fix. Recorded here rather than fixed.
 
+   ⚠ **The last clause of that argument was the only part nobody had measured, and it is the
+   part the decision turns on. Measured 2026-08-30: it is true, and the framing above is
+   therefore wrong about the cost.** `annot-probe --mode iconcolor` writes the same comment
+   twice in two colours and compares the two renders byte for byte --- no hue, no threshold, no
+   classifier, because a hue read off a 25 px antialiased icon is the kind of number that is
+   wrong quietly. **PDFKit moves 439 pixels and PDFium moves 0.** So Preview shows the reader's
+   colour correctly and tpdf's own renderer is the only one that does not.
+
+   That is not "agreeing with ourselves versus agreeing with everyone else". Writing an
+   appearance stream would make tpdf right **by making Preview wrong** --- replacing a correct
+   native icon with a hand-drawn bubble in every conforming reader, to fix the one renderer
+   that has the defect. The recorded framing presented the two sides as comparable goods and
+   one of them is not a good at all.
+
+   **A third option exists and the framing hid it**, because it assumed the answer had to be
+   in the file: draw the icon in tpdf's own overlay from the `/C` `annots.rs` reads, and let
+   the file stay as it is. That is not cheap --- `annots.rs` does not read `/C` today, and
+   PDFium's `FPDF_ANNOT` is per-render rather than per-annotation, so suppressing its icon
+   without suppressing every other mark's is its own piece of work --- but it is the option
+   that fixes the reader who is wrong instead of the file that is right.
+
+   **Decided 2026-08-30 on that measurement: tpdf writes no appearance stream for a comment,
+   and this stops being an open question.** Not the same "no" the argument above reached ---
+   that one was a choice between two goods and this one is a refusal to trade a correct icon in
+   every conforming reader for a fix to the single renderer that is wrong. What changes is that
+   the defect is now located: it is in the *view*, not in the file, so it is ranked as a
+   rendering gap rather than left as a question about `/AP`.
+
+   **Ranked, not built:** drawing the icon in tpdf's own overlay from `/C`. Two things stand in
+   the way and both are real work rather than plumbing --- `annots.rs` does not read `/C` at
+   all, and `FPDF_ANNOT` is a per-render flag, so suppressing PDFium's icon without suppressing
+   every other mark it draws needs the overlay and the tile render to divide the work
+   differently than they do now. Nothing about the file changes, which is what makes it the
+   right shape: the document is already correct.
+
+   **Still not done, and it is the half that would overturn this:** an Acrobat run. Preview is
+   one reader, and the decision above generalises from it plus §12.5.6.4 rather than from two.
+   `--mode iconcolor` is the instrument if a third reader can be scripted --- and if Acrobat
+   turns out to ignore `/C` as well, the trade goes back on the table with a different balance,
+   because then an appearance stream would be the only thing showing the reader's colour
+   anywhere.
+
+   The mode carries its own control, and it is the reason the reading can be believed: it runs
+   the same two-colour comparison on a **highlight** first, whose appearance stream carries the
+   colour, so both readers must move --- 3379 and 3546. Without it "PDFium moved 0 pixels" is an
+   emptiness reading with nothing saying the instrument looked. Sending one colour twice leaves
+   that PDFium check **green** while three others go red, which is the demonstration that the
+   pair has to be read together.
+
    Two things generalise past a highlight and are worth stating before ink or a text box
    makes them urgent. **A mark held in display space and mapped at write time** keeps the
    overlay free of conversions and puts the one conversion where the crop box and rotation

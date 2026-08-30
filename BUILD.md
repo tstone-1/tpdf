@@ -610,6 +610,20 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
     testdata/text-base14.pdf --mode roundtrip --kind ellipse
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode preview --kind ellipse
+# Whether a foreign renderer reads a comment icon's `/C` at all, which settles the
+# unchecked half of `docs/PLAN.md` open question 8. Two files differing only in
+# `/C`, rendered by both readers, compared byte for byte -- no hue, no threshold.
+# 5/5, and the numbers are the finding: PDFKit moves 439 px and PDFium moves 0,
+# so Preview shows the reader's colour and tpdf's own renderer does not.
+#
+# THE FIRST CHECK IS A CONTROL AND IS NOT OPTIONAL. It runs the same comparison
+# on a HIGHLIGHT, whose appearance stream carries the colour, so both readers
+# must move -- 3379 and 3546. Without it the PDFium reading is an emptiness
+# assertion with nothing proving the instrument looked: sending one colour twice
+# leaves that check GREEN while three others go red, which is what proves the
+# pair has to be read together.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode iconcolor --kind note
 # The stamp. `--mode stamp` exists because `--mode outline` CANNOT FAIL for this
 # kind: a stamp is a box with a word in it, so every reading that mode takes of a
 # box is satisfied by a stamp except the one it has backwards -- it requires an

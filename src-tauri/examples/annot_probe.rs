@@ -209,6 +209,8 @@ enum Mode {
     Refuse,
     /// What PDFKit --- which is Preview --- makes of the saved file.
     Preview,
+    /// Whether a foreign renderer reads a comment icon's `/C` at all.
+    IconColor,
 }
 
 struct Args {
@@ -224,6 +226,12 @@ struct Args {
     scale: f32,
     /// Which standard stamp `--kind stamp` writes. Ignored by every other kind.
     stamp: StampName,
+    /// Overrides [`color_for`], which is otherwise fixed per kind.
+    ///
+    /// Exists for [`icon_color`], whose whole measurement is running the same
+    /// mark twice in two colours --- and a probe that could only send one colour
+    /// per kind could not ask whether a renderer reads the colour at all.
+    color: Option<[f32; 3]>,
     /// Where to leave the marked copy, for a human to open. Removed otherwise.
     keep: Option<PathBuf>,
     library: PathBuf,
@@ -263,6 +271,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Legible => legible(args, &document, bindings),
         Mode::Refuse => refuse(args, &document),
         Mode::Preview => preview(args, &document),
+        Mode::IconColor => icon_color(args, &document, bindings),
     }
 }
 
@@ -644,7 +653,7 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
                     .flat_map(|q| [q.left, q.top, q.right, q.bottom])
                     .collect(),
                 strokes,
-                color: color_for(args.kind),
+                color: args.color.unwrap_or_else(|| color_for(args.kind)),
                 width: INK_WIDTH,
                 author: "annot-probe".to_string(),
                 note: String::new(),
@@ -1172,6 +1181,277 @@ fn preview(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         let _ = std::fs::remove_file(&out);
     }
     outcome
+}
+
+/// Whether PDFKit reads a comment icon's `/C`, asked by sending two colours.
+///
+/// **The question this settles is a decision, not a defect.** `docs/PLAN.md`
+/// open question 8 records that PDFium synthesises a `/Text` icon in its own
+/// yellow and ignores `/C` --- measured, by sending blue and then red and
+/// watching the reading not move. `save.rs` deliberately writes no appearance
+/// stream for a comment, on the argument that every reader generates its own
+/// and *"those readers use `/C` correctly"*. That last clause was the only part
+/// of the argument nobody had checked, and it is the part the decision turns
+/// on: if Preview ignores the colour too, then writing an appearance stream is
+/// the only way any reader shows the reader's own colour, and the "looks
+/// foreign in Acrobat" objection is weighed against a colour that is currently
+/// wrong everywhere.
+///
+/// **The observable is a byte comparison between two renders, not a hue.** Two
+/// files differing only in `/C`, rendered by PDFKit at one pixel per point: if
+/// the colour reaches the icon the two renders differ, and if it does not they
+/// are identical. That needs no colour model, no threshold and no classifier
+/// --- which matters, because a hue read off a small antialiased icon is
+/// exactly the kind of number that can be wrong quietly.
+///
+/// Three controls, and none of them is redundant. The two files must really
+/// carry different `/C` --- read back through `lopdf` rather than from what was
+/// sent, since a writer that dropped the key would make the two renders agree
+/// for a reason that has nothing to do with PDFKit. And each file must differ
+/// from the *source* page, or "the two agree" is satisfied by PDFKit drawing no
+/// icon at all, which is the reassuring reading of an absence.
+#[cfg(target_os = "macos")]
+fn icon_color(
+    args: &Args,
+    document: &OpenDocument,
+    bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    if args.kind != MarkKind::Note {
+        return Err(format!(
+            "--mode iconcolor asks about a comment's icon, so it wants --kind note, not {:?}",
+            args.kind
+        ));
+    }
+
+    let mut ok = true;
+
+    // **The control runs first and is a highlight, not a note.** A highlight's
+    // appearance stream is written by `save.rs` with the colour in it, so both
+    // renderers have to move pixels between the two files --- which is what
+    // separates *PDFium ignores `/C`* from *this comparison cannot see a colour
+    // change at all*. Without it the finding below is an emptiness reading with
+    // nothing proving the instrument was looking, which `docs/TRAPS.md` has more
+    // than one entry about.
+    let control = two_colours(args, document, bindings, MarkKind::Highlight)?;
+    ok &= check(
+        &format!(
+            "control: both readers see a highlight's colour change (PDFKit {}, PDFium {})",
+            control.pdfkit, control.pdfium
+        ),
+        control.pdfkit > 0 && control.pdfium > 0,
+    );
+
+    let note = two_colours(args, document, bindings, MarkKind::Note)?;
+    ok &= check(
+        &format!("the two files carry different /C ({:?})", note.colors),
+        note.colors.0 != note.colors.1 && note.colors.0.is_some() && note.colors.1.is_some(),
+    );
+    // An icon PDFKit declines to draw would make the two renders agree for a
+    // reason that is not about colour, and an absence is the reassuring reading.
+    ok &= check(
+        &format!(
+            "PDFKit draws the comment's icon in both files ({} and {} px against the source)",
+            note.drawn.0, note.drawn.1
+        ),
+        note.drawn.0 > 0 && note.drawn.1 > 0,
+    );
+    // **Pinned rather than printed, now that it has been measured.** The first
+    // run of this mode reported these two as findings, which is right for a
+    // question being asked for the first time and wrong afterwards: a renderer
+    // that changed its mind would print a different sentence and exit 0.
+    ok &= check(
+        &format!(
+            "PDFKit reads /C for a comment icon ({} px moved)",
+            note.pdfkit
+        ),
+        note.pdfkit > 0,
+    );
+    // **The negative half of the pair, and it is the one carrying the finding.**
+    // Asserting that our own renderer ignores the colour looks backwards until
+    // you read it as what it is: a disagreement between two readers, pinned from
+    // both ends, so that either of them changing turns this mode red. The day
+    // PDFium starts honouring `/C` is the day the paragraph in `docs/PLAN.md`
+    // stops being true, and nothing else would say so.
+    ok &= check(
+        &format!(
+            "PDFium ignores it, which is the disagreement ({} px moved)",
+            note.pdfium
+        ),
+        note.pdfium == 0,
+    );
+
+    Ok(ok)
+}
+
+/// What one kind's two-colour comparison read.
+#[cfg(target_os = "macos")]
+struct TwoColours {
+    /// Pixels differing between the two PDFKit renders.
+    pdfkit: usize,
+    /// The same, through PDFium.
+    pdfium: usize,
+    /// Pixels each file's PDFKit render differs from the source page's by.
+    drawn: (usize, usize),
+    /// `/C` read back out of each written file, not out of what was sent.
+    colors: (Option<Vec<f32>>, Option<Vec<f32>>),
+}
+
+/// Writes one mark twice in two colours and reads both renderers on both files.
+///
+/// The colours are far apart in hue and both dark enough to show against an
+/// icon's own outline whichever way a renderer composites them.
+///
+/// **The observable is a byte comparison between two renders, not a hue.** Two
+/// files differing only in `/C`: if the colour reaches the drawing the renders
+/// differ, and if it does not they are identical. That needs no colour model, no
+/// threshold and no classifier --- which matters, because a hue read off a 25 px
+/// antialiased icon is exactly the kind of number that can be wrong quietly.
+#[cfg(target_os = "macos")]
+fn two_colours(
+    args: &Args,
+    document: &OpenDocument,
+    bindings: progressive::Bindings,
+    kind: MarkKind,
+) -> Result<TwoColours, String> {
+    const BLUE: [f32; 3] = [0.10, 0.25, 0.90];
+    const RED: [f32; 3] = [0.90, 0.10, 0.10];
+
+    let scratch = std::env::temp_dir();
+    let pid = std::process::id();
+    let mut written = Vec::new();
+    for (name, color) in [("blue", BLUE), ("red", RED)] {
+        let at = scratch.join(format!("tpdf-iconcolor-{pid}-{kind:?}-{name}.pdf"));
+        let with = Args {
+            kind,
+            color: Some(color),
+            keep: Some(at.clone()),
+            ..clone_args(args)
+        };
+        let (out, _) = mark_and_save(&with, document)?;
+        written.push(out);
+    }
+
+    let source = open_pdfkit(&args.file)?;
+    let (base, w, h, origin) = pdfkit_render(&source, args.page)?;
+    let mut theirs = Vec::new();
+    let mut drawn = Vec::new();
+    for at in &written {
+        let doc = open_pdfkit(at)?;
+        let (pixels, rw, rh, _) = pdfkit_render(&doc, args.page)?;
+        if (rw, rh) != (w, h) {
+            return Err(format!(
+                "PDFKit rendered a copy at {rw}x{rh} and the source at {w}x{h}, \
+                 so the two cannot be compared pixel for pixel"
+            ));
+        }
+        drawn.push(differing(&base, &pixels, w, h, origin).0);
+        theirs.push(pixels);
+    }
+
+    // Our own renderer over the same two files. Loaded at one pixel per point,
+    // matching PDFKit's, so the two counts are comparable --- nothing here needs
+    // them to be, but a reader of the transcript will compare them anyway.
+    let mut ours = Vec::new();
+    let mut size = (0u32, 0u32);
+    for at in &written {
+        let (pixels, pw, ph) = render(bindings, at, args.page, 1.0)?;
+        size = (pw, ph);
+        ours.push(pixels);
+    }
+
+    let colors = (
+        annotation_color(&written[0])?,
+        annotation_color(&written[1])?,
+    );
+    let pdfkit = differing(&theirs[0], &theirs[1], w, h, origin).0;
+    let pdfium = differing(
+        &ours[0],
+        &ours[1],
+        size.0 as usize,
+        size.1 as usize,
+        [0.0; 2],
+    )
+    .0;
+
+    if args.keep.is_none() {
+        for at in &written {
+            let _ = std::fs::remove_file(at);
+        }
+    }
+    Ok(TwoColours {
+        pdfkit,
+        pdfium,
+        drawn: (drawn[0], drawn[1]),
+        colors,
+    })
+}
+
+/// A copy of `args`, which is not `Clone` because nothing else needed it to be.
+#[cfg(target_os = "macos")]
+fn clone_args(args: &Args) -> Args {
+    Args {
+        file: args.file.clone(),
+        page: args.page,
+        kind: args.kind,
+        mode: args.mode,
+        chars: args.chars,
+        scale: args.scale,
+        stamp: args.stamp,
+        color: args.color,
+        keep: args.keep.clone(),
+        library: args.library.clone(),
+    }
+}
+
+/// The `/C` of the one annotation `annot-probe` wrote into `file`.
+///
+/// `None` when the annotation carries no `/C` at all, which is a different
+/// answer from an empty array and is why this is an `Option` rather than a
+/// defaulted vector.
+#[cfg(target_os = "macos")]
+fn annotation_color(file: &Path) -> Result<Option<Vec<f32>>, String> {
+    let doc = lopdf::Document::load(file).map_err(|e| format!("could not reopen: {e}"))?;
+    for object in doc.objects.values() {
+        let Ok(dictionary) = object.as_dict() else {
+            continue;
+        };
+        let ours = dictionary
+            .get(b"T")
+            .ok()
+            .and_then(|t| t.as_str().ok())
+            .map(|t| t == b"annot-probe")
+            .unwrap_or(false);
+        if !ours {
+            continue;
+        }
+        let Ok(entry) = dictionary.get(b"C") else {
+            return Ok(None);
+        };
+        let Ok(array) = entry.as_array() else {
+            return Ok(None);
+        };
+        return Ok(Some(
+            array
+                .iter()
+                .map(|v| v.as_float().unwrap_or(f32::NAN))
+                .collect(),
+        ));
+    }
+    Err("no annotation authored by annot-probe in the written file".into())
+}
+
+/// The platform refusal for [`icon_color`], which is [`preview`]'s exactly.
+#[cfg(not(target_os = "macos"))]
+fn icon_color(
+    _args: &Args,
+    _document: &OpenDocument,
+    _bindings: progressive::Bindings,
+) -> Result<bool, String> {
+    Err(
+        "--mode iconcolor renders with PDFKit, which is macOS only. See --mode \
+         preview for why Windows.Data.Pdf is not a substitute."
+            .into(),
+    )
 }
 
 /// The platform refusal, which is a gap rather than a guarantee.
@@ -2642,6 +2922,7 @@ fn parse_args() -> Result<Args, String> {
         chars: DEFAULT_CHARS,
         scale: 2.0,
         stamp: StampName::Approved,
+        color: None,
         keep: None,
         library: PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR),
     };
@@ -2653,6 +2934,18 @@ fn parse_args() -> Result<Args, String> {
             "--chars" => parsed.chars = value.parse().map_err(|_| "--chars wants a number")?,
             "--scale" => parsed.scale = value.parse().map_err(|_| "--scale wants a number")?,
             "--lib" => parsed.library = PathBuf::from(value),
+            "--color" => {
+                let parts: Vec<&str> = value.split(',').collect();
+                let [r, g, b] = parts.as_slice() else {
+                    return Err("--color wants three comma-separated numbers".into());
+                };
+                let one = |t: &str| {
+                    t.trim()
+                        .parse::<f32>()
+                        .map_err(|_| "--color wants numbers".to_string())
+                };
+                parsed.color = Some([one(r)?, one(g)?, one(b)?]);
+            }
             "--kind" => {
                 parsed.kind = match value.as_str() {
                     "highlight" => MarkKind::Highlight,
@@ -2710,6 +3003,7 @@ fn parse_args() -> Result<Args, String> {
                     "legible" => Mode::Legible,
                     "refuse" => Mode::Refuse,
                     "preview" => Mode::Preview,
+                    "iconcolor" => Mode::IconColor,
                     other => return Err(format!("unknown mode {other}")),
                 }
             }
