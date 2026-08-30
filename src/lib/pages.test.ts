@@ -17,7 +17,11 @@ import {
 /** A working document built by hand, as a state reply would describe it. */
 function map(...views: [id: number, source: number, turns?: number][]): PageMap {
   return new PageMap(
-    views.map(([id, source, turns]) => ({ id: pageId(id), source, turns: turns ?? 0 })),
+    views.map(([id, source, turns]) => ({
+      id: pageId(id),
+      source: { baseline: source },
+      turns: turns ?? 0,
+    })),
   );
 }
 
@@ -77,7 +81,11 @@ describe("PageMap", () => {
     const pages = map([1, 0], [3, 2, 3]);
     expect(pages.turnsOf(1)).toBe(3);
     expect(pages.idOf(1)).toBe(3);
-    expect(pages.at(1)).toEqual({ id: 3, source: 2, turns: 3 });
+    expect(pages.at(1)).toEqual({
+      id: 3,
+      source: { baseline: 2 },
+      turns: 3,
+    });
   });
 
   describe("sameOrder", () => {
@@ -283,13 +291,69 @@ describe("PageMap", () => {
     });
   });
 
+  describe("a page tpdf made", () => {
+    /** The map above, with a made page of `size` at `slot`. */
+    function withMade(slot: number, width = 200, height = 400): PageMap {
+      const views: PageView[] = [
+        { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+        { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+      ];
+      views.splice(slot, 0, {
+        id: pageId(9),
+        source: { blank: { width, height } },
+        turns: 0,
+      });
+      return new PageMap(views);
+    }
+
+    it("has no page of the file behind it", () => {
+      const pages = withMade(1);
+      expect(pages.sourceOf(1)).toBeUndefined();
+      // The control: the pages around it still answer, so this is about the made
+      // page rather than about the map having stopped translating.
+      expect(pages.sourceOf(0)).toBe(0);
+      expect(pages.sourceOf(2)).toBe(1);
+    });
+
+    it("carries its own size, which a page of the file does not", () => {
+      const pages = withMade(1, 200, 400);
+      expect(pages.madeSizeOf(1)).toEqual({ width: 200, height: 400 });
+      expect(pages.madeSizeOf(0)).toBeUndefined();
+    });
+
+    it("is in no direction of the file-page translation", () => {
+      const pages = withMade(1);
+      // Both file pages still resolve, and to the slots they are actually in ---
+      // which is the half that would break if the made page took a place in the
+      // map keyed by an index.
+      expect(pages.slotOf(0)).toBe(0);
+      expect(pages.slotOf(1)).toBe(2);
+    });
+
+    it("answers with the page before it when a file page is what is needed", () => {
+      const pages = withMade(1);
+      expect(pages.nearestSourceAt(1)).toBe(0);
+      // Not a walk that always goes back: a slot showing a file page answers
+      // with its own.
+      expect(pages.nearestSourceAt(2)).toBe(1);
+      // Nothing before it at all, which is a made page at the very front.
+      expect(withMade(0).nearestSourceAt(0)).toBeUndefined();
+    });
+
+    it("reports itself in a source list rather than being left out of it", () => {
+      // A list one entry short would misalign every slot after the made page,
+      // which is what a `filter` here would produce.
+      expect(withMade(1).sources()).toEqual([0, undefined, 1]);
+    });
+  });
+
   describe("unedited", () => {
     it("numbers ids from one, as the model's baseline does", () => {
       const pages = unedited(3);
       expect(pages.pages).toEqual<PageView[]>([
-        { id: pageId(1), source: 0, turns: 0 },
-        { id: pageId(2), source: 1, turns: 0 },
-        { id: pageId(3), source: 2, turns: 0 },
+        { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+        { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+        { id: pageId(3), source: { baseline: 2 }, turns: 0 },
       ]);
     });
 

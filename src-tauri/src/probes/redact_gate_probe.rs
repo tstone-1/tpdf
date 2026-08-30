@@ -21,6 +21,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
 use tpdf_lib::ocr_gate::{self, GatePage};
 use tpdf_lib::render::{Backend, RenderService};
@@ -158,7 +159,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         pages: (0..opened.page_count)
             .map(|at| PageView {
                 id: at as u64 + 1,
-                source: at as u32,
+                source: PageSource::Baseline(at as u32),
                 turns: 0,
                 crop: None,
             })

@@ -62,7 +62,7 @@ afterEach(() => {
 
 /** A page that an edit has turned by `turns` quarter turns. */
 function turnedPage(turns: number): PageView[] {
-  return [{ id: pageId(1), source: 0, turns }];
+  return [{ id: pageId(1), source: { baseline: 0 }, turns }];
 }
 
 /** A one-page document, 600 by 800 points, optionally turned. */
@@ -442,8 +442,8 @@ describe("a drag that wanders", () => {
       onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
     });
     viewer.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(2), source: 1, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
     ]);
     await settle();
 
@@ -597,9 +597,9 @@ describe("which page a mark names", () => {
       onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
     });
     viewer.setPages([
-      { id: pageId(3), source: 2, turns: 0 },
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(2), source: 1, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
     ]);
     // **Back to the top, and it is not tidying.** Re-ordering keeps the reader
     // on the page they were looking at *by identity*, so the view follows id 1
@@ -950,8 +950,8 @@ describe("drawing freehand", () => {
     // which would put ink where nobody drew it.
     const viewer = build();
     viewer.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(2), source: 1, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
     ]);
     await settle();
 
@@ -1013,7 +1013,7 @@ describe("drawing freehand", () => {
     // goes through it once per point, so a mapping applied to the rectangle and
     // forgotten for the path is a defect no box could show.
     const viewer = build();
-    viewer.setPages([{ id: pageId(1), source: 0, turns: 1 }]);
+    viewer.setPages([{ id: pageId(1), source: { baseline: 0 }, turns: 1 }]);
     await settle();
 
     viewer.armDraw("ink");

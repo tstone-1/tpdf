@@ -35,7 +35,7 @@ function state(
   return {
     pages: Array.from({ length: count }, (_, at) => ({
       id: pageId(at + 1),
-      source: at,
+      source: { baseline: at },
       turns: turns[at] ?? 0,
     })),
     marks,
@@ -172,6 +172,50 @@ describe("Edits", () => {
       page: 1,
       after: 4,
     });
+  });
+
+  it("inserts behind the page in a slot, naming it by identity", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockResolvedValueOnce(state(4));
+
+    await edits.insertPage(1, [200, 400]);
+
+    expect(core.invoke).toHaveBeenLastCalledWith("page_insert", {
+      doc: 9,
+      after: 2,
+      size: [200, 400],
+    });
+  });
+
+  it("sends no anchor for an insert at the front", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockResolvedValueOnce(state(4));
+
+    await edits.insertPage(null, [200, 400]);
+
+    expect(core.invoke).toHaveBeenLastCalledWith("page_insert", {
+      doc: 9,
+      after: null,
+      size: [200, 400],
+    });
+  });
+
+  it("does not send an insert for a slot the model has never mentioned", async () => {
+    // The distinction the null-versus-undefined comment in `insertPage` is
+    // about: a stale press must not become an insert at the front, which is what
+    // a single `?? null` would make it.
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockClear();
+
+    await edits.insertPage(7, [200, 400]);
+
+    expect(core.invoke).not.toHaveBeenCalled();
   });
 
   it("sends no anchor for a move to the front", async () => {

@@ -25,6 +25,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::document::OpenDocument;
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
 use tpdf_lib::{outline, progressive, redact, render, save, text, verify};
@@ -884,7 +885,7 @@ fn form_plan(
         pages: (0..count)
             .map(|at| PageView {
                 id: u64::from(at) + 1,
-                source: at,
+                source: PageSource::Baseline(at),
                 turns: 0,
                 crop: None,
             })
@@ -936,7 +937,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
         pages: (0..pages)
             .map(|at| PageView {
                 id: u64::from(at),
-                source: at,
+                source: PageSource::Baseline(at),
                 turns: 0,
                 crop: None,
             })

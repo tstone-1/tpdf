@@ -18692,3 +18692,120 @@ The general form: **an emptiness control should assert a presence you can name, 
 quantity.** A threshold encodes what the machine you wrote it on happened to have, and it
 fails on the machine that has less while being satisfied by anything that has more --- including
 a result that is entirely wrong.
+
+### A widened type enumerates its readers, and is blind to the ones that already had a fallback
+
+`Page::source` was a `u32` naming a page of the file. Inserting a page needs it to be able to
+say *no page of the file supplies this one*, so it became an enum --- and the type checker did
+exactly what it is good for: twelve compile errors, one per site that reads the value, across
+seven Rust files and two more in the frontend. Every one of them had to state what it does when
+there is no baseline page, which is the whole reason the change was made this way round rather
+than with an `Option` nobody is forced to look at.
+
+**It found none of the sites that matter most.** Two readers already coalesced the answer away:
+
+```ts
+const source = this.opts.sourceOf?.(page) ?? page;              // thumbnails.ts
+page: inFile ? (edits?.map.sourceOf(where.page) ?? where.page)  // App.svelte
+```
+
+Both type-check before and after, because `sourceOf` returned `number | undefined` all along.
+Both were correct when written: `undefined` then meant *this slot is not in the document*, and
+falling back to the slot number is a harmless no-op for a slot that does not exist. Neither is
+correct now, because the same `undefined` also means *this page is one tpdf made* --- a slot
+that very much exists, whose fallback renders the thumbnail of whatever page of the file
+happens to sit at that number, and whose remembered reading place names a page the reader was
+not on.
+
+The defect is not in the code that changed. It is that a fallback's **justification** moved
+while the fallback stayed put, and there is no compiler in the world that can see that.
+
+So: after widening a type so that some function can answer `undefined`, `null` or an empty
+value for a **new reason**, the compile errors are half the work. The other half is a grep for
+that function's name next to `??`, `?.`, `unwrap_or`, `unwrap_or_default` and `else` --- every
+place that already had an answer for the old reason and will silently give it for the new one.
+There were exactly two here and both were defects.
+
+**And the clause you add to a predicate is the hardest one to test**, which the mutation
+harness said and three fixtures took to satisfy. The new clause here lives inside an `all()`
+over a page walk, under a length check:
+
+```rust
+self.pages.len() == self.baseline as usize
+    && self.pages.iter().enumerate().all(|(at, page)| {
+        matches!(source, PageSource::Baseline(n) if *n as usize == at) && ...
+    })
+```
+
+An insert alone never reaches the walk --- it makes the list longer, so the length check
+refuses first, and a mutation teaching the walk to accept a made page **survived**. A deletion
+*and* an insert fixes the length; but delete a page in the middle and every surviving page
+shifts down one, so they break the predicate on their own and the mutation survives **again**.
+Only deleting the *last* page and appending the blank one leaves the file's own pages at their
+own indices, and then the made page is the only thing left that can answer.
+
+The rule, and it generalises past this predicate: **to test a term you added to a conjunction,
+every other term has to be true and every other element has to be uninteresting.** Two
+neighbours refused the input here for two different reasons, and each looked like the answer
+until the run said otherwise. What it would have cost is not academic --- `is_identity` decides
+whether a print job hands the printer the file on disk byte for byte, so that reader would have
+got the original document out of the printer with neither edit on it.
+
+The same run had a third instance in a friendlier shape, which is worth recording because it
+failed loudly rather than quietly. A test written for the new refusal used the *untouched*
+document as its control: `select(plan, None)` on a document nobody has edited answers
+`Pages::All`, not `Pages::Only`, so the control asserted something the code had never done and
+went red on the first run. Had it been written as `matches!(.., Pages::All)` --- the answer that
+document does give --- it would have passed for ever while agreeing with a `select` that could
+no longer list anything at all. The control has to be an edit that still lists, which is one
+`rotate` away.
+
+### A skip in a reply-driven queue stops the queue, and "nothing was requested" is what a stall looks like
+
+`thumbnails.ts` fills its strip one page at a time: `pump` picks the next row nothing has been
+done about, issues one tile request, and is called again when the reply arrives. That is the
+whole engine --- there is no loop and no timer, only a request and its reply.
+
+A page tpdf made needs no request: there is nothing to render, so the row is painted white and
+`pump` returns. Two things then have to be true and neither is obvious from the change:
+
+- The row must be **recorded as done**, or `pump` picks the same page on the next call. It is
+  in none of the existing sets --- no bitmap, nothing borrowed, nothing failed --- so it looks
+  exactly like a row nobody has got to yet. Its own set rather than `failed`, which would work
+  and would be a lie: `failed` prints a warning and means the render was attempted.
+- The skip must **call `pump` itself**, because the request it did not make has no reply to do
+  it. Without that the strip stops at the blank page and every row below it stays empty for the
+  life of the document.
+
+The second was missed, and it took **two** wrong tests to find, which is the part worth
+recording. The first asserted the absence:
+
+```ts
+expect(tiles.fetchTile).not.toHaveBeenCalled();
+```
+
+That is true of the fix and true of the stall, and it was written *next to a comment claiming
+the opposite* --- "the strip does not stop there: the next row is asked for".
+
+The second named the next row and **still passed with the walk-on deleted**, which only the
+mutation harness said. The reason is the fixture rather than the assertion: it put the blank
+page at slot 0, and `setActive(true)` pumps twice --- once through `layout` and once itself ---
+so the second pump asks for row 1 whatever the first one did. The two mechanisms produce the
+same observation, which is the *fixture where the right rule and the wrong rule agree*.
+
+What discriminates is a blank page in the **middle**, where there is exactly one pump to be
+had --- the reply from the row before it:
+
+```ts
+sourceOf: (slot) => (slot === 1 ? undefined : slot),
+// row 0 requested, its reply delivered, and then:
+expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+expect(tiles.fetchTile.mock.calls[1]?.[0]).toMatchObject({ page: 2 });
+```
+
+The general form, and it is not about thumbnails: **in a queue driven by its own completions,
+every early return is a place the queue can stop**, the test for one must assert what happens
+*after* it rather than what did not happen at it, and the skipped item has to sit where no
+other mechanism reaches the same outcome. An absence assertion at the skip is satisfied by the
+skip working and by the machine having died; a presence assertion at the front of the queue is
+satisfied by whatever else happens to pump there.

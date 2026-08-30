@@ -115,6 +115,7 @@ import {
   type MarkView,
   type StampName,
   type PageId,
+  baselineOf,
   type PageView,
   type RedactionView,
 } from "./pages";
@@ -2031,7 +2032,20 @@ export class Viewer {
     return displayedSize(this.scroller.pageSize(page), this.scroller.effectiveTurns(page));
   }
 
-  /** A page's size in points, real or estimated. For the check harness. */
+  /**
+   * A page's size in points, real or estimated.
+   *
+   * **Estimated when the page has not rendered yet** --- see
+   * {@link knowsPageSize}, which is how a caller that cannot live with a guess
+   * tells the two apart. Both callers can: the check harness reads it to assert
+   * a layout, and `App.svelte` reads it to size a blank page, where the estimate
+   * is the mean of the document's own pages and is exact wherever they all
+   * match.
+   *
+   * Unturned, which is the page's own size rather than what the reader is
+   * looking at --- {@link displayedSize} is the other one, and a `/MediaBox`
+   * wants this one.
+   */
   pageSize(page: number): PageSize {
     return this.scroller.pageSize(page);
   }
@@ -4933,8 +4947,15 @@ export class Viewer {
         }
         continue;
       }
+      // Unreachable for a page tpdf made, which `Command::Crop` refuses a box
+      // on --- so `want` is always undefined for one and the branch above has
+      // already taken it. The check is here because the type carries the
+      // constraint and this is the one place that would ask a worker about a
+      // page no file supplies.
+      const source = baselineOf(view.source);
+      if (source === undefined) continue;
       this.text.setPageCrop(slot, want);
-      const at = await pageGeometry(this.opts.doc, view.source, want).catch(
+      const at = await pageGeometry(this.opts.doc, source, want).catch(
         () => null,
       );
       if (!at) continue;

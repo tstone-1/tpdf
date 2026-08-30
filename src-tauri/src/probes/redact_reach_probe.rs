@@ -63,6 +63,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
 use tpdf_lib::ocr::{Legibility, NotVerifiedCause};
 use tpdf_lib::ocr_gate::{self, GatePage, Judged, PageOutcome};
@@ -894,7 +895,7 @@ fn run_gate(
         pages: (0..opened.page_count)
             .map(|at| PageView {
                 id: at as u64 + 1,
-                source: at as u32,
+                source: PageSource::Baseline(at as u32),
                 turns: 0,
                 crop: None,
             })

@@ -3150,6 +3150,7 @@ async function appCommandChecks(
     // separately settable.
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
+    insertBlankPage: () => fired.push("insertBlankPage"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
@@ -3749,6 +3750,13 @@ async function appCommandChecks(
       // `appcommands.test.ts`.
       id: "edit.deletePage",
       ...shell("deletePage"),
+      read: () => fired.join(","),
+    },
+    {
+      // Palette-only as well, for the reason `edit.deletePage` is, so the same
+      // argument puts it here.
+      id: "edit.insertBlankPage",
+      ...shell("insertBlankPage"),
       read: () => fired.join(","),
     },
     {

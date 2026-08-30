@@ -48,8 +48,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
-    Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, Point, Quad, Rect, Redaction,
-    RedactionId, Refusal, StampName, Stroke,
+    Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, PageSource, Point, Quad, Rect,
+    Redaction, RedactionId, Refusal, Size, StampName, Stroke,
 };
 use crate::fingerprint::Fingerprint;
 
@@ -92,12 +92,20 @@ pub struct PageView {
     /// Sent back verbatim in a command. Deliberately not a position and not the
     /// baseline page number, even where those three currently coincide.
     pub id: u64,
-    /// Which baseline page supplies the content.
+    /// What supplies the content: a page of the file, or a page tpdf made.
     ///
-    /// Equal to the slot today. It is sent anyway because it is what a tile
-    /// request will have to carry once a page can move, and because a reader of
-    /// the reply should not have to know that the two are the same to read it.
-    pub source: u32,
+    /// **The model's own type rather than a mirror of it**, unlike everything
+    /// else on this struct, and the reason is that the two would be one field's
+    /// worth of drift apart: a wire copy would have to say which variant means
+    /// what a second time, and `docs/TRAPS.md` records two copies of one
+    /// distinction drifting until a mutation of one survived. It serialises as
+    /// `{"baseline": n}` or `{"blank": {"width": w, "height": h}}`.
+    ///
+    /// A baseline page's number is equal to the slot only in a document nobody
+    /// has edited. It is sent because it is what a tile request carries, and
+    /// because a page with no baseline number at all is what tells the frontend
+    /// there is nothing to ask a worker for.
+    pub source: PageSource,
     /// Quarter turns clockwise **on top of the page's own `/Rotate`**, 0 to 3.
     ///
     /// Named for the composition, not the result --- the page may already say
@@ -646,6 +654,52 @@ impl Edits {
         )
     }
 
+    /// Puts a new blank page immediately after `after`, or first when `after` is
+    /// `None`.
+    ///
+    /// **A neighbour rather than a destination index**, which is
+    /// [`move_page`](Edits::move_page)'s argument word for word and holds here
+    /// for the same reason. The frontend does the arithmetic, because it is the
+    /// side that holds the order.
+    ///
+    /// `size` is `[width, height]` in points, and it is the caller's rather than
+    /// a default of this layer's: a blank page a reader inserts should be the
+    /// size of the page they are looking at, and that number is in the render
+    /// path, not in the model. A layout constant here would be an A4 that is
+    /// wrong for every US document.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the size is not two finite positive
+    /// numbers; or the anchor names no page or a deleted one.
+    pub fn insert(
+        &self,
+        doc: u32,
+        after: Option<u64>,
+        size: [f64; 2],
+    ) -> Result<EditState, String> {
+        // **Here rather than in the model**, for the reason the mark path checks
+        // its coordinates here: a non-finite number is a sender defect, and the
+        // model's own refusal is about a size that encloses no area --- which
+        // `NaN` also fails, so the two overlap and neither is redundant. This one
+        // can say which number was wrong.
+        if let Some(bad) = size.iter().find(|v| !v.is_finite()) {
+            return Err(format!("a page cannot be {bad} points"));
+        }
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .insert(
+                after.map(PageId::from_raw),
+                Size {
+                    width: size[0],
+                    height: size[1],
+                },
+            )
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Puts a highlight on a page, over the rectangles the reader dragged across.
     ///
     /// `quads` are flat --- four numbers per rectangle, `left, top, right,
@@ -1156,12 +1210,17 @@ impl Edits {
             // a page number. A region whose page is not in the kept list is
             // skipped rather than defaulted to page 0 --- see the trap about a
             // failure path that acts hardest where it knows least.
-            let Some(source) = state
+            let Some(PageSource::Baseline(source)) = state
                 .pages
                 .iter()
                 .find(|page| page.id == region.page)
                 .map(|page| page.source)
             else {
+                // A page tpdf made lands here too, and it is the same answer for
+                // a second reason: it has no number in the file, and nothing on
+                // it to remove. `Doc::redact` refuses a region on one, so this
+                // arm is unreachable for that case rather than merely correct
+                // --- see `Refusal::MadePage`.
                 continue;
             };
             match out.iter_mut().find(|target| target.source == source) {
@@ -1261,13 +1320,30 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
     let working = model.working();
     pages
         .iter()
-        .flat_map(|view| {
+        .filter_map(|view| {
             let id = PageId::from_raw(view.id);
+            match view.source {
+                PageSource::Baseline(source) => Some((id, source)),
+                // **Asserted rather than skipped quietly.** `Doc::annotate`
+                // refuses a mark on a page tpdf made, so there is nothing here
+                // to drop --- and the day that refusal is lifted, a silent skip
+                // would drop every mark on an inserted page while the save
+                // reported success. See `Refusal::MadePage`.
+                PageSource::Blank(_) => {
+                    debug_assert!(
+                        working.marks_on(id).is_empty(),
+                        "a mark on a page tpdf made reached the plan: {id:?}"
+                    );
+                    None
+                }
+            }
+        })
+        .flat_map(|(id, source)| {
             working.marks_on(id).iter().map(move |mark| {
                 let body = model.mark(*mark).expect("a live mark has a body");
                 PlannedMark {
                     kind: body.kind,
-                    source: view.source,
+                    source,
                     // `snapshot`'s reason, and the consequence here is the
                     // one that reaches a file: `/Rect` and `/InkList` are
                     // written from these.
@@ -1645,7 +1721,15 @@ impl Plan {
                     turns,
                     crop,
                 } = page;
-                *source as usize == at && turns % 4 == 0 && crop.is_none()
+                // **A page tpdf made is never the file's**, which is the whole
+                // of what an insert costs this predicate: it has no baseline
+                // number, so it cannot be the page at `at` and no `if let` can
+                // make it one. Written as a match rather than a helper on
+                // `PageSource` so that a third variant is an error here, which
+                // is the property this destructure exists for one level up.
+                matches!(source, PageSource::Baseline(n) if *n as usize == at)
+                    && turns % 4 == 0
+                    && crop.is_none()
             })
     }
 }
@@ -1662,6 +1746,12 @@ fn describe(why: Refusal) -> String {
         Refusal::AnchorIsTarget(_) => "a page cannot be moved after itself".into(),
         Refusal::LastPage(_) => "a document must keep at least one page".into(),
         Refusal::DegenerateCrop(_) => "that crop encloses no area".into(),
+        Refusal::DegeneratePage(_) => "a page must have a width and a height".into(),
+        // Worded for what the reader can do about it, which differs by what they
+        // were trying: both callers of this refusal are about a page tpdf made,
+        // and neither of them is something a reader should have to reason about
+        // from the model's vocabulary. See `Refusal::MadePage`.
+        Refusal::MadePage(_) => "tpdf cannot mark a page it made yet".into(),
         Refusal::NoSuchMark(_) => "no such mark".into(),
         Refusal::MarkRemoved(_) => "that mark has already been removed".into(),
         Refusal::EmptyMark => "that mark covers nothing".into(),
@@ -1929,14 +2019,166 @@ mod tests {
         edits
     }
 
+    /// An inserted page reaches the reply as a page with no baseline number, and
+    /// the pages around it keep theirs.
+    ///
+    /// **The neighbours are the half a length check cannot make**: a reply of
+    /// four pages is what a correct insert and a duplicated slot both produce.
+    #[test]
+    fn an_inserted_page_arrives_in_the_reply_with_no_baseline_number() {
+        let edits = opened();
+        let before = edits.state(7).expect("open").pages;
+        let state = edits
+            .insert(7, Some(before[1].id), [200.0, 400.0])
+            .expect("insert");
+
+        assert_eq!(state.pages.len(), 4);
+        assert_eq!(
+            state.pages[2].source,
+            PageSource::Blank(Size {
+                width: 200.0,
+                height: 400.0
+            })
+        );
+        assert_eq!(
+            state
+                .pages
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| *at != 2)
+                .map(|(_, page)| page.source)
+                .collect::<Vec<_>>(),
+            vec![
+                PageSource::Baseline(0),
+                PageSource::Baseline(1),
+                PageSource::Baseline(2)
+            ],
+            "the file's own pages keep their numbers and their order"
+        );
+        assert!(
+            state.pages[2].id > before[2].id,
+            "a made page gets an id no baseline page has"
+        );
+    }
+
+    /// The size is refused by this layer when it is not a number, and by the
+    /// model when it encloses no area.
+    ///
+    /// Two refusals rather than one, and neither is redundant: `NaN` fails both,
+    /// and only the one here can say which number was wrong.
+    #[test]
+    fn a_page_size_that_is_not_two_positive_numbers_is_refused() {
+        let edits = opened();
+        let why = edits
+            .insert(7, None, [f64::INFINITY, 400.0])
+            .expect_err("an infinite width");
+        assert!(why.contains("inf"), "{why}");
+
+        let why = edits
+            .insert(7, None, [0.0, 400.0])
+            .expect_err("a width of nothing");
+        assert!(why.contains("width and a height"), "{why}");
+
+        assert_eq!(
+            edits.state(7).expect("state").pages.len(),
+            3,
+            "neither refusal inserted anything"
+        );
+    }
+
+    /// A plan carrying a made page is neither the file nor an append.
+    #[test]
+    fn a_plan_with_an_inserted_page_is_not_the_file_and_cannot_be_appended() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits
+            .annotate(7, a_mark(pages[0].id), "D:20260830120000Z".into())
+            .expect("a mark, so the plan would otherwise be appendable");
+        assert!(
+            edits.plan(7).expect("plan").is_appendable(),
+            "the control: marks alone are an append"
+        );
+
+        edits.insert(7, None, [200.0, 400.0]).expect("insert");
+        let plan = edits.plan(7).expect("plan");
+        assert!(!plan.is_appendable(), "an append cannot create a page");
+        assert!(!plan.is_identity(), "and this is not the file either");
+    }
+
+    /// A document with its last page deleted and a blank one put on the end is
+    /// still not the file.
+    ///
+    /// **Every other clause of `pages_are_the_file` has to hold, or this proves
+    /// nothing**, and getting there took two tries. That predicate asks whether
+    /// the list is as long as the file and whether each entry is the file's page
+    /// at that position. An insert alone never reaches the second question,
+    /// because it makes the list longer --- so a mutation teaching that question
+    /// to accept a page tpdf made survived, its neighbour having refused the
+    /// input first. A deletion *and* an insert fixes the length; but delete the
+    /// middle page and every surviving page shifts down one, so they break the
+    /// predicate on their own and the mutation survives again.
+    ///
+    /// Deleting the **last** page and appending the blank one is the one
+    /// arrangement where the file's own pages are all still at their own
+    /// indices, so the made page is the only thing left that can answer the
+    /// question. That is the trap about a fixture where the right rule and the
+    /// wrong rule agree, met twice in one increment.
+    ///
+    /// What it would cost is not academic. `is_identity` decides whether a print
+    /// job hands the printer the file on disk byte for byte --- so this reader
+    /// would get the original document out of the printer, with neither edit on
+    /// it and nothing saying so.
+    #[test]
+    fn a_deletion_and_an_insert_together_are_still_not_the_file_on_disk() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        let after = edits.delete(7, pages[2].id).expect("delete the last page");
+        let last = after.pages[1].id;
+        let state = edits
+            .insert(7, Some(last), [200.0, 400.0])
+            .expect("insert a blank one on the end");
+        assert_eq!(
+            state.pages.len(),
+            3,
+            "the premise: as many pages as the file has, so the length check passes"
+        );
+        assert_eq!(
+            sources(&state.pages[..2]),
+            vec![0, 1],
+            "and the file's own pages are still at their own indices, so nothing \
+             but the made page can answer"
+        );
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.baseline, 3);
+        assert!(!plan.is_identity(), "a page tpdf made is not the file's");
+        assert!(!plan.is_appendable());
+    }
+
+    /// The baseline page each slot shows, for the assertions about order.
+    ///
+    /// **Panics on a page tpdf made rather than skipping it**, which is what
+    /// makes it usable in an assertion about an order: a helper that quietly
+    /// left one out would let a test about three pages pass over two, and every
+    /// test that calls this is about a document nobody has inserted into. The
+    /// tests that *are* about an insert say `PageSource::Blank` themselves.
+    fn sources(pages: &[PageView]) -> Vec<u32> {
+        pages
+            .iter()
+            .map(|page| match page.source {
+                PageSource::Baseline(number) => number,
+                PageSource::Blank(size) => {
+                    panic!("a page tpdf made has no baseline number: {size:?}")
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn a_subset_plan_names_the_pages_asked_for_and_keeps_the_file_s_baseline() {
         let edits = opened();
         let plan = edits.plan_subset(7, &[0, 2]).expect("subset");
-        assert_eq!(
-            plan.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
-            vec![0, 2]
-        );
+        assert_eq!(sources(&plan.pages), vec![0, 2]);
         // The baseline describes the FILE, not the selection. A plan of two
         // pages with a baseline of two would tell `write_copy` that the source
         // has two pages, which is the external-modification lie its check
@@ -1967,7 +2209,7 @@ mod tests {
         let last = edits.state(7).expect("open").pages[2].id;
         edits.move_page(7, last, None).expect("move to the front");
         let plan = edits.plan_subset(7, &[0]).expect("subset");
-        assert_eq!(plan.pages[0].source, 2, "the moved page is now slot 0");
+        assert_eq!(sources(&plan.pages)[0], 2, "the moved page is now slot 0");
     }
 
     #[test]
@@ -2044,7 +2286,7 @@ mod tests {
     fn every_page_reports_its_own_identity_and_source() {
         let state = opened().state(7).expect("open");
         let ids: Vec<u64> = state.pages.iter().map(|page| page.id).collect();
-        let sources: Vec<u32> = state.pages.iter().map(|page| page.source).collect();
+        let sources: Vec<u32> = sources(&state.pages);
         assert_eq!(sources, vec![0, 1, 2], "slot is baseline page, for now");
         assert_eq!(ids.len(), 3);
         // The ids are distinct, which is the only thing about them this layer
@@ -2150,7 +2392,7 @@ mod tests {
 
         assert_eq!(after.pages.len(), 2);
         assert_eq!(
-            after.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            sources(&after.pages),
             vec![1, 2],
             "slot 0 is now baseline page 1 --- the equality between the two is what \
              this command breaks, and every consumer that assumed it has to translate"
@@ -2233,7 +2475,7 @@ mod tests {
             vec![pages[1].id, pages[2].id, pages[0].id]
         );
         assert_eq!(
-            after.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            sources(&after.pages),
             vec![1, 2, 0],
             "and the sources say which page of the FILE is now in each slot --- \
              the equality between the two is what a move breaks without changing \
@@ -2329,7 +2571,7 @@ mod tests {
         let plan = edits.plan(7).expect("plan");
         assert_eq!(plan.baseline, 3);
         assert_eq!(
-            plan.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            sources(&plan.pages),
             vec![1, 2, 0],
             "which is what `save.rs` and `print.rs` rebuild a page tree for"
         );
@@ -2367,7 +2609,7 @@ mod tests {
         let plan = edits.plan(7).expect("plan");
         assert_eq!(plan.baseline, 3, "the file still has three pages");
         assert_eq!(
-            plan.pages.iter().map(|p| p.source).collect::<Vec<_>>(),
+            sources(&plan.pages),
             vec![0, 2],
             "and the plan names the two it kept, by the page of the file they are"
         );
@@ -3344,7 +3586,7 @@ mod tests {
             .move_page(7, pages[2].id, None)
             .expect("put the third page first");
         let moved = edits.state(7).expect("state").pages;
-        assert_eq!(moved[0].source, 2);
+        assert_eq!(sources(&moved)[0], 2);
 
         let state = edits
             .annotate(7, a_mark(moved[0].id), stamped())

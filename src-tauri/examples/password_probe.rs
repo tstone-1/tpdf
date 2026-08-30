@@ -58,6 +58,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::docmodel::{MarkKind, Quad};
 use tpdf_lib::edits::{PageView, Plan, PlannedMark};
 use tpdf_lib::fingerprint::Fingerprint;
@@ -389,7 +390,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         pages: (0..pages as u32)
             .map(|source| PageView {
                 id: u64::from(source) + 1,
-                source,
+                source: PageSource::Baseline(source),
                 turns: 0,
                 crop: None,
             })

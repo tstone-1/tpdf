@@ -65,6 +65,7 @@
   import {
     commentsIn,
     linksIn,
+    baselineOf,
     markRows,
     NO_PAGES,
     outlineIn,
@@ -397,6 +398,7 @@
     updateReady: () => updates.state.kind === "ready",
     rotatePage: (delta) => void rotatePage(delta),
     deletePage: () => void deletePage(),
+    insertBlankPage: () => void insertBlankPage(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
     redactSelection: () => void redactSelection(),
@@ -693,6 +695,28 @@
   }
 
   /**
+   * Puts a blank page after the one the reader is on.
+   *
+   * **The size is the page they are looking at**, unturned, which is what makes
+   * a blank page in an A4 document A4 and one in a US Letter document Letter.
+   * `pageSize` rather than `displayedSize`: a `/MediaBox` is the page's own
+   * size, and a reader who has turned the view has not asked for a page in
+   * landscape.
+   *
+   * An estimated size is used rather than refused. `knowsPageSize` is false only
+   * before a page has ever rendered, and a blank page the size of the running
+   * mean of a document's pages is a better answer than a refusal a reader would
+   * read as the command being broken --- the estimate is exact for the great
+   * majority of documents, where every page is the same size.
+   */
+  async function insertBlankPage(): Promise<void> {
+    const at = viewer?.position.page;
+    const size = at === undefined ? undefined : viewer?.pageSize(at);
+    if (at === undefined || !size) return;
+    await applyEdit((e) => e.insertPage(at, [size.width_pt, size.height_pt]));
+  }
+
+  /**
    * Crops the page the reader is on to its ink, or puts the file's box back.
    *
    * The measurement is the backend's and names a page of the **file**, while the
@@ -719,8 +743,15 @@
       await applyEdit((e) => e.crop(at, null));
       return;
     }
-    const source = edits.state.pages[at]?.source;
-    if (source === undefined) return;
+    const view = edits.state.pages[at];
+    const source = view === undefined ? undefined : baselineOf(view.source);
+    if (source === undefined) {
+      // Two ways to get here and only one of them is worth a message: a slot
+      // that is not in the document is a stale press, and a page tpdf made is a
+      // reader asking a reasonable question about a page with nothing on it.
+      if (view !== undefined) say("A blank page has nothing to crop to.");
+      return;
+    }
     const box = await contentBox(edits.doc, source).catch(() => null);
     if (!box) {
       say("There is nothing on this page to crop to.");
@@ -762,8 +793,15 @@
     rect: [number, number, number, number],
   ): Promise<void> {
     if (!edits) return;
-    const source = edits.state.pages.find((p) => p.id === page)?.source;
-    if (source === undefined) return;
+    const view = edits.state.pages.find((p) => p.id === page);
+    const source = view === undefined ? undefined : baselineOf(view.source);
+    if (source === undefined) {
+      // `cropToContent`'s reasoning, and here the refusal is the model's as
+      // well: a crop box is measured against a page of the file, and there is
+      // none behind a page tpdf made --- see `Refusal::MadePage`.
+      if (view !== undefined) say("A blank page cannot be cropped.");
+      return;
+    }
     const box = await cropBox(edits.doc, source, rect).catch(() => null);
     if (!box) {
       say("That rectangle could not be turned into a crop.");
@@ -1672,7 +1710,13 @@
       // translation below --- which asks which baseline page a slot came from ---
       // would send them to whichever page used to be there. On a document with a
       // deletion in it the two answers differ by the deletion.
-      page: inFile ? (edits?.map.sourceOf(where.page) ?? where.page) : where.page,
+      // `nearestSourceAt` rather than `sourceOf`, because this has to answer
+      // with a page of the *file* and a reader can be looking at a page tpdf
+      // made --- which is in no file and cannot be restored. The page before it
+      // is where they would have been had they not inserted one.
+      page: inFile
+        ? (edits?.map.nearestSourceAt(where.page) ?? where.page)
+        : where.page,
       top_pt: where.top,
       zoom: viewer.currentZoom,
       fit: viewer.fitMode,

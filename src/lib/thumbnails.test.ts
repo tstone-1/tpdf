@@ -269,6 +269,45 @@ describe("Thumbnails lifetime", () => {
     return makeStrip(dom);
   }
 
+  it("asks for no tile for a page tpdf made, and carries on past it", async () => {
+    // **The made page is in the middle, and that is the whole fixture.** With it
+    // at slot 0 this test passes whether the walk-on exists or not, because
+    // `setActive` pumps twice --- once through `layout` and once itself --- so
+    // the second pump asks for row 1 no matter what the first one did. In the
+    // middle there is only one pump to be had: row 0's reply. A strip that
+    // paints the blank row and stops there leaves every row below it empty for
+    // the life of the document, and a mutation removing the walk-on survived
+    // the first version of this test.
+    //
+    // The `sourceOf` also stands in for the fallback this replaced ---
+    // `sourceOf?.(page) ?? page` --- which for a made page asked for whatever
+    // page of the file happens to sit at that slot number.
+    const pages = makeStrip(dom, {
+      sourceOf: (slot) => (slot === 1 ? undefined : slot),
+    });
+    pages.setActive(true);
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
+    expect(tiles.fetchTile.mock.calls[0]?.[0]).toMatchObject({ page: 0 });
+
+    deliver(render(() => {}));
+    await settle();
+
+    // Row 1 was never asked for and row 2 was, which is one assertion about
+    // both halves: the made page is skipped, and the queue did not stop at it.
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+    expect(tiles.fetchTile.mock.calls[1]?.[0]).toMatchObject({ page: 2 });
+  });
+
+  it("still asks for every page when nobody translates slots at all", async () => {
+    // The control for the test above, and the distinction it turns on: an absent
+    // callback means the slot *is* the page, where a callback answering
+    // `undefined` means there is no page. Collapsing the two is what the old
+    // `?? page` did.
+    const pages = makeStrip(dom);
+    pages.setActive(true);
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
+  });
+
   it("asks for nothing more once it has been destroyed", async () => {
     // `pump` refuses to issue anything while the strip is inactive, and a
     // teardown that left it active kept that door open: the request settling

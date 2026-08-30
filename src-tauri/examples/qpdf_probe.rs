@@ -49,6 +49,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use lopdf::Document;
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::edits::{PageView, Plan};
 use tpdf_lib::{save, sweep, verify};
 
@@ -224,7 +225,7 @@ fn keeping(baseline: u32, kept: Vec<u32>) -> Plan {
             .into_iter()
             .map(|source| PageView {
                 id: u64::from(source) + 1,
-                source,
+                source: PageSource::Baseline(source),
                 turns: 0,
                 crop: None,
             })

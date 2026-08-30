@@ -25,6 +25,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::edits::{PageView, Plan};
 use tpdf_lib::save;
 
@@ -108,7 +109,7 @@ fn dropping_last(pages: usize) -> Plan {
         pages: (0..pages - 1)
             .map(|at| PageView {
                 id: at as u64 + 1,
-                source: at as u32,
+                source: PageSource::Baseline(at as u32),
                 turns: 0,
                 crop: None,
             })

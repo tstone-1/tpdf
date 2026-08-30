@@ -18,6 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  blankFill,
   displayedSize,
   Scroller,
   type PageSize,
@@ -738,9 +739,9 @@ describe("Scroller when the page order changes", () => {
         { width_pt: 600, height_pt: 1200 },
       ],
       order: [
-        { id: pageId(1), source: 0, turns: 0 },
-        { id: pageId(2), source: 1, turns: 0 },
-        { id: pageId(3), source: 2, turns: 0 },
+        { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+        { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+        { id: pageId(3), source: { baseline: 2 }, turns: 0 },
       ],
     };
   }
@@ -764,8 +765,8 @@ describe("Scroller when the page order changes", () => {
     // page 2 is deleted, and a request naming the slot asks for a picture of the
     // wrong page --- which looks like a rendering defect, not a bookkeeping one.
     scroller.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
     ]);
     tiles.fetchTile.mockClear();
     scroller.frame(0, performance.now());
@@ -785,8 +786,8 @@ describe("Scroller when the page order changes", () => {
     // which is why this fixture's are not.
     const tallBefore = scroller.pageBoxCssOf(2);
     scroller.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
     ]);
 
     const moved = scroller.pageBoxCssOf(1);
@@ -794,11 +795,53 @@ describe("Scroller when the page order changes", () => {
     expect(scroller.knowsPageSize(1)).toBe(true);
   });
 
+  it("fills a page tpdf made rather than leaving the surround through it", () => {
+    // The painter itself cannot be tested here --- the fake DOM's `getContext`
+    // answers `null`, so no `paint*` method runs under vitest --- so the
+    // decision is a function and this is what tests it. What it does not prove
+    // is that the painter uses the answer.
+    const made = {
+      id: pageId(9),
+      source: { blank: { width: 300, height: 500 } },
+      turns: 0,
+    };
+    const ofFile = { id: pageId(1), source: { baseline: 0 }, turns: 0 };
+
+    expect(blankFill(made, false)).toBe("#ffffff");
+    expect(blankFill(made, true)).toBe("#000000");
+    // The two that must answer `null`, and they are different cases: a page of
+    // the file draws itself from tiles, and a slot that is not there has nothing
+    // to draw at all. A fill for either would paint over a page still loading,
+    // which is how a reader tells a page that is coming from one that is here.
+    expect(blankFill(ofFile, false)).toBeNull();
+    expect(blankFill(undefined, false)).toBeNull();
+  });
+
+  it("lays a page tpdf made out at the size the reply carried", () => {
+    // The only size that ever arrives this way: every other one is learned from
+    // a render, and nothing renders a made page. Without this it would sit at
+    // the running estimate --- the mean of the other pages --- for ever, and the
+    // estimate here is deliberately none of the three fixture heights.
+    scroller.setPages([
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(9), source: { blank: { width: 300, height: 500 } }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+    ]);
+
+    expect(scroller.knowsPageSize(1)).toBe(true);
+    expect(scroller.pageSize(1)).toEqual({ width_pt: 300, height_pt: 500 });
+    // The control: the pages either side kept the sizes they were learned with,
+    // so this is about the made page rather than about every size being
+    // replaced.
+    expect(scroller.pageSize(0)).toEqual({ width_pt: 600, height_pt: 800 });
+    expect(scroller.pageSize(2)).toEqual({ width_pt: 600, height_pt: 400 });
+  });
+
   it("carries a page's own turn with it", () => {
     scroller.setPageTurns(2, 1);
     scroller.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(3), source: 2, turns: 1 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 1 },
     ]);
     expect(scroller.pageExtraTurns(1)).toBe(1);
     expect(scroller.pageExtraTurns(0)).toBe(0);
@@ -826,8 +869,8 @@ describe("Scroller when the page order changes", () => {
     expect(unmoved).toBeGreaterThanOrEqual(0);
 
     held.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
     ]);
 
     const bitmap = { close: vi.fn(), width: 64, height: 64 };
@@ -879,8 +922,8 @@ describe("Scroller when the page order changes", () => {
   it("reports a document that got shorter", () => {
     const before = scroller.documentHeight;
     scroller.setPages([
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(3), source: 2, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
     ]);
     expect(scroller.documentHeight).toBeLessThan(before);
     expect(scroller.pageBoxCssOf(2)).toEqual({ width: 0, height: 0 });

@@ -287,9 +287,9 @@ describe("markWalk", () => {
     // changed. Ids ascend the other way, so a walk that read `mark.page` as a
     // position would produce exactly the reverse.
     const moved = new PageMap([
-      { id: pageId(3), source: 2, turns: 0 },
-      { id: pageId(1), source: 0, turns: 0 },
-      { id: pageId(2), source: 1, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
     ]);
     const walk = markWalk([mark(10, 1, 100), mark(11, 3, 100)], moved);
     expect(walk.map((item) => item.id)).toEqual([11, 10]);

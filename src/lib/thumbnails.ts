@@ -126,13 +126,17 @@ export interface ThumbnailOptions {
   doc: number;
   pageCount: number;
   /**
-   * Which page of the file a row draws, or `undefined` for a row that is not in
-   * the document.
+   * Which page of the file a row draws, or `undefined` when no page of the file
+   * does: a row that is not in the document, or a page tpdf made.
    *
    * A row is a slot, and a tile request names a page of the file --- the two
    * stopped being the same number when a page could be deleted. Optional, and
    * defaulting to the identity, because the strip is also driven by harnesses
    * that never edit; see `pages.ts`.
+   *
+   * **Absent and answering `undefined` are different**, and the row that asks
+   * treats them differently: absent means nobody translates here and the slot is
+   * the page, while `undefined` means there is nothing to ask a worker for.
    */
   sourceOf?: (slot: number) => number | undefined;
   /** Geometry of page 1, taken as representative --- as `scroller.ts` does. */
@@ -346,6 +350,21 @@ export class Thumbnails {
    * the reader asking for a different picture and so are owed a fresh attempt.
    */
   private readonly failed = new Set<number>();
+  /**
+   * Rows already painted blank, for a page tpdf made.
+   *
+   * **Not a nicety: without it the strip stops.** {@link pump} picks the next
+   * page nothing has been done about, and a made page is in none of the other
+   * sets --- no bitmap, nothing borrowed, nothing failed --- so it would be
+   * picked again on every call and the rows after it would never be asked for.
+   *
+   * Its own set rather than {@link failed}, which would work and would be a lie:
+   * a blank page is the picture, not a page that could not be drawn, and the
+   * warning `failed` prints would go out on a healthy document. Cleared wherever
+   * `failed` is, and for the same reason --- a different orientation or a
+   * different order is a fresh question about every row.
+   */
+  private readonly blank = new Set<number>();
   /**
    * Whether this strip is still alive, for its two arrivals to consult.
    *
@@ -633,6 +652,7 @@ export class Thumbnails {
     this.bitmaps.clear();
     this.borrowing.clear();
     this.failed.clear();
+    this.blank.clear();
     this.layout();
   }
 
@@ -657,6 +677,7 @@ export class Thumbnails {
     // is no way to --- so `keep` refuses anything not still marked as borrowed.
     this.borrowing.clear();
     this.failed.clear();
+    this.blank.clear();
 
     this.rowHeight = rowHeightFor(this.opts.page, next);
     this.thumbHeight = this.rowHeight - LABEL_HEIGHT - ROW_PADDING * 2;
@@ -699,6 +720,7 @@ export class Thumbnails {
     this.bitmaps.clear();
     this.borrowing.clear();
     this.failed.clear();
+    this.blank.clear();
 
     this.spacer.style.height = `${this.opts.pageCount * this.rowHeight}px`;
     for (const row of this.rows.values()) row.remove();
@@ -769,9 +791,35 @@ export class Thumbnails {
     const page = nextWanted(
       window,
       this.current,
-      (p) => this.bitmaps.has(p) || this.borrowing.has(p) || this.failed.has(p),
+      (p) =>
+        this.bitmaps.has(p) ||
+        this.borrowing.has(p) ||
+        this.failed.has(p) ||
+        this.blank.has(p),
     );
     if (page === null) return;
+
+    // **Two `undefined`s that mean different things**, which is why this is not
+    // `sourceOf?.(page) ?? page`. An absent callback means nobody translates
+    // slots here, and the slot *is* the page --- that is the fallback, and it is
+    // right. A callback that answers `undefined` means there is no page of the
+    // file behind this slot, and falling back to the slot number then renders
+    // whatever page happens to sit at it.
+    //
+    // Answered before the borrow below rather than after it, because a made page
+    // has nothing to borrow either: the viewer never rendered it.
+    const source = this.opts.sourceOf ? this.opts.sourceOf(page) : page;
+    if (source === undefined) {
+      // A page tpdf made. Painted rather than left alone: an empty row is what
+      // a page that has not loaded yet also looks like, so a reader could not
+      // tell a blank page from a slow one. Then straight on to the next row ---
+      // nothing else will pump for this one, because no request was made and
+      // there is no reply to arrive.
+      this.paintBlank(page);
+      this.blank.add(page);
+      this.pump();
+      return;
+    }
 
     // The viewer may already have this page as a tier-1 placeholder, in which
     // case there is nothing to render: it is the same 150 px bitmap at the same
@@ -806,7 +854,6 @@ export class Thumbnails {
       return;
     }
 
-    const source = this.opts.sourceOf?.(page) ?? page;
     const rid = nextRequestId();
     const outstanding: Outstanding = { page, rid, withdrawn: false };
     this.request = outstanding;
@@ -988,6 +1035,22 @@ export class Thumbnails {
     this.rows.set(page, row);
     this.mark(page, page === this.current);
     this.draw(page);
+  }
+
+  /**
+   * Fills a row with nothing, for a page no file supplies.
+   *
+   * Deliberately not through {@link keep}: there is no bitmap, so there is
+   * nothing for the cache to hold or evict, and putting a synthetic one in the
+   * LRU would spend a slot that a page with something on it could use.
+   */
+  private paintBlank(page: number): void {
+    const canvas = this.rows.get(page)?.querySelector("canvas");
+    if (!canvas) return;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
   }
 
   /** Paints a page's bitmap into its row, if both exist. */
