@@ -19,6 +19,23 @@ have the binary.)
 
 ## [26.8.12] - Unreleased
 
+### Added: insert a blank page
+
+**Insert blank page** puts a new page after the one you are reading. It is the size
+of the page you are looking at rather than a fixed A4, so a blank page in a US
+Letter document is Letter --- and it turns, moves and deletes like any other page,
+with undo and redo throughout.
+
+Two things it cannot do yet, and both are refused when you try rather than lost
+when you save. You cannot mark one: a mark is written by attaching it to a page of
+the file, and a page tpdf made is in no file until it is saved. You cannot crop
+one: a crop box is measured against a page of the file by the PDF engine, so there
+is nothing to measure it against.
+
+Inserting pages **from another file** is a different piece of work and is not this.
+It needs a second document open behind the one you are reading, which every tile,
+every search and every save would have to ask about.
+
 ### Changed: saving over a document no longer parses it in the app process
 
 **A save that deletes, moves, turns or crops a page now happens inside the

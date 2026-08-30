@@ -38,6 +38,7 @@ use std::path::Path;
 
 use lopdf::{Document, LoadOptions};
 
+use crate::docmodel::PageSource;
 use crate::edits::Plan;
 use crate::pagetree::{agreed_turns, apply_turns};
 use crate::sweep;
@@ -76,6 +77,21 @@ pub enum Pages {
     /// A listed order that is already the document's costs nothing: `build`
     /// rewrites the page tree only when the two differ.
     Only(Vec<PagePlan>),
+    /// The plan carries a page tpdf made, which no list of file page numbers can
+    /// name.
+    ///
+    /// **A variant rather than a shorter list**, because the alternative is a
+    /// lie: a `Pages::Only` that quietly leaves the made pages out is a complete
+    /// looking selection of the wrong document, and `docs/TRAPS.md` records a
+    /// list with a silently missing element as the shape that survives review.
+    ///
+    /// Nothing prints from it. [`route`] answers [`Route::Working`] for any plan
+    /// that produces one --- the working document is written by `save.rs`, which
+    /// is the only writer that can make the page --- and [`build`] refuses it.
+    /// That refusal is unreachable today and is kept as the type carrying the
+    /// constraint, which is what this repository does with a guard it cannot
+    /// reach.
+    Unlistable,
 }
 
 /// What to print, and how it should be oriented.
@@ -133,17 +149,19 @@ pub fn select(plan: Option<&Plan>, pages: Option<Vec<u32>>) -> Pages {
     if plan.is_identity() {
         return Pages::All;
     }
-    Pages::Only(
-        plan.pages
-            .iter()
-            .map(|page| PagePlan {
-                // One-based, as `lopdf` numbers pages; `source` is the zero-based
-                // baseline page the model works in.
-                number: page.source + 1,
-                turns: page.turns,
-            })
-            .collect(),
-    )
+    let mut listed = Vec::with_capacity(plan.pages.len());
+    for page in &plan.pages {
+        let PageSource::Baseline(number) = page.source else {
+            return Pages::Unlistable;
+        };
+        listed.push(PagePlan {
+            // One-based, as `lopdf` numbers pages; a `Baseline` is the
+            // zero-based baseline page the model works in.
+            number: number + 1,
+            turns: page.turns,
+        });
+    }
+    Pages::Only(listed)
 }
 
 /// Where a job's bytes come from.
@@ -374,6 +392,12 @@ fn resolve(pages: &Pages, present: &[u32]) -> Result<Vec<PagePlan>, String> {
             .iter()
             .map(|&number| PagePlan { number, turns: 0 })
             .collect()),
+        // Unreachable, and kept because the type carries the constraint rather
+        // than a comment: `route` sends any plan that produces this to
+        // `Route::Working`, which never reaches `build`. See `Pages::Unlistable`.
+        Pages::Unlistable => {
+            Err("this document has a page tpdf made, which a page range cannot name".into())
+        }
         Pages::Only(wanted) => {
             if wanted.is_empty() {
                 return Err("no pages selected".into());
@@ -771,6 +795,52 @@ mod tests {
             "one-based page numbers of the file, the deleted one absent, and the \
              turn on the page it was applied to"
         );
+    }
+
+    /// A plan carrying a page tpdf made cannot be spelled as file page numbers,
+    /// and the route says so.
+    ///
+    /// **Both halves, because either alone is satisfied by a defect.** A
+    /// `select` that answered `Unlistable` while `route` still sent the job to
+    /// `Range` would print a refusal at the panel; a `route` that answered
+    /// `Working` while `select` quietly listed two of three pages would print
+    /// the wrong document. The control is the same document without the made
+    /// page, which still lists.
+    #[test]
+    fn a_plan_with_a_page_tpdf_made_cannot_be_listed_and_goes_to_the_working_writer() {
+        let edits = modelled();
+        let pages = edits.state(1).expect("state").pages;
+        // The control is an edit that *is* listable, rather than the untouched
+        // document --- which answers `Pages::All` and would agree with a `select`
+        // that could no longer list anything at all.
+        edits.rotate(1, pages[0].id, 1).expect("rotate");
+        assert!(
+            matches!(
+                select(Some(&edits.plan(1).expect("plan")), None),
+                Pages::Only(_)
+            ),
+            "the control: an edited document without a made page still lists"
+        );
+
+        edits
+            .insert(1, Some(pages[0].id), [200.0, 400.0])
+            .expect("insert a blank page");
+        let plan = edits.plan(1).expect("plan");
+
+        assert_eq!(select(Some(&plan), None), Pages::Unlistable);
+        assert_eq!(
+            route(Some(&plan), None, 0),
+            Route::Working,
+            "the working writer is the only one that can make the page"
+        );
+        // An explicit range still wins, and still says nothing about edits ---
+        // which is what `route` documents and is worth pinning here, because the
+        // made page is the first thing a plan can carry that the range cannot
+        // express.
+        assert!(matches!(
+            route(Some(&plan), Some(vec![1]), 0),
+            Route::Range(_)
+        ));
     }
 
     #[test]

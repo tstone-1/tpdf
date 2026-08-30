@@ -1175,8 +1175,8 @@ MUTATIONS = [
         # document, and asks for the wrong page in exactly the case it is for.
         "pages: fall back to the slot when it draws no page",
         "src/lib/pages.ts",
-        "    return this.views[slot]?.source;",
-        "    return this.views[slot]?.source ?? slot;",
+        "    return view === undefined ? undefined : baselineOf(view.source);\n  }\n\n  /**\n   * The size of the page in a slot",
+        "    return view === undefined ? slot : (baselineOf(view.source) ?? slot);\n  }\n\n  /**\n   * The size of the page in a slot",
         "says a slot past the end is nowhere rather than falling back to itself",
     ),
     Mutation(
@@ -3144,6 +3144,96 @@ MUTATIONS = [
         "    if (event.button !== 0 || (isMac() && event.ctrlKey)) return;",
         "    if (isMac() && event.ctrlKey) return;",
         "keeps the selection when the second button is pressed",
+    ),
+    Mutation(
+        # Put a page tpdf made into the file-page map. It has no baseline number,
+        # so the slot becomes its key --- and every file page after it resolves to
+        # the wrong slot, which is the direction everything arriving from the
+        # backend is translated in.
+        "pages: put a page tpdf made into the file-page translation",
+        "src/lib/pages.ts",
+        "      const source = view === undefined ? undefined : baselineOf(view.source);\n      if (source === undefined || this.bySource.has(source)) continue;",
+        "      const source =\n        view === undefined ? undefined : (baselineOf(view.source) ?? slot);\n      if (source === undefined || this.bySource.has(source)) continue;",
+        "is in no direction of the file-page translation",
+    ),
+    Mutation(
+        # Answer with the slot's own page and never look back. A reader whose
+        # place is a page tpdf made then has no place at all, and the fallback
+        # one level up quietly uses the slot number instead.
+        "pages: stop the nearest-file-page walk at the slot it was asked about",
+        "src/lib/pages.ts",
+        "    for (let at = Math.min(slot, this.views.length - 1); at >= 0; at--) {",
+        "    for (let at = Math.min(slot, this.views.length - 1); at >= slot; at--) {",
+        "answers with the page before it when a file page is what is needed",
+    ),
+    Mutation(
+        # Leave a made page out of the source list. Every slot after it then
+        # reads as the page before it, which is the misalignment the list exists
+        # to make visible.
+        "pages: leave a page tpdf made out of the source list",
+        "src/lib/pages.ts",
+        "    return this.views.map((page) => baselineOf(page.source));",
+        "    return this.views.flatMap((page) => baselineOf(page.source) ?? []);",
+        "reports itself in a source list rather than being left out of it",
+    ),
+    Mutation(
+        # Stop the strip at a page tpdf made. Nothing pumps the row after it ---
+        # the request it did not make has no reply --- so every row below a blank
+        # page stays empty for the life of the document.
+        "thumbnails: stop the strip at a page tpdf made",
+        "src/lib/thumbnails.ts",
+        "      this.paintBlank(page);\n      this.blank.add(page);\n      this.pump();\n      return;",
+        "      this.paintBlank(page);\n      this.blank.add(page);\n      return;",
+        "asks for no tile for a page tpdf made, and carries on past it",
+    ),
+    Mutation(
+        # Collapse the two `undefined`s. An absent callback and one answering
+        # `undefined` mean different things, and this asks a worker for whatever
+        # page of the file happens to sit at the made page's slot number.
+        "thumbnails: fall back to the slot for a page with no file page behind it",
+        "src/lib/thumbnails.ts",
+        "    const source = this.opts.sourceOf ? this.opts.sourceOf(page) : page;",
+        "    const source = this.opts.sourceOf?.(page) ?? page;",
+        "asks for no tile for a page tpdf made, and carries on past it",
+    ),
+    Mutation(
+        # Leave the surround showing through a page tpdf made. Nothing else will
+        # ever draw it, so the reader sees a grey hole where they inserted a
+        # sheet of paper.
+        "scroller: leave the surround showing through a page tpdf made",
+        "src/lib/scroller.ts",
+        "  if (!view || !madeSizeOf(view.source)) return null;",
+        "  if (!view || madeSizeOf(view.source)) return null;",
+        "fills a page tpdf made rather than leaving the surround through it",
+    ),
+    Mutation(
+        # White under inversion too, which is a blank sheet between two black
+        # ones --- the one thing an inverted document must not draw.
+        "scroller: fill a page tpdf made white under inversion as well",
+        "src/lib/scroller.ts",
+        '  return invert ? "#000000" : "#ffffff";',
+        '  return "#ffffff";',
+        "fills a page tpdf made rather than leaving the surround through it",
+    ),
+    Mutation(
+        # Lay a made page out at the running estimate. It is never rendered, so
+        # nothing corrects it: the page keeps the mean of the other pages' sizes
+        # for the life of the document.
+        "scroller: lay a page tpdf made out at the estimate rather than its own size",
+        "src/lib/scroller.ts",
+        "      const made = madeSizeOf(page.source);",
+        "      const made = undefined as ReturnType<typeof madeSizeOf>;",
+        "lays a page tpdf made out at the size the reply carried",
+    ),
+    Mutation(
+        # Collapse a stale slot into an insert at the front. A press that arrives
+        # after the order changed then puts a page somewhere nobody asked for,
+        # which is the distinction `insertPage` is written around.
+        "edits: turn a stale slot into an insert at the front",
+        "src/lib/edits.ts",
+        "    const anchor =\n      after === null ? null : (this.current.pages[after]?.id ?? undefined);",
+        "    const anchor = after === null ? null : (this.current.pages[after]?.id ?? null);",
+        "does not send an insert for a slot the model has never mentioned",
     ),
 ]
 

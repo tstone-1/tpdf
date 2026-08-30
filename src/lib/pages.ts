@@ -293,6 +293,51 @@ export interface MarkView {
 }
 
 /**
+ * What supplies a page's content: a page of the file, or a page tpdf made.
+ *
+ * Mirrors `docmodel::PageSource`, which serialises externally tagged --- so a
+ * baseline page arrives as `{ baseline: 3 }` and a page tpdf made as
+ * `{ blank: { width: 595, height: 842 } }`. The two payload shapes differ, which
+ * is what lets `"baseline" in source` narrow it.
+ *
+ * **A page tpdf made has no number in the file, and that is the whole of what
+ * this type exists to say.** Every consumer that asks a worker for a tile, for a
+ * page's text or for its objects addresses the page by that number, so each of
+ * them has to answer what it does when there is none --- see
+ * {@link PageMap.sourceOf}, which answers `undefined` and documents why it must
+ * not fall back to the slot.
+ */
+export type PageSource =
+  | { readonly baseline: number }
+  | { readonly blank: { readonly width: number; readonly height: number } };
+
+/**
+ * The baseline page a source names, or `undefined` for a page tpdf made.
+ *
+ * A free function rather than a method on the union, because the union is a
+ * wire shape and has no methods; and named for the answer rather than for the
+ * question, so a caller reads it as "which page of the file is this".
+ */
+export function baselineOf(source: PageSource): number | undefined {
+  return "baseline" in source ? source.baseline : undefined;
+}
+
+/**
+ * The size of a page tpdf made, or `undefined` for a page of the file.
+ *
+ * {@link baselineOf}'s mirror, and the reason both exist rather than one: a page
+ * has a size here exactly when it has no baseline number, so a caller that
+ * needs the size is the one that got `undefined` from the other. A page of the
+ * file has a size too and it is the *file's* answer, which the render path
+ * reports and nothing here may contradict.
+ */
+export function madeSizeOf(
+  source: PageSource,
+): { readonly width: number; readonly height: number } | undefined {
+  return "blank" in source ? source.blank : undefined;
+}
+
+/**
  * One page of the working document, as the backend reports it.
  *
  * Mirrors `edits::PageView`. It lives here rather than in `edits.ts` so that the
@@ -312,8 +357,8 @@ export interface PageView {
    * written rather than a property of this line.
    */
   id: PageId;
-  /** Which page of the file supplies the content. Zero-based. */
-  source: number;
+  /** What supplies the content --- see {@link PageSource}. */
+  source: PageSource;
   /** Quarter turns clockwise an edit has applied, on top of the page's own. */
   turns: number;
   /**
@@ -354,7 +399,11 @@ export class PageMap {
     this.views = views;
     this.bySource = new Map();
     for (let slot = 0; slot < views.length; slot++) {
-      const source = views[slot]?.source;
+      const view = views[slot];
+      // A page tpdf made has no baseline number, so it is in no direction of
+      // this map: nothing arriving from the backend can name it, because
+      // everything that does names a page of the file.
+      const source = view === undefined ? undefined : baselineOf(view.source);
       if (source === undefined || this.bySource.has(source)) continue;
       this.bySource.set(source, slot);
     }
@@ -385,7 +434,44 @@ export class PageMap {
    * a missing slot must not ask for a tile rather than ask for the wrong one.
    */
   sourceOf(slot: number): number | undefined {
-    return this.views[slot]?.source;
+    const view = this.views[slot];
+    return view === undefined ? undefined : baselineOf(view.source);
+  }
+
+  /**
+   * The size of the page in a slot, when tpdf made it rather than the file.
+   *
+   * `undefined` for a page of the file, whose size the render path reports ---
+   * see {@link madeSizeOf}. The layout needs this because nothing will ever
+   * render a made page and report its size: {@link sourceOf} answers
+   * `undefined` for it precisely so that no tile is asked for.
+   */
+  madeSizeOf(
+    slot: number,
+  ): { readonly width: number; readonly height: number } | undefined {
+    const view = this.views[slot];
+    return view === undefined ? undefined : madeSizeOf(view.source);
+  }
+
+  /**
+   * The page of the file a slot draws, or the nearest one before it.
+   *
+   * For the one caller that must answer with a *file* page and cannot skip:
+   * remembering where the reader was. A page tpdf made is in no file, so a
+   * place naming it could not be restored --- and the honest answer is the page
+   * they would have been on had they not inserted it, which is the one before.
+   *
+   * `undefined` only when no slot at or before this one shows a page of the
+   * file, which for a real document means the reader is on a made page at the
+   * very front.
+   */
+  nearestSourceAt(slot: number): number | undefined {
+    for (let at = Math.min(slot, this.views.length - 1); at >= 0; at--) {
+      const view = this.views[at];
+      const source = view === undefined ? undefined : baselineOf(view.source);
+      if (source !== undefined) return source;
+    }
+    return undefined;
   }
 
   /**
@@ -434,8 +520,8 @@ export class PageMap {
    * `[0, 2, 3]` says what a deletion did, where three separate `sourceOf`
    * calls say it three times.
    */
-  sources(): number[] {
-    return this.views.map((page) => page.source);
+  sources(): (number | undefined)[] {
+    return this.views.map((page) => baselineOf(page.source));
   }
 
   /**
@@ -792,7 +878,7 @@ export function unedited(count: number): PageMap {
   return new PageMap(
     Array.from({ length: Math.max(0, count) }, (_unused, slot) => ({
       id: pageId(slot + 1),
-      source: slot,
+      source: { baseline: slot },
       turns: 0,
     })),
   );

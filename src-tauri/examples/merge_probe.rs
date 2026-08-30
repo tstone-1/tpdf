@@ -41,6 +41,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::document::OpenDocument;
 
 use lopdf::Document;
@@ -296,7 +297,7 @@ fn whole(pages: u32) -> Plan {
         pages: (0..pages)
             .map(|at| PageView {
                 id: u64::from(at) + 1,
-                source: at,
+                source: PageSource::Baseline(at),
                 turns: 0,
                 crop: None,
             })

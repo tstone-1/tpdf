@@ -79,7 +79,7 @@ import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 // module wholesale, and a class reached through it would be `undefined`
 // inside them --- turning this `instanceof` into a TypeError thrown from a
 // failure handler, which surfaces as a frame loop that never settles.
-import { unedited, type PageView } from "./pages";
+import { baselineOf, madeSizeOf, unedited, type PageView } from "./pages";
 import { DocumentGone } from "./tilestatus";
 
 export type Layout = "tiles" | "viewport";
@@ -345,6 +345,34 @@ interface Arrival {
 
 function keyOf(k: TileKey): string {
   return `${k.page}:${k.col}:${k.row}`;
+}
+
+/**
+ * The colour a page's box should be filled with before anything is drawn on it,
+ * or `null` for a page that draws itself.
+ *
+ * **A function rather than two lines inside the paint**, because the paint
+ * cannot be tested: the fake DOM's `getContext` answers `null`, so no `paint*`
+ * method in this class ever executes under vitest --- `docs/TRAPS.md` records
+ * that and records the remedy, which is to move the decision one call earlier.
+ * What this does *not* prove is that the painter uses the answer.
+ *
+ * Only a page tpdf made needs one. Every other page is drawn from tiles, and one
+ * whose tiles have not arrived is deliberately left showing the surround, which
+ * is how a reader can tell a page that is still coming from one that is there.
+ * A made page never has tiles --- nothing renders it --- so the surround would be
+ * permanent, and a grey hole where the reader inserted a sheet of paper reads as
+ * a defect rather than as a blank page.
+ */
+export function blankFill(
+  view: PageView | undefined,
+  invert: boolean,
+): string | null {
+  if (!view || !madeSizeOf(view.source)) return null;
+  // Black under inversion because that is what an inverted blank page is: the
+  // tiles either side of it come back inverted from the worker, and a white
+  // sheet between two black ones is the one thing this must not draw.
+  return invert ? "#000000" : "#ffffff";
 }
 
 /** Fallback surround, used only if the stylesheet has not loaded. */
@@ -715,7 +743,20 @@ export class Scroller {
     const epochs: number[] = [];
     for (const page of next) {
       const was = at.get(page.id);
-      sizes.push(was === undefined ? null : (this.sizes[was] ?? null));
+      // **A page tpdf made carries its own size, and it is the only page whose
+      // size ever arrives this way.** Every other size is learned from a render
+      // and carried across by the slot the page used to be in --- and a made
+      // page is never rendered, because `sourceOf` answers `undefined` for it
+      // and no tile is asked for. Without this it would lay out at the running
+      // estimate for ever, which is the mean of the *other* pages' sizes.
+      const made = madeSizeOf(page.source);
+      sizes.push(
+        made
+          ? { width_pt: made.width, height_pt: made.height }
+          : was === undefined
+            ? null
+            : (this.sizes[was] ?? null),
+      );
       turns.push(page.turns % 4);
       // Read off the reply rather than carried from the old slot, unlike the
       // size beside it: a crop is the *model's* answer and arrives in every
@@ -1534,13 +1575,19 @@ export class Scroller {
   /**
    * Which page of the file a slot draws.
    *
-   * `undefined` for a slot that is not in the document, and nothing asks for a
-   * tile in that case. Deliberately not falling back to the slot number: that
-   * fallback is right for every unedited document and asks for the wrong page in
-   * exactly the case the order exists for.
+   * `undefined` for a slot that is not in the document **and for a page tpdf
+   * made**, and nothing asks for a tile in either case. The second is the
+   * sharper one: a made page is in the document and has no page of the file
+   * behind it, so a request for it would render whatever page happens to sit at
+   * that number.
+   *
+   * Deliberately not falling back to the slot number: that fallback is right for
+   * every unedited document and asks for the wrong page in exactly the cases the
+   * order exists for.
    */
   private sourceOf(slot: number): number | undefined {
-    return this.order[slot]?.source;
+    const view = this.order[slot];
+    return view === undefined ? undefined : baselineOf(view.source);
   }
 
   private send(key: TileKey): void {
@@ -1820,6 +1867,24 @@ export class Scroller {
       if (!box) continue;
       const left = this.pageLeftCss(page);
       const top = box.top - this.scrollTop;
+
+      // **A page tpdf made is painted here or not at all.** Nothing renders one
+      // --- `sourceOf` answers `undefined` for it precisely so that no tile is
+      // asked for --- so without this the reader sees the surround through it,
+      // which reads as a hole in the document rather than as a sheet of paper.
+      // Under inversion it is black, because that is what an inverted blank page
+      // is and the tiles around it come back inverted from the worker.
+      const blank = blankFill(this.order[page], this.opts.invert);
+      if (blank) {
+        ctx.fillStyle = blank;
+        ctx.fillRect(
+          left * dpr,
+          top * dpr,
+          box.widthCss * dpr,
+          box.heightCss * dpr,
+        );
+        this.drawnThisFrame++;
+      }
 
       const placeholder = this.placeholders.get(page);
       if (placeholder) {

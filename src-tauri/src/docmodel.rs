@@ -153,6 +153,33 @@ impl Rect {
     }
 }
 
+/// A page's size in points.
+///
+/// **Not a [`Rect`], and the difference is what it forbids.** A rectangle can
+/// have any origin, and a page tpdf makes has exactly one: `[0 0 width height]`.
+/// Carrying the origin would let a caller ask for a page whose media box starts
+/// somewhere else, which nothing here writes and nothing here reads --- a field
+/// with no reachable value is the shape `docs/TRAPS.md` records as a guard that
+/// cannot fire. The writer turns this into the rectangle at the moment it writes.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Size {
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Size {
+    /// Whether the size encloses any area at all.
+    ///
+    /// [`Rect::is_proper`]'s twin, and the note there about `NaN` carries over
+    /// word for word: every comparison against `NaN` is false, so a `NaN` in
+    /// either field is improper without that being written anywhere. It is
+    /// asserted in the tests rather than left to be rediscovered, because a page
+    /// of `NaN` points would reach `/MediaBox` and no reader could open the file.
+    pub fn is_proper(self) -> bool {
+        self.width > 0.0 && self.height > 0.0
+    }
+}
+
 /// A mark's identity, stable for the life of the working document.
 ///
 /// Opaque for the same reason [`PageId`] is, and issued rather than derived ---
@@ -891,15 +918,41 @@ pub struct Redaction {
     pub area: Quad,
 }
 
+/// What supplies a page's content.
+///
+/// **The seam the render path uses**: a viewport position indexes
+/// [`Working::order`], that yields a [`PageId`], and this says what to draw for
+/// it. It was a bare `u32` naming a baseline page until 2026-08-30, and widening
+/// it is the whole of what inserting a page costs everywhere except the writer
+/// --- every consumer that asked a worker for a tile, a page's text or its
+/// objects has to say what it does when no file supplies the page.
+///
+/// **Named `PageSource` rather than `Source`**, which is taken:
+/// [`crate::docgraph::Source`] says where a *document's bytes* come from. Two
+/// types of one name in one crate is the collision `docs/TRAPS.md` records as
+/// the worse kind, because it compiles wherever the wrong one happens to have a
+/// method of the right shape.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PageSource {
+    /// Page `n` of the file this document was opened from. Zero-based.
+    Baseline(u32),
+    /// A page tpdf made, at this size. No file supplies it.
+    ///
+    /// **The size is here rather than beside it**, because a page has a size
+    /// exactly when no baseline page supplies one --- a baseline page's size is
+    /// the file's answer and nothing here may contradict it. Two fields would
+    /// make that a biconditional somebody has to check; one enum makes it the
+    /// type's answer, which is the distinction [`Refusal::ShapeMismatch`] exists
+    /// because [`Mark`] could not draw.
+    Blank(Size),
+}
+
 /// One page of the working document.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Page {
-    /// Which baseline page supplies the content. Zero-based.
-    ///
-    /// This is the seam the render path will use: a viewport position indexes
-    /// [`Working::order`], that yields a [`PageId`], and this is the page to ask
-    /// the worker for.
-    pub source: u32,
+    /// What supplies the content --- see [`PageSource`].
+    pub source: PageSource,
     /// Quarter turns clockwise **on top of the page's own `/Rotate`**, normalized
     /// to `0..=3`.
     ///
@@ -931,6 +984,29 @@ pub enum Command {
     /// Expressed against a neighbouring *id* rather than a destination index for
     /// the reason the module note gives.
     Move { page: PageId, after: Option<PageId> },
+    /// Put a new blank page immediately after `after`, or at the front when
+    /// `after` is `None`.
+    ///
+    /// Expressed against a neighbouring *id* rather than a destination index for
+    /// [`Command::Move`]'s reason, and it is that command's shape with one field
+    /// more: the page being placed does not exist yet, so `page` is the id this
+    /// command **issues** rather than one it names.
+    ///
+    /// **The size travels in the command**, unlike every other body in this
+    /// enum, which lives in a [`Doc`] table. There is no version of a page's
+    /// size for a table to be keyed by --- nothing edits it --- and a [`Size`]
+    /// is two `f64`s, so carrying it here costs the journal sixteen bytes and
+    /// keeps the enum `Copy`. A table would buy the indirection and nothing else.
+    ///
+    /// **Replay re-issues nothing.** The id is in the command, so replaying it
+    /// from a snapshot rebuilds the same page rather than a different one
+    /// wearing a new number --- the property the module note states for marks,
+    /// and it holds here for the same reason.
+    Insert {
+        page: PageId,
+        after: Option<PageId>,
+        size: Size,
+    },
     /// Put a mark on a page.
     ///
     /// The mark's body is in [`Doc`]'s table under `mark`; only the identity is
@@ -1037,6 +1113,7 @@ impl Command {
             | Command::Crop { page, .. }
             | Command::Delete { page }
             | Command::Move { page, .. }
+            | Command::Insert { page, .. }
             | Command::Annotate { page, .. }
             | Command::Rewrite { page, .. }
             | Command::Redact { page, .. } => Some(page),
@@ -1074,6 +1151,46 @@ pub enum Refusal {
     /// value. The test below does exactly that, and it found this by failing
     /// with the two sides printing identically.
     DegenerateCrop(Rect),
+    /// A page of no area, `NaN` included.
+    ///
+    /// [`DegenerateCrop`](Refusal::DegenerateCrop)'s twin, and its note about
+    /// `NaN` applies here too: **this variant does not compare equal to itself**
+    /// when the size holds one, so match the variant rather than the value.
+    ///
+    /// Its own variant rather than a second meaning for the crop's, because the
+    /// two say different things to a reader --- one is a box they dragged over a
+    /// page that exists, the other is a page they asked tpdf to make. That is
+    /// the trap about one predicate answering two questions, refused before it
+    /// could be made.
+    DegeneratePage(Size),
+    /// The page is one tpdf made rather than one out of the file.
+    ///
+    /// **Named for the fact rather than for the reason**, because its two
+    /// callers refuse for different reasons and only one of them is temporary. A
+    /// predicate named after why one caller happens to use it is renamed by the
+    /// second, which `docs/TRAPS.md` records twice.
+    ///
+    /// [`Doc::annotate`] refuses because a mark is written by attaching it to a
+    /// page *object*, and [`crate::edits::PlannedMark`] addresses that object by
+    /// its baseline number --- which a page no file supplies does not have.
+    /// Widening that addressing is the increment after this one, and the honest
+    /// place to refuse until then is the moment the reader draws, rather than
+    /// the save that would otherwise be the first thing to say no.
+    ///
+    /// [`Doc::redact`] refuses for a reason that does not expire: a blank page
+    /// has no content, so a region on one removes nothing. That is
+    /// [`EmptyRedaction`](Refusal::EmptyRedaction)'s argument --- a row in the
+    /// review list certifying the removal of nothing --- reaching the same
+    /// conclusion by a different route.
+    ///
+    /// [`Command::Crop`] refuses because the box cannot be measured: a reader
+    /// drags a rectangle in display space and `crop.ts` asks PDFium to turn it
+    /// into a box in the page's own space, naming a page of the file. There is
+    /// no page of the file to name, so accepting a crop here would mean holding
+    /// one nothing could have produced. **Clearing a crop is not refused**, and
+    /// nothing is missing: a made page has none to clear, so the refusal would
+    /// be about an operation with no effect.
+    MadePage(PageId),
     /// No mark has ever had this id.
     NoSuchMark(MarkId),
     /// The id names a mark that was taken off the page. Distinct from
@@ -1229,7 +1346,7 @@ impl Working {
                 (
                     id,
                     Page {
-                        source: i as u32,
+                        source: PageSource::Baseline(i as u32),
                         extra_turns: 0,
                         crop: None,
                     },
@@ -1467,6 +1584,19 @@ impl Working {
             }
             Command::Crop { page, to } => {
                 self.live(page)?;
+                // **The third caller of `Refusal::MadePage`, and this one is
+                // forced rather than chosen.** A crop box is in the page's own
+                // unrotated space and the reader drags a rectangle in display
+                // space; `crop.ts` asks PDFium to convert between them, naming a
+                // page of the *file*. A page tpdf made is in no file, so the
+                // frontend cannot produce the box in the first place --- and a
+                // model that accepted one anyway would hold a crop nothing could
+                // have measured.
+                if let Some(page_now) = self.pages.get(&page) {
+                    if matches!(page_now.source, PageSource::Blank(_)) && to.is_some() {
+                        return Err(Refusal::MadePage(page));
+                    }
+                }
                 if let Some(r) = to {
                     if !r.is_proper() {
                         return Err(Refusal::DegenerateCrop(r));
@@ -1526,6 +1656,40 @@ impl Working {
                     Some(anchor) => self.position(anchor) + 1,
                 };
                 self.order.insert(to, page);
+            }
+            Command::Insert { page, after, size } => {
+                if !size.is_proper() {
+                    return Err(Refusal::DegeneratePage(size));
+                }
+                if let Some(anchor) = after {
+                    self.live(anchor)?;
+                }
+                // `Command::Annotate`'s assertion, for its reason: the id is
+                // issued once and a journalled `Insert` is replayed exactly
+                // where it was accepted, so an id arriving here twice is a
+                // broken model rather than something a reader did. Both halves,
+                // because a page can be absent from `pages` two ways and only
+                // one of them is a fresh id.
+                debug_assert!(
+                    !self.pages.contains_key(&page) && !self.graves.contains(&page),
+                    "a page was inserted twice: {page:?}"
+                );
+                // After the anchor's check rather than before it, so a refused
+                // insert leaves the order alone --- the property the doc comment
+                // on this function states and every other arm keeps.
+                let at = match after {
+                    None => 0,
+                    Some(anchor) => self.position(anchor) + 1,
+                };
+                self.order.insert(at, page);
+                self.pages.insert(
+                    page,
+                    Page {
+                        source: PageSource::Blank(size),
+                        extra_turns: 0,
+                        crop: None,
+                    },
+                );
             }
             Command::Annotate { mark, page, note } => {
                 self.live(page)?;
@@ -1683,6 +1847,15 @@ pub struct Doc {
     /// The next redaction id to issue. Only ever counts up, as
     /// [`next_mark`](Doc::next_mark) does and for its reason.
     next_redaction: u64,
+    /// The next page id to issue, for a page tpdf makes.
+    ///
+    /// **Starts past the baseline**, because [`Working::baseline`] hands the
+    /// file's own pages `1..=pages` before any command runs, and an id issued
+    /// twice would put two pages under one name. Only ever counts up, as
+    /// [`next_mark`](Doc::next_mark) does and for its reason: an id spent by an
+    /// insert that has since been undone is still spent, so redo brings back the
+    /// page it named rather than a different one.
+    next_page: u64,
     /// What each version of each foreign comment's body is, keyed by the id its
     /// command carries. `notes`' fourth twin, keyed by the version for its
     /// reason --- and holding a date beside the text, which is what makes it a
@@ -1711,6 +1884,7 @@ impl Doc {
             next_color: 1,
             redactions: HashMap::new(),
             next_redaction: 1,
+            next_page: u64::from(pages) + 1,
             rewrites: HashMap::new(),
             next_rewrite: 1,
         }
@@ -1806,6 +1980,49 @@ impl Doc {
         self.redactions.len()
     }
 
+    /// Puts a new blank page after `after`, issuing its id.
+    ///
+    /// The third entry point that allocates, and it cannot be a caller-built
+    /// [`Command::Insert`] for [`annotate`](Doc::annotate)'s reason: an id a
+    /// caller chose is an id two pages can share.
+    ///
+    /// **`None` puts it at the front**, which is [`Command::Move`]'s convention
+    /// and is why the anchor is an id rather than a position --- a reader who
+    /// asks for a page after page 3 means the page they are looking at, and an
+    /// index would name whatever moved into that slot while the request was in
+    /// flight.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::DegeneratePage`] for a size enclosing no area, and whatever
+    /// [`Command::Insert`] refuses --- the anchor not existing, or having been
+    /// deleted. **The id is issued after those checks**, so a refused insert
+    /// spends nothing. Both are checked twice, here and in the apply: this
+    /// method must not spend an id on a command that will be refused, and the
+    /// apply must refuse the same on replay.
+    pub fn insert(&mut self, after: Option<PageId>, size: Size) -> Result<PageId, Refusal> {
+        if !size.is_proper() {
+            return Err(Refusal::DegeneratePage(size));
+        }
+        if let Some(anchor) = after {
+            self.now.live(anchor)?;
+        }
+
+        let id = PageId(self.next_page);
+        self.next_page += 1;
+        // A refusal cannot reach here: the size was checked a few lines ago and
+        // the anchor against the same working document. It is still routed
+        // through `apply` rather than mutating `now` directly, so that the
+        // journal, the cursor, the snapshot rule and the redo-tail discard are
+        // all the ones every other command gets.
+        self.apply(Command::Insert {
+            page: id,
+            after,
+            size,
+        })?;
+        Ok(id)
+    }
+
     /// Marks a region of a page for removal, issuing its id.
     ///
     /// [`annotate`](Doc::annotate)'s counterpart, and the second entry point
@@ -1827,6 +2044,16 @@ impl Doc {
             return Err(Refusal::EmptyRedaction);
         }
         self.now.live(redaction.page)?;
+        // **For a reason that does not expire**, unlike the same refusal in
+        // `annotate`: a page tpdf made has no content, so a region on one
+        // removes nothing --- which is `Refusal::EmptyRedaction`'s own argument
+        // arriving by a different route. After the liveness check, so a deleted
+        // page gets the better diagnosis, and before the id is issued.
+        if let Some(page) = self.now.page(redaction.page) {
+            if let PageSource::Blank(_) = page.source {
+                return Err(Refusal::MadePage(redaction.page));
+            }
+        }
 
         let id = RedactionId(self.next_redaction);
         let page = redaction.page;
@@ -1916,6 +2143,15 @@ impl Doc {
             return Err(Refusal::EmptyMark);
         }
         self.now.live(mark.page)?;
+        // **A stated limit rather than a rule about marks** --- see
+        // [`Refusal::MadePage`]. It is here, after the liveness check, because a
+        // deleted page is the better diagnosis for an id naming one; and before
+        // the id is issued, so a refused mark spends nothing.
+        if let Some(page) = self.now.page(mark.page) {
+            if let PageSource::Blank(_) = page.source {
+                return Err(Refusal::MadePage(mark.page));
+            }
+        }
 
         let id = MarkId(self.next_mark);
         let page = mark.page;
@@ -2311,6 +2547,12 @@ impl Doc {
                 | Command::Crop { .. }
                 | Command::Delete { .. }
                 | Command::Move { .. }
+                // Here rather than above with the six that issue a body, and
+                // the size is why it looks like it belongs there: it is carried
+                // *in* the command rather than in a table keyed by an id, so a
+                // discarded `Insert` leaves nothing behind to remove. See the
+                // variant.
+                | Command::Insert { .. }
                 | Command::Unannotate { .. }
                 | Command::Unredact { .. } => {}
             }
@@ -2401,6 +2643,291 @@ mod tests {
         Rect { llx, lly, urx, ury }
     }
 
+    /// A4 in points, which is what a blank page is in most of these.
+    const A4: Size = Size {
+        width: 595.0,
+        height: 842.0,
+    };
+
+    /// What a page shows, for the assertions about an insert.
+    fn source_of(doc: &Doc, page: PageId) -> PageSource {
+        doc.working().page(page).expect("a live page").source
+    }
+
+    #[test]
+    fn an_inserted_page_lands_behind_its_anchor_and_shows_nothing() {
+        let mut doc = Doc::open(3);
+        let second = doc.working().order()[1];
+        let made = doc.insert(Some(second), A4).expect("insert");
+
+        assert_eq!(
+            ids(&doc),
+            vec![1, 2, made.get(), 3],
+            "the new page sits behind the one it was anchored to"
+        );
+        assert_eq!(source_of(&doc, made), PageSource::Blank(A4));
+        assert_eq!(
+            doc.working().page(made).expect("live").extra_turns,
+            0,
+            "a page tpdf makes starts unturned"
+        );
+        assert_eq!(doc.working().page(made).expect("live").crop, None);
+        // The page it was placed behind is untouched, which is the half a test
+        // that only counts pages cannot see.
+        assert_eq!(source_of(&doc, second), PageSource::Baseline(1));
+    }
+
+    #[test]
+    fn an_insert_with_no_anchor_goes_to_the_front() {
+        let mut doc = Doc::open(2);
+        let made = doc.insert(None, A4).expect("insert");
+        assert_eq!(ids(&doc), vec![made.get(), 1, 2]);
+    }
+
+    /// The id is past the baseline's, which is what stops two pages sharing one.
+    #[test]
+    fn a_made_page_is_never_given_a_baseline_page_s_id() {
+        let mut doc = Doc::open(3);
+        let made = doc.insert(None, A4).expect("insert");
+        assert_eq!(made.get(), 4, "one past the three the file has");
+        let second = doc.insert(None, A4).expect("insert");
+        assert_eq!(second.get(), 5);
+    }
+
+    #[test]
+    fn a_page_enclosing_no_area_is_refused_and_spends_no_id() {
+        let mut doc = Doc::open(2);
+        for size in [
+            Size {
+                width: 0.0,
+                height: 800.0,
+            },
+            Size {
+                width: 600.0,
+                height: 0.0,
+            },
+            Size {
+                width: -600.0,
+                height: 800.0,
+            },
+            Size {
+                width: f64::NAN,
+                height: 800.0,
+            },
+        ] {
+            // The variant, never the value: a `Size` holding a `NaN` does not
+            // compare equal to itself, which `Refusal::DegeneratePage` states
+            // and which is what made the first version of this assertion fail
+            // with both sides printing identically.
+            assert!(
+                matches!(doc.insert(None, size), Err(Refusal::DegeneratePage(_))),
+                "{size:?}"
+            );
+        }
+        assert_eq!(ids(&doc), vec![1, 2], "nothing was inserted");
+        // The id the four refusals would have spent is still the next one.
+        let made = doc.insert(None, A4).expect("insert");
+        assert_eq!(made.get(), 3);
+    }
+
+    /// The apply refuses it too, which is not the same check twice.
+    ///
+    /// `Doc::insert` refuses before it spends an id; the apply refuses because
+    /// `Command::Insert` is public and reaches it through `Doc::apply` without
+    /// passing that method at all. Two guards, two callers, and a test that only
+    /// went through `insert` could not tell the second from a missing one --- the
+    /// trap about a guard whose neighbour refuses the same input first.
+    #[test]
+    fn a_page_of_no_area_is_refused_by_the_apply_as_well_as_by_the_entry_point() {
+        let mut doc = Doc::open(2);
+        assert!(matches!(
+            doc.apply(Command::Insert {
+                page: PageId::from_raw(99),
+                after: None,
+                size: Size {
+                    width: 0.0,
+                    height: 800.0,
+                },
+            }),
+            Err(Refusal::DegeneratePage(_))
+        ));
+        assert_eq!(ids(&doc), vec![1, 2]);
+        // The control: the same command with a proper size is applied, so this
+        // is about the size rather than about `Doc::apply` refusing an insert.
+        doc.apply(Command::Insert {
+            page: PageId::from_raw(99),
+            after: None,
+            size: A4,
+        })
+        .expect("a proper size through the same door");
+        assert_eq!(ids(&doc), vec![99, 1, 2]);
+    }
+
+    #[test]
+    fn an_insert_behind_a_page_that_is_not_there_is_refused() {
+        let mut doc = Doc::open(2);
+        let second = doc.working().order()[1];
+        doc.apply(Command::Delete { page: second }).expect("delete");
+
+        assert!(matches!(
+            doc.insert(Some(second), A4),
+            Err(Refusal::PageDeleted(_))
+        ));
+        assert!(matches!(
+            doc.insert(Some(PageId::from_raw(9_999)), A4),
+            Err(Refusal::NoSuchPage(_))
+        ));
+        assert_eq!(ids(&doc), vec![1], "neither refusal changed the order");
+    }
+
+    /// Undo takes it back, and redo brings back *the same page*.
+    ///
+    /// The identity is the point rather than the count: ids only ever count up,
+    /// so a redo that issued a fresh one would put a different page in the same
+    /// slot and every mark and reference naming the first would be orphaned.
+    #[test]
+    fn undoing_an_insert_removes_it_and_redo_brings_the_same_page_back() {
+        let mut doc = Doc::open(2);
+        let made = doc.insert(None, A4).expect("insert");
+        assert_eq!(ids(&doc), vec![made.get(), 1, 2]);
+
+        assert!(doc.undo());
+        assert_eq!(ids(&doc), vec![1, 2]);
+        assert!(
+            doc.working().page(made).is_none(),
+            "the page is gone, not merely out of the order"
+        );
+
+        assert!(doc.redo());
+        assert_eq!(ids(&doc), vec![made.get(), 1, 2]);
+        assert_eq!(source_of(&doc, made), PageSource::Blank(A4));
+    }
+
+    /// Replay past a snapshot rebuilds the same page rather than a new one.
+    ///
+    /// Undo replays from a snapshot rather than inverting, so an `Insert` is
+    /// *re-applied* --- and the id it carries is what makes that reproduce the
+    /// page it made the first time. A command that issued a fresh id on replay
+    /// would pass every count-based check here and rename the page.
+    #[test]
+    fn an_insert_survives_a_rebuild_through_a_snapshot() {
+        let mut doc = Doc::open(2);
+        let made = doc.insert(None, A4).expect("insert");
+        let first = doc.working().order()[1];
+        for _ in 0..(SNAPSHOT_EVERY * 2 + 5) {
+            doc.apply(Command::Rotate {
+                page: first,
+                turns: 1,
+            })
+            .expect("rotate");
+        }
+        for _ in 0..(SNAPSHOT_EVERY * 2 + 5) {
+            assert!(doc.undo());
+        }
+        assert_eq!(ids(&doc), vec![made.get(), 1, 2], "back to just the insert");
+        assert_eq!(source_of(&doc, made), PageSource::Blank(A4));
+    }
+
+    #[test]
+    fn a_made_page_turns_and_deletes_like_any_other() {
+        let mut doc = Doc::open(2);
+        let made = doc.insert(None, A4).expect("insert");
+        doc.apply(Command::Rotate {
+            page: made,
+            turns: 1,
+        })
+        .expect("turn a made page");
+        let page = *doc.working().page(made).expect("live");
+        assert_eq!(page.extra_turns, 1);
+        assert_eq!(page.source, PageSource::Blank(A4), "still the same page");
+
+        doc.apply(Command::Move {
+            page: made,
+            after: Some(doc.working().order()[2]),
+        })
+        .expect("move a made page");
+        assert_eq!(ids(&doc), vec![1, 2, made.get()]);
+
+        doc.apply(Command::Delete { page: made }).expect("delete");
+        assert_eq!(ids(&doc), vec![1, 2]);
+    }
+
+    /// A crop on a made page is refused, and clearing one is not.
+    ///
+    /// The asymmetry is the point and it is stated on `Refusal::MadePage`: a box
+    /// cannot be measured for a page no file supplies, and clearing a crop that
+    /// does not exist is an operation with no effect rather than an error. The
+    /// control is the same box on a page out of the file.
+    #[test]
+    fn a_page_tpdf_made_takes_no_crop_and_clearing_one_is_not_an_error() {
+        let mut doc = Doc::open(2);
+        let made = doc.insert(None, A4).expect("insert");
+        let ordinary = doc.working().order()[1];
+
+        assert!(matches!(
+            doc.apply(Command::Crop {
+                page: made,
+                to: Some(rect(0.0, 0.0, 100.0, 200.0)),
+            }),
+            Err(Refusal::MadePage(_))
+        ));
+        doc.apply(Command::Crop {
+            page: ordinary,
+            to: Some(rect(0.0, 0.0, 100.0, 200.0)),
+        })
+        .expect("the same box on a page out of the file");
+
+        doc.apply(Command::Crop {
+            page: made,
+            to: None,
+        })
+        .expect("clearing a crop a made page never had");
+        assert_eq!(doc.working().page(made).expect("live").crop, None);
+    }
+
+    /// The two refusals `Refusal::MadePage` carries, one per caller.
+    ///
+    /// Written as one test because they are one rule about one kind of page and
+    /// differ only in which entry point asks. The controls beside each are what
+    /// say the refusal is about *this* page rather than about marking at all ---
+    /// without them a model that refused every mark would pass.
+    #[test]
+    fn a_page_tpdf_made_takes_no_mark_and_no_redaction() {
+        let mut doc = Doc::open(2);
+        let made = doc.insert(None, A4).expect("insert");
+        let ordinary = doc.working().order()[1];
+
+        assert!(matches!(
+            doc.annotate(mark_on(made), String::new()),
+            Err(Refusal::MadePage(_))
+        ));
+        doc.annotate(mark_on(ordinary), String::new())
+            .expect("the same mark on a page out of the file");
+
+        assert!(matches!(
+            doc.redact(Redaction {
+                page: made,
+                area: Quad {
+                    left: 10.0,
+                    top: 10.0,
+                    right: 90.0,
+                    bottom: 40.0,
+                },
+            }),
+            Err(Refusal::MadePage(_))
+        ));
+        doc.redact(Redaction {
+            page: ordinary,
+            area: Quad {
+                left: 10.0,
+                top: 10.0,
+                right: 90.0,
+                bottom: 40.0,
+            },
+        })
+        .expect("the same region on a page out of the file");
+    }
+
     /// A highlight over one ordinary-looking line, on `page`.
     fn mark_on(page: PageId) -> Mark {
         Mark {
@@ -2427,7 +2954,7 @@ mod tests {
         assert_eq!(ids(&doc), vec![1, 2, 3, 4]);
         for (i, &id) in doc.working().order().iter().enumerate() {
             let page = doc.working().page(id).expect("baseline pages are live");
-            assert_eq!(page.source, i as u32);
+            assert_eq!(page.source, PageSource::Baseline(i as u32));
             assert_eq!(page.extra_turns, 0);
             assert_eq!(page.crop, None);
         }
@@ -2620,7 +3147,7 @@ mod tests {
         let page = *doc.working().page(a).unwrap();
         assert_eq!(page.extra_turns, 2);
         assert_eq!(page.crop, Some(rect(10.0, 20.0, 30.0, 40.0)));
-        assert_eq!(page.source, 0);
+        assert_eq!(page.source, PageSource::Baseline(0));
     }
 
     #[test]

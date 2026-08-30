@@ -275,6 +275,38 @@ export class Edits {
   }
 
   /**
+   * Puts a new blank page after the page in slot `after`, or at the front when
+   * `after` is `null`.
+   *
+   * Takes a slot and sends the id, as {@link rotate} does and for the same
+   * reason. `size` is `[width, height]` in **points**, and it is the caller's:
+   * a blank page should be the size of the page the reader is looking at, and
+   * that number is in the scroller rather than here or in the model.
+   *
+   * The reply's new slot is `after + 1`, or 0 --- but nothing here computes that
+   * and nothing should: the state that comes back names every page, and reading
+   * the answer beats predicting it.
+   */
+  async insertPage(
+    after: number | null,
+    size: readonly [number, number],
+  ): Promise<EditState> {
+    const anchor =
+      after === null ? null : (this.current.pages[after]?.id ?? undefined);
+    // `undefined` means the slot is not in the document, which is a stale press;
+    // `null` means the front, which is a real request. Collapsing the two would
+    // put a page at the front whenever a press arrived late.
+    if (anchor === undefined) return this.current;
+    return this.adopt(
+      await invoke<EditState>("page_insert", {
+        doc: this.doc,
+        after: anchor,
+        size: [...size],
+      }),
+    );
+  }
+
+  /**
    * Removes the page in slot `page` from the working document.
    *
    * Takes a slot and sends the id, as {@link rotate} does and for the same

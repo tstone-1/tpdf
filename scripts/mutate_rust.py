@@ -965,7 +965,7 @@ MUTATIONS = [
         # been reparented for a plan that moved nothing.
         "save: rebuild the page tree even when nothing moved",
         "src/save.rs",
-        "    let moved = plan\n        .pages\n        .windows(2)\n        .any(|two| two[0].source >= two[1].source);",
+        "    let moved =\n        baselines.len() != plan.pages.len() || baselines.windows(2).any(|two| two[0] >= two[1]);",
         "    let moved = true;",
         "a_plan_in_document_order_leaves_the_page_tree_as_it_found_it",
     ),
@@ -1003,8 +1003,8 @@ MUTATIONS = [
         # over byte for byte and the reader's rearrangement never reaches paper.
         "edits: read a plan's length and turns as meaning it is the file on disk",
         "src/edits.rs",
-        "                *source as usize == at && turns % 4 == 0 && crop.is_none()",
-        "                let _ = at;\n                turns % 4 == 0 && crop.is_none()",
+        "                matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    && turns % 4 == 0",
+        "                let _ = at;\n                turns % 4 == 0",
         "a_plan_after_a_move_is_out_of_document_order",
     ),
     Mutation(
@@ -1023,8 +1023,8 @@ MUTATIONS = [
         # invisible, because every turn is zero.
         "save: aim each turn at the page after the one the plan named",
         "src/save.rs",
-        "                *pages.get(page.source as usize)?,",
-        "                *pages.get(page.source as usize + 1)?,",
+        "                    Slot::Kept(*pages.get(number as usize).ok_or_else(|| {",
+        "                    Slot::Kept(*pages.get(number as usize + 1).ok_or_else(|| {",
         "a_turn_on_a_page_after_the_deleted_one_lands_where_it_was_aimed",
     ),
     Mutation(
@@ -1056,8 +1056,8 @@ MUTATIONS = [
         # where the reader put them instead of that the save declined to try.
         "save: write a reordered plan in file order rather than in the reader's",
         "src/save.rs",
-        "        .any(|two| two[0].source >= two[1].source)",
-        "        .any(|_two| false)",
+        "|| baselines.windows(2).any(|two| two[0] >= two[1]);",
+        "|| false;",
         "a_plan_whose_pages_have_moved_comes_out_in_the_order_the_reader_put_them",
     ),
     Mutation(
@@ -1732,8 +1732,8 @@ MUTATIONS = [
         # original bytes, and the reader's deletions and turns are not on paper.
         "edits: report an edited document as the file on disk",
         "src/edits.rs",
-        "                *source as usize == at && turns % 4 == 0 && crop.is_none()",
-        "                (*source as usize == at || turns % 4 == 0) && crop.is_none()",
+        "                matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    && turns % 4 == 0\n                    && crop.is_none()",
+        "                (matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    || turns % 4 == 0)\n                    && crop.is_none()",
         "only_an_unedited_document_is_the_file_on_disk",
     ),
     Mutation(
@@ -2328,8 +2328,8 @@ MUTATIONS = [
         # other direction, and the likelier of the two to be written.
         "docmodel: move a page in front of its anchor instead of behind it",
         "src/docmodel.rs",
-        "                    Some(anchor) => self.position(anchor) + 1,",
-        "                    Some(anchor) => self.position(anchor),",
+        "                let to = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor) + 1,\n                };\n                self.order.insert(to, page);",
+        "                let to = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor),\n                };\n                self.order.insert(to, page);",
         "a_page_moved_after_one_that_follows_it_lands_immediately_after_it",
     ),
     Mutation(
@@ -2337,8 +2337,8 @@ MUTATIONS = [
         # reader would see as the drag going to the wrong end of the document.
         "docmodel: send an unanchored move to the back",
         "src/docmodel.rs",
-        "                    None => 0,",
-        "                    None => self.order.len(),",
+        "                let to = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor) + 1,\n                };\n                self.order.insert(to, page);",
+        "                let to = match after {\n                    None => self.order.len(),\n                    Some(anchor) => self.position(anchor) + 1,\n                };\n                self.order.insert(to, page);",
         "a_page_moved_with_no_anchor_goes_to_the_front",
     ),
     Mutation(
@@ -3123,8 +3123,8 @@ MUTATIONS = [
         # implemented rather than one that was lost on the way.
         "edits: leave the marks out of a plan",
         "src/edits.rs",
-        "    pages\n        .iter()\n        .flat_map(|view| {",
-        "    pages\n        .iter()\n        .take(0)\n        .flat_map(|view| {",
+        "    pages\n        .iter()\n        .filter_map(|view| {",
+        "    pages\n        .iter()\n        .take(0)\n        .filter_map(|view| {",
         "a_mark_is_carried_into_the_plan_for_the_page_it_is_on",
     ),
     Mutation(
@@ -3166,8 +3166,8 @@ MUTATIONS = [
         # accounting observable.
         "docmodel: issue a mark's id before checking that it covers anything",
         "src/docmodel.rs",
-        "        if empty {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(self.next_mark);",
-        "        let id = MarkId(self.next_mark);\n        self.next_mark += 1;\n        if empty {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;\n\n        let id = MarkId(id.get());",
+        "        if empty {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;",
+        "        let id = MarkId(self.next_mark);\n        self.next_mark += 1;\n        let _ = id;\n        if empty {\n            return Err(Refusal::EmptyMark);\n        }\n        self.now.live(mark.page)?;",
         "a_mark_covering_nothing_is_refused_and_spends_no_id",
     ),
     Mutation(
@@ -3925,7 +3925,7 @@ MUTATIONS += [
         # Let the last of two crops for one page win, silently, for both.
         "save: let one page be cropped two ways",
         "src/save.rs",
-        "        match chosen.get(&page.source) {\n            None => {",
+        "        match chosen.get(&source) {\n            None => {",
         "        match None::<&([f64; 4], usize)> {\n            None => {",
         "one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not",
     ),
@@ -5309,8 +5309,8 @@ MUTATIONS += [
         # printer is handed the uncropped original.
         "identity: read a cropped document as the file on disk",
         "src/edits.rs",
-        "                *source as usize == at && turns % 4 == 0 && crop.is_none()",
-        "                let _ = crop;\n                *source as usize == at && turns % 4 == 0",
+        "                    && crop.is_none()",
+        "                    && (crop.is_none() || crop.is_some())",
         "a_cropped_document_is_not_the_file_on_disk",
     ),
     Mutation(
@@ -5334,8 +5334,8 @@ MUTATIONS += [
         # printed upright.
         "print: drop the view rotation from a job built by the save writer",
         "src/save.rs",
-        "                (page.turns + view % 4) % 4,",
-        "                page.turns,",
+        "            Ok((slot, (page.turns + view % 4) % 4))",
+        "            Ok((slot, page.turns))",
         "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
     ),
     Mutation(
@@ -5345,8 +5345,8 @@ MUTATIONS += [
         # the same number. The test rotates one page now.
         "print: let the view rotation replace a page's own instead of composing",
         "src/save.rs",
-        "                (page.turns + view % 4) % 4,",
-        "                view % 4,",
+        "            Ok((slot, (page.turns + view % 4) % 4))",
+        "            Ok((slot, view % 4))",
         "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
     ),
 ]
@@ -6821,6 +6821,144 @@ MUTATIONS += [
         "    if let Some(order) = reorder_to {\n        reorder_pages(doc, order)?;\n    }",
         "    reorder_pages(doc, reorder_to.unwrap_or(&doc.get_pages().into_values().collect::<Vec<_>>()))?;",
         "materialising_nothing_leaves_the_tree_alone",
+    ),
+    Mutation(
+        # Ignore the anchor. Every inserted page lands at the front, which on a
+        # one-page document is the same place it belonged and on any other is
+        # not --- and a count of pages agrees either way.
+        "docmodel: put an inserted page at the front whatever it was anchored to",
+        "src/docmodel.rs",
+        "                let at = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor) + 1,\n                };",
+        "                let at = 0;",
+        "an_inserted_page_lands_behind_its_anchor_and_shows_nothing",
+    ),
+    Mutation(
+        # Off by one the other way: the page lands in front of the one it was
+        # anchored to. `Command::Move` has the identical mutation for the
+        # identical reason, and both look like a drag landing one row out.
+        "docmodel: put an inserted page in front of its anchor rather than behind it",
+        "src/docmodel.rs",
+        "                let at = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor) + 1,\n                };",
+        "                let at = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor),\n                };",
+        "an_inserted_page_lands_behind_its_anchor_and_shows_nothing",
+    ),
+    Mutation(
+        # Accept a page of no area at the entry point. The apply below still
+        # refuses it, so the *refusal* is unchanged --- what changes is that the
+        # id was spent on the way, which only the "spends no id" half can see.
+        "docmodel: issue a page's id before checking that it has any area",
+        "src/docmodel.rs",
+        "        if !size.is_proper() {\n            return Err(Refusal::DegeneratePage(size));\n        }\n        if let Some(anchor) = after {",
+        "        if let Some(anchor) = after {",
+        "a_page_enclosing_no_area_is_refused_and_spends_no_id",
+    ),
+    Mutation(
+        # And in the apply, which is the guard the public `Command::Insert`
+        # meets. Its neighbour in `Doc::insert` refuses the same input first, so
+        # only a test that goes through `Doc::apply` can see this one.
+        "docmodel: let the apply take a page of no area",
+        "src/docmodel.rs",
+        "                if !size.is_proper() {\n                    return Err(Refusal::DegeneratePage(size));\n                }",
+        "                if false {\n                    return Err(Refusal::DegeneratePage(size));\n                }",
+        "a_page_of_no_area_is_refused_by_the_apply_as_well_as_by_the_entry_point",
+    ),
+    Mutation(
+        # Number a made page from 1, as the baseline pages are. The second page
+        # of the file and the first page tpdf makes then share an id, and every
+        # command naming either reaches whichever the table happens to hold.
+        "docmodel: issue a made page's id from the same run as the file's own",
+        "src/docmodel.rs",
+        "            next_page: u64::from(pages) + 1,",
+        "            next_page: 1,",
+        "a_made_page_is_never_given_a_baseline_page_s_id",
+    ),
+    Mutation(
+        # Let a mark onto a page tpdf made. It is accepted, it reaches the plan,
+        # and `planned_marks` then drops it silently --- so the reader draws a
+        # highlight, saves successfully, and it is not in the file.
+        "docmodel: let a mark onto a page tpdf made",
+        "src/docmodel.rs",
+        "        if let Some(page) = self.now.page(mark.page) {\n            if let PageSource::Blank(_) = page.source {\n                return Err(Refusal::MadePage(mark.page));\n            }\n        }",
+        "        let _ = mark.page;",
+        "a_page_tpdf_made_takes_no_mark_and_no_redaction",
+    ),
+    Mutation(
+        # And a redaction, which puts a row in the review list certifying the
+        # removal of nothing from a page that has nothing on it.
+        "docmodel: let a redaction onto a page tpdf made",
+        "src/docmodel.rs",
+        "        if let Some(page) = self.now.page(redaction.page) {\n            if let PageSource::Blank(_) = page.source {\n                return Err(Refusal::MadePage(redaction.page));\n            }\n        }",
+        "        let _ = redaction.page;",
+        "a_page_tpdf_made_takes_no_mark_and_no_redaction",
+    ),
+    Mutation(
+        # And a crop, which the frontend cannot even measure for such a page ---
+        # so the model would be holding a box nothing could have produced.
+        "docmodel: let a crop onto a page tpdf made",
+        "src/docmodel.rs",
+        "                    if matches!(page_now.source, PageSource::Blank(_)) && to.is_some() {",
+        "                    if false {",
+        "a_page_tpdf_made_takes_no_crop_and_clearing_one_is_not_an_error",
+    ),
+    Mutation(
+        # Refuse clearing one as well. The asymmetry is deliberate: a made page
+        # has no crop to clear, so this refuses an operation with no effect ---
+        # and the refusal is what a reader sees.
+        "docmodel: refuse clearing a crop a made page never had",
+        "src/docmodel.rs",
+        "                    if matches!(page_now.source, PageSource::Blank(_)) && to.is_some() {",
+        "                    if matches!(page_now.source, PageSource::Blank(_)) {",
+        "a_page_tpdf_made_takes_no_crop_and_clearing_one_is_not_an_error",
+    ),
+    Mutation(
+        # Read a page tpdf made as the file's own page at that slot. The plan
+        # then claims to be the document on disk, and a save takes the append
+        # path --- which cannot create a page, so the insert is silently absent
+        # from a file the reader was told was written.
+        "edits: read a page tpdf made as the file's own page at that slot",
+        "src/edits.rs",
+        "                matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    && turns % 4 == 0\n                    && crop.is_none()",
+        "                (matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    || matches!(source, PageSource::Blank(_)))\n                    && turns % 4 == 0\n                    && crop.is_none()",
+        "a_deletion_and_an_insert_together_are_still_not_the_file_on_disk",
+    ),
+    Mutation(
+        # Leave an inserted page out of the reason to rebuild the tree. The page
+        # object is created and never linked into `/Kids`, so the file comes out
+        # with the pages it had and an orphan the sweep may or may not take.
+        "save: do not rebuild the page tree for an inserted page",
+        "src/save.rs",
+        "    let moved =\n        baselines.len() != plan.pages.len() || baselines.windows(2).any(|two| two[0] >= two[1]);",
+        "    let moved = baselines.windows(2).any(|two| two[0] >= two[1]);",
+        "an_inserted_page_is_written_between_the_two_it_was_put_between",
+    ),
+    Mutation(
+        # Make the page with no media box. It has no size, so every reader
+        # guesses one --- and they do not all guess the same.
+        "save: make a blank page with no media box",
+        "src/save.rs",
+        '                (\n                    "MediaBox",',
+        '                (\n                    "NotABox",',
+        "an_inserted_page_is_written_between_the_two_it_was_put_between",
+    ),
+    Mutation(
+        # Give it the size of nothing. A zero media box is a page every reader
+        # renders as empty and several refuse, and the dictionary still has
+        # every key a check counting them would look for.
+        "save: make a blank page of no size",
+        "src/save.rs",
+        "                        Object::Real(size.width as f32),\n                        Object::Real(size.height as f32),",
+        "                        Object::Real(0.0),\n                        Object::Real(0.0),",
+        "an_inserted_page_is_written_between_the_two_it_was_put_between",
+    ),
+    Mutation(
+        # Spell a plan carrying a made page as the file pages it does have. The
+        # list is one entry short, and every consumer of it reads a complete
+        # selection of the wrong document.
+        "print: list a plan with a page tpdf made as the file pages it does have",
+        "src/print.rs",
+        "        let PageSource::Baseline(number) = page.source else {\n            return Pages::Unlistable;\n        };",
+        "        let PageSource::Baseline(number) = page.source else {\n            continue;\n        };",
+        "a_plan_with_a_page_tpdf_made_cannot_be_listed_and_goes_to_the_working_writer",
     ),
 ]
 

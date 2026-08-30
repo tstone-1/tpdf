@@ -1260,6 +1260,25 @@ async fn page_move(
     edits.move_page(doc, page, after)
 }
 
+/// Puts a new blank page into the working document, without touching the file.
+///
+/// `after` is the id of the page it should sit behind, and `null` means the
+/// front --- both ends identities, for the reason [`page_move`] gives.
+///
+/// `size` is `[width, height]` in points and comes from the frontend because
+/// that is the side holding the page the reader is looking at. **A default here
+/// would be wrong for one continent or the other**, and worse, wrong invisibly:
+/// a letter-size blank in an A4 document lays out and prints without complaint.
+#[tauri::command]
+async fn page_insert(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    after: Option<u64>,
+    size: [f64; 2],
+) -> Result<edits::EditState, String> {
+    edits.insert(doc, after, size)
+}
+
 /// Puts a mark on a page, over the rectangles a reader dragged across.
 ///
 /// **One command for all three kinds rather than three commands.** The kind is
@@ -2411,7 +2430,11 @@ async fn print_document(
         (print::Route::Working, None) => None,
         (print::Route::Range(job), _) => match &job.pages {
             print::Pages::Only(wanted) => Some(wanted.len()),
-            print::Pages::All => None,
+            // `None` for both, and for one reason each. `All` has no count to
+            // compare against; `Unlistable` is unreachable here --- `route`
+            // sends a plan carrying one to `Working` --- and the safe arm is the
+            // same "do not compare" the passthrough already answers.
+            print::Pages::All | print::Pages::Unlistable => None,
         },
     };
     // Read before `source` is moved onto the pool; the name is wanted whether or
@@ -3204,6 +3227,7 @@ pub fn run() {
             page_crop_box,
             page_delete,
             page_move,
+            page_insert,
             annot_mark,
             annot_remove,
             redact_mark,

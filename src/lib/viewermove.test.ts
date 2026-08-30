@@ -84,7 +84,7 @@ function build(turns = 0): Viewer {
     onMarkMoved: (id, dx, dy) => moved.push({ id, dx, dy }),
   });
   if (turns !== 0) {
-    const pages: PageView[] = [{ id: pageId(1), source: 0, turns }];
+    const pages: PageView[] = [{ id: pageId(1), source: { baseline: 0 }, turns }];
     viewer.setPages(pages);
   }
   return viewer;

@@ -16,6 +16,7 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::progressive::{self};
@@ -53,7 +54,7 @@ fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         pages: (0..pages)
             .map(|at| PageView {
                 id: u64::from(at) + 1,
-                source: at,
+                source: PageSource::Baseline(at),
                 turns: 1,
                 crop: None,
             })
@@ -93,7 +94,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         pages: (0..pages)
             .map(|at| PageView {
                 id: u64::from(at) + 1,
-                source: at,
+                source: PageSource::Baseline(at),
                 turns: 0,
                 crop: None,
             })

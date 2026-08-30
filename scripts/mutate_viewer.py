@@ -856,7 +856,7 @@ MUTATIONS = [
         # own runner rather than riding on the default corpus.
         "page move: forget every page's measured size when the order changes",
         "src/lib/scroller.ts",
-        "      sizes.push(was === undefined ? null : (this.sizes[was] ?? null));",
+        "      sizes.push(\n        made\n          ? { width_pt: made.width, height_pt: made.height }\n          : was === undefined\n            ? null\n            : (this.sizes[was] ?? null),\n      );",
         "      sizes.push(null);",
         "the moved page and the one it displaced keep their sizes",
         "viewer-mixed",

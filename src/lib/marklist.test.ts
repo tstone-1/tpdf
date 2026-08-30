@@ -26,8 +26,8 @@ describe("markRows", () => {
     // and the keyboard walk have to agree about that, because a reader uses
     // both in the same minute.
     const moved = new PageMap([
-      { id: pageId(3), source: 2, turns: 0 },
-      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
     ]);
     const rows = markRows([mark({ id: 10, page: pageId(1) }), mark({ id: 11, page: pageId(3) })], moved);
     expect(rows.map((row) => row.mark.id)).toEqual([11, 10]);

@@ -11747,15 +11747,133 @@ needs. Any change to `TEXT_SIZE`, `TEXT_INSET` or the band fractions flips it
 from a comparison to a skip. The exclusion makes that margin visible instead of
 leaving it to a rounding.
 
-##### Not done: inserting pages into the open document
+##### Not done: inserting pages **from another file**
 
 The other half of the README bullet, and it is not a smaller version of this. A
 merge produces a file; an insert produces a *working document* holding pages tpdf
-did not open --- which means `Page::source` has to name a document as well as a
+did not open --- which means `PageSource` has to name a document as well as a
 page, the render path has to ask some other worker for a tile, the model has to
 own the second file's identity across undo, and a save has to import the graph
 this module already knows how to import. The importer is the piece that carries
 over; nothing else does.
+
+⚠ **The seam that sentence names was widened on 2026-08-30 and the other half of
+the bullet --- a blank page --- is built.** See the section below. What is left
+here is the second document, which is every clause above except the first.
+
+#### Inserting a blank page --- done 2026-08-30
+
+**The seam first, under the feature that does not need a second document.** The
+paragraph above lists five things an insert-from-a-file costs, and four of them
+are about the second file. The fifth is `Page::source`, a bare `u32` naming a
+page of the file, read in twelve places across seven Rust files and two more in
+the frontend --- and a blank page needs exactly that widening and none of the
+rest. Doing it under a feature with no cross-document machinery is what makes a
+surviving mutation mean something: one increment carrying a model change, a
+render-path change, a second worker pool, undo identity and a graph import at
+once tells you very little about which of the five is wrong.
+
+```rust
+pub enum PageSource {
+    Baseline(u32),
+    Blank(Size),
+}
+```
+
+**Named `PageSource` rather than `Source`, which is taken.**
+`crate::docgraph::Source` says where a *document's bytes* come from. Two types of
+one name in one crate is the collision `docs/TRAPS.md` records as the worse kind,
+because it compiles wherever the wrong one happens to have a method of the right
+shape --- and this one would have been imported into the same files.
+
+**The size is inside the variant, not beside it.** A page has a size here exactly
+when no baseline page supplies one, and a baseline page's size is the file's
+answer that nothing in the model may contradict. Two fields would make that a
+biconditional somebody has to check, which is what `Refusal::ShapeMismatch` exists
+for because `Mark` could not draw it in the type. One enum makes it the type's
+answer.
+
+**The command carries the size, which no other command in the journal does.**
+Every other body lives in a `Doc` table keyed by a version id, because it changes:
+a note is rewritten, a drawing is erased into, a colour is picked again. A page's
+size is not edited, so there is no version for a table to be keyed by --- and a
+`Size` is two `f64`, so carrying it in `Command::Insert` costs the journal sixteen
+bytes and keeps the enum `Copy`. The id is in the command too, which is what makes
+replay from a snapshot rebuild *the same page* rather than a new one wearing its
+number.
+
+##### What a reader can and cannot do to a made page
+
+Turn it, move it, delete it, undo and redo all of that. **Not** mark it, redact it
+or crop it --- three refusals through one `Refusal::MadePage`, named for the fact
+rather than for any of the three reasons, because a variant named after why one
+caller happens to use it is renamed by the second. The reasons differ and only one
+of them expires:
+
+- **A mark** is written by attaching it to a page *object*, and `PlannedMark`
+  addresses that object by its baseline number. Widening that addressing is the
+  increment after this one. Refused at the moment the reader draws rather than at
+  the save that would otherwise be the first thing to say no.
+- **A redaction** removes content, and a blank page has none. That is
+  `Refusal::EmptyRedaction`'s own argument --- a row in the review list certifying
+  the removal of nothing --- arriving by a different route, and it does not expire.
+- **A crop** is forced rather than chosen. A crop box is in the page's own
+  unrotated space and the reader drags a rectangle in display space; `crop.ts`
+  asks PDFium to convert between them, naming a page of the file. There is none
+  to name, so the frontend cannot produce the box at all. Clearing a crop is not
+  refused, and nothing is missing: a made page has none to clear.
+
+##### The writer, and where the creation goes
+
+`Checked` used to carry `turns: Vec<(ObjectId, u8)>` --- one entry per page the
+reader sees, resolved to the file's objects while nothing had been written yet.
+It now carries `slots: Vec<(Slot, u8)>`, where a `Slot` is either an object of the
+file or a size to be made, and `make_blank_pages` turns that into the old list.
+
+**That call sits below the last refusal and above `materialise`, and both halves
+are load-bearing.** Below the refusals because it is the first thing in `rewrite`
+that adds an object, and a refusal arriving after it would leave a page in a
+document nobody serialises. Above `materialise` because the tree rebuild is the
+only step that can put a page into `/Kids`, and it is handed object ids, so the
+objects have to exist first. `Checked`'s own doc comment had recorded for weeks
+that page insertion was the next thing to be added there *by somebody deciding
+where it goes*; this is the decision.
+
+The dictionary is `/Type /Page`, `/MediaBox [0 0 w h]` and an empty `/Resources`,
+and each absence is a decision: **no `/Contents`**, which is the specification's
+own spelling of an empty page, and no `/Parent`, which the rebuild writes on every
+page in the order --- writing it here as well would be two places deciding what the
+tree looks like.
+
+`moved` gained a second way to be true, and it is the one that is easy to miss: an
+inserted page is not in the tree at all, so it can only get there by the tree being
+rebuilt --- while the file's own pages can still be in their own order around it,
+which is exactly what the existing window walk answers `false` for.
+
+##### Printing cannot name it, and the type says so
+
+`print::select` turns a plan into a list of one-based file page numbers. A made
+page has no such number, so `Pages` grew an `Unlistable` variant rather than a
+list quietly one entry short --- `docs/TRAPS.md` records a silently missing element
+as the shape that survives review. Nothing prints from it: `route` answers
+`Route::Working` for any plan that produces one, which is the writer that can
+actually make the page, and `build` refuses it in an arm nothing can reach.
+
+##### What the compiler found, and the two things it could not
+
+Twelve compile errors, one per reader, which is the whole argument for widening a
+type rather than adding an `Option` beside it. The two defects it was blind to
+were both fallbacks that already handled `undefined` --- for the *other* reason,
+correctly --- and both are in `docs/TRAPS.md` under *A widened type enumerates its
+readers*. A third, in the thumbnail strip's pump, is the queue-stall entry beside
+it: a row that needs no tile has to record itself done and pump the next one, or
+every row below a blank page stays empty, and the test written for it asserted
+`fetchTile` was not called, which is true of the fix and of the stall.
+
+**Not done:** marking an inserted page, which is the addressing change described
+above and is the obvious next increment; a page inserted from another file, which
+is the *Not done* this section sits under; and choosing a size other than the page
+you are looking at.
 
 #### Upgrading from 26.8.8 on Windows --- done 2026-08-24
 

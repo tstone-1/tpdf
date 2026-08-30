@@ -223,6 +223,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.rotatePageClockwise",
       "edit.rotatePageCounterClockwise",
       SEPARATOR,
+      // With the moves rather than with the deletion below, and the grouping is
+      // the claim: this is a page operation that leaves every existing page
+      // alone, which is what it shares with a move and what separates it from
+      // the group at the bottom.
+      "edit.insertBlankPage",
       "edit.movePageUp",
       "edit.movePageDown",
       SEPARATOR,

@@ -27,8 +27,8 @@ describe("redactionRows", () => {
     // A reader checks a redaction by scrolling the document, and the list has to
     // be the order they will meet them in.
     const moved = new PageMap([
-      { id: pageId(3), source: 2, turns: 0 },
-      { id: pageId(1), source: 0, turns: 0 },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
     ]);
     const rows = redactionRows(
       [region({ id: 10, page: pageId(1) }), region({ id: 11, page: pageId(3) })],

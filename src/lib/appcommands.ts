@@ -133,6 +133,14 @@ export interface AppActions {
   rotatePage(delta: number): void;
   deletePage(): void;
   /**
+   * Put a blank page after the one the reader is on.
+   *
+   * A shell action for `rotatePage`'s reason, with one of its own: the page's
+   * size comes from the scroller, which is the only thing that knows how big
+   * the page in front of the reader is. See `edits.ts`.
+   */
+  insertBlankPage(): void;
+  /**
    * Crop the page the reader is on to the box its ink occupies, or put the
    * file's own box back.
    *
@@ -1007,6 +1015,21 @@ export function registerAppCommands(
       title: "Delete page",
       enabled: withDocument,
       run: () => actions.deletePage(),
+    },
+    {
+      // No binding, for the reason the deletion above has none turned around:
+      // this adds rather than removes, so a mis-press costs an undo and not a
+      // page --- but there is no chord that reads as "insert a page" and is not
+      // already something else, and the palette is two keystrokes.
+      //
+      // **Named for the blank page rather than for inserting**, because
+      // inserting pages *from another file* is the other half of the same
+      // README bullet and is not built --- see `docs/PLAN.md`. A command called
+      // `edit.insertPages` would claim that half.
+      id: "edit.insertBlankPage",
+      title: "Insert blank page",
+      enabled: withDocument,
+      run: () => actions.insertBlankPage(),
     },
     {
       // No binding either, and for a different reason than the deletion above:

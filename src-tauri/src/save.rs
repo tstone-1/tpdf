@@ -65,7 +65,7 @@ use lopdf::{Document, IncrementalDocument};
 
 use lopdf::{dictionary, Dictionary, Object, ObjectId};
 
-use crate::docmodel::MarkKind;
+use crate::docmodel::{MarkKind, PageSource, Size};
 use crate::edits::{Plan, PlannedMark};
 use crate::encoding::MAX_DECODE;
 use crate::fingerprint::{FileId, Fingerprint};
@@ -2078,6 +2078,22 @@ pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
 /// can refuse and has written nothing; everything below it has changed the object
 /// graph, so a refusal there costs a cleanup. That is a real property of the code
 /// and it was readable only by reading all 217 lines in order.
+/// What supplies one page of the output.
+///
+/// [`crate::docmodel::PageSource`]'s counterpart on this side of the plan, and
+/// deliberately not that type: the model says *which baseline page*, and by the
+/// time a rewrite has parsed the file the answer worth carrying is *which
+/// object*. Resolving it once, in [`checked`], is what keeps the refusal for a
+/// page the file does not have in the half that has written nothing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Slot {
+    /// A page of the file, at this object.
+    Kept(lopdf::ObjectId),
+    /// A page tpdf makes, at this size. It has no object yet ---
+    /// [`make_blank_pages`] gives it one.
+    Made(Size),
+}
+
 struct Checked {
     /// The parsed document, not yet touched.
     doc: Document,
@@ -2088,8 +2104,14 @@ struct Checked {
     /// One-based numbers of the pages the plan drops, empty for a plan that
     /// keeps everything --- which is what the rewrite branches on.
     dropped: Vec<u32>,
-    /// Each kept page's object and the quarter turns it should end up with.
-    turns: Vec<(lopdf::ObjectId, u8)>,
+    /// What each output page is and the quarter turns it should end up with, in
+    /// the reader's order.
+    ///
+    /// **One entry per page the reader sees**, where `kept` has one per page of
+    /// the *file* the reader kept. The two were the same list under two names
+    /// until a page could be inserted; they are now different lengths whenever
+    /// one has been, and the difference is exactly the pages no file supplies.
+    slots: Vec<(Slot, u8)>,
     /// Whether the reader moved anything, so the page tree has to be rebuilt.
     moved: bool,
     /// The encryption the source had, when a password opened it, so [`rewrite`]
@@ -2368,20 +2390,38 @@ fn checked(
         )));
     }
 
-    // Whether the reader moved anything. Read here, off the plan, because after
-    // the deletion below the document's own page numbers are not the plan's any
-    // more --- and because a plan that is already in document order must not go
-    // near `reorder_pages`, which flattens the tree.
-    let moved = plan
+    // The baseline pages the plan keeps, in the reader's order. **A page tpdf
+    // made is not one of them**, and that is what keeps everything below a
+    // question about the file alone: `kept`, `dropped` and the shared-object
+    // refusals are all statements about pages the file has.
+    let baselines: Vec<u32> = plan
         .pages
-        .windows(2)
-        .any(|two| two[0].source >= two[1].source);
+        .iter()
+        .filter_map(|page| match page.source {
+            PageSource::Baseline(number) => Some(number),
+            PageSource::Blank(_) => None,
+        })
+        .collect();
+
+    // Whether the page tree has to be rebuilt. Read here, off the plan, because
+    // after the deletion below the document's own page numbers are not the
+    // plan's any more --- and because a plan that is already in document order
+    // must not go near `reorder_pages`, which flattens the tree.
+    //
+    // **Two ways, and the first one is new.** An inserted page is not in the
+    // tree at all, so it can only get there by the tree being rebuilt --- and
+    // the file's own pages can still be in their own order around it, which is
+    // exactly the case the window walk below answers `false` for. Reading the
+    // length difference is what says a page was inserted: `baselines` drops one
+    // entry per page no file supplies.
+    let moved =
+        baselines.len() != plan.pages.len() || baselines.windows(2).any(|two| two[0] >= two[1]);
 
     // One-based, because that is how `lopdf` numbers pages and how
-    // `pagetree::drop_pages` reads them. The model's `source` is the zero-based
-    // baseline page, and `ordered_pages` is that same order, so the two line up
-    // by position rather than by anything either of them stores.
-    let kept: Vec<u32> = plan.pages.iter().map(|page| page.source + 1).collect();
+    // `pagetree::drop_pages` reads them. The model's `PageSource::Baseline` is
+    // the zero-based baseline page, and `ordered_pages` is that same order, so
+    // the two line up by position rather than by anything either of them stores.
+    let kept: Vec<u32> = baselines.iter().map(|number| number + 1).collect();
     if let Some(past) = kept.iter().find(|&&number| number as usize > pages.len()) {
         return Err(Refusal::changed(format!(
             "the edits name page {past}, which this document does not have"
@@ -2398,16 +2438,30 @@ fn checked(
     // afterwards, because `agreed_turns` refuses one object asked for two
     // different angles: a constant added to every entry keeps that property,
     // where a second pass over the same objects would have to re-establish it.
-    let turns: Vec<(lopdf::ObjectId, u8)> = plan
+    //
+    // **A `Result` rather than the `filter_map` this was**, and the change is
+    // not cosmetic: a source out of range used to drop the page silently, which
+    // would write a shorter `/Kids` than the reader is looking at. The check
+    // above makes that unreachable, so this refusal is the assertion that says
+    // so rather than a second guard.
+    let slots: Vec<(Slot, u8)> = plan
         .pages
         .iter()
-        .filter_map(|page| {
-            Some((
-                *pages.get(page.source as usize)?,
-                (page.turns + view % 4) % 4,
-            ))
+        .map(|page| {
+            let slot = match page.source {
+                PageSource::Baseline(number) => {
+                    Slot::Kept(*pages.get(number as usize).ok_or_else(|| {
+                        Refusal::changed(format!(
+                            "the edits name page {}, which this document does not have",
+                            number + 1
+                        ))
+                    })?)
+                }
+                PageSource::Blank(size) => Slot::Made(size),
+            };
+            Ok((slot, (page.turns + view % 4) % 4))
         })
-        .collect();
+        .collect::<Result<Vec<_>, Refusal>>()?;
 
     // The last thing that can refuse, and it belongs on this side rather than
     // beside the deletion it guards: `unshared` rejects a plan that keeps and
@@ -2429,7 +2483,7 @@ fn checked(
         pages,
         kept,
         dropped,
-        turns,
+        slots,
         moved,
         encryption,
     })
@@ -2454,7 +2508,7 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
         pages,
         kept,
         dropped,
-        turns,
+        slots,
         moved,
         encryption,
     } = checked;
@@ -2487,6 +2541,17 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // true sentence about the file being built and the wrong diagnosis of the
     // plan.
     let replies = check_replies(&doc, &plan.marks)?;
+
+    // **Below the last refusal and above `materialise`, and both halves of that
+    // are load-bearing.** A page tpdf made is not in the tree, and the only step
+    // that can put it there is the rebuild below --- which is handed a list of
+    // object ids, so the objects have to exist first. It sits under the two
+    // checks above rather than over them because it is the first thing here that
+    // adds an object: a refusal that arrives after it has left a page in a
+    // document nobody will serialise, which is harmless and is still a document
+    // in a state no reader asked for. `Checked`'s doc comment records that
+    // somebody would have to decide where this goes; this is the decision.
+    let turns: Vec<(lopdf::ObjectId, u8)> = make_blank_pages(&mut doc, &slots)?;
 
     // What goes and in what order, in the one sequence both writers share ---
     // see `pagetree::materialise`, which carries why the outline is dropped for
@@ -4704,6 +4769,61 @@ fn unshared(pages: &[lopdf::ObjectId], kept: &[u32], dropped: &[u32]) -> Result<
     Ok(())
 }
 
+/// Gives every [`Slot::Made`] a page object, and answers the output order.
+///
+/// One `(object, turns)` per page the reader sees, in their order --- which is
+/// what [`pagetree::materialise`](crate::pagetree::materialise) rebuilds the
+/// tree from and what [`turn_pages`] writes.
+///
+/// **The dictionary is the smallest thing every reader accepts, and each absence
+/// is a decision rather than an omission.** `/Type` and `/MediaBox` are what
+/// make it a page; `/Resources` is an empty dictionary because the specification
+/// says a page inherits one and several readers fault on a page that inherits
+/// nothing; and there is **no `/Contents`**, which is the specification's own
+/// spelling of an empty page --- writing a zero-length stream would be a second
+/// object saying the same thing, and the sweep would then have to be taught it
+/// is reachable.
+///
+/// `/Parent` is deliberately absent here and written by the rebuild, which sets
+/// it on every page in the order. Writing it twice would be two places deciding
+/// what the tree looks like.
+///
+/// # Errors
+///
+/// Nothing today: no branch here can fail, and the signature carries a `Result`
+/// because the caller's chain does. That is worth naming rather than hiding ---
+/// a `Result` with no `Err` is a guard `docs/TRAPS.md` records as unable to
+/// fire, and it stays only until this has to read anything out of the document.
+fn make_blank_pages(
+    doc: &mut Document,
+    slots: &[(Slot, u8)],
+) -> Result<Vec<(lopdf::ObjectId, u8)>, Refusal> {
+    let mut out = Vec::with_capacity(slots.len());
+    for &(slot, turns) in slots {
+        let id = match slot {
+            Slot::Kept(id) => id,
+            Slot::Made(size) => doc.add_object(lopdf::Dictionary::from_iter([
+                ("Type", Object::Name(b"Page".to_vec())),
+                (
+                    "MediaBox",
+                    Object::Array(vec![
+                        Object::Real(0.0),
+                        Object::Real(0.0),
+                        // `as f32` because that is what `lopdf` stores, which
+                        // is also what a PDF real is: the model carries `f64`
+                        // for the crop's sake and nothing here needs the range.
+                        Object::Real(size.width as f32),
+                        Object::Real(size.height as f32),
+                    ]),
+                ),
+                ("Resources", Object::Dictionary(lopdf::Dictionary::new())),
+            ])),
+        };
+        out.push((id, turns));
+    }
+    Ok(out)
+}
+
 /// The crop each kept source page is to get, refusing two that disagree.
 ///
 /// One entry per **source** page rather than per plan position, because a page
@@ -4722,10 +4842,20 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
         std::collections::HashMap::new();
     for (at, page) in plan.pages.iter().enumerate() {
         let Some(want) = page.crop else { continue };
-        match chosen.get(&page.source) {
+        // **Unreachable, and the arm has to exist**: `Command::Crop` refuses a
+        // box on a page tpdf made, so no plan carries one --- see
+        // `Refusal::MadePage`. The match must be exhaustive, so this is where
+        // the model's refusal is written down on the writer's side, and it is
+        // also the right answer if that refusal is ever lifted: this function
+        // exists for one hazard, two positions that are one *object*, and a made
+        // page gets an object of its own for every position it occupies.
+        let PageSource::Baseline(source) = page.source else {
+            continue;
+        };
+        match chosen.get(&source) {
             None => {
-                chosen.insert(page.source, (want, at));
-                order.push(page.source);
+                chosen.insert(source, (want, at));
+                order.push(source);
             }
             Some(&(first, first_at)) if first != want => {
                 return Err(format!(
@@ -5001,7 +5131,7 @@ mod tests {
                 .enumerate()
                 .map(|(at, &turns)| PageView {
                     id: at as u64 + 1,
-                    source: at as u32,
+                    source: PageSource::Baseline(at as u32),
                     turns,
                     crop: None,
                 })
@@ -5024,7 +5154,7 @@ mod tests {
                 .iter()
                 .map(|&(source, turns)| PageView {
                     id: u64::from(source) + 1,
-                    source,
+                    source: PageSource::Baseline(source),
                     turns,
                     crop: None,
                 })
@@ -5817,7 +5947,7 @@ mod tests {
     #[test]
     fn one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not() {
         let mut plan = plan_of(&[0, 0]);
-        plan.pages[1].source = 0;
+        plan.pages[1].source = PageSource::Baseline(0);
         plan.pages[0].crop = Some([0.0, 0.0, 100.0, 100.0]);
         plan.pages[1].crop = Some([0.0, 0.0, 200.0, 200.0]);
         let why = agreed_crops(&plan).expect_err("two crops for one page");
@@ -8181,7 +8311,7 @@ mod tests {
             baseline: 1,
             pages: vec![PageView {
                 id: 1,
-                source: 0,
+                source: PageSource::Baseline(0),
                 turns: 0,
                 crop: None,
             }],
@@ -8267,7 +8397,7 @@ mod tests {
             baseline: 1,
             pages: vec![PageView {
                 id: 1,
-                source: 0,
+                source: PageSource::Baseline(0),
                 turns: 0,
                 crop: None,
             }],
@@ -8365,6 +8495,131 @@ mod tests {
         (bytes, annot)
     }
 
+    /// A page tpdf made is written as a page, in the reader's order, and is
+    /// blank.
+    ///
+    /// **The order is the assertion that matters**, and a count of pages cannot
+    /// make it: three pages come out whether the new one landed in the middle or
+    /// at either end. What distinguishes them is which page object each slot
+    /// holds, so this reads `/Kids` and asks which of the three is the one with
+    /// no `/Contents`.
+    #[test]
+    fn an_inserted_page_is_written_between_the_two_it_was_put_between() {
+        let (original, _) = document_with_a_comment_on_the_second_page();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.pages.insert(
+            1,
+            PageView {
+                id: 99,
+                source: PageSource::Blank(crate::docmodel::Size {
+                    width: 200.0,
+                    height: 400.0,
+                }),
+                turns: 0,
+                crop: None,
+            },
+        );
+        assert!(
+            !plan.is_appendable(),
+            "the premise: a plan carrying a page no file supplies cannot be an append"
+        );
+
+        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
+        let pages = ordered_pages(&after);
+        assert_eq!(pages.len(), 3, "two from the file and one made");
+
+        let dictionaries: Vec<&lopdf::Dictionary> = pages
+            .iter()
+            .map(|&id| after.get_dictionary(id).expect("a page dictionary"))
+            .collect();
+        // **Which slot holds which page, by a property only one of them has.**
+        // The made page is the only one 200 by 400, and the file's second page
+        // is the only one carrying an annotation --- so this says the new page
+        // landed *between* them rather than merely being somewhere in a file of
+        // three. An assertion about `/Contents` would say nothing: the fixture's
+        // own pages have none either, so it would hold by construction.
+        let media = |at: usize| -> Vec<f64> {
+            dictionaries[at]
+                .get(b"MediaBox")
+                .and_then(Object::as_array)
+                .expect("a media box")
+                .iter()
+                .map(|v| v.as_float().expect("a number") as f64)
+                .collect()
+        };
+        assert_eq!(media(0), vec![0.0, 0.0, 595.0, 842.0], "the file's first");
+        assert_eq!(media(1), vec![0.0, 0.0, 200.0, 400.0], "the made page");
+        assert_eq!(media(2), vec![0.0, 0.0, 595.0, 842.0], "the file's second");
+        assert!(
+            !dictionaries[0].has(b"Annots") && dictionaries[2].has(b"Annots"),
+            "the comment the fixture put on its second page is still on it, and \
+             it is last"
+        );
+        assert!(
+            !dictionaries[1].has(b"Contents") && !dictionaries[1].has(b"Annots"),
+            "the made page draws nothing and carries nothing"
+        );
+
+        assert_eq!(
+            dictionaries[1]
+                .get(b"Type")
+                .and_then(Object::as_name)
+                .expect("a type"),
+            b"Page"
+        );
+        assert!(
+            dictionaries[1].has(b"Resources"),
+            "a page that inherits no resources faults in several readers"
+        );
+        // Written by the tree rebuild rather than by the page's own creation,
+        // which is the one thing about `make_blank_pages` that is easy to write
+        // twice --- see its doc comment.
+        assert!(dictionaries[1].has(b"Parent"), "it hangs under the tree");
+    }
+
+    /// A made page takes the reader's turn, on the object it was given.
+    ///
+    /// Separate from the test above because it is the half that could quietly do
+    /// nothing: `turn_pages` is handed object ids, and a made page's is one this
+    /// rewrite created a few statements earlier rather than one `ordered_pages`
+    /// found. The control is the file's own first page, which took no turn.
+    ///
+    /// There is no crop here because a made page cannot have one --- see
+    /// `Refusal::MadePage`.
+    #[test]
+    fn a_made_page_is_turned_like_any_other() {
+        let (original, _) = document_with_a_comment_on_the_second_page();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.pages.push(PageView {
+            id: 99,
+            source: PageSource::Blank(crate::docmodel::Size {
+                width: 200.0,
+                height: 400.0,
+            }),
+            turns: 1,
+            crop: None,
+        });
+
+        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
+        let pages = ordered_pages(&after);
+        let made = after.get_dictionary(pages[2]).expect("the made page");
+
+        assert_eq!(
+            made.get(b"Rotate")
+                .and_then(Object::as_i64)
+                .expect("a rotation"),
+            90
+        );
+        // The control: the file's own pages took no turn, so this is evidence
+        // about the made page rather than about the writer turning everything.
+        let first = after.get_dictionary(pages[0]).expect("the first page");
+        assert!(!first.has(b"Rotate"));
+    }
+
     /// A rewrite writes the note edits an append would, on a plan no append can
     /// take.
     ///
@@ -8382,7 +8637,7 @@ mod tests {
         // Keep only the second page, which is what makes this a rewrite.
         plan.pages = vec![PageView {
             id: 2,
-            source: 1,
+            source: PageSource::Baseline(1),
             turns: 0,
             crop: None,
         }];
@@ -8617,7 +8872,7 @@ mod tests {
         let mut rewriting = plan_of(&[0, 0]);
         rewriting.pages = vec![PageView {
             id: 2,
-            source: 1,
+            source: PageSource::Baseline(1),
             turns: 0,
             crop: None,
         }];
@@ -8657,7 +8912,7 @@ mod tests {
         let mut plan = plan_of(&[0, 0]);
         plan.pages = vec![PageView {
             id: 2,
-            source: 1,
+            source: PageSource::Baseline(1),
             turns: 0,
             crop: None,
         }];
@@ -8779,6 +9034,21 @@ mod tests {
         let mut moved = marked.clone();
         moved.pages.swap(0, 1);
         assert_eq!(mode_for(&moved, small), Mode::Rewrite, "a move");
+
+        // The fifth, and it is the one whose evidence is structural rather than
+        // spike 0.6's: an append cannot create a page object, so a plan carrying
+        // a page no file supplies has nothing an append could write.
+        let mut inserted = marked.clone();
+        inserted.pages.push(PageView {
+            id: 99,
+            source: PageSource::Blank(crate::docmodel::Size {
+                width: 595.0,
+                height: 842.0,
+            }),
+            turns: 0,
+            crop: None,
+        });
+        assert_eq!(mode_for(&inserted, small), Mode::Rewrite, "an insert");
     }
 
     /// The size condition, at the boundary rather than near it.
@@ -10304,13 +10574,13 @@ mod tests {
             pages: vec![
                 PageView {
                     id: 1,
-                    source: 0,
+                    source: PageSource::Baseline(0),
                     turns: 0,
                     crop: None,
                 },
                 PageView {
                     id: 2,
-                    source: 1,
+                    source: PageSource::Baseline(1),
                     turns: 0,
                     crop: None,
                 },
@@ -10362,7 +10632,7 @@ mod tests {
             pages: (0..3)
                 .map(|source| PageView {
                     id: u64::from(source) + 1,
-                    source,
+                    source: PageSource::Baseline(source),
                     turns: 0,
                     crop: None,
                 })
@@ -10419,7 +10689,7 @@ mod tests {
             baseline: 1,
             pages: vec![PageView {
                 id: 1,
-                source: 0,
+                source: PageSource::Baseline(0),
                 turns: 0,
                 crop: None,
             }],
@@ -10453,7 +10723,7 @@ mod tests {
             baseline: 1,
             pages: vec![PageView {
                 id: 1,
-                source: 0,
+                source: PageSource::Baseline(0),
                 turns: 0,
                 crop: None,
             }],

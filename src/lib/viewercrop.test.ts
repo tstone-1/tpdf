@@ -126,8 +126,8 @@ function escape(): void {
 /** The pages of a two-page document, with page 1 cropped or not. */
 function pages(crop: boolean): PageView[] {
   return [
-    crop ? { id: pageId(1), source: 0, turns: 0, crop: CROP } : { id: pageId(1), source: 0, turns: 0 },
-    { id: pageId(2), source: 1, turns: 0 },
+    crop ? { id: pageId(1), source: { baseline: 0 }, turns: 0, crop: CROP } : { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+    { id: pageId(2), source: { baseline: 1 }, turns: 0 },
   ];
 }
 
