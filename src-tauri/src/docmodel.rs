@@ -89,6 +89,7 @@
 //! be driven directly rather than through a document.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::num::NonZeroU64;
 
 /// How many commands may separate a snapshot from the next one.
 ///
@@ -1957,12 +1958,41 @@ impl Working {
     }
 }
 
+/// Which gesture a journalled command belonged to.
+///
+/// **Minted by the frontend, one per gesture**, and the backend only ever asks
+/// whether two *adjacent* entries carry the same one. Nothing is looked up by
+/// it and no table is keyed by it, so a webview that sent nonsense could group
+/// commands it issued back to back --- which it could equally have achieved by
+/// not issuing them. That is the whole of the trust this places in the number,
+/// and it is why the id is not minted here: the backend cannot see where a
+/// gesture ends.
+///
+/// Non-zero because zero is the wire's way of saying *this command belongs to
+/// no gesture*, which is what every command but the eraser's sends.
+pub type SweepId = NonZeroU64;
+
+/// One journalled command, and the gesture it belonged to.
+///
+/// **A struct rather than two vectors in lockstep.** The command and its sweep
+/// are one fact about one moment; kept apart they would be two lengths that
+/// must agree, which `docs/TRAPS.md` has more than one entry about. `Command`
+/// is `Copy`, so this is too, and replay stays a `for` loop over values.
+#[derive(Clone, Copy, Debug)]
+struct Entry {
+    cmd: Command,
+    /// `None` for every command that is not part of a gesture, which is all of
+    /// them but the eraser's. Two entries group only when both are `Some` and
+    /// equal, so a `None` never joins anything --- including another `None`.
+    sweep: Option<SweepId>,
+}
+
 /// A document being edited: baseline, working view, journal and cursor.
 #[derive(Clone, Debug)]
 pub struct Doc {
     baseline: u32,
     now: Working,
-    journal: Vec<Command>,
+    journal: Vec<Entry>,
     /// How many journal entries are applied. Entries past it are the redo tail.
     cursor: usize,
     /// Working documents at selected cursor positions, so an undo replays a
@@ -2469,6 +2499,23 @@ impl Doc {
     /// The id names no mark or one already removed; the mark is not ink;
     /// nothing drawable survives.
     pub fn reink(&mut self, mark: MarkId, strokes: Vec<Stroke>) -> Result<(), Refusal> {
+        self.reink_in(mark, strokes, None)
+    }
+
+    /// [`reink`](Doc::reink)'s twin, for a re-inking that belongs to a gesture.
+    ///
+    /// One sweep of the eraser re-inks every drawing it crossed, and the reader
+    /// pressing undo is putting back the sweep rather than one of the drawings.
+    ///
+    /// # Errors
+    ///
+    /// As [`reink`](Doc::reink).
+    pub fn reink_in(
+        &mut self,
+        mark: MarkId,
+        strokes: Vec<Stroke>,
+        sweep: Option<SweepId>,
+    ) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
         let kind = self.mark(mark).map_or(MarkKind::Highlight, |m| m.kind);
         if kind != MarkKind::Ink {
@@ -2488,7 +2535,7 @@ impl Doc {
             .into_iter()
             .collect();
         let ink = self.issue_ink(Ink { strokes, quads });
-        self.apply(Command::Reink { mark, ink })
+        self.apply_in(Command::Reink { mark, ink }, sweep)
     }
 
     /// Moves a mark by `(dx, dy)` in the page's display space.
@@ -2739,12 +2786,22 @@ impl Doc {
     /// A successful apply **discards the redo tail**, which is what makes the
     /// journal a line rather than a tree.
     pub fn apply(&mut self, cmd: Command) -> Result<(), Refusal> {
+        self.apply_in(cmd, None)
+    }
+
+    /// Applies a command as part of a gesture, or refuses and changes nothing.
+    ///
+    /// [`apply`](Doc::apply)'s twin, and the only way a command joins a group.
+    /// Undo and redo cross a run of adjacent entries carrying the same
+    /// [`SweepId`] in one step, which is what makes one press of undo put back
+    /// a whole sweep of the eraser rather than the last drawing it touched.
+    pub fn apply_in(&mut self, cmd: Command, sweep: Option<SweepId>) -> Result<(), Refusal> {
         self.now.apply(cmd)?;
         // Bodies belonging to the discarded tail go with it. Without this, a
         // reader who annotates and undoes in a loop grows the table forever ---
         // and the ids are never re-issued, so nothing else would ever notice.
         for discarded in &self.journal[self.cursor..] {
-            match *discarded {
+            match discarded.cmd {
                 Command::Annotate { mark, note, .. } => {
                     self.marks.remove(&mark);
                     self.notes.remove(&note);
@@ -2796,7 +2853,7 @@ impl Doc {
         // position would start from a document built by commands this apply just
         // discarded, and every page after it would be wrong with nothing saying so.
         self.snapshots.retain(|&at, _| at <= self.cursor);
-        self.journal.push(cmd);
+        self.journal.push(Entry { cmd, sweep });
         self.cursor += 1;
         if self.cursor % SNAPSHOT_EVERY == 0 {
             self.snapshots.insert(self.cursor, self.now.clone());
@@ -2804,30 +2861,78 @@ impl Doc {
         Ok(())
     }
 
-    /// Steps back one command. Returns whether there was one.
+    /// Steps back one command, or one whole gesture. Returns whether there was one.
+    ///
+    /// **A gesture is one press**, which is the whole reason [`Entry`] carries a
+    /// sweep: one drag of the eraser across five drawings is five commands, and
+    /// a reader who wants them back wants them all back. Only *adjacent* entries
+    /// group, and only when both name the same gesture, so nothing a reader did
+    /// between two sweeps is swallowed by either.
     pub fn undo(&mut self) -> bool {
         if !self.can_undo() {
             return false;
         }
         self.cursor -= 1;
+        while let Some(with) = self.grouped(self.cursor) {
+            if self.cursor == 0 || self.grouped(self.cursor - 1) != Some(with) {
+                break;
+            }
+            self.cursor -= 1;
+        }
         self.now = self.rebuild(self.cursor);
         true
     }
 
-    /// Steps forward one command. Returns whether there was one.
+    /// The gesture the entry at `at` belongs to, if it belongs to one.
+    ///
+    /// Indexing rather than `get` because every caller has already established
+    /// that the entry exists --- undo by stepping onto it, redo by applying it,
+    /// and both of them again for the neighbour they are about to compare
+    /// against.
+    ///
+    /// **Both operands of that comparison come through here**, which is the
+    /// point: *a command outside a gesture stands alone* would otherwise be
+    /// enforced twice, once by the `while let` and once by an `Option`
+    /// equality that reads the field directly. Two mechanisms for one rule
+    /// make each other unfalsifiable, and `docs/TRAPS.md` has the entry --- a
+    /// mutation of this function survived until both sides read it.
+    fn grouped(&self, at: usize) -> Option<SweepId> {
+        self.journal[at].sweep
+    }
+
+    /// Steps forward one command, or one whole gesture. Returns whether there was one.
     ///
     /// Applies rather than rebuilds, since the working document is already the
     /// state this command expects.
+    ///
+    /// **The mirror of [`undo`](Doc::undo), and it has to be.** A gesture that
+    /// goes back in one press and returns in five would leave the two counts
+    /// disagreeing about how many presses the reader is from where they were.
     pub fn redo(&mut self) -> bool {
         if !self.can_redo() {
             return false;
         }
-        let cmd = self.journal[self.cursor];
+        self.step();
+        while let Some(with) = self.grouped(self.cursor - 1) {
+            if !self.can_redo() || self.grouped(self.cursor) != Some(with) {
+                break;
+            }
+            self.step();
+        }
+        true
+    }
+
+    /// Re-applies the entry at the cursor and advances past it.
+    ///
+    /// **A refusal here is a broken model**, for [`rebuild`](Doc::rebuild)'s
+    /// reason: every entry was accepted against the state its predecessors
+    /// produced, and redo has just reproduced those predecessors.
+    fn step(&mut self) {
+        let cmd = self.journal[self.cursor].cmd;
         self.now.apply(cmd).unwrap_or_else(|why| {
             panic!("a journalled command was refused on redo: {cmd:?} -> {why:?}")
         });
         self.cursor += 1;
-        true
     }
 
     /// The greatest snapshot position at or below `upto`, or 0 for the baseline.
@@ -2854,7 +2959,7 @@ impl Doc {
             Some(snap) => snap.clone(),
             None => Working::baseline(self.baseline),
         };
-        for &cmd in &self.journal[from..upto] {
+        for &Entry { cmd, .. } in &self.journal[from..upto] {
             w.apply(cmd).unwrap_or_else(|why| {
                 panic!("a journalled command was refused on replay: {cmd:?} -> {why:?}")
             });
@@ -3532,7 +3637,7 @@ mod tests {
         let from_snapshot = doc.rebuild(target);
         let full = {
             let mut w = Working::baseline(3);
-            for &cmd in &doc.journal[..target] {
+            for &Entry { cmd, .. } in &doc.journal[..target] {
                 w.apply(cmd).unwrap();
             }
             w
@@ -5255,6 +5360,166 @@ mod tests {
         assert_eq!(
             doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
             Some("first")
+        );
+    }
+
+    /// A gesture id for a test, which only has to be distinct from its neighbours.
+    fn sweep(n: u64) -> Option<SweepId> {
+        SweepId::new(n)
+    }
+
+    #[test]
+    fn one_press_of_undo_puts_back_a_sweep_that_crossed_several_drawings() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let first = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let second = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+
+        // One release of the pointer, two drawings, two commands.
+        let keep = vec![doc.strokes_of(first)[0].clone()];
+        doc.reink_in(first, keep, sweep(1)).expect("erased");
+        let keep = vec![doc.strokes_of(second)[0].clone()];
+        doc.reink_in(second, keep, sweep(1)).expect("erased");
+        assert_eq!(doc.strokes_of(first).len(), 1);
+        assert_eq!(doc.strokes_of(second).len(), 1);
+
+        assert!(doc.undo(), "there was a sweep to undo");
+        assert_eq!(
+            (doc.strokes_of(first).len(), doc.strokes_of(second).len()),
+            (3, 3),
+            "one press put back only part of the gesture"
+        );
+        // And the drawings themselves are still there, so the undo stopped at
+        // the sweep rather than running back over everything before it.
+        assert!(doc.mark(first).is_some());
+        assert!(doc.mark(second).is_some());
+    }
+
+    #[test]
+    fn two_sweeps_are_two_presses() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let first = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let second = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+
+        let keep = vec![doc.strokes_of(first)[0].clone()];
+        doc.reink_in(first, keep, sweep(1)).expect("erased");
+        let keep = vec![doc.strokes_of(second)[0].clone()];
+        doc.reink_in(second, keep, sweep(2)).expect("erased");
+
+        assert!(doc.undo());
+        assert_eq!(
+            (doc.strokes_of(first).len(), doc.strokes_of(second).len()),
+            (1, 3),
+            "one press crossed both gestures"
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.strokes_of(first).len(), 3);
+    }
+
+    #[test]
+    fn a_command_belonging_to_no_gesture_joins_neither_neighbour() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+
+        // Two ungrouped erasures. `None` never groups --- including with another
+        // `None`, which is the case an equality on `Option` would get wrong.
+        let keep = vec![doc.strokes_of(id)[0].clone(), doc.strokes_of(id)[1].clone()];
+        doc.reink_in(id, keep, None).expect("erased");
+        let keep = vec![doc.strokes_of(id)[0].clone()];
+        doc.reink_in(id, keep, None).expect("erased");
+        assert_eq!(doc.strokes_of(id).len(), 1);
+
+        assert!(doc.undo());
+        assert_eq!(
+            doc.strokes_of(id).len(),
+            2,
+            "two ungrouped commands went back in one press"
+        );
+    }
+
+    #[test]
+    fn a_gesture_does_not_swallow_what_a_reader_did_before_it() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let id = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        doc.apply(Command::Rotate { page, turns: 1 }).expect("turn");
+
+        let keep = vec![doc.strokes_of(id)[0].clone(), doc.strokes_of(id)[1].clone()];
+        doc.reink_in(id, keep, sweep(9)).expect("erased");
+        let keep = vec![doc.strokes_of(id)[0].clone()];
+        doc.reink_in(id, keep, sweep(9)).expect("erased");
+
+        assert!(doc.undo());
+        assert_eq!(doc.strokes_of(id).len(), 3, "the sweep went back whole");
+        assert_eq!(
+            doc.working().page(page).expect("live").extra_turns,
+            1,
+            "the undo ran past the sweep and took the turn with it"
+        );
+    }
+
+    #[test]
+    fn redo_returns_a_whole_sweep_in_one_press() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let first = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let second = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let keep = vec![doc.strokes_of(first)[0].clone()];
+        doc.reink_in(first, keep, sweep(4)).expect("erased");
+        let keep = vec![doc.strokes_of(second)[0].clone()];
+        doc.reink_in(second, keep, sweep(4)).expect("erased");
+
+        assert!(doc.undo());
+        assert!(doc.redo(), "there was a sweep to redo");
+        assert_eq!(
+            (doc.strokes_of(first).len(), doc.strokes_of(second).len()),
+            (1, 1),
+            "one press brought back only part of the gesture"
+        );
+        assert!(!doc.can_redo(), "the whole tail was the sweep");
+    }
+
+    #[test]
+    fn a_sweep_that_takes_a_whole_mark_and_part_of_a_drawing_is_one_press() {
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let drawn = doc
+            .annotate(drawing_on(page), String::new())
+            .expect("drawn");
+        let whole = doc.annotate(mark_on(page), String::new()).expect("marked");
+
+        // The two halves of one release: `reink` for the drawing it clipped,
+        // `Unannotate` for the highlight it crossed. Different commands, one
+        // gesture.
+        let keep = vec![doc.strokes_of(drawn)[0].clone()];
+        doc.reink_in(drawn, keep, sweep(3)).expect("erased");
+        doc.apply_in(Command::Unannotate { mark: whole }, sweep(3))
+            .expect("removed");
+        assert!(!doc.working().marks_on(page).contains(&whole));
+
+        assert!(doc.undo());
+        assert_eq!(doc.strokes_of(drawn).len(), 3);
+        assert!(
+            doc.working().marks_on(page).contains(&whole),
+            "the highlight the same gesture took is still gone"
         );
     }
 }

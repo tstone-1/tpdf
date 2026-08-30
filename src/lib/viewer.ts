@@ -527,8 +527,12 @@ export interface ViewerOptions {
    * points --- the backend owns what a drawing is made of and this says only
    * which parts of it to drop. One call per mark the sweep crossed, which is
    * almost always one.
+   *
+   * `sweep` names the gesture, and every call this release makes --- here and
+   * through {@link onUnmarked} --- carries the same number. It is what puts a
+   * sweep across five drawings back in one press of undo rather than five.
    */
-  onErased?: (mark: number, remove: number[]) => void;
+  onErased?: (mark: number, remove: number[], sweep: number) => void;
   /**
    * One mark the same sweep took whole: a highlight, a box, a note, a stamp.
    *
@@ -541,8 +545,11 @@ export interface ViewerOptions {
    * drawing the reader rubbed every stroke out of still comes through
    * {@link onErased}: what happens to an empty drawing is the backend's
    * decision, and `edits.rs` makes it.
+   *
+   * `sweep` is {@link onErased}'s, and the same number for both: one release of
+   * the pointer is one gesture however many marks and drawings it touched.
    */
-  onUnmarked?: (mark: number) => void;
+  onUnmarked?: (mark: number, sweep: number) => void;
   /**
    * Called after a jump that Back can undo, so a caller can re-enable a button.
    *
@@ -1095,6 +1102,15 @@ export class Viewer {
   } | null = null;
 
   /**
+   * How many sweeps of the eraser have been committed.
+   *
+   * Counts up and is never read back, so it is a source of distinct numbers
+   * rather than a name for anything. Non-zero from the first sweep, because the
+   * wire spells *no gesture* as zero and this is pre-incremented.
+   */
+  private sweeps = 0;
+
+  /**
    * The rectangle being dragged, in the slot's laid-out space.
    *
    * Held rather than recomputed from the drag, because the overlay paints it
@@ -1600,19 +1616,37 @@ export class Viewer {
           // Escape; a `pointercancel` leaves it armed, which is right --- the
           // reader did not ask to stop erasing.
           if (!committed) return;
+          // **Minted here rather than at the press**, so a sweep the reader
+          // cancelled spends no number. Nothing looks anything up by it --- the
+          // backend only asks whether two adjacent journal entries carry the
+          // same one --- so all it has to be is different from the gesture
+          // before and the gesture after.
+          const sweep = ++this.sweeps;
           for (const [mark, strokes] of swept.marks) {
             if (strokes.size === 0) continue;
             // Sorted so that the list a reader's gesture produces does not
             // depend on the order their hand happened to cross the strokes.
             // Nothing downstream requires it; a diagnostic quoting the list is
             // readable because of it.
-            this.opts.onErased?.(mark, [...strokes].sort((a, b) => a - b));
+            this.opts.onErased?.(
+              mark,
+              [...strokes].sort((a, b) => a - b),
+              sweep,
+            );
           }
-          // One call per mark, matching the loop above: a sweep that crossed a
-          // highlight and a stamp did two things to the document and the reader
-          // undoes them one at a time, which is what the eraser has always done
-          // to two separate drawings.
-          for (const mark of swept.whole) this.opts.onUnmarked?.(mark);
+          // One call per mark, matching the loop above, and every one of them
+          // carrying `sweep`: a sweep that crossed a highlight and a stamp did
+          // two things to the document and the reader undoes them together,
+          // because they let go of the pointer once.
+          //
+          // ⚠ **Until 2026-08-30 this comment ended "the reader undoes them one
+          // at a time, which is what the eraser has always done to two separate
+          // drawings"**, and it was an accurate description of a defect. Three
+          // other comments in three other files said the gesture was one undo,
+          // which was true only of a sweep that stayed inside one drawing ---
+          // and `docs/PLAN.md` ranked the eraser's nib as a question rather
+          // than a defect *because* a sweep was one press of undo away.
+          for (const mark of swept.whole) this.opts.onUnmarked?.(mark, sweep);
           return;
         }
         const live = this.drawing;

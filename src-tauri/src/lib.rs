@@ -1312,13 +1312,18 @@ async fn annot_mark(
 }
 
 /// Takes one mark off the page it is on.
+///
+/// `sweep` names the gesture this belongs to, or is zero for a removal that
+/// stands alone --- see [`edits::Edits::erase`]. One sweep of the eraser can
+/// take several whole marks, and they go back together.
 #[tauri::command]
 async fn annot_remove(
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
     mark: u64,
+    sweep: u64,
 ) -> Result<edits::EditState, String> {
-    edits.unannotate(doc, mark)
+    edits.unannotate(doc, mark, sweep)
 }
 
 /// Marks a region of one page for removal.
@@ -1360,17 +1365,18 @@ async fn redact_remove(
 ///
 /// `remove` is positions into the drawing's current stroke list, not points ---
 /// see [`edits::Edits::erase`] for why the frontend does not get to send back
-/// geometry through a command that only removes. One call per gesture, so one
-/// undo puts the whole sweep back; and a sweep that takes the last stroke takes
-/// the drawing with it.
+/// geometry through a command that only removes. One call per *drawing*, and
+/// `sweep` is what makes a gesture that crossed several of them one undo; a
+/// sweep that takes the last stroke takes the drawing with it.
 #[tauri::command]
 async fn annot_erase(
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
     mark: u64,
     remove: Vec<usize>,
+    sweep: u64,
 ) -> Result<edits::EditState, String> {
-    edits.erase(doc, mark, remove)
+    edits.erase(doc, mark, remove, sweep)
 }
 
 /// Replaces what one mark says.

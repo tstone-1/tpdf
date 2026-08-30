@@ -2769,12 +2769,13 @@
         // A pending redaction is held in exactly the space handed here.
         onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
-        onErased: (mark, remove) => void applyEdit((e) => e.erase(mark, remove)),
+        onErased: (mark, remove, sweep) =>
+          void applyEdit((e) => e.erase(mark, remove, sweep)),
         // The same sweep's other half: a mark with no parts to lose goes whole.
         // `unmark` is what the mark panel's own Remove already calls, so a mark
         // taken by the nib and one taken from the list are one command and one
         // undo, however the reader asked.
-        onUnmarked: (mark) => void applyEdit((e) => e.unmark(mark)),
+        onUnmarked: (mark, sweep) => void applyEdit((e) => e.unmark(mark, sweep)),
         // **Back and Forward grey when there is nowhere to go, and this is what
         // keeps that honest.** A menu item's enablement is a *pushed* map, so a
         // guard reading state that moves outside the push sites is wrong

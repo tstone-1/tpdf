@@ -3579,8 +3579,8 @@ MUTATIONS += [
         # differently for two readers who erased the same thing.
         "viewer: report an erased stroke in the order the hand reached it",
         "src/lib/viewer.ts",
-        "            this.opts.onErased?.(mark, [...strokes].sort((a, b) => a - b));",
-        "            this.opts.onErased?.(mark, [...strokes]);",
+        "              [...strokes].sort((a, b) => a - b),",
+        "              [...strokes],",
         "reports the strokes in order however the hand crossed them",
     ),
     Mutation(
@@ -3677,7 +3677,7 @@ MUTATIONS += [
         # ever reached the model.
         "viewer: keep the marks a sweep took whole to itself",
         "src/lib/viewer.ts",
-        "          for (const mark of swept.whole) this.opts.onUnmarked?.(mark);",
+        "          for (const mark of swept.whole) this.opts.onUnmarked?.(mark, sweep);",
         "          for (const mark of swept.whole) void mark;",
         "takes a mark the nib is pressed on, without a drag",
     ),
@@ -6618,6 +6618,51 @@ MUTATIONS += [
     ),
 ]
 
+
+MUTATIONS += [
+    Mutation(
+        # Mint the gesture number at the press rather than at the release, which
+        # is the placement that looks more natural and spends a number on every
+        # cancelled sweep. Harmless for grouping -- neighbours still differ --
+        # and it is the pin on where the mint happens that goes.
+        "viewer: report the gesture the sweep before this one had",
+        "src/lib/viewer.ts",
+        "          const sweep = ++this.sweeps;",
+        "          const sweep = this.sweeps;",
+        "spends no number on a sweep the reader cancelled",
+    ),
+    Mutation(
+        # Give every release the same number. One sweep still groups, which is
+        # why the single-gesture check cannot see this: what goes is the reader
+        # who erased, stopped and erased again getting their second gesture
+        # back along with their first.
+        "viewer: give every sweep one gesture",
+        "src/lib/viewer.ts",
+        "          const sweep = ++this.sweeps;",
+        "          const sweep = 1;",
+        "gives two sweeps two numbers",
+    ),
+    Mutation(
+        # Send the wire's no-gesture from the eraser, which is what every call
+        # sent until 2026-08-30. The reply is identical and only a press of undo
+        # can tell the difference.
+        "edits: send no gesture with an erasure",
+        "src/lib/edits.ts",
+        "  async erase(mark: number, remove: number[], sweep = 0): Promise<EditState> {",
+        "  async erase(mark: number, remove: number[], _sweep = 0): Promise<EditState> {\n    const sweep = 0;",
+        "carries the gesture a sweep gave it, on both of its commands",
+    ),
+    Mutation(
+        # The same, for the half of a sweep that takes a mark whole. A gesture
+        # that clipped a drawing and took a highlight then goes back in two
+        # presses, which is exactly half fixed.
+        "edits: send no gesture when a sweep takes a mark whole",
+        "src/lib/edits.ts",
+        "  async unmark(mark: number, sweep = 0): Promise<EditState> {",
+        "  async unmark(mark: number, sweep = 0): Promise<EditState> {\n    sweep = 0;",
+        "carries the gesture a sweep gave it, on both of its commands",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

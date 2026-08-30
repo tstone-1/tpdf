@@ -3174,8 +3174,8 @@ MUTATIONS = [
         # wearing it -- so a redo restores "the" mark and gets somebody else's.
         "docmodel: give an undone mark's id back to the allocator",
         "src/docmodel.rs",
-        "        self.cursor -= 1;\n        self.now = self.rebuild(self.cursor);",
-        "        self.cursor -= 1;\n        self.next_mark = self.next_mark.saturating_sub(1);\n        self.now = self.rebuild(self.cursor);",
+        "        self.now = self.rebuild(self.cursor);\n        true",
+        "        self.next_mark = self.next_mark.saturating_sub(1);\n        self.now = self.rebuild(self.cursor);\n        true",
         "an_id_spent_by_an_undone_mark_is_never_issued_again",
     ),
     Mutation(
@@ -7251,6 +7251,87 @@ MUTATIONS += [
     ),
 ]
 
+
+MUTATIONS += [
+    Mutation(
+        # Step back one entry whatever gesture it belonged to, which is what
+        # undo did until 2026-08-30. A sweep of the eraser across five drawings
+        # is five commands, so the reader who let go once presses undo five
+        # times -- and four comments in four files said otherwise, because a
+        # sweep that stays inside one drawing really is one command and is the
+        # sweep anyone writing a test reaches for.
+        "docmodel: undo one entry whatever gesture it belonged to",
+        "src/docmodel.rs",
+        """        while let Some(with) = self.grouped(self.cursor) {
+            if self.cursor == 0 || self.grouped(self.cursor - 1) != Some(with) {
+                break;
+            }
+            self.cursor -= 1;
+        }
+""",
+        "",
+        "one_press_of_undo_puts_back_a_sweep_that_crossed_several_drawings",
+    ),
+    Mutation(
+        # Redo one entry at a time while undo takes a whole gesture. The two
+        # counts then disagree about how many presses the reader is from where
+        # they were, which is worse than either behaviour on its own.
+        "docmodel: redo one entry whatever gesture it belonged to",
+        "src/docmodel.rs",
+        """        while let Some(with) = self.grouped(self.cursor - 1) {
+            if !self.can_redo() || self.grouped(self.cursor) != Some(with) {
+                break;
+            }
+            self.step();
+        }
+""",
+        "",
+        "redo_returns_a_whole_sweep_in_one_press",
+    ),
+    Mutation(
+        # Give every ungrouped entry one shared gesture, so that two commands
+        # which belong to nothing group with each other. `Option` equality is
+        # what makes this reachable: `None == None`, and the property that a
+        # command outside a gesture stands alone is carried by the `while let`
+        # rather than by any comparison.
+        "docmodel: let two commands outside a gesture join each other",
+        "src/docmodel.rs",
+        "        self.journal[at].sweep\n",
+        "        self.journal[at].sweep.or(SweepId::new(u64::MAX))\n",
+        "a_command_belonging_to_no_gesture_joins_neither_neighbour",
+    ),
+    Mutation(
+        # Drop the gesture between the door and the model. Every erasure then
+        # stands alone, which is the state this whole increment replaced -- and
+        # nothing about the reply changes, so only a check that presses undo
+        # once and counts what came back can see it.
+        "edits: forget which gesture an erasure belonged to",
+        "src/edits.rs",
+        "        model.apply_in(cmd, sweep).map_err(describe)?;\n",
+        "        model.apply(cmd).map_err(describe)?;\n",
+        "a_sweep_that_took_two_marks_whole_is_one_undo",
+    ),
+    Mutation(
+        # Read the wire's zero as a gesture. Zero is what every caller but the
+        # eraser sends, so this groups unrelated commands into one press of
+        # undo -- the failure the non-zero type exists to make unspellable.
+        "edits: treat the wire's no-gesture as gesture zero",
+        "src/edits.rs",
+        "    NonZeroU64::new(value)\n",
+        "    Some(NonZeroU64::new(value).unwrap_or(NonZeroU64::MIN))\n",
+        "two_erasures_outside_a_gesture_are_two_undos",
+    ),
+    Mutation(
+        # Re-ink outside the gesture while the whole-mark removal stays inside
+        # it. A sweep that clipped a drawing and took a highlight then costs two
+        # presses, and only a check that crosses both callbacks can see it.
+        "edits: re-ink outside the gesture the sweep named",
+        "src/edits.rs",
+        "            model.reink_in(id, keep, joins).map_err(describe)?;\n",
+        "            model.reink(id, keep).map_err(describe)?;\n",
+        "a_sweep_that_crossed_two_drawings_is_still_one_undo",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

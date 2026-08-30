@@ -47,11 +47,22 @@ let erased: { mark: number; remove: number[] }[];
 /** Every mark the same sweep took whole, in order. */
 let unmarked: number[];
 
+/**
+ * The gesture number every erase report carried, in order, from both callbacks.
+ *
+ * Kept beside {@link erased} and {@link unmarked} rather than folded into them,
+ * so that the dozen assertions on those two say what they always said. What the
+ * number is does not matter --- nothing looks anything up by it --- so every
+ * check here is about which reports share one and which do not.
+ */
+let sweeps: number[];
+
 beforeEach(() => {
   dom = installFakeDom();
   drawn = [];
   erased = [];
   unmarked = [];
+  sweeps = [];
   core.invoke.mockResolvedValue(null);
 });
 
@@ -72,8 +83,14 @@ function build(pages?: PageView[]): Viewer {
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
     onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
-    onErased: (mark, remove) => erased.push({ mark, remove }),
-    onUnmarked: (mark) => unmarked.push(mark),
+    onErased: (mark, remove, sweep) => {
+      erased.push({ mark, remove });
+      sweeps.push(sweep);
+    },
+    onUnmarked: (mark, sweep) => {
+      unmarked.push(mark);
+      sweeps.push(sweep);
+    },
   });
   if (pages) viewer.setPages(pages);
   return viewer;
@@ -1436,6 +1453,49 @@ describe("the eraser on marks that have no strokes", () => {
     await settle();
     expect(erased).toEqual([{ mark: 77, remove: [1] }]);
     expect(unmarked).toEqual([WASH]);
+    // The whole point of the number: two commands, one release of the pointer,
+    // so the backend crosses them together and the reader presses undo once.
+    expect(sweeps).toEqual([sweeps[0], sweeps[0]]);
+    expect(sweeps[0]).toBeGreaterThan(0);
+  });
+
+  it("gives two sweeps two numbers", async () => {
+    // The other half, and the half a single-gesture check cannot see: a reader
+    // who erases, stops, and erases again did two things. One number for both
+    // would put the second gesture back along with the first.
+    const viewer = build();
+    viewer.setMarks(marks());
+    await settle();
+    viewer.armErase();
+    drag(centre(viewer, WASH), centre(viewer, WASH));
+    await settle();
+    drag(centre(viewer, ICON), centre(viewer, ICON));
+    await settle();
+    expect(unmarked).toEqual([WASH, ICON]);
+    expect(sweeps).toHaveLength(2);
+    expect(sweeps[0]).not.toEqual(sweeps[1]);
+  });
+
+  it("spends no number on a sweep the reader cancelled", async () => {
+    // Minted at the release rather than at the press, so a cancelled gesture
+    // leaves the next one adjacent to the one before it. Nothing depends on
+    // the numbers being consecutive --- only on neighbours differing --- so this
+    // is here to pin where the mint happens rather than to defend a sequence.
+    const viewer = build();
+    viewer.setMarks(marks());
+    await settle();
+    viewer.armErase();
+    drag(centre(viewer, WASH), centre(viewer, WASH), false);
+    viewer.cancelDraw();
+    await settle();
+    expect(sweeps).toEqual([]);
+
+    // `cancelDraw` puts the tool away as well as the gesture, so the next sweep
+    // needs arming again -- which is the eraser's own rule and not this check's.
+    viewer.armErase();
+    drag(centre(viewer, ICON), centre(viewer, ICON));
+    await settle();
+    expect(sweeps, "the cancelled sweep spent a number").toEqual([1]);
   });
 
   it("counts marks and strokes apart while the sweep is live", async () => {
