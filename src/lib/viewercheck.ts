@@ -10059,7 +10059,7 @@ async function markAgreementChecks(
 
   viewer.setMarks([]);
   for (const id of ids) {
-    if (id !== undefined) await attempt("annot_remove", { doc: doc.id, mark: id });
+    if (id !== undefined) await attempt("annot_remove", { doc: doc.id, mark: id, sweep: 0 });
   }
   // The copy is closed and the marks are taken off, so the phases after this one
   // meet the document this one was handed. `markCommandChecks` runs next and
@@ -10775,7 +10775,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
     kindsError ||= one.error;
     const last = one.state?.marks[one.state.marks.length - 1];
     back.push(String(last?.kind ?? "none"));
-    if (last?.id !== undefined) await attempt("annot_remove", { doc: doc.id, mark: last.id });
+    if (last?.id !== undefined) await attempt("annot_remove", { doc: doc.id, mark: last.id, sweep: 0 });
   }
   check(
     MARK_COMMAND_CHECKS[1] ?? "",
@@ -10797,7 +10797,7 @@ async function markCommandChecks(doc: DocumentInfo): Promise<void> {
       : `the model says ${JSON.stringify(noted.state?.marks[0]?.note ?? null)}`,
   );
 
-  const gone = await attempt("annot_remove", { doc: doc.id, mark });
+  const gone = await attempt("annot_remove", { doc: doc.id, mark, sweep: 0 });
   check(
     MARK_COMMAND_CHECKS[3] ?? "",
     gone.state?.marks.length === 0,

@@ -4831,11 +4831,11 @@ them. The harness's own flag for the reply is separate from the edit's on purpos
 guards ask the same question today, and one flag driving both would let a mutation that swaps
 them survive.
 
-**Not done:** changing a comment's author or its subject, and deleting one somebody else
-wrote. The first two are fields beside the body and would go through the same override; the
-third cannot be an append at all, because an append only adds --- so it forces the full
-rewrite for what a reader will read as a small edit, which is a design question rather than
-an increment. The panel's rows are still not editable.
+**Not done:** changing a comment's author or its subject, and ~~deleting one somebody else
+wrote~~ (done 2026-08-29 --- see *Deleting a comment the file came with* below; the design
+question this note raised was answered by taking the rewrite, and `is_appendable` gained the
+clause that forces it). The first two are fields beside the body and would go through the same
+override. The panel's rows are still not editable.
 
 #### Multilingual search — corpus done 2026-08-01
 
@@ -11442,11 +11442,24 @@ a reader-chosen size would have to pick one of the two units.
 question the ink eraser left~~ (done 2026-08-30 --- see *A nib the reader picks*
 below, and note that the clause after the semicolon was wrong: the two nibs share
 a word and not a quantity, so this was never waiting on the paragraph above it);
-an undo that puts back a whole sweep rather than
+~~an undo that puts back a whole sweep rather than
 one mark per press, which is the same granularity the ink eraser has always had
-and would need a journal command that groups; and reaching a comment the file
+and would need a journal command that groups~~ (done 2026-08-30 --- see *One press
+of undo for one sweep* below; the estimate was wrong about the shape, since a
+command that groups would have to hold a list and `Command` is `Copy`, so what it
+needed was a field on the journal *entry*); and ~~reaching a comment the file
 arrived with, which is deliberate --- the model has no command that names one,
-which is the same reason editing one is still on the *Not built yet* list.
+which is the same reason editing one is still on the *Not built yet* list~~
+(overtaken 2026-08-29 and 2026-08-30: `Command::Rewrite` and `Command::Discard`
+both name one, and the eraser still does not reach them --- which is a choice about
+the tool rather than a limit of the model, and is stated as one below).
+
+⚠ **The paragraph above this one is what made the sweep worth doing, and it is
+the reason it took ten days.** It ranks the nib's unit *as a question rather than
+a defect* because "an eraser you cannot hit is the complaint that actually gets
+reported, against a sweep that is one press of undo away". A sweep was not one
+press of undo away. `docs/TRAPS.md` has the entry; the correction here is that the
+question is now ranked on the argument it was always meant to rest on.
 
 #### Merging documents --- done 2026-08-24
 
@@ -12275,6 +12288,56 @@ a rectangle with itself. `docs/TRAPS.md` has that coda.
 choice; and a per-mark border width for the box and the ellipse, which
 `OUTLINE_WIDTH` argues against rather than defers --- a frame that competes with
 its contents is a worse frame, so that one is a decision and not a gap.
+
+#### One press of undo for one sweep --- done 2026-08-30
+
+A sweep of the eraser is one press, one drag and one release, and it can cross
+any number of marks. Until today each mark it touched was its own journal entry,
+so a reader who rubbed out five drawings pressed undo five times to get them
+back --- while four comments in four files said the gesture was one undo.
+
+**Every one of those comments is true of a sweep that stays inside one drawing**,
+which is the sweep the existing test used and the sweep anyone writing one reaches
+for. `docs/TRAPS.md` has the entry, and the cost is what makes it worth an entry:
+the section above ranks the eraser's nib *as a question rather than a defect*
+because "an eraser you cannot hit is the complaint that actually gets reported,
+against a sweep that is one press of undo away". The conclusion rested on the
+premise and the premise was false.
+
+**The journal holds an `Entry`, not a `Command`.** The obvious shape --- a command
+that groups, carrying a list of the commands inside it --- is closed by an existing
+decision: `Command` is `Copy` and replay is a `for` loop over values, which is
+what keeps a rebuild allocation-free. So the gesture is a second field beside the
+command, and undo walks back over the run of *adjacent* entries carrying the same
+one. A struct rather than two vectors in lockstep, since a pair that must agree
+is a pair that can disagree.
+
+**The number is minted by the frontend**, at the release rather than at the press,
+and that is not laziness about where it belongs: the backend sees a sequence of
+commands and cannot see where a gesture ends. Nothing is looked up by the number
+and no table is keyed by it --- the model only ever asks whether two neighbours
+carry the same one --- so a webview sending nonsense could group commands it
+issued back to back, which it could equally have achieved by not issuing them.
+
+**Zero is the wire's *no gesture*, and `SweepId` is a `NonZeroU64`** behind a door
+in `edits.rs`, the fourth of its kind in that file. Two entries group only when
+both are `Some` and equal, so a command outside a gesture never joins anything,
+including another command outside a gesture. That last case is the one an
+`Option` equality gets wrong, and it has a test of its own.
+
+Ten mutations, six in Rust and four in the frontend, each caught by the test named
+for it --- and two of them survived first. One was `None`-never-groups being
+enforced twice, by the `while let` and by a direct read of the field beside the
+accessor, so mutating the accessor left the raw read refusing anyway; the fix was
+one mechanism rather than a cleverer mutation. The other was aimed at `command_in`
+while the test named for it went through `reink_in`, which is a different route to
+the same call --- a sweep that takes two marks *whole* is the only thing in this
+subsystem that reaches the first, and that is the test that was missing.
+
+**Not done:** grouping anything else. A drag that moves a mark is already one
+command, and no other gesture in the viewer sends more than one --- so this is a
+mechanism with exactly one consumer today, which is stated rather than hidden: the
+day a second one appears, `apply_in` is what it calls.
 
 #### Upgrading from 26.8.8 on Windows --- done 2026-08-24
 

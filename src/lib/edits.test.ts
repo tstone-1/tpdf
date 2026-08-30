@@ -553,8 +553,41 @@ describe("Edits", () => {
     expect(core.invoke).toHaveBeenLastCalledWith("annot_remove", {
       doc: 3,
       mark: 4,
+      sweep: 0,
     });
     expect(edits.state.marks.map((m) => m.id)).toEqual([5]);
+  });
+
+  it("carries the gesture a sweep gave it, on both of its commands", async () => {
+    // The two halves of one release of the eraser go out as two commands, and
+    // the only thing tying them together on the wire is this number. Zero is
+    // what a caller outside a gesture sends, which is every caller but the
+    // eraser -- so both spellings are checked, and against the same command.
+    core.invoke.mockResolvedValueOnce(state(2, {}, [mark(4, 1), mark(5, 2)]));
+    const edits = new Edits(3);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValue(state(2, {}, [mark(4, 1), mark(5, 2)]));
+    await edits.erase(4, [1], 12);
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_erase", {
+      doc: 3,
+      mark: 4,
+      remove: [1],
+      sweep: 12,
+    });
+    await edits.unmark(5, 12);
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_remove", {
+      doc: 3,
+      mark: 5,
+      sweep: 12,
+    });
+    await edits.erase(4, [1]);
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_erase", {
+      doc: 3,
+      mark: 4,
+      remove: [1],
+      sweep: 0,
+    });
   });
 
   it("sends the mark's own id and the whole note when one is typed", async () => {

@@ -49,9 +49,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
     Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, PageSource, Point, Quad, Rect,
-    Redaction, RedactionId, Refusal, Size, StampName, Stroke, INK_WIDTH, NIB_MAX, NIB_MIN,
+    Redaction, RedactionId, Refusal, Size, StampName, Stroke, SweepId, INK_WIDTH, NIB_MAX, NIB_MIN,
 };
 use crate::fingerprint::Fingerprint;
+use std::num::NonZeroU64;
 
 /// One open document: the edit model, and what its file looked like at open.
 ///
@@ -394,6 +395,22 @@ fn nib(value: f64) -> f64 {
     } else {
         INK_WIDTH
     }
+}
+
+/// The gesture a command belongs to, as the frontend sends it.
+///
+/// **Zero is the wire's way of saying *no gesture***, and every command but the
+/// eraser's sends it. One spelling rather than an omitted field with a default:
+/// a caller that forgot would then be indistinguishable from one that meant
+/// "this stands alone", and the two want different diagnoses the day a gesture
+/// stops grouping.
+///
+/// The fourth door of its kind in this file, and the narrowest: nothing is
+/// looked up by this number and no table is keyed by it. What it buys is that
+/// the model's [`SweepId`] cannot be zero, so *belongs to a gesture* and *is
+/// gesture number nothing* are not the same value.
+fn gesture(value: u64) -> Option<SweepId> {
+    NonZeroU64::new(value)
 }
 
 /// One colour channel from the wire, brought into the range `Mark` promises.
@@ -905,12 +922,13 @@ impl Edits {
     /// The handle names no open document; the id names no mark, or one that has
     /// already been removed --- two diagnoses, for the reason
     /// [`delete`](Edits::delete) keeps two.
-    pub fn unannotate(&self, doc: u32, mark: u64) -> Result<EditState, String> {
-        self.command(
+    pub fn unannotate(&self, doc: u32, mark: u64, sweep: u64) -> Result<EditState, String> {
+        self.command_in(
             doc,
             Command::Unannotate {
                 mark: MarkId::from_raw(mark),
             },
+            gesture(sweep),
         )
     }
 
@@ -979,11 +997,20 @@ impl Edits {
     /// the survivors back would let a stale or wrong frontend rewrite a drawing's
     /// geometry through a command whose name says it only removes.
     ///
-    /// **The whole gesture is one call and one command.** A reader sweeps an
-    /// eraser across four strokes and lets go; that is one thing they did, so it
-    /// is one undo. The frontend hides the doomed strokes while the drag is live
-    /// and sends the list on release, exactly as drawing accumulates and commits
-    /// on Enter.
+    /// **One call per drawing, and the gesture is what joins them.** A reader
+    /// sweeps an eraser across four strokes of one drawing and lets go; that is
+    /// one call. A sweep across four *drawings* is four calls, because the
+    /// backend owns what each drawing is made of and a command names one mark.
+    /// `sweep` is what makes the four one undo: entries carrying the same
+    /// gesture are crossed together.
+    ///
+    /// ⚠ **This comment said the gesture was one call until 2026-08-30**, and so
+    /// did three others in three files. It was true of a sweep that crossed one
+    /// drawing, which is the sweep anyone writing a test reaches for, and false
+    /// of every wider one --- so a reader who rubbed out five drawings pressed
+    /// undo five times. The frontend hides the doomed strokes while the drag is
+    /// live and sends the lists on release, exactly as drawing accumulates and
+    /// commits on Enter.
     ///
     /// **Erasing everything removes the mark**, rather than leaving a drawing of
     /// nothing behind: `Doc::reink` refuses an empty result and this is the
@@ -995,7 +1022,13 @@ impl Edits {
     ///
     /// The handle names no open document; the id names no mark, or one already
     /// removed; the mark is not a drawing; a position names no stroke.
-    pub fn erase(&self, doc: u32, mark: u64, remove: Vec<usize>) -> Result<EditState, String> {
+    pub fn erase(
+        &self,
+        doc: u32,
+        mark: u64,
+        remove: Vec<usize>,
+        sweep: u64,
+    ) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         let id = MarkId::from_raw(mark);
@@ -1015,11 +1048,12 @@ impl Edits {
             .filter(|(at, _)| !remove.contains(at))
             .map(|(_, stroke)| stroke.clone())
             .collect();
+        let joins = gesture(sweep);
         if keep.iter().any(Stroke::is_drawable) {
-            model.reink(id, keep).map_err(describe)?;
+            model.reink_in(id, keep, joins).map_err(describe)?;
         } else {
             model
-                .apply(Command::Unannotate { mark: id })
+                .apply_in(Command::Unannotate { mark: id }, joins)
                 .map_err(describe)?;
         }
         Ok(snapshot(model))
@@ -1226,9 +1260,19 @@ impl Edits {
 
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
+        self.command_in(doc, cmd, None)
+    }
+
+    /// [`command`](Edits::command)'s twin, for a command that belongs to a gesture.
+    fn command_in(
+        &self,
+        doc: u32,
+        cmd: Command,
+        sweep: Option<SweepId>,
+    ) -> Result<EditState, String> {
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
-        model.apply(cmd).map_err(describe)?;
+        model.apply_in(cmd, sweep).map_err(describe)?;
         Ok(snapshot(model))
     }
 
@@ -2998,6 +3042,108 @@ mod tests {
     }
 
     #[test]
+    fn a_sweep_that_crossed_two_drawings_is_still_one_undo() {
+        // `one_sweep_is_one_undo` below is about a sweep that stayed inside one
+        // drawing, which is the sweep anyone writing a test reaches for --- and
+        // the reason this one did not exist until 2026-08-30, while four
+        // comments in four files said a gesture was one undo. A sweep across
+        // two drawings is two calls, and `sweep` is what joins them.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let first = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn")
+            .marks[0]
+            .id;
+        let second = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn")
+            .marks
+            .iter()
+            .map(|m| m.id)
+            .find(|id| *id != first)
+            .expect("a second drawing");
+
+        edits.erase(7, first, vec![0], 12).expect("erased");
+        let state = edits.erase(7, second, vec![0], 12).expect("erased");
+        let strokes = |state: &EditState, id: u64| {
+            state
+                .marks
+                .iter()
+                .find(|m| m.id == id)
+                .expect("the drawing")
+                .strokes
+                .len()
+        };
+        assert_eq!((strokes(&state, first), strokes(&state, second)), (2, 2));
+
+        let state = edits.undo(7).expect("undo");
+        assert_eq!(
+            (strokes(&state, first), strokes(&state, second)),
+            (3, 3),
+            "one press put back only half the gesture"
+        );
+    }
+
+    #[test]
+    fn a_sweep_that_took_two_marks_whole_is_one_undo() {
+        // The other command a sweep sends, and the only test that reaches
+        // `command_in`: a highlight and a note have no parts to lose, so the
+        // eraser takes them off the page rather than re-inking them. Two
+        // `Unannotate`s, one gesture, one press.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let first = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn")
+            .marks[0]
+            .id;
+        let second = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn")
+            .marks
+            .iter()
+            .map(|m| m.id)
+            .find(|id| *id != first)
+            .expect("a second mark");
+
+        edits.unannotate(7, first, 8).expect("removed");
+        let state = edits.unannotate(7, second, 8).expect("removed");
+        assert!(state.marks.is_empty());
+
+        let state = edits.undo(7).expect("undo");
+        assert_eq!(
+            state.marks.len(),
+            2,
+            "one press put back only half the gesture"
+        );
+    }
+
+    #[test]
+    fn two_erasures_outside_a_gesture_are_two_undos() {
+        // The door's zero, from the other side: a caller that sends no gesture
+        // gets a command that stands alone, and two of them do not merge into
+        // one press because they both sent the same nothing.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let mark = edits
+            .annotate(7, three_strokes(page), stamped())
+            .expect("drawn")
+            .marks[0]
+            .id;
+
+        edits.erase(7, mark, vec![0], 0).expect("erased");
+        edits.erase(7, mark, vec![0], 0).expect("erased");
+
+        let state = edits.undo(7).expect("undo");
+        assert_eq!(
+            state.marks[0].strokes.len(),
+            2,
+            "two ungrouped erasures went back in one press"
+        );
+    }
+
+    #[test]
     fn one_sweep_is_one_undo() {
         // The reason `erase` takes a list rather than being called once per
         // stroke: a reader sweeping across two strokes did one thing, so one
@@ -3009,7 +3155,7 @@ mod tests {
             .expect("drawn");
         let mark = state.marks[0].id;
 
-        let state = edits.erase(7, mark, vec![0, 2]).expect("erased");
+        let state = edits.erase(7, mark, vec![0, 2], 0).expect("erased");
         assert_eq!(state.marks.len(), 1, "the drawing is still there");
         assert_eq!(state.marks[0].strokes.len(), 1, "with its middle stroke");
         assert_eq!(state.marks[0].strokes[0], vec![72.0, 150.0, 300.0, 150.0]);
@@ -3031,7 +3177,7 @@ mod tests {
             .expect("drawn");
         let mark = state.marks[0].id;
 
-        let state = edits.erase(7, mark, vec![0, 1, 2]).expect("erased");
+        let state = edits.erase(7, mark, vec![0, 1, 2], 0).expect("erased");
         assert!(
             state.marks.is_empty(),
             "a drawing of nothing was left behind: {:?}",
@@ -3059,7 +3205,7 @@ mod tests {
         // Position 0 is real and position 9 is not. The refusal has to take the
         // whole gesture: acting on the half it understood would erase a stroke
         // on the strength of a sweep aimed at a drawing this is not.
-        let why = edits.erase(7, mark, vec![0, 9]).expect_err("refused");
+        let why = edits.erase(7, mark, vec![0, 9], 0).expect_err("refused");
         assert!(why.contains("stroke 9"), "{why}");
         assert!(why.contains("has 3"), "{why}");
         assert_eq!(
@@ -3080,7 +3226,7 @@ mod tests {
             .annotate(7, three_strokes(page), stamped())
             .expect("drawn");
         let mark = state.marks[0].id;
-        let state = edits.erase(7, mark, vec![1, 1, 1]).expect("erased");
+        let state = edits.erase(7, mark, vec![1, 1, 1], 0).expect("erased");
         assert_eq!(state.marks[0].strokes.len(), 2);
     }
 
@@ -3099,7 +3245,7 @@ mod tests {
         let mark = state.marks[0].id;
         let before = state.marks[0].quads.clone();
 
-        let state = edits.erase(7, mark, vec![2]).expect("erased");
+        let state = edits.erase(7, mark, vec![2], 0).expect("erased");
         let after = &state.marks[0].quads;
         assert_eq!(after.len(), 4, "a drawing is one rectangle");
         assert!(
@@ -3167,7 +3313,7 @@ mod tests {
         let page = edits.state(7).expect("open").pages[0].id;
         let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
         let mark = state.marks[0].id;
-        edits.unannotate(7, mark).expect("removed");
+        edits.unannotate(7, mark, 0).expect("removed");
 
         assert_eq!(
             edits.recolor(7, mark, GREEN),
@@ -3193,7 +3339,7 @@ mod tests {
         let mark = state.marks[0].id;
         let before = edits.plan(7).expect("plan").marks[0].quads[0];
 
-        edits.erase(7, mark, vec![2]).expect("erased");
+        edits.erase(7, mark, vec![2], 0).expect("erased");
         let planned = &edits.plan(7).expect("plan").marks[0];
         assert_eq!(
             planned.strokes.len(),
@@ -3306,7 +3452,7 @@ mod tests {
             .expect("drawn");
         let mark = state.marks[0].id;
 
-        let after = edits.erase(7, mark, vec![1]).expect("erased").marks[0]
+        let after = edits.erase(7, mark, vec![1], 0).expect("erased").marks[0]
             .quads
             .clone();
         let pad = (BROAD / 2.0) as f32;
@@ -4051,7 +4197,7 @@ mod tests {
             .expect_err("no such mark");
         assert!(why.contains("no such mark"), "{why}");
 
-        edits.unannotate(7, mark).expect("remove it");
+        edits.unannotate(7, mark, 0).expect("remove it");
         let why = edits
             .renote(7, mark, "hello".to_string())
             .expect_err("already removed");

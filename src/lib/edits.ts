@@ -601,22 +601,33 @@ export class Edits {
    *
    * `remove` is positions into the strokes the last state reply carried, which
    * is why this takes no points: the backend owns what a drawing is made of and
-   * a command named "erase" must not be able to rewrite it. One call per sweep,
-   * so one call per undo.
+   * a command named "erase" must not be able to rewrite it. One call per
+   * *drawing* the sweep crossed, and `sweep` is what makes them one undo ---
+   * zero for a call that stands alone.
    *
    * A sweep that takes every stroke removes the drawing --- decided in
    * `edits.rs`, not here, and the reply simply comes back without the mark.
    */
-  async erase(mark: number, remove: number[]): Promise<EditState> {
+  async erase(mark: number, remove: number[], sweep = 0): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_erase", { doc: this.doc, mark, remove }),
+      await invoke<EditState>("annot_erase", {
+        doc: this.doc,
+        mark,
+        remove,
+        sweep,
+      }),
     );
   }
 
-  /** Takes one mark off the page it is on, by the id a state reply gave it. */
-  async unmark(mark: number): Promise<EditState> {
+  /**
+   * Takes one mark off the page it is on, by the id a state reply gave it.
+   *
+   * `sweep` names the gesture, as {@link erase}'s does, or is zero for a removal
+   * that stands alone --- which is every caller but the eraser.
+   */
+  async unmark(mark: number, sweep = 0): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_remove", { doc: this.doc, mark }),
+      await invoke<EditState>("annot_remove", { doc: this.doc, mark, sweep }),
     );
   }
 

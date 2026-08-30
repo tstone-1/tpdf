@@ -19229,3 +19229,69 @@ in the place the edit had to be made, and it is the reason the filter was delete
 left as a thing that quietly stopped being true. **A tripwire for a change that has not happened
 yet costs one assertion and one sentence**, and it is worth writing at the moment you refuse
 something temporarily, not later.
+
+---
+### A sweep that stays inside one drawing really is one undo, and four files said that meant every sweep was
+
+The eraser's gesture is one press, one drag and one release, and it can cross any number of
+marks. The backend owns what each mark is made of, so what leaves the frontend is one command
+per mark: a `Reink` for each drawing that lost strokes, an `Unannotate` for each highlight,
+note, box or stamp taken whole. Until 2026-08-30 each of those was its own journal entry, so a
+reader who rubbed out five drawings pressed undo five times.
+
+Four comments in four files said otherwise, and none of them was careless:
+
+- `edits.rs` --- *"The whole gesture is one call and one command. A reader sweeps an eraser
+  across four strokes and lets go; that is one thing they did, so it is one undo."*
+- `lib.rs` --- *"One call per gesture, so one undo puts the whole sweep back."*
+- `edits.ts` --- *"One call per sweep, so one call per undo."*
+- `viewer.ts`, which had the truth and drew the wrong conclusion from it: *"a sweep that
+  crossed a highlight and a stamp did two things to the document and the reader undoes them
+  one at a time, which is what the eraser has always done to two separate drawings."*
+
+**Every one of them is true of a sweep that stays inside one drawing**, which is the sweep
+anyone writing a test reaches for --- and it is the sweep the existing test used. `edits.rs`
+had `one_sweep_is_one_undo`, correct, passing, and about a gesture that touched one mark. The
+false half of the claim had no test because writing one means building *two* drawings and
+crossing both, which is a fixture nobody needs for any other question.
+
+**The cost was not the extra presses.** `docs/PLAN.md` ranks the eraser's nib --- whether it
+should be a hit radius in view pixels or a width in points --- *as a question rather than a
+defect*, and the argument that ranks it ends: an eraser you cannot hit is the complaint that
+actually gets reported, "against a sweep that is one press of undo away." The conclusion rests
+on the premise, the premise was false, and the question sat open for ten days on the strength
+of it. A wrong sentence in a comment misleads whoever reads that file; a wrong sentence a
+*decision* rests on decides what does not get built.
+
+The check is the one the plan's own *Not done* notes get: **when a claim is true of the narrow
+case and stated in general terms, build the wide fixture before believing it.** Two of
+something, not one --- which is the same rule as *Whatever a fixture is meant to discriminate,
+it needs two of*, arriving in prose instead of in a test.
+
+Two things about the repair are worth keeping.
+
+**The gesture is minted by the frontend, and it has to be.** The backend cannot see where a
+gesture ends; it sees a sequence of commands. So the viewer counts releases and sends the
+number, the model stores it beside each journal entry, and undo walks back over the run of
+adjacent entries carrying the same one. Nothing is looked up by the number and no table is
+keyed by it, so a webview sending nonsense could group commands it issued back to back --- which
+it could equally have achieved by not issuing them. That is the whole of the trust placed in it.
+
+**Zero is the wire's "no gesture", and the model's type cannot hold it.** `SweepId` is a
+`NonZeroU64` behind a door in `edits.rs`, so *belongs to a gesture* and *is gesture number
+nothing* are not the same value. Two entries group only when both are `Some` and equal, which
+makes `None` never group --- including with another `None`, the case an `Option` equality gets
+wrong.
+
+⚠ **And that last property was enforced twice, so a mutation of it survived.** The `while let
+Some(with)` bound one operand and the comparison read `self.journal[at].sweep` directly for the
+other, so mutating the accessor changed one side and the raw read refused anyway. It is the
+*Two mechanisms for one rule* entry again, two days later and in one line rather than two
+files: the fix was to put both operands through the accessor, not to write a cleverer mutation.
+
+A second survivor from the same run was the other classic. `edits: forget which gesture an
+erasure belonged to` mutates `command_in`, and the test named for it goes through `reink_in`,
+which is a different path to the same model call --- so the mutation was aimed at a route the
+test never takes. **A mutation aimed at one route into a rule is not aimed at the rule**, and
+the fix is a test that takes the other route: a sweep that takes two marks *whole* is the only
+thing in this subsystem that reaches `command_in`.

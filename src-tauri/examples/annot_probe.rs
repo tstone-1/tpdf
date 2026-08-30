@@ -2591,7 +2591,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         odd_stroke.is_err(),
     );
 
-    let gone = edits.unannotate(DOC, 4242);
+    let gone = edits.unannotate(DOC, 4242, 0);
     ok &= check(
         &format!("removing a mark that never existed is refused: {gone:?}"),
         gone.is_err(),
