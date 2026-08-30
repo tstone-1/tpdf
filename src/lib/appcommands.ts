@@ -39,6 +39,7 @@ import {
   parseSplitPoints,
 } from "./pageranges";
 import { PALETTE } from "./markcolors";
+import { NIBS } from "./marknibs";
 import { PAGE_SIZES, PAGE_SIZE_NAMES, type PageSizeName } from "./pagesizes";
 import type { MarkKind, StampName } from "./pages";
 import type { Tab } from "./sidebar";
@@ -346,6 +347,15 @@ export interface AppActions {
    * stating it here as well would be the second copy of it.
    */
   setMarkColor(id: string): void;
+  /**
+   * Picks how thick the next drawing is, by the id of a nib in `NIBS`.
+   *
+   * A string for [`setMarkColor`](AppActions.setMarkColor)'s reason: the command
+   * ids are built from the table, so what crosses is the same word that made the
+   * id, and the caller resolving it to a width would be a second reader of the
+   * list.
+   */
+  setNib(id: string): void;
   /** Which swatch is picked. For the check harness. */
   markColor(): string;
   /** Whether there is a selection to mark. */
@@ -865,6 +875,27 @@ export function registerAppCommands(
       // would grey out exactly the case a reader uses to choose before marking.
       enabled: withDocument,
       run: () => actions.setMarkColor(entry.id),
+    })),
+    // Built from `NIBS` for `PALETTE`'s reason above: a nib added there and not
+    // here would be a width nothing can reach. Four separate commands rather
+    // than one that asks, on the same argument --- a reader who wants a broad
+    // pen wants it in one press.
+    //
+    // **Enabled on any open document, and not on "a pen is armed"**, which is
+    // the tempting guard and the wrong one. A reader picks the nib and *then*
+    // takes the pen out at least as often as the reverse, and greying the
+    // choice until a tool is armed would make the commoner order impossible.
+    // It is the same reasoning the colours above state, and it lands here for a
+    // different reason: a colour applies to an open mark too, and a nib never
+    // does, so this had no second justification to fall back on.
+    ...NIBS.map((entry) => ({
+      id: `edit.nib.${entry.id}`,
+      // "Nib:" leads for `Colour:`'s reason --- it groups the run in a list
+      // sorted by title, and it is the word a reader searches for when they do
+      // not know whether this application says "pen", "weight" or "thickness".
+      title: `Nib: ${entry.name}`,
+      enabled: withDocument,
+      run: () => actions.setNib(entry.id),
     })),
     {
       // Takes the mark whose note is open, because that is the one the reader

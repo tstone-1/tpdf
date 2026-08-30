@@ -28,6 +28,7 @@ import {
   type StampName,
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
+import { INK_WIDTH } from "./markband";
 
 // Re-exported because this is the module a reader of the edit state comes to
 // first, and the declaration lives in `pages.ts` so that the modules which only
@@ -399,6 +400,7 @@ export class Edits {
     chosen: MarkColor | null = null,
     stamp: StampName | null = null,
     replyTo: readonly [number, number] | null = null,
+    width: number = INK_WIDTH,
   ): Promise<EditState> {
     // A page the model has never mentioned, or one that has gone since the
     // gesture started. Nothing is sent, which is what the slot lookup used to
@@ -423,6 +425,15 @@ export class Edits {
           // naming an object that is not an annotation.
           reply_to: replyTo,
           color: colorFor(kind, chosen),
+          // **Sent for every kind, and drawn for one.** `save.rs` writes a `w`
+          // for each of them and only the path arm reads this, which is a
+          // decision stated there rather than a field ink owns: a box's border
+          // is fixed because a frame competing with its contents is a worse
+          // frame, not because nobody got round to it.
+          //
+          // Last in the parameter list and defaulted, so every existing caller
+          // --- which is every mark that is not a drawing --- is untouched.
+          width,
           author: "",
           note,
         },

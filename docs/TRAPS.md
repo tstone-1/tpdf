@@ -14932,6 +14932,51 @@ already in this file about a note outliving the work that closes it is the same 
 milder case: that one was true once. This one was written about a route that has had no reader
 in it since the day the command was added.
 
+### Two open questions joined by a word, and the smaller one had no choice in it
+
+`docs/PLAN.md` ranked the drawing nib twice, in two sections written weeks apart, and both said
+the same thing:
+
+> **Not done:** ... a nib whose size the reader can choose, which is the same open question the
+> ink eraser left.
+
+The eraser's question is genuinely open, and it is written out at length in `markband.ts`:
+`ERASER_RADIUS` is **6 view pixels**, `HIT_SLACK_PT` is **3 points**, so in the page's own
+points the eraser's nib is 12 pt at 50% zoom and 3 pt at 200% --- and whether to clamp it is a
+question about how the tool feels when a reader is zoomed out, with an eraser nobody can hit at
+one end and a sweep that takes the wrong mark at the other. Nothing settles that from a
+document; it needs somebody to use it.
+
+**The drawing nib has no such question, and one line of the format says so.** The width goes
+into a `w` operator inside the mark's form XObject, tpdf writes no `/Matrix`, so the form's
+space *is* the page's --- the number is in points and can be in nothing else. A width taken
+from the view would make a line drawn at 400% four times thinner in the file than the same line
+drawn at 100%. There was never a unit to pick.
+
+So the two are called the same word and are not the same quantity: one is a hit radius on
+screen, the other is a width in a file. The note joined them by the word.
+
+**What it cost is the ranking, which is the same cost as the entry above.** A note saying *this
+needs the answer to that* makes a small piece of work look like a blocked one, and it is read as
+coverage: the question has been thought about, so there is nothing here to find. Two sessions
+read those two notes and moved on. The whole increment --- table, seam, four commands, wire
+guard, twelve mutations --- took an afternoon, and the only design decision in it was already
+made by the file format.
+
+**The check is one question, and it is not "is this still true".** When a *Not done* says one
+piece of work waits on another, ask what the two share: a mechanism, or a noun. If it is a
+noun, they are two notes.
+
+**Coda, and it is why the fixture had to be a second width.** The test that proves the
+rectangle is padded by *the mark's own* nib read `state.marks[0]` from both replies. By the
+second `annotate` both drawings are on the page, so `[0]` is the narrow one twice, and the
+assertion compared a rectangle with itself: `[48.75, 48.75, 51.25, 301.25]` against the same
+four numbers. It failed, which is the lucky direction --- it reads exactly like the feature not
+working, and the fix is to address the mark by the id the first reply gave rather than by
+position. At the default nib a derivation reading the mark and one reading the constant agree
+on every number, so a single-width fixture could not have discriminated at all; that is the
+half a run of the suite cannot tell you.
+
 ### PDFium draws a comment's icon in its own colour, and the file is not wrong
 
 A reader picks blue for a comment. The overlay draws a blue icon. They save, reopen the file

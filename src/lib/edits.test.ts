@@ -22,6 +22,7 @@ import {
   type MarkView,
 } from "./edits";
 import { pageId } from "./pages";
+import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
@@ -57,6 +58,7 @@ function mark(id: number, page: number): MarkView {
     quads: [72, 100, 300, 118],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note: "",
     lines: [],
   };
@@ -391,6 +393,7 @@ describe("Edits", () => {
         stamp: null,
         reply_to: null,
         color: [1, 0.9, 0.2],
+        width: INK_WIDTH,
         author: "",
         note: "a note",
       },

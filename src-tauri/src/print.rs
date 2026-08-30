@@ -555,6 +555,7 @@ mod tests {
                     quads: vec![72.0, 100.0, 300.0, 118.0],
                     strokes: Vec::new(),
                     color: [1.0, 0.9, 0.2],
+                    width: crate::docmodel::INK_WIDTH,
                     author: String::new(),
                     note: String::new(),
                 },

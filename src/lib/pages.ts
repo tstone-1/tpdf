@@ -303,6 +303,20 @@ export interface MarkView {
   stamp: StampName | null;
   color: [number, number, number];
   /**
+   * How thick this mark's ink is, in points, before any zoom.
+   *
+   * **The overlay needs it or the tile and the overlay disagree.** PDFium paints
+   * every saved mark inside the tile at whatever `w` the appearance stream sets,
+   * and the overlay redraws ink on top from {@link MarkView.strokes}; a constant
+   * here would draw every drawing at the default weight over a tile drawing it
+   * at the reader's, which reads as a rendering fault rather than as a wrong
+   * number.
+   *
+   * `Mark::width` in `docmodel.rs`, and fixed when the mark is made --- there is
+   * no recolouring counterpart for it, and that entry says what one would cost.
+   */
+  width: number;
+  /**
    * What the reader typed, which may be empty.
    *
    * **Attacker-controlled once a saved file is reopened**, so it is treated as

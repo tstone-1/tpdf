@@ -49,7 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
     Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, PageSource, Point, Quad, Rect,
-    Redaction, RedactionId, Refusal, Size, StampName, Stroke,
+    Redaction, RedactionId, Refusal, Size, StampName, Stroke, INK_WIDTH, NIB_MAX, NIB_MIN,
 };
 use crate::fingerprint::Fingerprint;
 
@@ -165,6 +165,15 @@ pub struct MarkView {
     pub stamp: Option<StampName>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
+    /// How thick this mark's ink is, in points.
+    ///
+    /// **The overlay needs it or the tile and the overlay disagree.** PDFium
+    /// paints every saved mark inside the tile at whatever `w` the appearance
+    /// stream sets, and the overlay redraws ink on top from the strokes above;
+    /// a constant here would draw every drawing at the default weight over a
+    /// tile drawing it at the reader's, which reads as a rendering fault rather
+    /// than as a wrong number.
+    pub width: f64,
     /// What the reader typed, which may be empty.
     ///
     /// **Attacker-controlled the moment a saved file is reopened**, so it is
@@ -321,8 +330,48 @@ pub struct NewMark {
     pub reply_to: Option<(u32, u16)>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
+    /// How thick the ink is, in points.
+    ///
+    /// Defaulted for [`NewMark::stamp`]'s reason and with one addition: every
+    /// sender that predates the nib keeps working, a missing field is
+    /// [`INK_WIDTH`] rather than a deserialisation failure --- and, unlike the
+    /// fields above, a missing one here is not the absence of a thing but the
+    /// presence of the default, so `Option` would make every reader of it write
+    /// the same `unwrap_or` twice.
+    #[serde(default = "default_nib")]
+    pub width: f64,
     pub author: String,
     pub note: String,
+}
+
+/// [`INK_WIDTH`], for serde's `default` on [`NewMark::width`].
+fn default_nib() -> f64 {
+    INK_WIDTH
+}
+
+/// A nib width from the wire, brought into the range [`Mark::width`] promises.
+///
+/// **The fourth door, and it opens onto the same content stream as the other
+/// three.** `channel` clamps a colour, [`Edits::displace`] refuses a non-finite
+/// offset and the geometry check above refuses a non-finite point, all because
+/// `1e40` is valid JSON, is `INFINITY` by the time it is here, and is `inf`
+/// when `save.rs` writes it with `format!`. This number reaches
+/// `format!("{width} w")` in exactly that way, so it needs exactly that guard.
+///
+/// Clamped rather than refused, which is `channel`'s choice rather than
+/// [`Edits::displace`]'s, and the reason is what the number means. An offset and
+/// a point say *where* a mark is, and a mark silently moved is not the mark the
+/// reader drew; a width says how heavy it is, and a line a quarter point off
+/// what was asked for is still the line, still where it was drawn, and still
+/// what the reader will recognise. A non-finite value has no clamped meaning ---
+/// `f64::NAN.clamp(a, b)` is `NaN` --- so it becomes [`INK_WIDTH`], which is the
+/// only total answer and is also what a caller sending nothing at all gets.
+fn nib(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(NIB_MIN, NIB_MAX)
+    } else {
+        INK_WIDTH
+    }
 }
 
 /// One colour channel from the wire, brought into the range `Mark` promises.
@@ -786,8 +835,9 @@ impl Edits {
         // rectangle the ink occupies is wider than the points it runs through ---
         // and tight bounds would additionally refuse a straight vertical line as
         // covering no area. See `Stroke::bounds`.
+        let width = nib(want.width);
         if want.kind == MarkKind::Ink {
-            quads = Stroke::bounds(&strokes, (crate::docmodel::INK_WIDTH / 2.0) as f32)
+            quads = Stroke::bounds(&strokes, (width / 2.0) as f32)
                 .into_iter()
                 .collect();
         }
@@ -806,6 +856,7 @@ impl Edits {
                         .reply_to
                         .map(|(number, generation)| ObjectId::new(number, generation)),
                     color: want.color.map(channel),
+                    width,
                     author: want.author,
                     made,
                 },
@@ -1345,6 +1396,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                         .reply_to
                         .map(|object| (object.number(), object.generation())),
                     color: model.color_of(*mark),
+                    width: body.width,
                     author: body.author.clone(),
                     note: model.note_of(*mark).to_string(),
                     made: body.made.clone(),
@@ -1631,6 +1683,15 @@ pub struct PlannedMark {
     #[serde(default)]
     pub reply_to: Option<(u32, u16)>,
     pub color: [f32; 3],
+    /// How thick the ink is, in points --- what `save.rs` writes as `w`.
+    ///
+    /// `#[serde(default = "default_nib")]` for [`PlannedMark::reply_to`]'s
+    /// reason, with the addition [`NewMark::width`] states: a plan written
+    /// before this existed meant the default rather than meaning nothing, so
+    /// the absent value has to *be* the default and not an `Option` every
+    /// reader unwraps.
+    #[serde(default = "default_nib")]
+    pub width: f64,
     pub author: String,
     pub note: String,
     pub made: String,
@@ -1868,6 +1929,14 @@ fn snapshot(model: &Doc) -> EditState {
                 // it was made in. Taking `mark.color` here would leave the
                 // overlay painting a recoloured mark in its first colour.
                 color: model.color_of(id),
+                // **The body rather than an accessor, which is the opposite of
+                // the line above and for the reason `Mark::width` states.** A
+                // colour has a command that replaces it, so the body holds a
+                // stale one; a width is fixed when the mark is made, so there
+                // is no second version of it and no accessor to answer from.
+                // The day a `Rewidth` exists this becomes an accessor in the
+                // same breath, and that is what its doc comment is for.
+                width: mark.width,
                 note: model.note_of(id).to_string(),
                 // Wrapped to the mark's own rectangle, so the overlay's line
                 // breaks are the file's. Empty for every kind that is not a text
@@ -2769,6 +2838,7 @@ mod tests {
             quads: vec![72.0, 100.0, 300.0, 118.0],
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
+            width: INK_WIDTH,
             author: "a reader".to_string(),
             note: String::new(),
         }
@@ -3009,9 +3079,187 @@ mod tests {
             quads: Vec::new(),
             strokes,
             color: [0.85, 0.15, 0.15],
+            width: INK_WIDTH,
             author: "a reader".to_string(),
             note: String::new(),
         }
+    }
+
+    /// A drawing made with a wider nib than the last one.
+    fn a_wide_drawing(page: u64, strokes: Vec<Vec<f32>>) -> NewMark {
+        NewMark {
+            width: BROAD,
+            ..a_drawing(page, strokes)
+        }
+    }
+
+    /// A nib no swatch offers and every layer here has to carry, chosen so that
+    /// no assertion below can pass by agreeing with [`INK_WIDTH`].
+    const BROAD: f64 = 8.0;
+
+    #[test]
+    fn the_rectangle_is_padded_by_half_the_nib_the_reader_chose() {
+        // The sibling below proves the pad exists at all, with the default nib,
+        // and it cannot see this: at one width a derivation reading the mark and
+        // one reading the constant agree on every number. So the discriminating
+        // fixture is a *second* width, and the assertion is the difference
+        // between the two rectangles rather than either one of them.
+        let edits = opened();
+        let id = edits.state(7).expect("state").pages[1].id;
+        let line = vec![vec![50.0, 50.0, 50.0, 300.0]];
+
+        let first = edits
+            .annotate(7, a_drawing(id, line.clone()), stamped())
+            .expect("the default nib");
+        let narrow_id = first.marks[0].id;
+        let narrow = first.marks[0].quads.clone();
+
+        // By id rather than by position. Both drawings are on the page by the
+        // second reply, and reading `marks[0]` twice compares the narrow
+        // rectangle with itself --- which is what the first draft of this did,
+        // and it fails in the direction that says the feature does not work.
+        let both = edits
+            .annotate(7, a_wide_drawing(id, line), stamped())
+            .expect("a broad nib");
+        let wide = both
+            .marks
+            .iter()
+            .find(|m| m.id != narrow_id)
+            .expect("the second drawing")
+            .quads
+            .clone();
+
+        // Half the difference in width, on each side of a line with no width of
+        // its own. Written as the growth rather than as two absolute numbers so
+        // that moving either constant leaves the check true and pointed at the
+        // same property.
+        let grew = ((BROAD - INK_WIDTH) / 2.0) as f32;
+        assert!(
+            (narrow[0] - wide[0] - grew).abs() < 0.01,
+            "the broad nib's box did not grow on the left: {narrow:?} {wide:?}"
+        );
+        assert!(
+            (wide[2] - narrow[2] - grew).abs() < 0.01,
+            "nor on the right: {narrow:?} {wide:?}"
+        );
+    }
+
+    #[test]
+    fn erasing_a_stroke_keeps_the_nib_the_drawing_was_made_with() {
+        // `Doc::reink` re-derives the rectangle, and the width it pads by is the
+        // one thing about the drawing it cannot read from the strokes it was
+        // handed. Reaching for `INK_WIDTH` there would shrink a broad drawing's
+        // box the first time a reader rubbed one stroke out of it, leaving ink
+        // outside its own `/Rect` --- which no reader on screen would see and
+        // every foreign reader would clip.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(
+                7,
+                a_wide_drawing(
+                    page,
+                    vec![
+                        vec![72.0, 90.0, 300.0, 90.0],
+                        vec![72.0, 150.0, 300.0, 150.0],
+                    ],
+                ),
+                stamped(),
+            )
+            .expect("drawn");
+        let mark = state.marks[0].id;
+
+        let after = edits.erase(7, mark, vec![1]).expect("erased").marks[0]
+            .quads
+            .clone();
+        let pad = (BROAD / 2.0) as f32;
+        assert!(
+            (after[1] - (90.0 - pad)).abs() < 0.01,
+            "the surviving stroke's box is padded by half the broad nib: {after:?}"
+        );
+        assert!(
+            (after[3] - (90.0 + pad)).abs() < 0.01,
+            "and on the other side: {after:?}"
+        );
+    }
+
+    #[test]
+    fn the_reply_and_the_plan_both_carry_the_nib() {
+        // Two readers of one field, and neither is reached by the other's test.
+        // The overlay paints ink from `MarkView::width` and the writer draws it
+        // from `PlannedMark::width`; a mark that reached one with the chosen nib
+        // and the other with the default would be a drawing that changed weight
+        // the moment it was saved, which is exactly the shape a reader cannot
+        // diagnose.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(
+                7,
+                a_wide_drawing(page, vec![vec![50.0, 50.0, 90.0, 90.0]]),
+                stamped(),
+            )
+            .expect("drawn");
+
+        assert_eq!(state.marks[0].width, BROAD, "the overlay's copy");
+        assert_eq!(
+            edits.plan(7).expect("plan").marks[0].width,
+            BROAD,
+            "the writer's copy"
+        );
+    }
+
+    #[test]
+    fn a_nib_that_is_not_a_number_is_clamped_at_this_door_too() {
+        // The fourth door, and it opens onto the same content stream as the
+        // three above: `1e40` is valid JSON, is `f64::INFINITY` here, and is the
+        // three letters `inf` where `save.rs` writes `{width} w`. A file with
+        // that in a content stream is one no reader can parse, written and
+        // signed by tpdf.
+        //
+        // Clamped rather than refused, unlike the geometry beside it --- see
+        // `nib`. So the check is that every one of these produces a width a
+        // content stream can carry, and the control is that a width inside the
+        // range is left exactly alone.
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        for sent in [
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            1e40,
+            -1e40,
+            0.0,
+            -3.0,
+        ] {
+            let state = edits
+                .annotate(
+                    7,
+                    NewMark {
+                        width: sent,
+                        ..a_drawing(page, vec![vec![50.0, 50.0, 90.0, 90.0]])
+                    },
+                    stamped(),
+                )
+                .expect("taken");
+            let got = state.marks.last().expect("a mark").width;
+            assert!(
+                got.is_finite() && (NIB_MIN..=NIB_MAX).contains(&got),
+                "{sent} came through as {got}"
+            );
+        }
+
+        // The control. Without it every assertion above is satisfied by a door
+        // that answers `INK_WIDTH` to everything, which would silently throw
+        // away every nib a reader picks.
+        let state = edits
+            .annotate(
+                7,
+                a_wide_drawing(page, vec![vec![50.0, 50.0, 90.0, 90.0]]),
+                stamped(),
+            )
+            .expect("taken");
+        assert_eq!(state.marks.last().expect("a mark").width, BROAD);
     }
 
     #[test]

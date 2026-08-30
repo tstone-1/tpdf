@@ -5,6 +5,7 @@ import { DEFAULT_SWATCH, PALETTE } from "./markcolors";
 import { pageId, type MarkView } from "./pages";
 import type { Anchor } from "./popup";
 import { installFakeDom, type FakeDom } from "./testdom";
+import { INK_WIDTH } from "./markband";
 
 /** One of the reader's own marks, with the fields a test is not about filled in. */
 function mark(over: Partial<MarkView> & { id: number }): MarkView {
@@ -15,6 +16,7 @@ function mark(over: Partial<MarkView> & { id: number }): MarkView {
     quads: [72, 100, 300, 118],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note: "",
     lines: [],
     ...over,

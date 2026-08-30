@@ -1472,6 +1472,34 @@ changes anything, and cannot restore the file's own text. Undo is what restores 
 replaying without the command — which is the same mechanism every other edit uses, and is why
 there is no "revert" command with a document read behind it.
 
+#### T6.14 — The nib a reader picks, added 2026-08-30
+
+**No new command and no new authority.** Choosing a nib calls no Tauri command at all: it
+sets a field on the viewer, and the number reaches the backend as one more field on the
+`annot_mark` payload §T6.2 already covers. Nothing here opens a file, writes one or reaches a
+worker.
+
+**One new number off the wire, and it is the T6.10 shape exactly.** `Mark::width` is written
+into an appearance stream by `format!("{width} w")`, which is the route `displace` refuses a
+non-finite offset for and `channel` clamps a colour for: JSON has no `Infinity` literal, but
+`1e40` is valid JSON and is `f64::INFINITY` by the time it is in Rust, and `format!` spells
+that `inf` — three letters in the middle of a content stream, which is a syntax error. tpdf
+would write a file no reader can parse and sign its name to it. `edits::nib` is the fourth
+guard of that family, at the wire boundary and before the model sees the value.
+
+**Clamped rather than refused**, which is `channel`'s choice and not `displace`'s. The
+distinction is what the number means: an offset and a coordinate say *where* a mark is, and a
+mark silently moved is not the mark the reader drew; a width says how heavy it is, and a line
+a quarter point off what was asked for is still that line in that place. A non-finite value
+has no clamped meaning — `f64::NAN.clamp(a, b)` is `NaN` — so it becomes the default, which
+is also what a caller sending no width at all gets.
+
+**The bound is a range and not the table.** `NIB_MIN` and `NIB_MAX` in `docmodel.rs` are what
+the wire is held to; `marknibs.ts` is what a reader can pick, and a frontend test asserts
+every entry sits inside the range. A caller bypassing the frontend can therefore ask for any
+width in `0.25..=24` — which is a correctness question about a file rather than a reach, and
+residual risk 7 already bounds who can call `annot_mark` at all.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

@@ -30,6 +30,7 @@
     swatch,
     type Swatch,
   } from "./lib/markcolors";
+  import { DEFAULT_NIB, nib, type Nib } from "./lib/marknibs";
   import {
     afterCopy,
     afterRedaction,
@@ -135,6 +136,16 @@
    * it and `null` --- the default's colour --- has no name of its own.
    */
   let markColor = $state<Swatch>(DEFAULT_SWATCH);
+  /**
+   * The nib the reader has picked, for the status line and the menu's tick.
+   *
+   * **Not what a drawing is made with**, which is the viewer's own `nib` and
+   * arrives back on `Drawn.width`. This is the label, and it is deliberately
+   * downstream of the setting rather than beside it: `chooseNib` sets the
+   * viewer and then records what it set, so a state that drifted would show a
+   * wrong word rather than draw a wrong line.
+   */
+  let markNib = $state<Nib>(DEFAULT_NIB);
   /**
    * The words each mark covers, by the model's id for it.
    *
@@ -427,6 +438,7 @@
     canReplyToComment: () => viewer?.commentReplyable ?? false,
     replyToComment: () => viewer?.replyToComment(),
     setMarkColor: (id) => chooseMarkColor(id),
+    setNib: (id) => chooseNib(id),
     markColor: () => markColor.id,
     saveDocument: () => void saveDocument(),
     isDirty: () => dirty,
@@ -639,7 +651,24 @@
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
     await applyEdit((e) =>
-      e.mark(kind, page, shape.quads, shape.strokes, "", markColor.rgb, stamp),
+      e.mark(
+        kind,
+        page,
+        shape.quads,
+        shape.strokes,
+        "",
+        markColor.rgb,
+        stamp,
+        // Never a reply: this is a mark a reader dragged out, and a reply is
+        // made from the panel beside the comment it answers.
+        null,
+        // **From the shape, not from `markNib`.** The viewer holds the armed nib
+        // and painted the preview with it, so taking it from here is what makes
+        // the line a reader watched and the line they get one number --- see
+        // `Drawn.width`. Reading the state below instead would work today and
+        // would be a second copy of it.
+        shape.width,
+      ),
     );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
     if (made) viewer?.showMark(made.id);
@@ -680,6 +709,28 @@
     if (!chosen) return;
     markColor = chosen;
     viewer?.recolorOpenMark(chosen.rgb);
+  }
+
+  /**
+   * Picks how thick the next drawing is.
+   *
+   * **One direction, unlike {@link chooseMarkColor} above.** A colour applies to
+   * the mark whose note is open as well as to the next one; a nib applies only
+   * to the next, because changing an existing drawing's width has to rebuild its
+   * rectangle --- `Mark::width` says what that would cost. So there is nothing
+   * here about an open mark, and that absence is a decision rather than a gap.
+   *
+   * The viewer is set first and the label second, so the two cannot disagree
+   * about a drawing: if this ever drifts the reader sees the wrong word beside a
+   * line drawn at the right weight, rather than the reverse.
+   */
+  function chooseNib(id: string): void {
+    const chosen = nib(id);
+    // No such nib means a command id that named one, which cannot happen from
+    // the registry: every `edit.nib.*` command is built from `NIBS`.
+    if (!chosen) return;
+    viewer?.setNib(chosen.pt);
+    markNib = chosen;
   }
 
   /**
@@ -3116,6 +3167,19 @@
       {#if markColor.rgb !== null}
         <span class="stat" data-testid="markcolor">
           Marking in {markColor.name}
+        </span>
+      {/if}
+      <!--
+        The nib, on the colour's argument exactly and with its condition: shown
+        once a reader has picked something other than the default, because it
+        outlives the gesture and the pen, and the reader who set it three
+        documents ago is the one who needs telling. Silent at the default, which
+        is what the application has always drawn with and is not worth a line of
+        chrome.
+      -->
+      {#if markNib !== DEFAULT_NIB}
+        <span class="stat" data-testid="marknib">
+          Nib: {markNib.name}
         </span>
       {/if}
       {#if status.selected > 0}

@@ -114,6 +114,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
             }],
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
+            width: tpdf_lib::docmodel::INK_WIDTH,
             author: "worker-probe".to_string(),
             note: String::new(),
             made: "D:20260822120000Z".to_string(),

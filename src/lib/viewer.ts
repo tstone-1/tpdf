@@ -340,6 +340,23 @@ export interface Drawn {
   quads: number[];
   /** `x y x y ...` per stroke. Empty for every kind but ink. */
   strokes: number[][];
+  /**
+   * How thick the ink is, in points --- the nib armed when the drag ended.
+   *
+   * **On the shape rather than a fifth argument to {@link ViewerOptions.onDrawn}**,
+   * and the reason is that it is not a fifth thing: it is part of what the
+   * gesture produced, exactly as the strokes are. A caller that took it from
+   * anywhere else would be reading a second copy of the setting the preview drew
+   * from, which is precisely the disagreement `Viewer.setNib` exists to prevent
+   * --- the preview at one weight and the saved mark at another, with nothing on
+   * screen saying which is right until the file is reopened.
+   *
+   * Sent for every kind and read for one. `save.rs` writes a `w` for all of
+   * them and only the path arm reads this, which is a decision stated there:
+   * a box's border is fixed because a frame competing with its contents is a
+   * worse frame.
+   */
+  width: number;
 }
 
 export interface ViewerOptions {
@@ -991,6 +1008,24 @@ export class Viewer {
    * stays armed is the obvious next step and is a decision, not an oversight.
    */
   private drawKind: MarkKind | null = null;
+  /**
+   * How thick the next drawing is, in points.
+   *
+   * **A setting rather than part of an arming**, which is where it parts company
+   * with {@link drawStamp} beside it. A stamp is chosen *as* the tool --- there
+   * is no stamp tool without one --- so it is spent when the drag commits. A nib
+   * outlives the pen: a reader who picks "broad" and then puts the pen away and
+   * takes it out again is still drawing broad, which is what a pen is.
+   *
+   * **It lives here rather than in `App.svelte`, and that is what makes the
+   * preview honest.** The preview is painted from this and the committed mark
+   * carries it out on {@link Drawn.width}, so the line a reader watches and the
+   * line they get are one number. A copy in the caller would be a second piece
+   * of state that could disagree with the one the preview drew from --- the same
+   * argument {@link drawStamp} makes, applied to a setting instead of to a
+   * tool.
+   */
+  private nib: number = INK_WIDTH;
   /** Which stamp an armed stamp tool will place. `null` for every other kind. */
   private drawStamp: StampName | null = null;
   /**
@@ -1640,7 +1675,7 @@ export class Viewer {
         this.opts.onDrawn?.(
           kind,
           id,
-          { quads: this.fileRectOn(live.slot, quad), strokes: [] },
+          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib },
           stamp,
         );
       },
@@ -3805,6 +3840,32 @@ export class Viewer {
   }
 
   /**
+   * Sets how thick the next drawing will be, in points.
+   *
+   * **Not an arming, which is why it is not a parameter of {@link armDraw}.** A
+   * reader picks a nib and then draws with it repeatedly; folding the two
+   * together would mean the choice was spent by the first drag, and a caller
+   * re-arming to keep it would be holding the nib itself --- which is the copy
+   * {@link nib} exists to avoid.
+   *
+   * Takes points rather than a `Nib`, because this file has no business knowing
+   * what the nibs are called: `marknibs.ts` owns the list and `App.svelte`
+   * resolves an id to a width. What crosses is the number the preview draws with
+   * and {@link Drawn.width} carries out.
+   *
+   * A width outside what the backend accepts is not refused here. The door in
+   * `edits.rs` clamps it, in one place, for every sender --- and a second rule
+   * here would be a second copy of a range that lives in `docmodel.rs`.
+   */
+  setNib(pt: number): void {
+    this.nib = pt;
+    // The preview is painted from it, so a reader changing nibs mid-drawing
+    // sees the strokes already made redrawn at the new weight --- which is what
+    // will be saved, because one width applies to the whole mark.
+    this.wake();
+  }
+
+  /**
    * Arms the crop tool: the next drag on a page keeps what is inside it.
    *
    * **One-shot, like every drawing tool and unlike the eraser.** A crop replaces
@@ -4050,7 +4111,7 @@ export class Viewer {
     this.opts.onDrawn?.(
       "note",
       where.page,
-      { quads: where.quads, strokes: [] },
+      { quads: where.quads, strokes: [], width: this.nib },
       null,
     );
   }
@@ -4098,6 +4159,7 @@ export class Viewer {
           return [mapped[0], mapped[1]];
         }),
         ),
+        width: this.nib,
       },
       // Never a stamp: ink is finished with Enter and a stamp with a drag.
       null,
@@ -5260,7 +5322,11 @@ export class Viewer {
         const inked = this.viewStrokesOf(mark);
         if (inked) {
           ctx.strokeStyle = markInk(mark.color, false);
-          ctx.lineWidth = INK_WIDTH * this.zoom * dpr;
+          // **The mark's own width, not the constant.** PDFium draws this same
+          // drawing inside the tile at whatever `w` its appearance stream sets;
+          // a constant here would put the default weight on top of the reader's,
+          // which reads as a rendering fault rather than as a wrong number.
+          ctx.lineWidth = mark.width * this.zoom * dpr;
           // Round, matching the `1 J 1 j` the appearance stream sets: a mitre
           // on a hand-drawn corner spikes, and a butt cap leaves a stroke that
           // stops square where the reader's hand did not.
@@ -5599,7 +5665,14 @@ export class Viewer {
    * box's dashed outline states: a preview is not yet a mark, and a reader who
    * presses Enter expects something to change. Dashing a freehand line would
    * make it look like a different *kind* of mark rather than an unfinished one,
-   * so the colour carries it and the weight stays honest at {@link INK_WIDTH}.
+   * so the colour carries it and the weight stays honest at the armed nib.
+   *
+   * **The weight is the reader's and the colour is not, and the asymmetry is the
+   * point.** A preview says *this is not a mark yet*, which the colour carries;
+   * it also has to say *this is how thick your line will be*, which nothing else
+   * can. Drawing the preview at {@link INK_WIDTH} while {@link setNib} held
+   * something else would answer the second question wrongly, and the reader
+   * would only find out after committing.
    *
    * Both in one pass, because they are one thing to the reader: the stroke under
    * the pen is the newest part of the drawing, not a separate object.
@@ -5614,7 +5687,7 @@ export class Viewer {
     const origin = this.scroller.pageOrigin(slot);
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = PREVIEW_STROKE;
-    ctx.lineWidth = INK_WIDTH * this.zoom * dpr;
+    ctx.lineWidth = this.nib * this.zoom * dpr;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
