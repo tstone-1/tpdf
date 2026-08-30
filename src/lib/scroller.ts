@@ -79,7 +79,13 @@ import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 // module wholesale, and a class reached through it would be `undefined`
 // inside them --- turning this `instanceof` into a TypeError thrown from a
 // failure handler, which surfaces as a frame loop that never settles.
-import { baselineOf, madeSizeOf, unedited, type PageView } from "./pages";
+import {
+  baselineOf,
+  madeSizeOf,
+  unedited,
+  type FilePage,
+  type PageView,
+} from "./pages";
 import { DocumentGone } from "./tilestatus";
 
 export type Layout = "tiles" | "viewport";
@@ -1585,7 +1591,7 @@ export class Scroller {
    * every unedited document and asks for the wrong page in exactly the cases the
    * order exists for.
    */
-  private sourceOf(slot: number): number | undefined {
+  private sourceOf(slot: number): FilePage | undefined {
     const view = this.order[slot];
     return view === undefined ? undefined : baselineOf(view.source);
   }

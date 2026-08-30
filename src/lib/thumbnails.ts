@@ -54,6 +54,7 @@
  */
 
 import { Lifetime } from "./lifetime";
+import type { FilePage } from "./pages";
 import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
@@ -138,7 +139,7 @@ export interface ThumbnailOptions {
    * treats them differently: absent means nobody translates here and the slot is
    * the page, while `undefined` means there is nothing to ask a worker for.
    */
-  sourceOf?: (slot: number) => number | undefined;
+  sourceOf?: (slot: number) => FilePage | undefined;
   /** Geometry of page 1, taken as representative --- as `scroller.ts` does. */
   page: PageSize;
   tier1: Tier1Access;

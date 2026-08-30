@@ -7734,6 +7734,21 @@ under *"state keyed by a slot belongs to whatever moves into that slot"*. Three 
 - **Left alone and translated at the boundary**: the text cache, which is keyed by the page of
   the file because that is what a page's text belongs to.
 
+  ⚠ **The translation was written at three of the eighteen boundaries, and this paragraph is
+  the reason nobody looked --- corrected 2026-08-30.** Fourteen calls into the cache from
+  `viewer.ts` passed the slot, and `selection.ts` took the cache itself and did the same. The
+  cost is not subtle: on any document with a deletion, a move or an insert in it, **pressing on
+  a page placed no caret and dragging selected nothing**, the character count stayed at zero
+  and the search highlights were not drawn --- while the text sat in memory under the page's
+  own number. The class's own doc comment said `viewer.ts` "translates at the four call sites",
+  which is a count with nothing behind it, and it was believed for as long as it stood.
+
+  What closes it is a branded `FilePage` that only `PageMap.sourceOf` mints, so a slot reaching
+  the cache is a type error in a gate rather than a rule somebody has to remember. Turning it
+  on printed the sixteen sites. `selection.ts` now takes a lookup function instead of the
+  cache, so the class whose whole job is arithmetic in slots never meets the other space at
+  all. `docs/TRAPS.md` has both entries.
+
 **A link into a deleted page becomes `broken`**, which already means "points at a page this
 document does not have" and is precisely what the reader has made true. No new variant, and
 nothing in `outline.rs` has to learn a state it cannot produce. The outline tree is kept whole

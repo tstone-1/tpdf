@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { filePage } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import {
   insertionGap,
@@ -283,7 +284,7 @@ describe("Thumbnails lifetime", () => {
     // `sourceOf?.(page) ?? page` --- which for a made page asked for whatever
     // page of the file happens to sit at that slot number.
     const pages = makeStrip(dom, {
-      sourceOf: (slot) => (slot === 1 ? undefined : slot),
+      sourceOf: (slot) => (slot === 1 ? undefined : filePage(slot)),
     });
     pages.setActive(true);
     expect(tiles.fetchTile).toHaveBeenCalledTimes(1);

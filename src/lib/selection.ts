@@ -31,7 +31,19 @@
  */
 
 import { readingTextOf } from "./reading";
-import { runsFor, type Caret, type PageText, type Quad, type TextCache } from "./text";
+import { runsFor, type Caret, type PageText, type Quad } from "./text";
+
+/**
+ * A page's text if it has already arrived, asked for by **slot**.
+ *
+ * Taken instead of the cache itself, which this class used to hold. `TextCache`
+ * is keyed by page of the *file* and every number in here is a slot --- a caret
+ * names where the pointer went, not what the document was before somebody
+ * deleted a page --- so passing the cache made two spaces meet in a class whose
+ * whole job is arithmetic in one of them. `Viewer.textOn` is the translation and
+ * is what gets passed.
+ */
+export type TextLookup = (page: number) => PageText | null;
 
 /** Which of two carets comes first in reading order. */
 function precedes(a: Caret, b: Caret): boolean {
@@ -80,9 +92,9 @@ export class Selection {
   }
 
   /** Highlight rectangles for a page, in PDF points from its top-left. */
-  quadsOn(page: number, cache: TextCache): Quad[] {
+  quadsOn(page: number, look: TextLookup): Quad[] {
     const range = this.rangeOn(page);
-    const text = range && cache.peek(page);
+    const text = range && look(page);
     if (!range || !text) return [];
     return runsFor(text, range.from, range.to);
   }
@@ -97,11 +109,11 @@ export class Selection {
    * hold each page's reply and see them all, which is what
    * {@link textFrom} is for and what `Viewer.selectionText` does.
    */
-  text(cache: TextCache): string {
+  text(look: TextLookup): string {
     const { start, end } = this.ordered;
     const parts: string[] = [];
     for (let page = start.page; page <= end.page; page++) {
-      const text = cache.peek(page);
+      const text = look(page);
       if (!text) continue;
       const part = this.textFrom(page, text);
       if (part !== null) parts.push(part);

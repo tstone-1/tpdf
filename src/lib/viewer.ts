@@ -907,14 +907,6 @@ export class Viewer {
    * information needed to flip it back.
    */
   private anchorUnit: { page: number; from: number; to: number } | null = null;
-  /**
-   * Pages whose text has been asked for.
-   *
-   * `TextCache` already dedupes the request, but not the `.then` attached to it,
-   * and the frame loop would attach a fresh one every frame of a scroll over a
-   * page still being extracted. This is what stops that.
-   */
-  private readonly textAsked = new Set<number>();
 
   private readonly scroller: Scroller;
   private scrollTop = 0;
@@ -1872,7 +1864,7 @@ export class Viewer {
     let moved = false;
     for (const page of this.scroller.visiblePages()) {
       if (this.scroller.knowsPageSize(page)) continue;
-      const text = this.text.peek(page);
+      const text = this.textOn(page);
       if (!text) continue;
       // `PageText` reports the page as *displayed*, so every turn in force has
       // to come back out before this is the document's geometry --- the page's
@@ -2809,7 +2801,7 @@ export class Viewer {
     let total = 0;
     for (const page of this.selection.pages()) {
       const range = this.selection.rangeOn(page);
-      const text = range && this.text.peek(page);
+      const text = range && this.textOn(page);
       if (!range || !text) continue;
       total += Math.min(range.to, text.codes.length) - range.from;
     }
@@ -4418,6 +4410,38 @@ export class Viewer {
     return source === undefined ? null : this.text.peek(source);
   }
 
+  /**
+   * A page's text as the *document* displays it, without asking for it.
+   *
+   * {@link textOn}'s unturned counterpart --- see {@link unturnedText} for what
+   * unturned buys and why a mark's quads have to come from here.
+   */
+  private unturnedOn(slot: number): PageText | null {
+    const source = this.pages.sourceOf(slot);
+    return source === undefined ? null : this.text.peekUnturned(source);
+  }
+
+  /**
+   * A page's text as the view shows it, fetching it if it is not here.
+   *
+   * `null` without a round trip for a page tpdf made, which no worker can
+   * extract text from because there is no page of the file to ask about.
+   */
+  private loadOn(slot: number): Promise<PageText | null> {
+    const source = this.pages.sourceOf(slot);
+    return source === undefined
+      ? Promise.resolve(null)
+      : this.text.load(source);
+  }
+
+  /** {@link loadOn}, in the document's own space. */
+  private loadUnturnedOn(slot: number): Promise<PageText | null> {
+    const source = this.pages.sourceOf(slot);
+    return source === undefined
+      ? Promise.resolve(null)
+      : this.text.loadUnturned(source);
+  }
+
   /** Where a pointer event falls, in one page's own point space. */
   private pointFrom(
     event: PointerEvent,
@@ -4426,7 +4450,7 @@ export class Viewer {
     const docY = event.clientY - bounds.top + this.scrollTop;
     const page = this.scroller.pageAt(docY);
 
-    const text = this.text.peek(page);
+    const text = this.textOn(page);
     if (!text) {
       this.requestText(page);
       return null;
@@ -4701,9 +4725,9 @@ export class Viewer {
    */
   selectPage(): void {
     const page = this.currentPage();
-    const text = this.text.peek(page);
+    const text = this.textOn(page);
     if (!text) {
-      void this.text.load(page).then((arrived) => {
+      void this.loadOn(page).then((arrived) => {
         if (arrived && !this.life.ended) this.selectPage();
       });
       return;
@@ -4790,13 +4814,27 @@ export class Viewer {
       const chunk = await Promise.all(
         pages.slice(at, at + COPY_CHUNK).map(async (page) => ({
           page,
-          text: await this.text.load(page),
+          // Asked before the load rather than derived from its `null`, because
+          // the two produce the same `null` and mean opposite things --- see
+          // the branch below, where the difference decides whether the reader
+          // gets their text or an error about pages that were perfectly
+          // readable.
+          made: this.pages.sourceOf(page) === undefined,
+          text: await this.loadOn(page),
         })),
       );
-      for (const { page, text } of chunk) {
-        // The page could not be read at all. Reported rather than skipped ---
-        // see {@link copySelection}.
-        if (!text) return null;
+      for (const { page, made, text } of chunk) {
+        if (!text) {
+          // A page tpdf made has nothing to read, which is not the same as a
+          // page that could not be read: it contributes nothing and the copy
+          // goes ahead. Dragging from page 1 to page 3 across a blank page 2
+          // used to show `"ab\ncd"` in the status line and then refuse to copy
+          // it, naming pages that had been read without difficulty.
+          if (made) continue;
+          // The page could not be read at all. Reported rather than skipped ---
+          // see {@link copySelection}.
+          return null;
+        }
         const part = selection.textFrom(page, text);
         if (part !== null) parts.push(part);
       }
@@ -4853,7 +4891,7 @@ export class Viewer {
       const chunk = await Promise.all(
         slots.slice(at, at + COPY_CHUNK).map(async (slot) => ({
           slot,
-          text: await this.text.loadUnturned(slot),
+          text: await this.loadUnturnedOn(slot),
         })),
       );
       for (const { slot, text } of chunk) {
@@ -4884,7 +4922,7 @@ export class Viewer {
 
   /** The selected text, without touching the clipboard. For the check harness. */
   get selectedText(): string {
-    return this.selection ? this.selection.text(this.text) : "";
+    return this.selection ? this.selection.text((page) => this.textOn(page)) : "";
   }
 
   /**
@@ -4935,6 +4973,16 @@ export class Viewer {
       const view = pages.at(slot);
       if (!view) continue;
       live.add(view.id);
+      // Read here rather than beside the geometry call below, because the text
+      // cache is keyed by page of the file as well: this loop is the only place
+      // that translates, and doing it once means the two cannot disagree about
+      // which page a crop belongs to. `undefined` is a page tpdf made, which
+      // `Command::Crop` refuses a box on --- so `want` is always undefined for
+      // one and the branch below has already taken it by the time the geometry
+      // call would need a number. The check stays because the type carries the
+      // constraint and this is the one place that would ask a worker about a
+      // page no file supplies.
+      const source = baselineOf(view.source);
       const want = view.crop;
       const held = this.crops.get(view.id);
       if (want === undefined) {
@@ -4942,19 +4990,13 @@ export class Viewer {
         // so a cleared crop needs the entry gone rather than a round trip.
         if (held) {
           this.crops.delete(view.id);
-          this.text.setPageCrop(slot, undefined);
+          if (source !== undefined) this.text.setPageCrop(source, undefined);
           this.scroller.invalidatePage(slot);
         }
         continue;
       }
-      // Unreachable for a page tpdf made, which `Command::Crop` refuses a box
-      // on --- so `want` is always undefined for one and the branch above has
-      // already taken it. The check is here because the type carries the
-      // constraint and this is the one place that would ask a worker about a
-      // page no file supplies.
-      const source = baselineOf(view.source);
       if (source === undefined) continue;
-      this.text.setPageCrop(slot, want);
+      this.text.setPageCrop(source, want);
       const at = await pageGeometry(this.opts.doc, source, want).catch(
         () => null,
       );
@@ -5040,7 +5082,7 @@ export class Viewer {
       // reason: the model names pages by id and a slot is not a name.
       const id = this.pages.idOf(page);
       if (id === undefined) continue;
-      const text = this.text.peekUnturned(page);
+      const text = this.unturnedOn(page);
       if (!text) continue;
       const range = this.selection.rangeOn(page);
       if (!range) continue;
@@ -5080,9 +5122,11 @@ export class Viewer {
    * extraction behind the tiles, so a caller wanting many pages should ask for
    * one at a time --- `App.svelte`'s comment-words loop is the worked example.
    */
-  async unturnedText(page: number): Promise<PageText | null> {
-    await this.text.load(page);
-    return this.text.peekUnturned(page);
+  async unturnedText(slot: number): Promise<PageText | null> {
+    const source = this.pages.sourceOf(slot);
+    if (source === undefined) return null;
+    await this.text.load(source);
+    return this.text.peekUnturned(source);
   }
 
   /** Draws the marks, the search highlights and the selection. */
@@ -5604,7 +5648,7 @@ export class Viewer {
 
     for (const page of this.scroller.visiblePages()) {
       const origin = this.scroller.pageOrigin(page);
-      for (const quad of this.selection.quadsOn(page, this.text)) {
+      for (const quad of this.selection.quadsOn(page, (at) => this.textOn(at))) {
         const left = (origin.left + quad.left * this.zoom) * dpr;
         const top = (origin.top + quad.top * this.zoom - this.scrollTop) * dpr;
         ctx.fillRect(
@@ -5819,7 +5863,7 @@ export class Viewer {
     this.currentMatch = wrapped;
     this.wake();
 
-    const text = await this.text.load(match.page);
+    const text = await this.loadOn(match.page);
     // The load outlives a document being closed --- it is an IPC round trip and
     // nothing withdraws it --- so the scroll below would run against a torn-down
     // scroller. See `life`.
@@ -5871,7 +5915,7 @@ export class Viewer {
         // Not requested if missing: `prefetchText` already asks for every
         // visible page, and asking again from the paint path would queue an
         // extraction per frame for a page whose reply has not landed yet.
-        const text = this.text.peek(half.page);
+        const text = this.textOn(half.page);
         if (!text) continue;
 
         const origin = this.scroller.pageOrigin(half.page);
@@ -5930,8 +5974,14 @@ export class Viewer {
   private requestText(slot: number): void {
     const source = this.pages.sourceOf(slot);
     if (source === undefined) return;
-    if (this.textAsked.has(source)) return;
-    this.textAsked.add(source);
+    // The cache is asked rather than a set kept here. `TextCache` dedupes the
+    // request but not the `.then` attached to it, and the frame loop would
+    // attach a fresh one every frame of a scroll over a page still being
+    // extracted --- so something has to remember. It has to be the cache,
+    // because the cache is what *forgets*: a set here went stale the moment a
+    // crop dropped a page's extraction, and that page was then never fetched
+    // again and could not be selected on for the rest of the session.
+    if (!this.text.worthAsking(source)) return;
     void this.text.load(source).then(() => this.wake());
   }
 

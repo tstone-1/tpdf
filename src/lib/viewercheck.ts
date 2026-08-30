@@ -60,6 +60,7 @@ import {
 import { TextCache, type PageText } from "./text";
 import type { EditState } from "./edits";
 import {
+  filePage,
   markRows,
   pageId,
   unedited,
@@ -754,7 +755,9 @@ async function readingChecks(doc: DocumentInfo): Promise<void> {
   const cache = new TextCache(doc.id);
   /** A page's non-empty lines, trimmed, in reading order. */
   const read = async (at: number): Promise<string[]> => {
-    const text = await cache.load(at);
+    // A page of the file, and these corpora are unedited, so it is also the
+    // slot. The cast says which of the two this number is --- see `FilePage`.
+    const text = await cache.load(filePage(at));
     if (!text) return [];
     return readingLines(text)
       .map((line) =>
@@ -2442,7 +2445,7 @@ async function structureChecks(
     "a heading is announced as a heading, at the document's own level",
     "nothing the document did not call a heading becomes one",
   ] as const;
-  const text = await new TextCache(doc.id).load(0);
+  const text = await new TextCache(doc.id).load(filePage(0));
   const runs = text ? usableRuns(text) : null;
   if (!text || !runs) {
     const why = !text
