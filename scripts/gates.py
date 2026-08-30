@@ -244,6 +244,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a doc comment documents nothing: an insertion separated it from its declaration",
         ),
         (
+            "classified",
+            [sys.executable, str(ROOT / "scripts" / "check_classified.py")],
+            "a registered command is not classified by the window harness",
+        ),
+        (
             "check",
             [npm(), "run", "check"],
             "svelte-check or tsc found a type error",

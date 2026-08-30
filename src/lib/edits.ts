@@ -22,6 +22,7 @@ import {
   type MarkKind,
   type MarkView,
   type PageId,
+  type Discarded,
   type NoteEdited,
   type PageView,
   type RedactionView,
@@ -34,7 +35,7 @@ import { INK_WIDTH } from "./markband";
 // first, and the declaration lives in `pages.ts` so that the modules which only
 // need the shape --- the scroller, the thumbnails --- do not have to import this
 // one, which cannot be loaded outside a webview.
-export type { MarkView, NoteEdited, PageView, RedactionView };
+export type { Discarded, MarkView, NoteEdited, PageView, RedactionView };
 
 /**
  * What `save_copy` and `extract_pages` report about the file they wrote.
@@ -134,6 +135,16 @@ export interface EditState {
    * the document is saved and opened again.
    */
   notes: NoteEdited[];
+  /**
+   * Every comment out of the file the reader has deleted, in page order.
+   *
+   * A fourth list rather than a flag on {@link notes}, because a comment can be
+   * rewritten *and* deleted, so the two are not alternatives --- and an empty
+   * body already means something else, namely a comment a reader cleared and
+   * kept. `commentsIn` joins on it, and dropping a row is what a deletion looks
+   * like to the panel and the popup.
+   */
+  discards: Discarded[];
   can_undo: boolean;
   can_redo: boolean;
   /** Whether anything differs from the file on disk. */
@@ -146,6 +157,7 @@ export const NOTHING_OPEN: EditState = {
   marks: [],
   redactions: [],
   notes: [],
+  discards: [],
   can_undo: false,
   can_redo: false,
   dirty: false,
@@ -511,6 +523,33 @@ export class Edits {
         page,
         body,
       }),
+    );
+  }
+
+  /**
+   * Takes a comment out of the file off the page it is on.
+   *
+   * {@link Edits.rewrite}'s counterpart, and its two arguments mean exactly what
+   * they mean there: `object` is the name the file gave the annotation, and
+   * `page` is the model's identity, resolved by the caller through
+   * {@link Edits.map}.
+   *
+   * ⚠ **The one edit that forces a full rewrite on save.** An incremental save
+   * only adds objects, so a deletion has nothing it can write --- see
+   * `Plan::is_appendable`. On a large document the save a reader waits for is
+   * therefore the slow one, and that is a property of the deletion rather than
+   * of this method.
+   *
+   * A comment one of the reader's own replies answers is refused by the model,
+   * with a message telling them to remove the reply first. Refused there rather
+   * than predicted here, which is what `rewrite` says about a deleted page.
+   */
+  async discard(
+    object: readonly [number, number],
+    page: PageId,
+  ): Promise<EditState> {
+    return this.adopt(
+      await invoke<EditState>("annot_discard", { doc: this.doc, object, page }),
     );
   }
 

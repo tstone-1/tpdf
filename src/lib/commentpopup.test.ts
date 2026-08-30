@@ -66,6 +66,7 @@ describe("CommentPopup", () => {
    * carry the same words.
    */
   let replies: { object: [number, number]; body: string }[] = [];
+  let discards: [number, number][] = [];
 
   function popup(): CommentPopup {
     // A host with a size, since the placement clamps against it.
@@ -73,6 +74,7 @@ describe("CommentPopup", () => {
     dom.root.clientHeight = 700;
     rewrites = [];
     replies = [];
+    discards = [];
     return new CommentPopup(dom.root as unknown as HTMLElement, {
       onClose: () => {
         closed += 1;
@@ -84,6 +86,9 @@ describe("CommentPopup", () => {
       },
       onReply: (comment, body) => {
         if (comment.object) replies.push({ object: comment.object, body });
+      },
+      onDiscard: (comment) => {
+        if (comment.object) discards.push(comment.object);
       },
     });
   }
@@ -307,6 +312,37 @@ describe("CommentPopup", () => {
     if (box) box.value = "half a sentence";
     note.edit();
     expect(editorOf(note)?.value).toBe("half a sentence");
+  });
+
+  it("sends the comment on show to be deleted, and closes", () => {
+    // Two assertions and the second is the one with a mechanism behind it. The
+    // popup hides *before* the callback: the state reply that follows rebuilds
+    // the panel from a list this comment is no longer in, so a popup still
+    // showing it would be displaying a comment nothing else knows about until
+    // the reply arrives.
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    expect(note.deletable).toBe(true);
+
+    note.remove();
+    expect(discards).toEqual([[12, 0]]);
+    expect(note.openId).toBeNull();
+  });
+
+  it("deletes nothing for a comment the file wrote without an object", () => {
+    // The structural limit the Edit and Reply tests each state, a third time
+    // and with its own test for their reason: the three agree today and that is
+    // a fact about today rather than a shared rule. A deletion names an object,
+    // so a comment written as a direct dictionary has nothing to name.
+    const note = popup();
+    note.show(comment({ id: 1 }), [], anchor(), false);
+    expect(note.deletable).toBe(false);
+
+    note.remove();
+    expect(discards).toEqual([]);
+    // And it did not close either, which is the half a `remove` that returned
+    // after hiding would still pass.
+    expect(note.openId).toBe(1);
   });
 
   it("offers no reply for a comment the file wrote without an object", () => {

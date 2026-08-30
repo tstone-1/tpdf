@@ -177,6 +177,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             image_objects: 0,
         }],
         notes: Vec::new(),
+        discards: Vec::new(),
     };
     save::write_copy(file, &plan, &out, None).map_err(|e| e.message)?;
 

@@ -12081,6 +12081,101 @@ and the second document's bytes have to reach the worker that writes, which toda
 handed exactly one descriptor. Nothing in the application can reach `import`'s
 selection yet --- its live caller is `append`, asking for everything.
 
+#### Deleting a comment the file came with --- done 2026-08-30
+
+The last third of a family whose other two thirds shipped the day before: a reader
+could reply to a foreign comment and rewrite one, and could not take one away.
+`Command::Discard` is the counterpart to `Command::Rewrite` and carries its extra
+field for the same reason --- the page rides along, because this model has never
+read the file and has no table to look a page up in.
+
+##### It is the one edit that cannot be an append
+
+Every write command before it *adds*: a mark, a reply, a body over an existing
+comment. An incremental save is exactly that --- an update section appended to the
+file --- so all of them can be written without touching the previous revision. A
+deletion has nothing it can add, so `Plan::is_appendable` gains a clause and every
+save carrying one is a full rewrite.
+
+**The clause is what makes the feature correct, and a fixture holding only a
+deletion cannot see it.** With no marks and no note edits the predicate's *first*
+clause already answers false, so the wrong rule and the right rule agree on that
+input. The case that discriminates is a mixed plan --- highlight one line, delete
+one comment --- which without the clause classifies as an append, writes the
+highlight, drops the deletion and reports success. That is the fixture the test
+uses and the mutation proves.
+
+##### The bytes, not the reference
+
+`pagetree::forget` rather than pruning the page's `/Annots`, which is the
+redaction path's argument word for word: a structure element's `/OBJR` or an
+AcroForm's `/Fields` names the annotation too, and an annotation still reachable
+is an annotation still written.
+
+That removes the annotation's own dictionary and leaves its **appearance stream**
+--- a drawing of the words the reader deleted --- reachable from nothing. The
+sweep collects it, and the sweep runs on a condition that is a list: dropped
+pages, a move, redacted annotations, outline entries, form fields, images. A
+deletion is the seventh, and it had to be added. `docs/TRAPS.md` records the
+picture that found this list short once already; this is the same shape in the one
+place the leftover is text somebody asked to be rid of, and the test greps the
+written bytes for a marker rather than asking what the page draws.
+
+##### Replying first made deleting need a refusal
+
+`/IRT` names the comment a reply answers **by object number**, which is the only
+name the file and the model agree on. Take the comment away and the reply points
+at nothing --- a malformed thread in every reader that draws one.
+
+Refused rather than taking the reply along, and the choice is not close: a reader
+deleting somebody else's comment has not asked to lose what they themselves wrote,
+and a silent second deletion is the shape nobody notices until the file is
+reopened. `Refusal::ReplyAnswersIt` says which order to do the two in, and the
+refusal is made in the model at the moment the reader asks rather than at the save,
+because both facts are the model's own. It counts **live** marks: a reply the reader
+has already removed is not a reply, and refusing because of one would tell them to
+remove something that is already gone.
+
+##### What the panel shows is nothing
+
+A deleted comment is dropped from `commentsIn` rather than crossed out, which is
+what deleting a mark already does and is why neither the popup nor the panel needs
+a third state. The scan is a reading of the file on disk and knows nothing of a
+deletion, so that join is the only place one can show --- and undo puts the comment
+back by taking it out of the list.
+
+##### What the gates found, and one thing they could not
+
+The three registry checks did their job as they have for every command: a README
+line, a menu place, a window-harness classification.
+
+**The third of those was red before this command existed**, which is the finding.
+`edit.editForeignMark` and `edit.replyToComment` shipped on 2026-08-29 without a
+classification, so the window harness's own *every registered command is
+classified* check had been failing for a day --- and nothing said so, because that
+harness needs a screen and runs by hand. It was found by grepping for a sibling's
+id. `scripts/check_classified.py` is the static twin that closes the schedule gap;
+it is deliberately weaker than the harness's version and buys the day rather than
+the certainty. `docs/TRAPS.md` has the entry, and the general question it asks is
+worth asking of every harness here: which of its checks are asserted only there?
+
+The anchor gate named four existing mutations orphaned by one predicate gaining a
+clause --- two sharing `MUT_APPENDABLE`, one on the sweep's condition, one whose
+`if object.0 == 0 {` anchor became ambiguous the moment `discard` grew the same
+guard. All four re-aimed.
+
+And one mutation survived twice, correctly both times, for two different reasons.
+The rule *a comment with no object matches no deletion* was enforced by an outer
+guard **and** by optional chaining inside the comparison, so deleting either
+changed nothing. Two mechanisms, one rule; the fix is to keep one, not to write a
+cleverer mutation. `docs/TRAPS.md` has that as its own entry, because the tell is
+the *second* excuse rather than the first survivor.
+
+**Not done:** changing a comment's author or its subject, which are fields beside
+the body and go through the same `Rewrite`; and deleting a comment from the panel's
+own rows, which are still not actionable --- the editor is in the popup, and a
+reader working from the list has to open one first.
+
 #### A nib the reader picks --- done 2026-08-30
 
 The last of the three the ink section's *Not done* lists, and it was the one that

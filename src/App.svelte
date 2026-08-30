@@ -437,6 +437,8 @@
     editComment: () => viewer?.editComment(),
     canReplyToComment: () => viewer?.commentReplyable ?? false,
     replyToComment: () => viewer?.replyToComment(),
+    canDeleteComment: () => viewer?.commentDeletable ?? false,
+    deleteComment: () => viewer?.deleteComment(),
     setMarkColor: (id) => chooseMarkColor(id),
     setNib: (id) => chooseNib(id),
     markColor: () => markColor.id,
@@ -1003,7 +1005,12 @@
       // after every state reply, which is what makes an edited comment reach
       // the panel and the popup at all --- the scan is a reading of the file on
       // disk and knows nothing of what has been typed since.
-      const items = commentsIn(rawComments.items, pages, edits?.state.notes);
+      const items = commentsIn(
+        rawComments.items,
+        pages,
+        edits?.state.notes,
+        edits?.state.discards,
+      );
       viewer?.setComments(items);
       sidebar?.setComments({ ...rawComments, items });
       // After, because `setComments` is a rebuild and drops what the panel knew.
@@ -2712,6 +2719,18 @@
           const page = edits?.map.idOf(comment.page);
           if (!object || page === undefined) return;
           void applyEdit((e) => e.rewrite(object, page, body));
+        },
+        // The same two lookups as the rewrite above and for its reasons: a
+        // comment the file wrote as a direct dictionary has no object to name,
+        // and one on a page the model no longer has translates to nothing. A
+        // comment a reply of the reader's own answers is refused by the model
+        // rather than predicted here --- the refusal names the order to do the
+        // two in, which is more than this side could say.
+        onCommentDelete: (comment) => {
+          const object = comment.object;
+          const page = edits?.map.idOf(comment.page);
+          if (!object || page === undefined) return;
+          void applyEdit((e) => e.discard(object, page));
         },
         // The reply's own icon goes on the parent's rectangle, which is why
         // this callback needs a third thing off the comment where the one above

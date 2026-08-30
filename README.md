@@ -138,6 +138,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
   journalled and undoable, and it is written by adding to the file rather than rewriting
   it. A blank reply is not sent --- opening the box and changing your mind adds nothing.
   <!-- built: edit.replyToComment -->
+- **Delete a comment somebody else left.** The comment goes off the page and its bytes go
+  out of the file --- the words are not left behind unreachable, which is what removing a
+  reference alone would do. It is journalled and undoable like every other edit. Two things
+  follow from what a deletion is: unlike an edit or a reply it cannot be written by adding
+  to the file, so saving after one rewrites the document rather than appending to it; and a
+  comment one of your own replies answers is refused until you delete the reply, because a
+  reply points at its parent by object number and a thread with no parent is a file no
+  reader can show correctly.
+  <!-- built: edit.deleteComment -->
 - **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
   content measures where the ink actually is rather than reading the page's objects, so it
   works on a scan --- where every object union is the whole sheet --- as well as on a page of

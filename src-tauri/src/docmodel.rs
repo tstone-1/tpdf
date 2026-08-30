@@ -1128,6 +1128,34 @@ pub enum Command {
         page: PageId,
         edit: RewriteId,
     },
+    /// Take a comment **out of the file** off the page it is on.
+    ///
+    /// [`Command::Unannotate`]'s counterpart for an annotation the model did not
+    /// make, and it takes [`Command::Rewrite`]'s extra field for that entry's
+    /// reason: the page comes in with the command, because the model has never
+    /// read the file and has no table to look it up in. That is what makes a
+    /// discard die with its page rather than outliving it.
+    ///
+    /// **It issues no body, which is what separates it from every command
+    /// above.** A rewrite says what the comment now reads; this says the comment
+    /// is not there. There is nothing to put in a table, so there is no
+    /// `DiscardId` --- and [`Doc::trim`] has nothing to remove for this variant,
+    /// which is why it is one of the arms listed there rather than left to a
+    /// catch-all.
+    ///
+    /// **A discarded comment may also have been rewritten, and the discard
+    /// wins.** Both are recorded, because undo replays the journal and a
+    /// `Rewrite` that vanished when a later `Discard` arrived could not come
+    /// back; what the writer does with an object in both sets is `save.rs`'s
+    /// decision and is written there.
+    ///
+    /// ⚠ **This cannot be an append**, and that is the whole of what makes it
+    /// bigger than it looks. An incremental save only *adds* objects, so a
+    /// deletion has nothing it can write --- see [`crate::edits::Plan`]'s
+    /// `is_appendable`, which gained a clause for this and would otherwise
+    /// classify *highlight one line and delete one comment* as an append,
+    /// write the highlight, drop the deletion and report success.
+    Discard { object: ObjectId, page: PageId },
     /// Mark a region of a page for removal.
     ///
     /// [`Command::Annotate`]'s counterpart, and journalled the same way: the
@@ -1167,6 +1195,7 @@ impl Command {
             | Command::Insert { page, .. }
             | Command::Annotate { page, .. }
             | Command::Rewrite { page, .. }
+            | Command::Discard { page, .. }
             | Command::Redact { page, .. } => Some(page),
             Command::Unannotate { .. }
             | Command::Renote { .. }
@@ -1286,6 +1315,31 @@ pub enum Refusal {
     /// refuse in that direction. It carries the kind the caller sent, which is
     /// the only thing a diagnostic can usefully name.
     ReplyMismatch(MarkKind),
+    /// A comment out of the file that one of the reader's own replies answers.
+    ///
+    /// **The one refusal deleting a comment needs that no other command in its
+    /// family does**, and it exists because replying to a foreign comment landed
+    /// first. A reply is a [`MarkKind::Note`] carrying `/IRT` --- the object
+    /// number of the comment it answers --- and that object number is the only
+    /// name the file and this model agree on. Take the comment away and the
+    /// reply's `/IRT` points at nothing, which is a malformed thread in every
+    /// reader that draws one.
+    ///
+    /// **Refused rather than taking the reply with it**, which was the other
+    /// option and is worse: a reader who deletes somebody else's comment has not
+    /// asked to lose what they themselves wrote, and a silent second deletion is
+    /// the shape nobody notices until the file is reopened. So the reader is
+    /// told, and removing their reply first is one press.
+    ///
+    /// **And refused here rather than at the save**, which is where the same
+    /// invariant is checked for a reply naming an object the file does not have.
+    /// That check is about the *file* and can only be made when one is being
+    /// written; this one is about two things the model holds, so it can be made
+    /// at the moment the reader asks and answered with something they can act
+    /// on.
+    ///
+    /// It carries the object so a diagnostic can name it.
+    ReplyAnswersIt(ObjectId),
     /// No redaction has ever had this id.
     NoSuchRedaction(RedactionId),
     /// The id names a redaction that was taken back off the page --- including
@@ -1384,6 +1438,23 @@ pub struct Working {
     /// way a rewrite goes is with its page --- where naming it again is refused
     /// by [`Refusal::PageDeleted`], which is the better diagnosis anyway.
     rewrites: BTreeMap<ObjectId, Rewritten>,
+    /// The comments **out of the file** a reader has deleted, and the page each
+    /// was on.
+    ///
+    /// [`Working::rewrites`]' twin and deliberately a second map rather than a
+    /// state inside `Rewritten`: a comment can be rewritten and then discarded,
+    /// so the two are not alternatives, and folding them would make the commoner
+    /// operation carry a field about the rarer one.
+    ///
+    /// The page rides along for `rewrites`' reason exactly --- deleting a page
+    /// takes its discards with it, so a comment on a page that has gone does not
+    /// outlive it and come back if the page is restored by undo carrying a
+    /// deletion nobody re-issued.
+    ///
+    /// A `BTreeMap` rather than a `HashMap` for `rewrites`' reason: the writer
+    /// walks it, and an order that varied per process would make an ordering
+    /// assertion fail about one run in three.
+    discards: BTreeMap<ObjectId, PageId>,
 }
 
 impl Working {
@@ -1416,6 +1487,7 @@ impl Working {
             redactions: HashMap::new(),
             redaction_graves: HashSet::new(),
             rewrites: BTreeMap::new(),
+            discards: BTreeMap::new(),
         }
     }
 
@@ -1610,6 +1682,30 @@ impl Working {
         self.rewrites.get(&object).map(|held| held.edit)
     }
 
+    /// Every foreign comment a reader has deleted, with the page it was on, in
+    /// page order and by object number within a page.
+    ///
+    /// [`all_rewrites`](Self::all_rewrites)'s twin, and both orderings are by
+    /// construction for that entry's reason --- an order that varied per run
+    /// would put deletions into a plan differently each time, so two saves of one
+    /// document would produce different bytes with nothing wrong.
+    pub fn all_discards(&self) -> Vec<(PageId, ObjectId)> {
+        self.order
+            .iter()
+            .flat_map(|page| {
+                self.discards
+                    .iter()
+                    .filter(move |(_, on)| *on == page)
+                    .map(move |(object, _)| (*page, *object))
+            })
+            .collect()
+    }
+
+    /// Whether a reader has deleted this foreign comment.
+    pub fn is_discarded(&self, object: ObjectId) -> bool {
+        self.discards.contains_key(&object)
+    }
+
     /// Refuses unless the id names a live page, naming which of the two it is.
     fn live(&self, id: PageId) -> Result<(), Refusal> {
         if self.pages.contains_key(&id) {
@@ -1686,6 +1782,10 @@ impl Working {
                 // check above. A walk rather than a lookup, since this map is
                 // keyed by the object --- see the field.
                 self.rewrites.retain(|_, held| held.page != page);
+                // The same, for the same reason: a discard names a page it can
+                // outlive, and one that did would tell the writer to delete an
+                // object off a page that is not in the plan.
+                self.discards.retain(|_, on| *on != page);
             }
             Command::Move { page, after } => {
                 self.live(page)?;
@@ -1796,6 +1896,20 @@ impl Working {
                 // whether the file holds it. See [`ObjectId`].
                 self.live(page)?;
                 self.rewrites.insert(object, Rewritten { page, edit });
+            }
+            Command::Discard { object, page } => {
+                // The page, and nothing about the object, for the reason the
+                // arm above gives: this layer has never read the file and
+                // cannot ask whether it holds the object. The writer can, and
+                // refuses one it cannot find.
+                self.live(page)?;
+                // **The rewrite is left in place.** A comment can be edited and
+                // then deleted, and taking the edit out here would mean an undo
+                // of the deletion brought the comment back reading whatever the
+                // *file* said rather than what the reader had typed. Both are
+                // recorded; the writer decides what an object in both sets gets,
+                // and `save.rs` is where that is written down.
+                self.discards.insert(object, page);
             }
             Command::Redact { redaction, page } => {
                 self.live(page)?;
@@ -2281,6 +2395,61 @@ impl Doc {
         self.apply(Command::Rewrite { object, page, edit })
     }
 
+    /// Whether any live mark is a reply to this foreign comment.
+    ///
+    /// **Over the live marks rather than over every mark ever made**, which is
+    /// what [`Working::all_marks`] gives: a reply the reader removed is not a
+    /// reply any more, and refusing a deletion because of one would tell them to
+    /// remove something that is already gone.
+    ///
+    /// Linear in the live marks, which is the same cost `all_marks` already
+    /// pays and is asked once per deletion --- an operation a reader performs by
+    /// hand, one comment at a time.
+    fn answered_by_a_reply(&self, object: ObjectId) -> bool {
+        self.now
+            .all_marks()
+            .into_iter()
+            .filter_map(|(_, id)| self.mark(id))
+            .any(|mark| mark.reply_to == Some(object))
+    }
+
+    /// Takes a comment out of the file off the page it is on.
+    ///
+    /// [`rewrite`](Self::rewrite)'s counterpart and it takes that entry's page
+    /// argument for the same reason: this model has never read the file, so the
+    /// page is the only thing about the comment it can check and the only thing
+    /// that lets a page deletion take the discard with it.
+    ///
+    /// **Nothing here asks whether the object is an annotation or is there at
+    /// all**, which is `rewrite`'s note word for word: those are the writer's
+    /// refusals, and they are refusals about the *file* --- the case a reader can
+    /// act on, because it means the document changed under them.
+    ///
+    /// **Discarding a comment already discarded is still a command**, which is
+    /// [`renote`](Self::renote)'s decision applied to a removal: whether a reader
+    /// *meant* a no-op is a question about a gesture, and the layer holding the
+    /// gesture drops it. The frontend does, by not offering Remove on a row that
+    /// is already gone.
+    ///
+    /// # Errors
+    ///
+    /// The page does not exist, or was deleted.
+    pub fn discard(&mut self, object: ObjectId, page: PageId) -> Result<(), Refusal> {
+        // The page before anything else, for `rewrite`'s reason --- though there
+        // is no body to spend here, which is what makes this the cheapest
+        // command in the file.
+        self.now.live(page)?;
+        // **Before the command, and it is the reason this method is not two
+        // lines.** A reply the reader wrote carries this object in `/IRT`, and
+        // an `/IRT` naming an object the file no longer has is a malformed
+        // thread. See [`Refusal::ReplyAnswersIt`] for why it is refused rather
+        // than taking the reply along.
+        if self.answered_by_a_reply(object) {
+            return Err(Refusal::ReplyAnswersIt(object));
+        }
+        self.apply(Command::Discard { object, page })
+    }
+
     /// Replaces what a drawing is made of --- the eraser's one command.
     ///
     /// **Refuses an empty result rather than removing the mark**, because a mark
@@ -2613,6 +2782,11 @@ impl Doc {
                 // variant.
                 | Command::Insert { .. }
                 | Command::Unannotate { .. }
+                // With the removals rather than with the six above, and the
+                // object number is why it looks like it belongs there: it names
+                // something the *file* numbered, so there is no table of ours
+                // keyed by it and a discarded `Discard` leaves nothing behind.
+                | Command::Discard { .. }
                 | Command::Unredact { .. } => {}
             }
         }
@@ -4838,6 +5012,155 @@ mod tests {
             doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
             Some("on the first")
         );
+    }
+
+    /// Deleting a foreign comment is undone by replaying without it.
+    ///
+    /// [`Command::Rewrite`]'s twin and the same property: the journal replays
+    /// rather than inverts, so undo is the model rebuilt without this command
+    /// and the comment comes back because nothing ever removed it from the file.
+    #[test]
+    fn discarding_a_foreign_comment_is_undone_by_replaying_without_it() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        doc.discard(object(7), page).expect("discard");
+        assert!(doc.working().is_discarded(object(7)));
+
+        assert!(doc.undo());
+        assert!(
+            !doc.working().is_discarded(object(7)),
+            "undo left the comment deleted"
+        );
+        assert!(doc.redo());
+        assert!(doc.working().is_discarded(object(7)));
+    }
+
+    /// Deleting a page takes the discards on it, and leaves the others.
+    ///
+    /// [`Command::Rewrite`]'s page argument exists for this and so does this
+    /// one's: without it the model would hand a save a deletion for a comment the
+    /// file being written does not contain. The two-page fixture is what makes
+    /// the assertion say that rather than "the map was emptied".
+    #[test]
+    fn deleting_a_page_takes_the_discards_on_it_and_no_others() {
+        let mut doc = Doc::open(2);
+        let [first, second] = [0, 1].map(|i| doc.working().order()[i]);
+        doc.discard(object(7), first).expect("discard");
+        doc.discard(object(9), second).expect("discard");
+
+        doc.apply(Command::Delete { page: first }).expect("delete");
+        assert!(!doc.working().is_discarded(object(7)));
+        assert!(
+            doc.working().is_discarded(object(9)),
+            "the other page's discard went with it"
+        );
+
+        assert!(doc.undo());
+        assert!(
+            doc.working().is_discarded(object(7)),
+            "undo brings page and discard back together"
+        );
+    }
+
+    /// A comment can be rewritten and then deleted, and both are recorded.
+    ///
+    /// The reason `discards` is a second map rather than a state inside
+    /// `Rewritten`. Undoing the deletion has to leave the comment reading what
+    /// the reader typed, not what the file said --- and it can only do that if
+    /// the rewrite was still there while the deletion stood.
+    #[test]
+    fn a_comment_can_be_rewritten_and_then_discarded_and_undo_keeps_the_edit() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        doc.rewrite(object(7), page, "mine".into(), "D:2026".into())
+            .expect("rewrite");
+        doc.discard(object(7), page).expect("discard");
+
+        assert!(doc.working().is_discarded(object(7)));
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("mine"),
+            "the edit was thrown away when the comment was deleted"
+        );
+
+        assert!(doc.undo());
+        assert!(!doc.working().is_discarded(object(7)));
+        assert_eq!(
+            doc.rewrite_of(object(7)).map(|edit| edit.body.as_str()),
+            Some("mine"),
+            "undoing the deletion brought back the file's text, not the reader's"
+        );
+    }
+
+    /// A comment one of the reader's own replies answers cannot be deleted.
+    ///
+    /// **The one refusal this command needs that no other in its family does**,
+    /// and it exists because replying landed first: `/IRT` names the comment by
+    /// object, so taking the comment away leaves the reply pointing at nothing.
+    ///
+    /// The control is the whole of it. Without a comment that *is* deletable in
+    /// the same document, every assertion here is satisfied by a method that
+    /// refuses everything --- and the two objects differ in exactly one thing,
+    /// which is whether a reply names them.
+    #[test]
+    fn a_comment_a_reply_answers_cannot_be_discarded() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        doc.annotate(
+            Mark {
+                kind: MarkKind::Note,
+                reply_to: Some(object(7)),
+                ..mark_on(page)
+            },
+            "answering".into(),
+        )
+        .expect("a reply");
+
+        assert_eq!(
+            doc.discard(object(7), page),
+            Err(Refusal::ReplyAnswersIt(object(7)))
+        );
+        assert!(
+            !doc.working().is_discarded(object(7)),
+            "a refusal changed the model"
+        );
+
+        // The control: the same document, the same page, an object no reply
+        // names.
+        doc.discard(object(9), page).expect("nothing answers 9");
+        assert!(doc.working().is_discarded(object(9)));
+    }
+
+    /// Removing the reply makes the comment deletable again.
+    ///
+    /// The refusal's own advice, executed: it tells a reader to delete their
+    /// reply first, and a refusal that stayed after they did would be telling
+    /// them to do something that does not work. **Over the live marks, which is
+    /// what makes this pass** --- a scan over every mark ever made would still
+    /// find the removed reply and refuse for ever.
+    #[test]
+    fn removing_the_reply_makes_the_comment_deletable_again() {
+        let mut doc = Doc::open(2);
+        let page = doc.working().order()[0];
+        let reply = doc
+            .annotate(
+                Mark {
+                    kind: MarkKind::Note,
+                    reply_to: Some(object(7)),
+                    ..mark_on(page)
+                },
+                "answering".into(),
+            )
+            .expect("a reply");
+        assert!(
+            doc.discard(object(7), page).is_err(),
+            "refused while it is there"
+        );
+
+        doc.apply(Command::Unannotate { mark: reply })
+            .expect("remove the reply");
+        doc.discard(object(7), page).expect("deletable now");
+        assert!(doc.working().is_discarded(object(7)));
     }
 
     /// A rewrite on a page that is gone says which of the two it is, and spends

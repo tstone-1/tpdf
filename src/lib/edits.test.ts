@@ -42,6 +42,7 @@ function state(
     marks,
     redactions: [],
     notes: [],
+    discards: [],
     can_undo: Object.keys(turns).length > 0,
     can_redo: false,
     dirty: Object.keys(turns).length > 0,

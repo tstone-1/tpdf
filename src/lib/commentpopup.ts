@@ -80,6 +80,21 @@ export interface CommentPopupOptions {
    * wrong value silently edits somebody else's comment instead of answering it.
    */
   onReply: (comment: Comment, body: string) => void;
+  /**
+   * The reader deleted the comment on show.
+   *
+   * The whole comment for {@link CommentPopupOptions.onRewrite}'s reason: the
+   * consumer needs the object and the page, and reading them back out of a
+   * popup that has already closed is not possible.
+   *
+   * **Optional where the two above are required**, and that is a decision about
+   * what a viewer with no model behind it should do. Editing and replying have
+   * been wired since they shipped; deleting is newer, and the window harness
+   * builds a popup to read what it draws rather than to change a document. A
+   * required callback would make every such caller supply a no-op that says
+   * nothing.
+   */
+  onDiscard?: (comment: Comment) => void;
 }
 
 /** The note shown for one comment, with its replies under it. */
@@ -215,6 +230,43 @@ export class CommentPopup {
    */
   get replyable(): boolean {
     return this.shown !== null && this.subject?.object != null;
+  }
+
+  /**
+   * Whether the comment on show can be deleted.
+   *
+   * {@link CommentPopup.editable}'s two conditions once more, and a getter of
+   * its own for that entry's reason --- the three commands ask three questions
+   * and only happen to agree today.
+   *
+   * **It does not ask whether a reply answers the comment**, which is the one
+   * refusal deleting has that the other two do not. That is the model's
+   * knowledge, not the popup's: the popup is handed the replies it draws and
+   * has no way to tell one the reader wrote from one the file came with. The
+   * model refuses and says which order to do the two in, which is what a reader
+   * can act on.
+   */
+  get deletable(): boolean {
+    return this.shown !== null && this.subject?.object != null;
+  }
+
+  /**
+   * Sends the comment on show to be deleted, and closes the popup.
+   *
+   * **Closed here rather than left to the state reply**, and the difference is
+   * a frame: the reply rebuilds the panel from a list this comment is no longer
+   * in, so the popup would be showing a comment nothing else knows about until
+   * it arrived. Hiding first makes the deletion look like what it is.
+   *
+   * Does nothing for a comment that cannot be deleted, which is
+   * {@link CommentPopup.edit}'s shape.
+   */
+  remove(): void {
+    if (!this.deletable) return;
+    const comment = this.subject;
+    if (!comment) return;
+    this.hide();
+    this.opts.onDiscard?.(comment);
   }
 
   /**

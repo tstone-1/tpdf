@@ -178,6 +178,14 @@ export interface RedactionView {
  * in one scan and moves whenever an earlier comment is inserted. A comment whose
  * `object` is `null` cannot be edited at all --- see `Comment.object`.
  */
+export interface Discarded {
+  /** The annotation object, as `[number, generation]`. */
+  object: [number, number];
+  /** The page it was on, by {@link PageView.id} --- never a slot. */
+  page: PageId;
+}
+
+/** One comment out of the file the reader has rewritten. */
 export interface NoteEdited {
   /** The annotation object, as `[number, generation]`. */
   object: [number, number];
@@ -645,11 +653,36 @@ export function commentsIn(
   items: readonly Comment[],
   pages: PageMap,
   notes: readonly NoteEdited[] = [],
+  discards: readonly Discarded[] = [],
 ): Comment[] {
   const mapped: Comment[] = [];
   for (const comment of items) {
     const slot = pages.slotOf(comment.page);
     if (slot === undefined) continue;
+    // **Dropped rather than crossed out**, which is the same thing deleting a
+    // mark does and is what makes the popup and the panel need no third state.
+    // The scan is a reading of the file on disk and cannot know about a
+    // deletion, so this join is the only place a deleted comment can stop being
+    // listed --- and undo puts it back by taking it out of this list.
+    //
+    // **One mechanism, and the first draft had two.** It was written as
+    // `comment.object && discards.some(...)` with the optional chaining below
+    // as well --- and a comment with no object of its own was then excluded
+    // twice over, by the outer guard and by `undefined` matching no object
+    // number. Two mutations were written for that rule and *both* survived, for
+    // two different reasons: deleting the outer guard changed nothing because
+    // the chaining already refused, and making the chaining a wildcard changed
+    // nothing because the outer guard refused first. Either alone is sufficient,
+    // which is what makes each one untestable while the other stands.
+    if (
+      discards.some(
+        (gone) =>
+          gone.object[0] === comment.object?.[0] &&
+          gone.object[1] === comment.object?.[1],
+      )
+    ) {
+      continue;
+    }
     const edit = comment.object
       ? notes.find(
           (note) =>
