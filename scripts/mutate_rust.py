@@ -6994,5 +6994,78 @@ MUTATIONS += [
     ),
 ]
 
+# --- The importer taking a selection (2026-08-30) ---------------------------
+#
+# `merge::import` is the piece `docs/PLAN.md` names as carrying over into
+# inserting pages from another file. What is new here is the *selection*: the
+# whole-document path is `append`, unchanged, and its own tests are the control
+# for it. So every mutation below is aimed at a clause that exists only because
+# a caller may ask for some of a document rather than all of it.
+#
+# One clause deliberately has no mutation, and it is worth saying which rather
+# than leaving a gap: the `!detached.contains_key(id)` filter that builds
+# `left`. A page being taken is in `seen` and in the queue before the walk
+# starts, so putting it in the barrier as well changes nothing any test could
+# observe --- the filter is there so the set means what its name says, not so
+# the walk behaves differently. `docs/TRAPS.md` records an unreachable guard as
+# worth keeping and not worth a mutation.
+MUTATIONS += [
+    Mutation(
+        # Detach every page rather than the ones asked for. `detached` is what
+        # seeds the walk, so all three pages come across as objects while the
+        # answer still names only the one the caller wanted --- a file reporting
+        # one page and carrying the text of two others, which is the leak
+        # `docs/TRAPS.md` records a shipped extract having.
+        "merge: import every page rather than the ones asked for",
+        "src/merge.rs",
+        "    for &page in &taking {",
+        "    for &page in &pages {",
+        "only_the_pages_asked_for_come_across",
+    ),
+    Mutation(
+        # Take the wall away. A `/Dest` from a page somebody asked for to a page
+        # they did not then imports that page, its resources and its content
+        # stream --- the same leak as above, arriving by reference rather than
+        # through the seed list, which is why it needs its own mutation.
+        "merge: follow a reference into a page nobody asked for",
+        "src/merge.rs",
+        "            if left.contains(&id) {\n                continue;\n            }\n",
+        "",
+        "a_page_left_behind_is_not_followed_into",
+    ),
+    Mutation(
+        # Answer in the document's own page order. Every other assertion in the
+        # module passes --- the ids are right, the count is right, nothing leaks
+        # --- and a caller placing them puts page 3 where it asked for page 1.
+        "merge: answer in the document's order rather than the order asked for",
+        "src/merge.rs",
+        "    taking\n        .iter()\n        .map(|&id| shifted_id(id, by))",
+        "    pages\n        .iter()\n        .filter(|id| taking.contains(id))\n        .map(|&id| shifted_id(id, by))",
+        "the_answer_is_in_the_order_asked_for",
+    ),
+    Mutation(
+        # Serve a page asked for twice. Two positions then hold one page object,
+        # which is the hazard `save::mark_sites` refuses a mark on and
+        # `pagetree` refuses a deletion of --- reached here by building such a
+        # document rather than by finding one.
+        "merge: let one page be asked for twice",
+        "src/merge.rs",
+        "        if taking.contains(&id) {\n            return Err(format!(\"page {} was asked for twice\", at + 1));\n        }\n",
+        "",
+        "the_same_page_asked_for_twice_is_refused",
+    ),
+    Mutation(
+        # Take the first page for a position the document does not have. The
+        # import succeeds, the answer is the right length, and it names a page
+        # nobody asked for.
+        "merge: fall back to the first page for a position that is not there",
+        "src/merge.rs",
+        "        let id = *pages.get(at).ok_or_else(|| {",
+        "        let id = *pages.get(at).or(pages.first()).ok_or_else(|| {",
+        "a_position_the_document_does_not_have_is_refused",
+    ),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())

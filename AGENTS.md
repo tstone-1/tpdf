@@ -843,6 +843,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An incremental save is cheap on disk, not in memory --- and its cost is the parse
 - An object a prior revision overwrote is reachable by no parser
 - A signature blob is trimmed by trailing zero, and BER ends in zeros (1 in 256 DER blobs loses its last byte; a real CAdES signature loses its terminators, and `der` refuses indefinite length anyway --- closed 2026-08-21, and both halves went together because where a blob ends and what length form it uses are one question)
+- Asking for fewer pages made the walk reach more, because the bound was a property of taking all of them (orphaning every incoming page is what stops the walk climbing out; seed a subset and one `/Dest` to a page you left behind reaches its REAL dictionary, its `/Parent`, the tree node and every other page --- 10 objects against 5 on a three-page fixture, and `append`'s tests pass identically because it passes an empty barrier. Plus the coda: the clause excluding the taken pages from that barrier is unfalsifiable, kept for its name, and deliberately has no mutation)
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
 - A shortcut can produce the right answer and lose the report
 - An empty answer from a whole-document scan cannot say whether it looked

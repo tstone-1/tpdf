@@ -1,11 +1,19 @@
 //! Bringing another document's pages into this one.
 //!
-//! One operation: take every page of a second [`Document`] and add it to the end
-//! of the first, so that the result renders both. It is what *Merge documents*
-//! is made of, and it is the piece nothing else here does --- every write path
-//! before it produces a subset or a permutation of **one** file's pages, so
-//! `save.rs`'s whole vocabulary is positions into a single object graph and
-//! `pagetree.rs`'s is surgery within one tree.
+//! Two operations, and the second is the general one. [`import`] takes the pages
+//! of a second [`Document`] that a caller names and adds them to the first as
+//! objects, answering where each one landed; [`append`] asks for all of them and
+//! hangs the answer off the page tree, which is what *Merge documents* is made
+//! of. It is the piece nothing else here does --- every write path before it
+//! produces a subset or a permutation of **one** file's pages, so `save.rs`'s
+//! whole vocabulary is positions into a single object graph and `pagetree.rs`'s
+//! is surgery within one tree.
+//!
+//! **The selection is what inserting pages from another file needs**, and it is
+//! built here, under merge, for the reason `docs/PLAN.md` gives for building the
+//! blank page before the imported one: an increment carrying a model change, a
+//! second worker pool, undo identity and a graph import at once says very little
+//! about which of the four is wrong.
 //!
 //! Three things make it more than a copy of a `BTreeMap`, and each is a way the
 //! obvious version is silently wrong rather than a way it fails.
@@ -29,6 +37,15 @@
 //! definition, for any page of it. The walk here starts from page dictionaries
 //! whose `/Parent` has already been removed, which is what bounds it: the only
 //! way out of an orphaned page is downward.
+//!
+//! ⚠ **That bound was free while every page came across, and it is a rule the
+//! moment some of them do not.** A `/Dest` or a `/Link` from a page you asked
+//! for to a page you did not reaches that page *with its `/Parent` still on
+//! it*, and the walk then climbs out through the tree node into the rest of the
+//! file --- so asking for fewer pages makes the walk reach more. [`import`]
+//! states it as `left`, the pages staying behind, which the walk steps over
+//! rather than into. `append` passes an empty one, which is why its own tests
+//! are the control for everything here and say nothing at all about this.
 //!
 //! ## What is left behind, and why it is not a defect to be fixed later
 //!
@@ -89,18 +106,108 @@ pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
         .and_then(Object::as_reference)
         .map_err(|e| format!("no page tree: {e}"))?;
 
+    // Asked here rather than left to [`import`], which asks the same question,
+    // so that a document with nothing in it is refused in those words. `import`
+    // would answer "no pages were asked for" for the empty range this builds,
+    // which is true and describes the caller rather than the file.
     let pages = pagetree::ordered_pages(from);
     if pages.is_empty() {
         return Err("it has no pages".into());
     }
 
-    // Every page, orphaned, before anything is walked or written. `detached` is
-    // what the walk below reads instead of `from.objects` for these ids, and
-    // that substitution *is* the bound on the walk --- see the module note.
+    let want: Vec<usize> = (0..pages.len()).collect();
+    let kids = import(into, from, &want)?;
+    graft(into, root, &kids)?;
+    Ok(kids.len())
+}
+
+/// Brings the named pages of `from` into `into`, and says where they landed.
+///
+/// `want` is positions in `from`'s own page order, zero-based; the answer is the
+/// object id each one has in `into`, in the order asked for. `from` is not
+/// touched, and neither is anything the destination already held --- object
+/// numbers, order, inheritance --- which is what makes this safe to run against
+/// bytes some other part of the write path has produced.
+///
+/// **Nothing is put into the page tree.** The pages are objects of `into` and
+/// are not in any `/Kids`, so a document is not readable until the caller places
+/// them: [`append`] grafts them onto the root, and `save.rs`'s rewrite hands the
+/// ids to `pagetree::materialise`, which is the only step that decides an order.
+/// `/Parent` is written to the destination's root here even so --- not as a
+/// placement, but because the alternative is an imported page pointing up into
+/// a document it is no longer part of, and a tree rebuild overwrites it anyway.
+///
+/// **A page you did not ask for is a wall, not a door.** The walk that decides
+/// what an incoming page needs cannot enter a page left behind, so a `/Dest` or
+/// a `/Link` naming one is shifted with everything else and left dangling. That
+/// is the module's existing position --- a destination reached by name does not
+/// survive a merge --- arriving for a page reached by *reference*, and it is the
+/// only shape available: importing the page would bring content the caller did
+/// not ask for, which is the leak `docs/TRAPS.md` records under a shipped
+/// extract carrying all eight pages' streams.
+///
+/// # Errors
+///
+/// `into` has no catalog or no page tree; `from` has no pages; `want` is empty,
+/// names a position `from` does not have, or names one twice; an object nests
+/// deeper than [`sweep::MAX_NESTING`]; or an object number would overflow.
+pub fn import(
+    into: &mut Document,
+    from: &Document,
+    want: &[usize],
+) -> Result<Vec<ObjectId>, String> {
+    let root = into
+        .catalog()
+        .map_err(|e| format!("no document catalog: {e}"))?
+        .get(b"Pages")
+        .and_then(Object::as_reference)
+        .map_err(|e| format!("no page tree: {e}"))?;
+
+    let pages = pagetree::ordered_pages(from);
+    if pages.is_empty() {
+        return Err("it has no pages".into());
+    }
+    if want.is_empty() {
+        return Err("no pages were asked for".into());
+    }
+
+    // The pages asked for, in the order asked for, before anything is walked.
+    //
+    // **A repeat is refused rather than served.** Two positions holding one page
+    // *object* is the hazard `save.rs` refuses a mark on and `pagetree.rs`
+    // refuses a deletion of --- a change to either position shows up at both.
+    // Lifting this means copying the objects, which is a different operation
+    // from importing them, so it is refused here rather than half-done.
+    let mut taking: Vec<ObjectId> = Vec::with_capacity(want.len());
+    for &at in want {
+        let id = *pages.get(at).ok_or_else(|| {
+            format!(
+                "it has {} pages, so there is no page {}",
+                pages.len(),
+                at + 1
+            )
+        })?;
+        if taking.contains(&id) {
+            return Err(format!("page {} was asked for twice", at + 1));
+        }
+        taking.push(id);
+    }
+
+    // Orphaned before anything is walked or written. `detached` is what the walk
+    // below reads instead of `from.objects` for these ids, and that substitution
+    // *is* the bound on the walk --- see the module note.
     let mut detached: BTreeMap<ObjectId, Dictionary> = BTreeMap::new();
-    for &page in &pages {
+    for &page in &taking {
         detached.insert(page, pagetree::detached_page(from, page)?);
     }
+
+    // Every page of `from` that is staying behind. The walk stops at these; see
+    // the note above about a wall.
+    let left: HashSet<ObjectId> = pages
+        .iter()
+        .copied()
+        .filter(|id| !detached.contains_key(id))
+        .collect();
 
     // Read off the objects rather than taken from `max_id`, and the two can
     // differ: `lopdf` sets `max_id` from the cross-reference table's `/Size`,
@@ -112,7 +219,7 @@ pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
     // Sorted, so that a document with two objects that both refuse produces the
     // same message twice running. A `HashSet`'s order is not a fact about the
     // input, and a failure that moves is one nobody can reproduce.
-    let mut needed: Vec<ObjectId> = needed(from, &detached)?.into_iter().collect();
+    let mut needed: Vec<ObjectId> = needed(from, &detached, &left)?.into_iter().collect();
     needed.sort_unstable();
 
     for id in needed {
@@ -139,12 +246,10 @@ pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
 
     into.max_id = highest(into);
 
-    let kids: Vec<ObjectId> = pages
+    taking
         .iter()
         .map(|&id| shifted_id(id, by))
-        .collect::<Result<_, _>>()?;
-    graft(into, root, &kids)?;
-    Ok(pages.len())
+        .collect::<Result<_, _>>()
 }
 
 /// The highest object number `doc` holds, or claims to.
@@ -163,12 +268,21 @@ fn highest(doc: &Document) -> u32 {
 
 /// Every object of `from` that the detached pages reach.
 ///
-/// [`sweep::reachable`]'s shape, with one substitution that changes what it
-/// means: an id in `detached` is walked as the **orphaned** dictionary rather
+/// [`sweep::reachable`]'s shape, with two substitutions that change what it
+/// means. An id in `detached` is walked as the **orphaned** dictionary rather
 /// than as the one in the document, so the `/Parent` that would lead up out of
-/// the page is not there to follow. Every page is a seed, so a `/Dest` naming
-/// another page of the same file finds it --- and finds the orphan, so it
+/// the page is not there to follow; every page taken is a seed, so a `/Dest`
+/// naming another page that was taken finds it --- and finds the orphan, so it
 /// cannot escape that way either.
+///
+/// `left` is every page of `from` that is **not** being taken, and the walk
+/// steps over one rather than into it. Without that, one `/Dest` from a page
+/// somebody asked for to a page they did not would import that page as an
+/// object, with its resources and its content stream behind it: a file
+/// reporting the pages that were asked for while carrying the text of one that
+/// was not. When [`append`] takes the whole document `left` is empty and this
+/// is the walk it always was, which is what makes the existing merge tests the
+/// control for it.
 ///
 /// # Errors
 ///
@@ -177,6 +291,7 @@ fn highest(doc: &Document) -> u32 {
 fn needed(
     from: &Document,
     detached: &BTreeMap<ObjectId, Dictionary>,
+    left: &HashSet<ObjectId>,
 ) -> Result<HashSet<ObjectId>, String> {
     let mut seen: HashSet<ObjectId> = detached.keys().copied().collect();
     let mut queue: Vec<ObjectId> = seen.iter().copied().collect();
@@ -198,6 +313,11 @@ fn needed(
             },
         }
         for id in referenced {
+            // Before `seen`, so that a page left behind is never added to the
+            // answer at all --- it is not merely un-walked, it is not imported.
+            if left.contains(&id) {
+                continue;
+            }
             if seen.insert(id) {
                 queue.push(id);
             }
@@ -313,9 +433,9 @@ fn graft(into: &mut Document, root: ObjectId, kids: &[ObjectId]) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{append, highest, needed, shifted, shifted_id};
+    use super::{append, highest, import, needed, shifted, shifted_id};
     use lopdf::{dictionary, Document, Object, Stream};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
 
     /// A one-page document whose page states everything itself.
     ///
@@ -346,6 +466,95 @@ mod tests {
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
         doc.trailer.set("Root", catalog);
         doc
+    }
+
+    /// A three-page document whose first page links to its **third**.
+    ///
+    /// The discriminating fixture for a selection, and it needs all three pages
+    /// to be one: page 2 is the page nobody asks for and nothing points at, so
+    /// its absence says the walk took only what was seeded; page 3 is the page
+    /// nobody asks for and page 1 *does* point at, so its absence says the walk
+    /// stopped at a page rather than stepping through it. A two-page fixture
+    /// collapses those into one subject and either rule alone would pass.
+    ///
+    /// Each page carries its own content stream, and the text is what the
+    /// assertions look for --- an object id would be a fact about this
+    /// document's numbering, which is exactly what an import changes.
+    fn linked() -> Document {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+
+        let mut pages = Vec::new();
+        for text in ["one", "two", "three"] {
+            let content = doc.add_object(Stream::new(dictionary! {}, text.as_bytes().to_vec()));
+            pages.push(doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content,
+                "Resources" => resources,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            }));
+        }
+
+        // First page to last, by reference: the door the walk is allowed to
+        // open, leading somewhere it is not allowed to go.
+        let link = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Link",
+            "Rect" => vec![0.into(), 0.into(), 10.into(), 10.into()],
+            "Dest" => vec![pages[2].into(), "Fit".into()],
+        });
+        doc.get_object_mut(pages[0])
+            .and_then(Object::as_dict_mut)
+            .expect("the first page")
+            .set("Annots", vec![link.into()]);
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => pages.iter().map(|&id| id.into()).collect::<Vec<Object>>(),
+                "Count" => 3,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        doc
+    }
+
+    /// The bytes of every stream in `doc`, which is what a page's text is.
+    ///
+    /// The instrument for "did this page's content come across", and it reads
+    /// the **objects** rather than the page tree on purpose: a leaked stream is
+    /// one no page names, so anything that walked the tree to find it would be
+    /// unable to see the defect it exists to catch. `docs/TRAPS.md` records that
+    /// exact shape under an extract that reported one page and carried eight.
+    fn streams(doc: &Document) -> Vec<Vec<u8>> {
+        doc.objects
+            .values()
+            .filter_map(|object| object.as_stream().ok())
+            .map(|stream| stream.content.clone())
+            .collect()
+    }
+
+    /// What the page at `id` draws, read through its `/Contents`.
+    fn text_of(doc: &Document, id: lopdf::ObjectId) -> Vec<u8> {
+        let contents = doc
+            .get_object(id)
+            .and_then(Object::as_dict)
+            .expect("an imported page")
+            .get(b"Contents")
+            .and_then(Object::as_reference)
+            .expect("its contents");
+        doc.get_object(contents)
+            .and_then(Object::as_stream)
+            .expect("the stream")
+            .content
+            .clone()
     }
 
     /// A one-page document whose page inherits its box and resources.
@@ -593,7 +802,7 @@ mod tests {
                 crate::pagetree::detached_page(&from, page).expect("detach"),
             );
         }
-        let reached = needed(&from, &detached).expect("walk");
+        let reached = needed(&from, &detached, &HashSet::new()).expect("walk");
         let catalog = from
             .trailer
             .get(b"Root")
@@ -634,5 +843,239 @@ mod tests {
             "nothing was overwritten on the way in"
         );
         assert_eq!(into.get_pages().len(), 2);
+    }
+
+    #[test]
+    fn only_the_pages_asked_for_come_across() {
+        let mut into = flat("first");
+        let from = linked();
+
+        let ids = import(&mut into, &from, &[1]).expect("the import");
+        assert_eq!(ids.len(), 1, "one page was asked for");
+        assert_eq!(text_of(&into, ids[0]), b"two".to_vec());
+
+        // The assertion that matters, and it is about the objects rather than
+        // about the pages: a page nobody asked for arrives as a stream no page
+        // names, which reads as a correct one-page file and carries the text of
+        // two others.
+        let carried = streams(&into);
+        assert!(
+            carried.contains(&b"two".to_vec()),
+            "the page asked for is here"
+        );
+        assert!(
+            !carried.contains(&b"one".to_vec()),
+            "the page before it is not, in any object"
+        );
+        assert!(
+            !carried.contains(&b"three".to_vec()),
+            "nor the page after it"
+        );
+        assert!(
+            carried.contains(&b"first".to_vec()),
+            "and the destination still has its own"
+        );
+    }
+
+    #[test]
+    fn the_answer_is_in_the_order_asked_for() {
+        // Reversed, which is the only order this can be wrong in and still be a
+        // permutation of the right ids --- an answer built from the document's
+        // own page order rather than from `want` passes every other assertion
+        // in this module.
+        let mut into = flat("first");
+        let from = linked();
+
+        let ids = import(&mut into, &from, &[2, 0]).expect("the import");
+        assert_eq!(ids.len(), 2);
+        assert_eq!(text_of(&into, ids[0]), b"three".to_vec());
+        assert_eq!(text_of(&into, ids[1]), b"one".to_vec());
+    }
+
+    #[test]
+    fn a_page_left_behind_is_not_followed_into() {
+        // Page 1 links to page 3. Taking page 1 alone must bring the annotation
+        // --- it is part of the page --- and must not bring the page it names.
+        let mut into = flat("first");
+        let from = linked();
+
+        let ids = import(&mut into, &from, &[0]).expect("the import");
+
+        let annots = into
+            .get_object(ids[0])
+            .and_then(Object::as_dict)
+            .expect("the imported page")
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("its annotations")
+            .clone();
+        assert_eq!(annots.len(), 1, "the link came with the page");
+        let link = annots[0].as_reference().expect("a reference");
+        let dest = into
+            .get_object(link)
+            .and_then(Object::as_dict)
+            .expect("the link itself, so the walk did descend")
+            .get(b"Dest")
+            .and_then(Object::as_array)
+            .expect("its destination")
+            .clone();
+
+        // The wall: the destination still names a page, and that page is not in
+        // this document. Dangling rather than repaired --- see `import`.
+        let named = dest[0].as_reference().expect("a page reference");
+        assert!(
+            into.get_object(named).is_err(),
+            "the page it names did not come across"
+        );
+        assert!(
+            !streams(&into).contains(&b"three".to_vec()),
+            "and neither did its content stream"
+        );
+    }
+
+    #[test]
+    fn without_the_wall_one_page_reaches_the_whole_file() {
+        // The measurement the barrier exists for, kept as an assertion because
+        // the sentence in the module note --- asking for fewer pages makes the
+        // walk reach more --- is the kind of claim that reads as plausible and
+        // is worth a number. The walk is run with an empty `left`, which is
+        // exactly what `append` passes, on a seed set of ONE page.
+        let from = linked();
+        let pages = crate::pagetree::ordered_pages(&from);
+        let mut detached = BTreeMap::new();
+        detached.insert(
+            pages[0],
+            crate::pagetree::detached_page(&from, pages[0]).expect("detach"),
+        );
+
+        let unwalled = needed(&from, &detached, &HashSet::new()).expect("walk");
+        assert!(
+            unwalled.contains(&pages[2]),
+            "the page it links to comes across, which is the door"
+        );
+        assert!(
+            unwalled.contains(&pages[1]),
+            "and so does the page nothing points at, because the walk climbed \
+             out through the tree node above the one it reached"
+        );
+
+        // With the wall, the same seed reaches neither.
+        let left: HashSet<lopdf::ObjectId> = pages[1..].iter().copied().collect();
+        let walled = needed(&from, &detached, &left).expect("walk");
+        assert!(!walled.contains(&pages[1]));
+        assert!(!walled.contains(&pages[2]));
+        assert!(
+            walled.len() < unwalled.len(),
+            "and it is strictly smaller: {} against {}",
+            walled.len(),
+            unwalled.len()
+        );
+    }
+
+    #[test]
+    fn a_destination_naming_a_page_you_did_take_still_resolves() {
+        // The other side of the wall, and without it the barrier is decoration:
+        // a rule that stops at *every* page passes
+        // `a_page_left_behind_is_not_followed_into` exactly as the right one
+        // does, and quietly breaks the intra-document link the module note
+        // promises survives a merge.
+        let mut into = flat("first");
+        let from = linked();
+
+        let ids = import(&mut into, &from, &[0, 2]).expect("the import");
+        let link = into
+            .get_object(ids[0])
+            .and_then(Object::as_dict)
+            .expect("the first page")
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("its annotations")[0]
+            .as_reference()
+            .expect("a reference");
+        let named = into
+            .get_object(link)
+            .and_then(Object::as_dict)
+            .expect("the link")
+            .get(b"Dest")
+            .and_then(Object::as_array)
+            .expect("its destination")[0]
+            .as_reference()
+            .expect("a page reference");
+
+        assert_eq!(
+            named, ids[1],
+            "the destination names the page that came with it, at its new number"
+        );
+        assert_eq!(text_of(&into, named), b"three".to_vec());
+    }
+
+    #[test]
+    fn an_imported_page_is_in_no_kids_until_someone_places_it() {
+        // The control for the sentence in `import`'s doc comment, and the
+        // counterpart of `an_incoming_page_hangs_off_the_destinations_root`,
+        // which asserts the opposite for `append`. Without one of the two,
+        // grafting and not grafting are indistinguishable.
+        let mut into = flat("first");
+        let from = linked();
+
+        let ids = import(&mut into, &from, &[1]).expect("the import");
+        assert_eq!(
+            into.get_pages().len(),
+            1,
+            "the destination\u{2019}s own page"
+        );
+
+        let root = into
+            .catalog()
+            .expect("catalog")
+            .get(b"Pages")
+            .and_then(Object::as_reference)
+            .expect("tree");
+        let kids = into
+            .get_object(root)
+            .and_then(Object::as_dict)
+            .expect("the root")
+            .get(b"Kids")
+            .and_then(Object::as_array)
+            .expect("its kids")
+            .clone();
+        assert!(
+            !kids
+                .iter()
+                .any(|kid| kid.as_reference().ok() == Some(ids[0])),
+            "the imported page is an object of this document and in no tree"
+        );
+
+        // And it is genuinely there, or the assertion above holds for a page
+        // that was never imported at all.
+        assert_eq!(text_of(&into, ids[0]), b"two".to_vec());
+    }
+
+    #[test]
+    fn a_position_the_document_does_not_have_is_refused() {
+        let mut into = flat("first");
+        let from = linked();
+        let why = import(&mut into, &from, &[3]).expect_err("there is no page 4");
+        assert!(why.contains("3 pages"), "{why}");
+        assert!(why.contains("page 4"), "{why}");
+    }
+
+    #[test]
+    fn the_same_page_asked_for_twice_is_refused() {
+        let mut into = flat("first");
+        let from = linked();
+        let why = import(&mut into, &from, &[1, 1]).expect_err("one object, two places");
+        assert!(why.contains("twice"), "{why}");
+    }
+
+    #[test]
+    fn asking_for_no_pages_is_refused() {
+        let mut into = flat("first");
+        let from = linked();
+        let why = import(&mut into, &from, &[]).expect_err("nothing was asked for");
+        assert!(why.contains("no pages were asked for"), "{why}");
+        // And it is not the message for a document with nothing in it, which is
+        // a different fact and is `append`\u{2019}s.
+        assert!(!why.contains("it has no pages"), "{why}");
     }
 }
