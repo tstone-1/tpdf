@@ -9877,8 +9877,11 @@ command that was not meant to be left out.
 
 **Not done:** splitting a stroke where the nib crosses it; ~~an eraser for marks
 that are not drawings, which is `Unannotate` and already has a command~~ (done
-2026-08-23 --- see *An eraser that takes any mark* below); and a nib whose size
-the reader can choose.
+2026-08-23 --- see *An eraser that takes any mark* below); and ~~a nib whose size
+the reader can choose~~ (done 2026-08-30 --- see *A nib the reader picks* below.
+The clause this note carried, *the same open question the ink eraser left*, was
+wrong: the eraser's nib is view pixels and open, the drawing nib is points and the
+file format decides it).
 
 
 #### A colour a reader can choose --- done 2026-08-20
@@ -11430,8 +11433,11 @@ reported, against a sweep that is one press of undo away. **Ranked as a question
 rather than taken**, and worth deciding before the nib becomes adjustable, since
 a reader-chosen size would have to pick one of the two units.
 
-**Not done:** a nib whose size the reader can choose, which is the same open
-question the ink eraser left; an undo that puts back a whole sweep rather than
+**Not done:** ~~a nib whose size the reader can choose, which is the same open
+question the ink eraser left~~ (done 2026-08-30 --- see *A nib the reader picks*
+below, and note that the clause after the semicolon was wrong: the two nibs share
+a word and not a quantity, so this was never waiting on the paragraph above it);
+an undo that puts back a whole sweep rather than
 one mark per press, which is the same granularity the ink eraser has always had
 and would need a journal command that groups; and reaching a comment the file
 arrived with, which is deliberate --- the model has no command that names one,
@@ -12069,6 +12075,106 @@ file's identity across undo; the render path has to ask some other worker for a 
 and the second document's bytes have to reach the worker that writes, which today is
 handed exactly one descriptor. Nothing in the application can reach `import`'s
 selection yet --- its live caller is `append`, asking for everything.
+
+#### A nib the reader picks --- done 2026-08-30
+
+The last of the three the ink section's *Not done* lists, and it was the one that
+looked hardest. `INK_WIDTH` was a constant in two files --- `docmodel.rs` and its
+near-copy in `markband.ts` --- and every drawing tpdf has ever written came out at
+2.5 pt. Four commands beside the colours now name a nib: fine, medium, broad,
+marker.
+
+##### The question the note said was open was not open
+
+Both *Not done* notes that ranked this called it *"the same open question the ink
+eraser left"*, and it is not the same question. The eraser's nib is
+`ERASER_RADIUS`, a hit radius in **view pixels**, and whether to clamp it to
+`HIT_SLACK_PT` in points is genuinely undecided --- `markband.ts` argues both
+sides and neither wins from a document. The drawing nib is a width in a **file**:
+it goes into a `w` operator inside the mark's form XObject, tpdf writes no
+`/Matrix`, so the form's space is the page's and the number is in points. A width
+taken from the view would make a line drawn at 400% four times thinner in the file
+than the same line drawn at 100%. There was no unit to choose.
+
+`docs/TRAPS.md` has that as an entry, because the cost was the ranking: two
+sessions read those notes as *this waits on that* and went elsewhere.
+
+##### Chosen before, never after --- and the reason is geometry
+
+`markcolors.ts` argues at length that a colour is picked before marking *and*
+after, and `Command::Recolor` is what makes the second half work. A nib is picked
+before only, and that is a decision with a mechanism rather than a gap: ink's
+rectangle is `Stroke::bounds` of its strokes **padded by half its width**, so
+changing an existing drawing's nib has to rebuild `Mark::quads` on every replay of
+the journal, or leave a mark whose ink hangs outside its own `/Rect`. That is a
+command with a body table and a derivation in it. What shipped is the pen a reader
+picks up before they draw, and `Mark::width` says from the other side what the
+second half would cost.
+
+So `width` sits on the mark's body, like `stamp` and unlike `color`, and
+`MarkView` reads it from the body rather than through an accessor --- with a
+comment at that line saying which of the two it is and why, because the line above
+it does the opposite.
+
+##### The viewer holds the nib, and that is what makes the preview honest
+
+The obvious place for the choice is `App.svelte`, beside `markColor`. It is the
+wrong one. The preview under the reader's hand is painted by the viewer, and a
+preview drawn at `INK_WIDTH` while the caller held something else answers *how
+thick will my line be* wrongly --- which the reader finds out after committing.
+
+So `Viewer.nib` is the setting, `setNib` sets it, `paintInkPreview` draws from it,
+and the committed mark carries it back out on `Drawn.width`. `App.svelte` passes
+`shape.width` to `Edits.mark` and holds `markNib` only as the status line's label,
+downstream of the setting rather than beside it. It is `drawStamp`'s own argument
+--- *what a drag commits comes from one place* --- applied to a setting instead of
+to a tool, and the two sit together in the class behaving differently on purpose:
+a stamp is spent by the drag that used it, a nib outlives the pen.
+
+`Drawn.width` rather than a fifth argument to `onDrawn`, because it is not a fifth
+thing: it is part of what the gesture produced, exactly as the strokes are.
+
+##### The fourth door
+
+`channel` clamps a colour, `displace` refuses a non-finite offset, and the
+geometry check refuses a non-finite point --- all three because `1e40` is valid
+JSON, is an infinity by the time it is in Rust, and is the three letters `inf`
+where `save.rs` writes it with `format!`. The nib reaches
+`format!("{width} w")` by exactly that route, so `edits.rs` has a fourth guard
+with the same shape.
+
+Clamped rather than refused, which is `channel`'s choice and not `displace`'s: an
+offset says *where* a mark is and a mark silently moved is not the mark the reader
+drew, while a width says how heavy it is and a line a quarter point off is still
+the line, still where it was drawn. `NIB_MIN` and `NIB_MAX` are a **range** rather
+than a list, so the wire does not carry a second copy of `marknibs.ts`'s table ---
+and `marknibs.test.ts` asserts every entry sits inside it, since a nib outside
+would arrive as something else with nothing on either side saying so.
+
+##### What went red, and what could not have
+
+The registry demanded its three classifications as it did for the sized inserts:
+`readme.test.ts` wanted a README line, `menubar.ts` a menu place, `viewercheck.ts`
+a probe. None is a check somebody remembered to run.
+
+The anchor gate found the interesting thing. Three existing mutations aimed at the
+two `Stroke::bounds` call sites and at `save.rs`'s `w`, and all three were orphaned
+by lines that now read the mark instead of the constant --- invisible in
+`git status`, invisible to every test, and the gate names them in half a second.
+All three were re-aimed rather than deleted: what each was written to catch is
+still a defect.
+
+Seven Rust mutations and seven frontend ones, each caught by the test named for it.
+The Rust seven include both derivations separately, because at the default nib a
+derivation reading the mark and one reading the constant agree on **every number**
+--- so each needs a fixture at a second width, and the first draft of one compared
+a rectangle with itself. `docs/TRAPS.md` has that coda.
+
+**Not done:** a nib a reader can change on a drawing already made, which is the
+`Rewidth` command described above and is bounded by the rebuild rather than by the
+choice; and a per-mark border width for the box and the ellipse, which
+`OUTLINE_WIDTH` argues against rather than defers --- a frame that competes with
+its contents is a worse frame, so that one is a decision and not a gap.
 
 #### Upgrading from 26.8.8 on Windows --- done 2026-08-24
 

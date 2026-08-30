@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarkList } from "./marklist";
 import { markRows, PageMap, pageId, unedited, type MarkKind, type MarkView } from "./pages";
 import { installFakeDom, type FakeDom } from "./testdom";
+import { INK_WIDTH } from "./markband";
 
 /** One mark, with the fields a test is not about filled in plausibly. */
 function mark(over: Partial<MarkView> & { id: number }): MarkView {
@@ -13,6 +14,7 @@ function mark(over: Partial<MarkView> & { id: number }): MarkView {
     quads: [100, 100, 300, 114],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note: "",
     lines: [],
     ...over,

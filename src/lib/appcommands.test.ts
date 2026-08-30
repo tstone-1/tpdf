@@ -24,6 +24,7 @@ import {
 } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { PALETTE } from "./markcolors";
+import { NIBS } from "./marknibs";
 import type { StampName } from "./pages";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
 
@@ -126,6 +127,7 @@ function harness(
     // exercises.
     removeMark: () => fired.push("removeMark"),
     setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
+    setNib: (id: string) => fired.push(`setNib:${id}`),
     markColor: () => "default",
     hasOpenMark: () => markOpen,
     canEditComment: () => commentEditable,
@@ -150,6 +152,59 @@ function harness(
   registerAppCommands(registry, actions);
   return { registry, fired };
 }
+
+describe("the nib commands", () => {
+  it("every nib command asks for its own nib", () => {
+    // Four commands out of one `map`, which is the colours' shape below and
+    // carries their warning: a wrong argument is wrong four times at once and
+    // every one still runs, so a check that only asserted each reaches `setNib`
+    // would pass where every entry passed "medium". Asserted from `NIBS` rather
+    // than from a list written twice.
+    for (const entry of NIBS) {
+      const { registry, fired } = harness();
+      expect(registry.run(`edit.nib.${entry.id}`)).toBe(true);
+      expect(fired).toEqual([`setNib:${entry.id}`]);
+    }
+  });
+
+  it("gives the nibs titles that are nobody's prefix", () => {
+    // A title that is a strict prefix of another ties in the ranking, and
+    // registration order then decides which one typing the full name runs ---
+    // which this repository has paid for once, with one command running its
+    // neighbour. `rank`'s whole-title bonus is what settles the tie now, so this
+    // is a second line rather than the only one; it is worth having because a
+    // family built from a table is where a name that swallows another arrives
+    // without anybody looking at the other three.
+    //
+    // `marknibs.ts` asserts it of the words; this asserts it of the titles a
+    // reader actually types, which is what the ranking looks at.
+    const { registry } = harness();
+    const titles = NIBS.map(
+      (entry) => registry.find(`edit.nib.${entry.id}`)?.title ?? "",
+    );
+    expect(titles.filter((title) => title.length > 0)).toHaveLength(NIBS.length);
+    for (const one of titles) {
+      for (const other of titles) {
+        if (one === other) continue;
+        expect(
+          other.startsWith(one),
+          `"${one}" is a strict prefix of "${other}"`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("is offered with a document open whether or not a pen is armed", () => {
+    // The guard that is deliberately not "a drawing tool is armed". A reader
+    // picks the nib and then takes the pen out at least as often as the
+    // reverse, and greying the choice until a tool is armed would make the
+    // commoner order impossible. The harness arms nothing, which is what makes
+    // this the case under test.
+    const { registry } = harness();
+    const offered = registry.search("").map((ranked) => ranked.command.id);
+    for (const entry of NIBS) expect(offered).toContain(`edit.nib.${entry.id}`);
+  });
+});
 
 describe("the colour commands", () => {
   it("every colour command asks for its own colour", () => {
@@ -1018,6 +1073,7 @@ describe("the window shortcuts for editing", () => {
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
       setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
+      setNib: (id: string) => fired.push(`setNib:${id}`),
       markColor: () => "default",
       hasOpenMark: () => false,
       canEditComment: () => false,

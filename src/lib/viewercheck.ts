@@ -38,6 +38,7 @@ import { frame, Report, settle as settleFor } from "./checkreport";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { INK_WIDTH, TEXT_INSET, TEXT_LEADING, TEXT_SIZE } from "./markband";
 import { DEFAULT_SWATCH, PALETTE, swatch } from "./markcolors";
+import { NIBS } from "./marknibs";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
@@ -3177,6 +3178,7 @@ async function appCommandChecks(
     // interesting thing about the command out of the check.
     removeMark: () => fired.push("removeMark"),
     setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
+    setNib: (id: string) => fired.push(`setNib:${id}`),
     markColor: () => "default",
     hasOpenMark: () => viewer.markOpen >= 0,
     canEditComment: () => viewer.commentEditable,
@@ -3948,6 +3950,17 @@ async function appCommandChecks(
       ...shell(`setMarkColor:${entry.id}`),
       read: () => fired.join(","),
     })),
+    // Every nib, aimed separately, for the colours' reason exactly: four
+    // commands built by one `map`, all calling one action with an argument, so
+    // a copy-and-paste leaving every entry passing "medium" would give a reader
+    // four commands that all draw at the default and no single probe could see
+    // it. Built from `NIBS` so a nib added there and unclassified here reddens
+    // the sweep.
+    ...NIBS.map((entry) => ({
+      id: `edit.nib.${entry.id}`,
+      ...shell(`setNib:${entry.id}`),
+      read: () => fired.join(","),
+    })),
     // Every stamp, aimed separately, for the colours' reason exactly: four
     // commands built by one `map`, all calling one action with an argument, so
     // a copy-and-paste that left every entry passing "approved" would give a
@@ -4530,6 +4543,7 @@ function syntheticMark(
     ],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note,
   };
 }
@@ -5139,6 +5153,7 @@ function markOnPage(
     ],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note,
     lines: [],
   };
@@ -9131,6 +9146,7 @@ async function overlayInkChecks(
         quads: quad,
         strokes,
         color: [0.85, 0.15, 0.15],
+        width: INK_WIDTH,
         note: words.join(" "),
         lines: words,
       },
@@ -9734,6 +9750,7 @@ async function markAgreementChecks(
       // and a stamp without one is too.
       stamp: kind === "stamp" ? ("draft" as const) : null,
       color: COLOR,
+      width: INK_WIDTH,
       note: lines.join(" "),
       lines,
     };
@@ -10083,6 +10100,7 @@ async function inkPreviewChecks(
       quads: [0, 0, size.width_pt, size.height_pt],
       strokes: [],
       color: [1, 0.9, 0.2],
+      width: INK_WIDTH,
       note: "",
       lines: [],
     },
@@ -10276,6 +10294,7 @@ async function erasePreviewChecks(
         [from, lower, to, lower],
       ],
       color: [0.85, 0.15, 0.15],
+      width: INK_WIDTH,
       note: "",
       lines: [],
     },
@@ -10366,6 +10385,7 @@ async function wholeMarkPreviewChecks(
       quads: [from, upper - 10, to, upper + 10],
       strokes: [],
       color: [0.85, 0.15, 0.15],
+      width: INK_WIDTH,
       note: "",
       lines: [],
     },
@@ -10377,6 +10397,7 @@ async function wholeMarkPreviewChecks(
       quads: [from, lower - 10, to, lower + 10],
       strokes: [],
       color: [0.85, 0.15, 0.15],
+      width: INK_WIDTH,
       note: "",
       lines: [],
     },

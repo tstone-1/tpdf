@@ -421,8 +421,8 @@ MUTATIONS = [
         # a point that reads as a rendering fault.
         "save: leave a drawing's joins mitred, as a box's are",
         "src/save.rs",
-        '        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
-        '        Paint::Path => (crate::docmodel::INK_WIDTH, ""),',
+        '        Paint::Path => (mark.width, "1 J 1 j "),',
+        '        Paint::Path => (mark.width, ""),',
         "each_stroke_is_its_own_path_in_the_appearance_stream",
     ),
     Mutation(
@@ -462,7 +462,7 @@ MUTATIONS = [
         # down a margin is answered with "that mark covers nothing".
         "edits: take ink's rectangle tight against the strokes",
         "src/edits.rs",
-        "            quads = Stroke::bounds(&strokes, (crate::docmodel::INK_WIDTH / 2.0) as f32)",
+        "            quads = Stroke::bounds(&strokes, (width / 2.0) as f32)",
         "            quads = Stroke::bounds(&strokes, 0.0)",
         # **Not the `docmodel` test that looks like the right one.** That one
         # builds its `Mark` by hand, so it exercises `Stroke::bounds` and says
@@ -3429,7 +3429,7 @@ MUTATIONS = [
         # and this is the second one.
         "docmodel: derive an erased drawing's rectangle from nothing",
         "src/docmodel.rs",
-        "        let quads = Stroke::bounds(&strokes, INK_WIDTH as f32 / 2.0)",
+        "        let quads = Stroke::bounds(&strokes, (width / 2.0) as f32)",
         "        let quads = Stroke::bounds(&strokes, 1000.0)",
         "erasing_a_stroke_leaves_the_others_and_shrinks_the_rectangle",
     ),
@@ -7063,6 +7063,87 @@ MUTATIONS += [
         "        let id = *pages.get(at).ok_or_else(|| {",
         "        let id = *pages.get(at).or(pages.first()).ok_or_else(|| {",
         "a_position_the_document_does_not_have_is_refused",
+    ),
+]
+
+# The nib a reader picks: the door it arrives through, the two derivations that
+# pad by half of it, and the two readers that carry it out.
+MUTATIONS += [
+    Mutation(
+        # Answer the default to everything. Every width a reader picks is thrown
+        # away silently: the mark is taken, the file is valid, and the line is
+        # the weight it always was. The control in the test is what catches it --
+        # every other assertion there is satisfied by a door that clamps
+        # correctly and by one that ignores its argument.
+        "edits: answer the default nib to every width sent",
+        "src/edits.rs",
+        "    if value.is_finite() {\n        value.clamp(NIB_MIN, NIB_MAX)",
+        "    if true {\n        INK_WIDTH",
+        "a_nib_that_is_not_a_number_is_clamped_at_this_door_too",
+    ),
+    Mutation(
+        # Take a non-finite width as sent, which is the fourth door standing
+        # open: `1e40` is valid JSON, is `INFINITY` here, and `save.rs` writes it
+        # as the three letters `inf` in the middle of a content stream. tpdf
+        # would write a file no reader can parse and sign its name to it.
+        "edits: let a non-finite nib through the door",
+        "src/edits.rs",
+        "fn nib(value: f64) -> f64 {\n    if value.is_finite() {",
+        "fn nib(value: f64) -> f64 {\n    if true {",
+        "a_nib_that_is_not_a_number_is_clamped_at_this_door_too",
+    ),
+    Mutation(
+        # Derive the rectangle from the constant rather than from the mark. At
+        # the default nib the two agree exactly, which is why the fixture has to
+        # be a second width -- the sibling test that proves the pad exists at all
+        # cannot see this.
+        "edits: pad a drawing's rectangle by the default nib",
+        "src/edits.rs",
+        "        let width = nib(want.width);",
+        "        let width = INK_WIDTH;",
+        "the_rectangle_is_padded_by_half_the_nib_the_reader_chose",
+    ),
+    Mutation(
+        # The same reach for the constant, on the second derivation: `reink` runs
+        # after an eraser sweep, so a broad drawing would keep its ink and lose
+        # the box around it the first time a reader rubbed one stroke out.
+        "docmodel: pad an erased drawing by the default nib",
+        "src/docmodel.rs",
+        "        let width = self.mark(mark).map_or(INK_WIDTH, |m| m.width);",
+        "        let width = INK_WIDTH;",
+        "erasing_a_stroke_keeps_the_nib_the_drawing_was_made_with",
+    ),
+    Mutation(
+        # The overlay's copy. PDFium draws the mark inside the tile at the width
+        # the file carries and the overlay redraws ink on top from this; a
+        # constant here puts the default weight over the reader's, which reads as
+        # a rendering fault rather than as a wrong number.
+        "edits: report the default nib to the overlay",
+        "src/edits.rs",
+        "                width: mark.width,\n                note: model.note_of(id).to_string(),",
+        "                width: INK_WIDTH,\n                note: model.note_of(id).to_string(),",
+        "the_reply_and_the_plan_both_carry_the_nib",
+    ),
+    Mutation(
+        # The writer's copy, and the one that reaches a file. Together with the
+        # mutation above this says the two readers are fed separately: a mark
+        # that reached one with the chosen nib and the other with the default is
+        # a drawing that changes weight the moment it is saved.
+        "edits: plan the default nib for the writer",
+        "src/edits.rs",
+        "                    width: body.width,",
+        "                    width: INK_WIDTH,",
+        "the_reply_and_the_plan_both_carry_the_nib",
+    ),
+    Mutation(
+        # Write the constant into the appearance stream. Every reader on earth
+        # then draws the default, whatever the reader picked and whatever the
+        # overlay showed them while they drew it.
+        "save: write the default nib rather than the mark's",
+        "src/save.rs",
+        '        Paint::Path => (mark.width, "1 J 1 j "),',
+        '        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
+        "the_stroke_width_is_the_nib_the_reader_chose",
     ),
 ]
 

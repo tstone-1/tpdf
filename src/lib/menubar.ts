@@ -59,6 +59,7 @@
 import type { Command, CommandRegistry } from "./commands";
 import { accelerator, BINDINGS, type BoundCommand } from "./keys";
 import { PALETTE } from "./markcolors";
+import { NIBS } from "./marknibs";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
 
 /** A gap between groups of items. */
@@ -210,6 +211,13 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // Below the marks rather than above, because a reader picking a colour has
       // usually just made one. The default leads, as it does everywhere else.
       ...PALETTE.map((entry) => `edit.color.${entry.id}`),
+      SEPARATOR,
+      // The nibs, listed from `NIBS` for the palette's reason above. A group of
+      // their own rather than folded in with the colours: they are the same
+      // *kind* of choice --- what the next mark is made with --- and a single
+      // run of eleven items would read as one list a reader has to scan twice,
+      // once for a colour word and once for a width word.
+      ...NIBS.map((entry) => `edit.nib.${entry.id}`),
       SEPARATOR,
       "edit.selectAll",
       "edit.clearSelection",

@@ -25,6 +25,7 @@ import type { CropGeometry } from "./crop";
 import { pageId, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
+import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 const tiles = vi.hoisted(() => ({
@@ -159,6 +160,7 @@ function mark(rect: [number, number, number, number]): MarkView {
     quads: [...rect],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note: "",
     lines: [],
   };

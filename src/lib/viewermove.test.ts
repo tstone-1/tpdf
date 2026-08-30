@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
+import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 const tiles = vi.hoisted(() => ({
@@ -69,6 +70,7 @@ function mark(kind: MarkKind, id = 42): MarkView[] {
       quads: [200, 300, 300, 400],
       strokes: kind === "ink" ? [[210, 310, 290, 390]] : [],
       color: [0.85, 0.15, 0.15],
+      width: INK_WIDTH,
       note: "",
       lines: [],
     },

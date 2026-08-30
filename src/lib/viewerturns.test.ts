@@ -27,6 +27,7 @@ import type { Comment } from "./comments";
 import type { Link } from "./links";
 import type { PageText } from "./text";
 import { pageId } from "./pages";
+import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 const tiles = vi.hoisted(() => ({
@@ -181,6 +182,7 @@ describe("a rectangle on a page an edit turned", () => {
         quads: [...RECT],
         strokes: [],
         color: [1, 1, 0],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       }]);
@@ -220,6 +222,7 @@ describe("a rectangle on a page an edit turned", () => {
         quads: [...RECT],
         strokes: [],
         color: [1, 1, 0],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       }]);
@@ -298,6 +301,7 @@ describe("what a turned page does to a place in it", () => {
         quads: [...RECT],
         strokes: [],
         color: [1, 1, 0],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       }]);

@@ -4367,8 +4367,15 @@ fn appearance_stream(
     // on a sharp one spikes out to a point --- which reads as a rendering fault
     // rather than as a style. `1 J 1 j` is round caps and round joins, and it
     // also gives a stroke its ends, without which a line stops square.
+    //
+    // **The mark's own width for a path, and a constant for everything else.**
+    // A drawing is the one kind whose weight the reader chooses --- see
+    // `Mark::width` --- and a box's border is not: `OUTLINE_WIDTH` argues there
+    // that a frame which competes with its contents is a worse frame, which is
+    // a statement about what a box is for rather than a default somebody has
+    // not got round to making adjustable.
     let (width, joins) = match style {
-        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),
+        Paint::Path => (mark.width, "1 J 1 j "),
         _ => (OUTLINE_WIDTH, ""),
     };
     let mut content = format!(
@@ -8353,6 +8360,7 @@ mod tests {
                 quads,
                 strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
+                width: crate::docmodel::INK_WIDTH,
                 author: "a reader".to_string(),
                 note: "a note".to_string(),
                 made: "D:20260818120000Z".to_string(),
@@ -8688,6 +8696,7 @@ mod tests {
             }],
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
+            width: crate::docmodel::INK_WIDTH,
             author: "Reader".into(),
             note: String::new(),
             made: "D:20260830120000Z".into(),
@@ -8841,6 +8850,7 @@ mod tests {
             stamp: None,
             reply_to: Some((annot.0, annot.1)),
             color: [1.0, 0.9, 0.2],
+            width: crate::docmodel::INK_WIDTH,
             author: "Reader".into(),
             note: "I answer it.".into(),
             made: "D:20260829120000Z".into(),
@@ -8922,6 +8932,7 @@ mod tests {
             stamp: None,
             reply_to: None,
             color: [1.0, 0.9, 0.2],
+            width: crate::docmodel::INK_WIDTH,
             author: "Reader".into(),
             note: "I answer it.".into(),
             made: "D:20260829120000Z".into(),
@@ -8971,6 +8982,7 @@ mod tests {
             stamp: None,
             reply_to: Some((object.0, object.1)),
             color: [1.0, 0.9, 0.2],
+            width: crate::docmodel::INK_WIDTH,
             author: "Reader".into(),
             note: "I answer a page.".into(),
             made: "D:20260829120000Z".into(),
@@ -9109,6 +9121,7 @@ mod tests {
             quads: one_quad(),
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
+            width: crate::docmodel::INK_WIDTH,
             author: "a reader".to_string(),
             note: "a note".to_string(),
             made: "D:20260822120000Z".to_string(),
@@ -10711,6 +10724,7 @@ mod tests {
                 quads: one_quad(),
                 strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
+                width: crate::docmodel::INK_WIDTH,
                 author: String::new(),
                 note: String::new(),
                 made: "D:20260818120000Z".to_string(),
@@ -10763,6 +10777,7 @@ mod tests {
                 quads: one_quad(),
                 strokes: Vec::new(),
                 color: [1.0, 0.9, 0.2],
+                width: crate::docmodel::INK_WIDTH,
                 author: String::new(),
                 note: String::new(),
                 made: "D:20260818120000Z".to_string(),
@@ -12298,6 +12313,47 @@ mod tests {
     }
 
     #[test]
+    fn the_stroke_width_is_the_nib_the_reader_chose() {
+        // **The number that reaches every foreign reader.** The overlay draws ink
+        // from `MarkView::width` and the file draws it from this `w`; a writer
+        // reaching for `INK_WIDTH` here would show a broad drawing on screen and
+        // save a thin one, and nothing would say so until the file was reopened.
+        //
+        // A width no constant in the tree holds, so the wide assertion cannot be
+        // satisfied by the default --- and the default is checked too, because a
+        // writer that always wrote the mark's field would pass the first half
+        // whether or not the field carried anything.
+        let scratch = Scratch::new("annots-ink-nib");
+        let broad = 8.0_f64;
+        assert_ne!(
+            broad,
+            crate::docmodel::INK_WIDTH,
+            "the fixture discriminates"
+        );
+
+        let mut plan = plan_with_ink();
+        plan.marks[0].width = broad;
+        let content = appearance_of_plan(&plan, &scratch);
+        assert!(
+            content.contains(&format!("{broad} w")),
+            "the chosen nib is not the width written: {content}"
+        );
+
+        // The control. `plan_with_ink` leaves the default in place, so this is
+        // the same code path answering a different question, and without it the
+        // check above passes for a writer with `8.0` hard-coded in it.
+        let content = appearance_of_plan(&plan_with_ink(), &scratch);
+        assert!(
+            content.contains(&format!("{} w", crate::docmodel::INK_WIDTH)),
+            "the default nib is not written either: {content}"
+        );
+        assert!(
+            !content.contains(&format!("{broad} w")),
+            "and the wide one leaked into a default drawing: {content}"
+        );
+    }
+
+    #[test]
     fn each_stroke_is_its_own_path_in_the_appearance_stream() {
         // **One `S` per stroke, and that is the whole assertion.** A writer that
         // emitted a single path across both would join the end of the first to
@@ -12761,6 +12817,7 @@ mod tests {
             quads: vec![quad],
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
+            width: crate::docmodel::INK_WIDTH,
             author: "a reader".to_string(),
             note: "the reader typed this".to_string(),
             made: "D:20260824120000Z".to_string(),

@@ -20,7 +20,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ICON_SIZE, MIN_BOX } from "./markband";
+import { ICON_SIZE, INK_WIDTH, MIN_BOX } from "./markband";
 import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer, type Drawn } from "./viewer";
@@ -101,6 +101,7 @@ function threeStrokes(id = 77): MarkView[] {
         [80, 500, 300, 500],
       ],
       color: [0.85, 0.15, 0.15],
+      width: INK_WIDTH,
       note: "",
       lines: [],
     },
@@ -192,6 +193,52 @@ describe("arming the tool", () => {
 
     drag({ x: 100, y: 300 }, { x: 300, y: 400 });
     expect(drawn).toHaveLength(1);
+    viewer.destroy();
+  });
+
+  it("carries the nib that was set, and the default until one is", async () => {
+    // **The seam the whole feature rests on.** The preview is painted from the
+    // viewer's own nib and the committed mark carries it out on `Drawn.width`;
+    // if these two ever came from different places a reader would watch a broad
+    // line and save a thin one, with nothing on screen saying which was right
+    // until the file was reopened. Under vitest no canvas runs --- `getContext`
+    // answers null --- so what can be checked here is the number that leaves,
+    // and that is also the number that reaches the file.
+    const viewer = build();
+    await settle();
+
+    // The default first, and it is the control: without it every assertion
+    // below is satisfied by a viewer that always reports whatever it was last
+    // told, including by a viewer with no default at all.
+    viewer.armDraw("square");
+    drag({ x: 100, y: 100 }, { x: 300, y: 200 });
+    expect(drawn[0]?.shape.width).toBe(INK_WIDTH);
+
+    const broad = 5;
+    expect(broad).not.toBe(INK_WIDTH);
+    viewer.setNib(broad);
+    viewer.armDraw("square");
+    drag({ x: 100, y: 300 }, { x: 300, y: 400 });
+    expect(drawn[1]?.shape.width).toBe(broad);
+    viewer.destroy();
+  });
+
+  it("keeps the nib across arming, because a pen outlives a drag", async () => {
+    // The property that makes it a setting rather than part of an arming, and
+    // it is the one a reader would notice going: picking "broad" and then
+    // putting the pen away and taking it out again must not quietly go back to
+    // the default. `armDraw` spends the stamp beside it for exactly the opposite
+    // reason, so the two sit together and behave differently on purpose.
+    const viewer = build();
+    await settle();
+
+    viewer.setNib(10);
+    for (const at of [100, 300, 500]) {
+      viewer.armDraw("square");
+      drag({ x: 100, y: at }, { x: 300, y: at + 60 });
+    }
+
+    expect(drawn.map((one) => one.shape.width)).toEqual([10, 10, 10]);
     viewer.destroy();
   });
 
@@ -1131,6 +1178,7 @@ describe("the eraser", () => {
           [80, 500, 300, 500],
         ],
         color: [1, 0.9, 0.2],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       },
@@ -1226,6 +1274,7 @@ describe("the eraser on marks that have no strokes", () => {
         quads: [100, 100, 300, 140],
         strokes: [],
         color: [1, 0.9, 0.2],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       },
@@ -1237,6 +1286,7 @@ describe("the eraser on marks that have no strokes", () => {
         quads: [100, 300, 300, 400],
         strokes: [],
         color: [0.85, 0.15, 0.15],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       },
@@ -1248,6 +1298,7 @@ describe("the eraser on marks that have no strokes", () => {
         quads: [100, 500, 124, 524],
         strokes: [],
         color: [0.2, 0.5, 0.9],
+        width: INK_WIDTH,
         note: "here",
         lines: [],
       },
@@ -1368,6 +1419,7 @@ describe("the eraser on marks that have no strokes", () => {
         quads: [340, 280, 500, 320],
         strokes: [],
         color: [1, 0.9, 0.2],
+        width: INK_WIDTH,
         note: "",
         lines: [],
       },

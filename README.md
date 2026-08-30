@@ -104,6 +104,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   note open it recolours that mark; chosen with none open it sets what the next one will
   be, which is the commoner of the two and is why it is offered either way.
   <!-- built: edit.color.default edit.color.yellow edit.color.green edit.color.blue edit.color.pink edit.color.orange edit.color.red -->
+- **Choose a nib** --- fine, medium, broad or marker --- and every drawing after it is that
+  thick, in the file as well as on screen. The preview under your hand is drawn at the
+  weight you picked, so what you watch is what you get. Unlike a colour it applies to the
+  next drawing rather than to one already made.
+  <!-- built: edit.nib.fine edit.nib.medium edit.nib.broad edit.nib.marker -->
 - **Stamp a document** APPROVED, CONFIDENTIAL, DRAFT or FINAL, dragged out like a box. The
   word is set to fill the rectangle you dragged, and it is written as a real `/Stamp`
   annotation carrying the standard name as well as the picture --- so another reader gets a

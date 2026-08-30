@@ -304,6 +304,25 @@ pub struct Point {
 /// holds the same number for the overlay.
 pub const INK_WIDTH: f64 = 2.5;
 
+/// The thinnest and thickest a [`Mark::width`] may be, in points.
+///
+/// **A range rather than a list, because the wire is not the table.** The nibs a
+/// reader can pick are named in `marknibs.ts` and every one of them sits inside
+/// this; what these two bound is the number that arrives over IPC, which is
+/// whatever a caller sends. Refusing anything outside the table would put a copy
+/// of the table on this side of the boundary, and the copy that is wrong is the
+/// one nothing reaches.
+///
+/// A quarter point is a hairline at any zoom a reader works at and is still a
+/// line; below it the difference between widths stops being visible and `0 w`
+/// means "as thin as this device draws", which is a rendering decision rather
+/// than a width. Twenty-four points is about a third of an inch --- wider than
+/// any pen and wide enough that the mark is a block --- and it is the ceiling
+/// rather than the answer to a question anybody asked.
+pub const NIB_MIN: f64 = 0.25;
+/// See [`NIB_MIN`].
+pub const NIB_MAX: f64 = 24.0;
+
 /// One continuous line a reader drew without lifting the pointer.
 ///
 /// `/InkList` is an array of these, which is why a mark holds a `Vec<Stroke>`
@@ -875,6 +894,38 @@ pub struct Mark {
     pub reply_to: Option<ObjectId>,
     /// Red, green and blue in 0..=1, as `/C` takes them.
     pub color: [f32; 3],
+    /// How thick this mark's ink is, in the page's own points.
+    ///
+    /// [`INK_WIDTH`] is what a caller sends when the reader has chosen nothing,
+    /// and every kind carries the number rather than ink alone --- `save.rs`
+    /// writes a `w` operator for all of them, so a field only ink could use
+    /// would make the writer ask which kind it had before reading a value it
+    /// needs either way.
+    ///
+    /// **Points rather than anything on screen, and there is no choice in it.**
+    /// The appearance stream's `w` is in the form's space, which is the page's
+    /// with no matrix, so this number *is* what a foreign reader draws. A width
+    /// taken from the view would make a line drawn at 400% four times thinner in
+    /// the file than the same line drawn at 100%, and neither the file nor the
+    /// reader would say so. The eraser's nib is view pixels for the opposite
+    /// reason and `markband.ts` argues it there; the two are called the same
+    /// word and are not the same quantity.
+    ///
+    /// **Fixed at creation, like [`Mark::stamp`] and unlike [`Mark::color`]**,
+    /// and the reason is geometry rather than taste. A colour changes nothing
+    /// about where a mark is, so [`Command::Recolor`] can replace one by naming
+    /// an id. Ink's rectangle is [`Stroke::bounds`] of its strokes padded by
+    /// *half this number*, so changing it after the fact would have to rebuild
+    /// [`Mark::quads`] on every replay --- and a `/Rect` that did not follow
+    /// would be a mark whose ink hangs outside its own box. That is a command
+    /// with a body table and a derivation, which is a separate piece of work;
+    /// what is here is the pen a reader picks up before they draw.
+    ///
+    /// Brought into `NIB_MIN..=NIB_MAX` at the wire boundary --- see
+    /// `edits.rs`'s `nib`, which exists because `1e40` is valid JSON and
+    /// `format!("{} w", f64::INFINITY)` is `inf` in the middle of a content
+    /// stream.
+    pub width: f64,
     /// `/T`. Empty when the reader has no name set.
     pub author: String,
     /// `/M`, already in PDF date form.
@@ -2257,7 +2308,14 @@ impl Doc {
         if !strokes.iter().any(Stroke::is_drawable) {
             return Err(Refusal::EmptyMark);
         }
-        let quads = Stroke::bounds(&strokes, INK_WIDTH as f32 / 2.0)
+        // **Half the mark's own width, not half [`INK_WIDTH`].** The pad is
+        // what makes the rectangle hold the ink rather than the path, so a
+        // drawing made with a broad nib and then erased down to two strokes
+        // would otherwise come back with a box too small for the line still in
+        // it. The kind is read a line above from the same lookup, so this costs
+        // nothing but saying it.
+        let width = self.mark(mark).map_or(INK_WIDTH, |m| m.width);
+        let quads = Stroke::bounds(&strokes, (width / 2.0) as f32)
             .into_iter()
             .collect();
         let ink = self.issue_ink(Ink { strokes, quads });
@@ -2945,6 +3003,7 @@ mod tests {
             }],
             strokes: Vec::new(),
             color: [1.0, 0.9, 0.2],
+            width: INK_WIDTH,
             author: "a reader".to_string(),
             made: "D:20260818T120000Z".to_string(),
         }
@@ -3498,6 +3557,7 @@ mod tests {
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
             strokes,
             color: [0.85, 0.15, 0.15],
+            width: INK_WIDTH,
             author: "a reader".to_string(),
             made: "D:20260820T120000Z".to_string(),
         }
@@ -3528,6 +3588,7 @@ mod tests {
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
             strokes,
             color: [0.85, 0.15, 0.15],
+            width: INK_WIDTH,
             author: "a reader".to_string(),
             made: "D:20260820T120000Z".to_string(),
         }

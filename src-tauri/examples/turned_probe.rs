@@ -332,6 +332,7 @@ fn reading(
                 quads: vec![quad.left, quad.top, quad.right, quad.bottom],
                 strokes: Vec::new(),
                 color: [0.15, 0.35, 0.9],
+                width: tpdf_lib::docmodel::INK_WIDTH,
                 author: String::new(),
                 note: "the reader typed this".to_string(),
             },

@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { markWalk, PageMap, pageId, unedited, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
+import { INK_WIDTH } from "./markband";
 
 /** Reaches the viewer's private scroll, exactly as `viewerturns.test.ts` does. */
 interface Placing {
@@ -104,6 +105,7 @@ function mark(id: number, page: number, top: number): MarkView {
     quads: [100, top, 300, top + 14],
     strokes: [],
     color: [1, 0.9, 0.2],
+    width: INK_WIDTH,
     note: "",
     lines: [],
   };

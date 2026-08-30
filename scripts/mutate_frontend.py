@@ -4808,6 +4808,7 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    "src/lib/marknibs.test.ts",
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",
     "src/lib/commands.test.ts",
@@ -6437,6 +6438,87 @@ MUTATIONS += [
         "      title: `Insert blank ${PAGE_SIZES[name].title} page`,",
         "      title: `Insert blank page ${PAGE_SIZES[name].title}`,",
         "give the sized inserts titles that are nobody's prefix",
+    ),
+]
+
+# The nib a reader picks: the table, the seam the viewer holds it on, and the
+# commands built from it.
+MUTATIONS += [
+    Mutation(
+        # Two entries with one width. Both are inside the range, both are
+        # plausible pen weights, and the list is still sorted --- so only the
+        # distinctness half can see it, and a reader would have two commands
+        # they could not tell apart by their effect.
+        "marknibs: give two nibs the same width",
+        "src/lib/marknibs.ts",
+        '  { id: "broad", name: "broad", pt: 5 },',
+        '  { id: "broad", name: "broad", pt: 1 },',
+        "goes from thinnest to thickest, with no two the same",
+    ),
+    Mutation(
+        # Past the ceiling `docmodel.rs` clamps to. It stays sorted, stays
+        # distinct and stays a number --- the door in `edits.rs` silently brings
+        # it back to 24, so the reader picks "marker" and gets something else
+        # with nothing on either side saying so.
+        "marknibs: offer a nib past what the backend accepts",
+        "src/lib/marknibs.ts",
+        '  { id: "marker", name: "marker", pt: 10 },',
+        '  { id: "marker", name: "marker", pt: 40 },',
+        "offers every one inside the range the backend clamps to",
+    ),
+    Mutation(
+        # The default a shade off, which is the whole argument for holding it by
+        # reference: 2.6 is a pen weight, is between its neighbours, and means a
+        # reader picking "medium" to match their existing drawings gets ink that
+        # does not match them.
+        "marknibs: write the default nib as a number instead of the constant",
+        "src/lib/marknibs.ts",
+        '  { id: "medium", name: "medium", pt: INK_WIDTH },',
+        '  { id: "medium", name: "medium", pt: 2.6 },',
+        "holds the default by reference, so it cannot be a shade off",
+    ),
+    Mutation(
+        # No choice must mean the default. Answering the thinnest nib instead is
+        # the shape that ships: every drawing made without picking anything comes
+        # out hairline, and `App.svelte` is reached by no unit test, so the seam
+        # is the only place this can be caught.
+        "marknibs: fall back to the first nib rather than to the default",
+        "src/lib/marknibs.ts",
+        "  return chosen?.pt ?? INK_WIDTH;",
+        "  return chosen?.pt ?? NIBS[0]!.pt;",
+        "falls back to the default width when nothing is chosen",
+    ),
+    Mutation(
+        # The seam the feature rests on: the preview is painted from the armed
+        # nib and the mark carries it out here. Reporting the constant instead
+        # gives a reader a broad preview and a thin saved line, with nothing on
+        # screen saying which is right until the file is reopened.
+        "viewer: report the default nib rather than the armed one",
+        "src/lib/viewer.ts",
+        "          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib },",
+        "          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: INK_WIDTH },",
+        "carries the nib that was set, and the default until one is",
+    ),
+    Mutation(
+        # Spend the nib with the tool, which is what `drawStamp` beside it does
+        # and is exactly the distinction the field's comment draws. A reader who
+        # picks "broad" then gets one broad drawing and silently goes back to the
+        # default for every one after it.
+        "viewer: spend the nib when the armed tool is spent",
+        "src/lib/viewer.ts",
+        "        this.drawStamp = null;\n        this.showCursor();",
+        "        this.drawStamp = null;\n        this.nib = INK_WIDTH;\n        this.showCursor();",
+        "keeps the nib across arming, because a pen outlives a drag",
+    ),
+    Mutation(
+        # Four commands out of one `map`, all reaching one action with an
+        # argument: the copy-and-paste this table exists for. Every command still
+        # runs and every one sets the default.
+        "appcommands: give every nib command the same nib",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.setNib(entry.id),",
+        '      run: () => actions.setNib("medium"),',
+        "every nib command asks for its own nib",
     ),
 ]
 
