@@ -76,6 +76,7 @@
     type PageId,
     type RegionPlan,
   } from "./lib/pages";
+  import { dimensionsOf, type PageSizeName } from "./lib/pagesizes";
   import { nameOf } from "./lib/markpopup";
   import { sweepLabel } from "./lib/markband";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
@@ -399,6 +400,7 @@
     rotatePage: (delta) => void rotatePage(delta),
     deletePage: () => void deletePage(),
     insertBlankPage: () => void insertBlankPage(),
+    insertSizedPage: (name) => void insertSizedPage(name),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
     redactSelection: () => void redactSelection(),
@@ -714,6 +716,20 @@
     const size = at === undefined ? undefined : viewer?.pageSize(at);
     if (at === undefined || !size) return;
     await applyEdit((e) => e.insertPage(at, [size.width_pt, size.height_pt]));
+  }
+
+  /**
+   * Inserts a blank page of a named size after the one the reader is on.
+   *
+   * The pair comes from `dimensionsOf` rather than being read off the table
+   * here, and that is the whole reason that function exists: this file is
+   * reached by no unit test, so a width and a height transposed at this call
+   * site would be checked by nothing. There it has a test and a mutation.
+   */
+  async function insertSizedPage(name: PageSizeName): Promise<void> {
+    const at = viewer?.position.page;
+    if (at === undefined) return;
+    await applyEdit((e) => e.insertPage(at, dimensionsOf(name)));
   }
 
   /**

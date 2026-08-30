@@ -25,6 +25,7 @@ import {
 import { CommandRegistry } from "./commands";
 import { PALETTE } from "./markcolors";
 import type { StampName } from "./pages";
+import { PAGE_SIZE_NAMES } from "./pagesizes";
 
 /**
  * A registry with every application command in it, and a record of what fired.
@@ -91,6 +92,7 @@ function harness(
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
     insertBlankPage: () => fired.push("insertBlankPage"),
+    insertSizedPage: (name) => fired.push(`insertSizedPage:${name}`),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
@@ -392,6 +394,46 @@ describe("the page operations", () => {
     expect(registry.run("edit.rotatePageClockwise")).toBe(true);
     expect(registry.run("edit.rotatePageCounterClockwise")).toBe(true);
     expect(fired).toEqual(["rotatePage:1", "rotatePage:-1"]);
+  });
+
+  it("insert a page of the size the command names, and not of another", () => {
+    // The pairing is what fails quietly. Five commands built in a `map` all
+    // reach the same action, so one wired to the wrong entry of the table --- a
+    // closure capturing the loop's last name, which is the classic way a `map`
+    // of handlers goes wrong --- returns true, inserts a page, and inserts the
+    // wrong one. Every name is run, and the answer has to be every name in the
+    // table's own order.
+    const { registry, fired } = harness();
+    for (const name of PAGE_SIZE_NAMES) {
+      expect(registry.run(`edit.insertPage.${name}`), name).toBe(true);
+    }
+    expect(fired).toEqual(
+      PAGE_SIZE_NAMES.map((name) => `insertSizedPage:${name}`),
+    );
+  });
+
+  it("give the sized inserts titles that are nobody's prefix", () => {
+    // `docs/TRAPS.md` records a strict-prefix pair shipping: two titles tie on
+    // every term `rank` can see, and registration order decides, so typing one
+    // command's full title ran the other. A family of five sharing "Insert
+    // blank" is exactly where that arrives, and the sweep in `commands.test.ts`
+    // covers the registry as a whole --- this is the local statement, so a
+    // rename of one title fails beside the table it came from.
+    const { registry } = harness();
+    const titles = registry
+      .all()
+      .map((command) => command.title)
+      .filter((title) => title.startsWith("Insert blank"));
+    expect(titles.length).toBe(PAGE_SIZE_NAMES.length + 1);
+    for (const one of titles) {
+      for (const other of titles) {
+        if (one === other) continue;
+        expect(
+          other.startsWith(one),
+          `"${one}" is a strict prefix of "${other}"`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("are withheld with no document", () => {
@@ -953,6 +995,7 @@ describe("the window shortcuts for editing", () => {
       rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
       deletePage: () => fired.push("deletePage"),
       insertBlankPage: () => fired.push("insertBlankPage"),
+      insertSizedPage: (name) => fired.push(`insertSizedPage:${name}`),
       cropPage: (to) => fired.push(`cropPage:${to}`),
       redactRegion: () => fired.push("redactRegion"),
       redactSelection: () => fired.push("redactSelection"),

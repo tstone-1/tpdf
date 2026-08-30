@@ -59,6 +59,7 @@
 import type { Command, CommandRegistry } from "./commands";
 import { accelerator, BINDINGS, type BoundCommand } from "./keys";
 import { PALETTE } from "./markcolors";
+import { PAGE_SIZE_NAMES } from "./pagesizes";
 
 /** A gap between groups of items. */
 export const SEPARATOR = "---";
@@ -228,6 +229,12 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // alone, which is what it shares with a move and what separates it from
       // the group at the bottom.
       "edit.insertBlankPage",
+      // The five named sizes, beside the one that copies the page you are
+      // looking at, listed the way the seven colours and the four stamps are:
+      // a family built from its own table, so adding a size to `pagesizes.ts`
+      // puts it in the menu and in the palette together rather than in one of
+      // them.
+      ...PAGE_SIZE_NAMES.map((name) => `edit.insertPage.${name}`),
       "edit.movePageUp",
       "edit.movePageDown",
       SEPARATOR,

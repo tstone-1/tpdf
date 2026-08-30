@@ -4241,8 +4241,14 @@ MUTATIONS += [
         # check is the only thing standing there.
         "plan: name a command family that is not registered",
         "docs/PLAN.md",
-        "`edit.color.*`",
-        "`edit.colour.*`",
+        # Widened 2026-08-30. The anchor was the bare `` `edit.color.*` ``, and a
+        # later section naming the same family in passing made it match twice ---
+        # the anchor never moved and nothing about the mutation was wrong, which
+        # is the shape `docs/TRAPS.md` records. Widened rather than answered by
+        # rewording the new prose: a document should be free to name a family the
+        # plan already talks about.
+        "the shape\n`edit.color.*` already has.",
+        "the shape\n`edit.colour.*` already has.",
         "names only command families that exist",
     ),
     Mutation(
@@ -4962,6 +4968,10 @@ TEST_FILES = [
     # it is to write the mutation and the list entry in the commit that adds
     # the suite.
     "src/lib/viewertext.test.ts",
+    # Thirteenth. Written in the same commit as the mutations below, which is
+    # what the note above says stops the pattern, rather than after a run has
+    # already refused.
+    "src/lib/pagesizes.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
@@ -6345,6 +6355,90 @@ def main() -> int:
         else f"[FAIL] {problems} of {len(chosen)} mutations were not caught as described"
     )
     return 0 if problems == 0 else 1
+
+
+# --- Choosing an inserted page's size (2026-08-30) --------------------------
+#
+# The table is five sizes and one function, and everything that can be wrong
+# with it is a number: a pair transposed, a size off its series, a US size that
+# has drifted off a whole point. So the mutations below are each one edited
+# constant, and each is aimed at the one assertion that can see it --- which is
+# also the record of which assertion is doing which job.
+MUTATIONS += [
+    Mutation(
+        # Transpose the pair the model is handed. Every size is still in the
+        # table and every command still inserts a page; the pages come out
+        # landscape. This is the mistake `dimensionsOf` exists to keep out of
+        # `App.svelte`, where no unit test reaches it.
+        "pagesizes: answer height first, then width",
+        "src/lib/pagesizes.ts",
+        "  return [size.width, size.height];",
+        "  return [size.height, size.width];",
+        "answers width first, then height",
+    ),
+    Mutation(
+        # Turn one entry on its side in the table itself, which `dimensionsOf`
+        # then reports faithfully --- so the mutation above cannot see it.
+        "pagesizes: give A4 a landscape shape",
+        "src/lib/pagesizes.ts",
+        '  a4: { title: "A4", width: 595.276, height: 841.89 },',
+        '  a4: { title: "A4", width: 841.89, height: 595.276 },',
+        "is portrait throughout",
+    ),
+    Mutation(
+        # Take one A size off the ratio the series is defined by, while leaving
+        # it portrait, non-integral and correctly related to its neighbour. Only
+        # the ratio assertion can see this one.
+        "pagesizes: give A3 a shape the A series does not have",
+        "src/lib/pagesizes.ts",
+        '  a3: { title: "A3", width: 841.89, height: 1190.551 },',
+        '  a3: { title: "A3", width: 841.89, height: 1250.5 },',
+        "gives every A size the ratio the series is defined by",
+    ),
+    Mutation(
+        # Break the chain without breaking the shape: 300 x 424.264 is root two
+        # to four figures, portrait, and on no whole point --- so the ratio, the
+        # portrait and the whole-point assertions all pass, and A5 is no longer
+        # half of A4.
+        "pagesizes: make A5 the right shape and the wrong size",
+        "src/lib/pagesizes.ts",
+        '  a5: { title: "A5", width: 419.528, height: 595.276 },',
+        '  a5: { title: "A5", width: 300, height: 424.264 },',
+        "halves each A size into the next one down",
+    ),
+    Mutation(
+        # Drift a US size off the whole point its definition in inches puts it
+        # on. Half a point is invisible on screen and in every other assertion
+        # here: still portrait, still nobody's neighbour in a series.
+        "pagesizes: put US Letter half a point off",
+        "src/lib/pagesizes.ts",
+        '  letter: { title: "US Letter", width: 612, height: 792 },',
+        '  letter: { title: "US Letter", width: 612.5, height: 792 },',
+        "puts the US sizes on whole points",
+    ),
+    Mutation(
+        # The `map` mistake the colours and the stamps each have a mutation for:
+        # five commands built in one loop, all passing the same name. Every
+        # command is registered, every one runs, and a reader gets five ways to
+        # insert A4.
+        "appcommands: give every sized insert the same size",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.insertSizedPage(name),",
+        '      run: () => actions.insertSizedPage("a4"),',
+        "insert a page of the size the command names",
+    ),
+    Mutation(
+        # Put the size after the noun instead of inside the phrase. Every title
+        # is still unique and still readable, and "Insert blank page" becomes a
+        # strict prefix of all five --- which `commands.ts` decides by
+        # registration order, and `docs/TRAPS.md` records shipping once.
+        "appcommands: name the sized inserts so one title is a prefix of another",
+        "src/lib/appcommands.ts",
+        "      title: `Insert blank ${PAGE_SIZES[name].title} page`,",
+        "      title: `Insert blank page ${PAGE_SIZES[name].title}`,",
+        "give the sized inserts titles that are nobody's prefix",
+    ),
+]
 
 
 if __name__ == "__main__":

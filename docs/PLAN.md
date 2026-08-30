@@ -11888,8 +11888,9 @@ every row below a blank page stays empty, and the test written for it asserted
 **Not done:** ~~marking an inserted page, which is the addressing change described
 above and is the obvious next increment~~ (done 2026-08-30 --- see *Marking an
 inserted page*, immediately below); a page inserted from another file, which
-is the *Not done* this section sits under; and choosing a size other than the page
-you are looking at.
+is the *Not done* this section sits under; and ~~choosing a size other than the
+page you are looking at~~ (done 2026-08-30 --- see *Choosing an inserted page's
+size*).
 
 #### Marking an inserted page --- done 2026-08-30
 
@@ -11936,8 +11937,73 @@ two variants now, `CropOnMadePage` and `RedactionOnMadePage`, with two sentences
 is true of the page. `docs/TRAPS.md` has the entry.
 
 **Not done:** a page inserted from another file, which is the *Not done* this section
-sits under; choosing a size other than the page you are looking at; and redacting or
-cropping one, both of which are refused for reasons that do not expire.
+sits under; ~~choosing a size other than the page you are looking at~~ (done 2026-08-30);
+and redacting or cropping one, both of which are refused for reasons that do not expire.
+
+#### Choosing an inserted page's size --- done 2026-08-30
+
+The second of the three the blank page's *Not done* lists, and the last of them
+that needs nothing from the second-document work. *Insert blank page* copies the
+page you are looking at, which is right almost always and unhelpful exactly when
+it is not: the page in front of you is a scan at some size nobody chose. Five
+commands beside it now name a size --- A4, A3, A5, US Letter, US Legal.
+
+**A menu of names, not a prompt for two numbers**, which is the argument
+`edit.stamp.*` and `edit.color.*` both make and this follows their spelling so the
+three families read alike. A reader who wants A4 has a name; typing it into a
+prompt is slower than typing it into the palette that is already open.
+
+**Portrait only, and that is a decision rather than a gap.** Landscape variants
+would double a list of five for a choice the reader already has: a page tpdf made
+turns like any other, so *Insert blank A4 page* then *Rotate clockwise* is a
+landscape A4, and the turn goes into `/Rotate` where every reader honours it.
+
+`pagesizes.ts` is a module rather than a constant in `App.svelte` for one reason
+that is worth stating, because it is the only thing that makes the numbers
+testable: **`App.svelte` is reached by no unit test**, so a width and a height
+transposed at that call site would be checked by nothing. `dimensionsOf` is the
+seam, and it has a test and a mutation.
+
+##### The assertions are relations, not a second copy of the table
+
+A test that reads each number back out of the table it came from is the writer
+agreeing with its own reader. So nothing in `pagesizes.test.ts` transcribes a
+constant. What it asserts are the properties the standards define: the A series
+halves along its long edge, so each size's width is the next larger one's height;
+every A sheet has the ratio root two; and the US sizes, being defined in inches,
+land on whole points at 72 to the inch while no A size can.
+
+**A tolerance of a thousandth on the ratio was written first and failed on A5 ---
+correctly, and about ISO 216 rather than about the table.** The series is defined
+by the ratio and then every size is *rounded to whole millimetres*, so no real
+sheet has it exactly: A5 is 148 x 210, which is 1.41892 against 1.41421, out by a
+third of a percent. Half a percent is the tolerance, and it still refuses a
+transposed pair, which reads 0.705.
+
+##### What the registry demanded
+
+Adding five commands turned two existing checks red, both of them correctly and
+both immediately: `menubar.test.ts` wanted a menu place or a written reason, and
+`readme.test.ts` wanted a README line or an entry in its exclusion table. Neither
+is a check somebody remembered to run --- a command cannot arrive unclassified,
+because there is no third state to arrive in.
+
+**And the README bullet was wrong about something else.** It said *"You cannot yet
+mark one or crop it"*, which had been false since marking an inserted page landed
+earlier the same day. The gate could not see it: it checks that command *names* are
+claimed, and this was a claim of absence in prose naming no command --- the shape
+`docs/TRAPS.md` records as the one a registry structurally cannot contradict.
+
+Seven mutations, each aimed at the one assertion that can see it, which is also
+the record of which assertion is doing which job: a transposed pair in
+`dimensionsOf`, a landscape entry in the table, an A size off the ratio, an A size
+of the right shape and the wrong size, a US size half a point off, five commands
+all passing one name, and a title that becomes a strict prefix of the plain one.
+
+**Not done:** a size a reader types, which is the prompt this decided against and
+would be worth revisiting only if somebody asks for a size the table has not got;
+landscape entries, for the reason above; and a page inserted from another file,
+which is now the only one of the blank page's three left.
 
 #### The importer takes a selection --- done 2026-08-30
 

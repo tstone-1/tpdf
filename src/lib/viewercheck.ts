@@ -38,6 +38,7 @@ import { frame, Report, settle as settleFor } from "./checkreport";
 import { MULTI_CLICK_SLOP_PX } from "./clicks";
 import { INK_WIDTH, TEXT_INSET, TEXT_LEADING, TEXT_SIZE } from "./markband";
 import { DEFAULT_SWATCH, PALETTE, swatch } from "./markcolors";
+import { PAGE_SIZE_NAMES } from "./pagesizes";
 import { CommandRegistry } from "./commands";
 import type { DocumentInfo, PageSize } from "./ipc";
 import { needsWords, wordsForPage, type Comment, type Comments } from "./comments";
@@ -3154,6 +3155,7 @@ async function appCommandChecks(
     rotatePage: (delta) => fired.push(`rotatePage:${delta}`),
     deletePage: () => fired.push("deletePage"),
     insertBlankPage: () => fired.push("insertBlankPage"),
+    insertSizedPage: (name) => fired.push(`insertSizedPage:${name}`),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
@@ -3762,6 +3764,18 @@ async function appCommandChecks(
       ...shell("insertBlankPage"),
       read: () => fired.join(","),
     },
+    // Every named size, aimed separately, for the colours' and the stamps'
+    // reason exactly: five commands built by one `map`, all calling one action
+    // with an argument, so a copy-and-paste that left every entry passing "a4"
+    // would give a reader five commands that all insert A4 and no single probe
+    // could see it. `insertSizedPage:<name>` is what says each reaches its own.
+    // Built from `PAGE_SIZE_NAMES` so a size added to the table and left
+    // unclassified here reddens the sweep.
+    ...PAGE_SIZE_NAMES.map((name) => ({
+      id: `edit.insertPage.${name}`,
+      ...shell(`insertSizedPage:${name}`),
+      read: () => fired.join(","),
+    })),
     {
       // Needs a selection, like `find.inSelection` above, and for a sharper
       // reason: its `enabled` guard is the only one in the application that

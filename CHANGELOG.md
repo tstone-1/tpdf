@@ -19,6 +19,18 @@ have the binary.)
 
 ## [26.8.12] - Unreleased
 
+### Added: inserting a page of a size you name
+
+*Insert blank page* has always made a page the size of the one you were looking
+at. That is right almost always and unhelpful exactly when it is not --- the page
+you are on is a scan at some size nobody chose, and the page you want to add is
+A4. There are now five more commands beside it, in the palette and in the Edit
+menu: **A4, A3, A5, US Letter and US Legal**.
+
+Portrait, all five. A page tpdf made turns like any other, so *Insert blank A4
+page* followed by *Rotate clockwise* is a landscape A4 and the turn is written
+into the file where every reader honours it.
+
 ### Fixed: what you are told when a blank page refuses something
 
 Marking a region for removal on a blank page said **"tpdf cannot mark a page it
