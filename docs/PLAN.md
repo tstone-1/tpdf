@@ -9162,13 +9162,18 @@ a statement about a document no other check has seen. It sits in `viewercheck.ts
 `undriven` table with that reason, which is the rule the trap index states about a
 command left out of the sweep.
 
-**Not done:** an incremental save. §5 measures the append at **8.2x faster** than
-the rewrite on a 337 MB scan, and describes the mode classification that would
-choose between them. This increment writes the full rewrite every time --- correct
-on every document, including the encrypted ones it refuses, and 239 ms rather than
-29 ms on the largest fixture here. There is no save-mode classification, and
-nothing preserves a signature's trust, which §5 says plainly cannot be preserved
-at all.
+**Not done:** ~~an incremental save. §5 measures the append at **8.2x faster**
+than the rewrite on a 337 MB scan, and describes the mode classification that
+would choose between them. This increment writes the full rewrite every time ---
+correct on every document, including the encrypted ones it refuses, and 239 ms
+rather than 29 ms on the largest fixture here. There is no save-mode
+classification~~ (done 2026-08-22 --- `save::mode_for` classifies every save into
+`Mode::Append` or `Mode::Rewrite`, bounded by `APPEND_MAX_BYTES`, and
+`a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten` is the
+test for it. Struck 2026-08-30, eight days late, which is the cost this file's own
+entry about a *Not done* outliving its work describes: a note saying a mechanism
+does not exist is read as a reason not to look for it). Still not done: nothing
+preserves a signature's trust, which §5 says plainly cannot be preserved at all.
 
 ⚠ **The paragraph ended here with a second *Not done* that stopped being true on
 2026-08-19 and was still being read on 2026-08-21.** It said: *"nothing warns the
