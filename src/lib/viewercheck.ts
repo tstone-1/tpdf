@@ -62,6 +62,7 @@ import {
 import { TextCache, type PageText } from "./text";
 import type { EditState } from "./edits";
 import {
+  baselineOf,
   filePage,
   markRows,
   pageId,
@@ -4367,6 +4368,16 @@ async function appCommandChecks(
     "edit.underlineSelection",
     "edit.strikeoutSelection",
     "edit.squigglySelection",
+    // The three a comment has to be OPEN for, guarded on the popup rather than
+    // on a selection: a reader names the comment they mean by opening it, and a
+    // document nobody has clicked into has none open. All three landed on
+    // 2026-08-29 and 2026-08-30 without joining this list, which turned the
+    // check red on a clean tree -- the third time in this file's history, and
+    // the two comments below already say why it goes unread. **In registry
+    // order**, which the check compares by `join`.
+    "edit.editForeignMark",
+    "edit.deleteComment",
+    "edit.replyToComment",
     // Guarded on a note being open, which is how a reader names the mark they
     // mean. A document with no marks in it offers nothing to remove.
     //
@@ -10544,12 +10555,19 @@ async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
     return;
   }
 
+  const page = baselineOf(first.source);
   let found: [number, number, number, number] | null = null;
   let why = "";
   try {
     found = await invoke<[number, number, number, number] | null>(
       "page_content_box",
-      { doc: doc.id, page: first.source },
+      // **`baselineOf`, not `first.source`.** This asks PDFium about the file on
+      // disk, so the argument is a page NUMBER; `PageSource` became a union on
+      // 2026-08-30 and this line kept passing the whole object, which serialises
+      // as a map and is refused by the command with `expected u32`. `invoke` is
+      // untyped, so nothing compiled against it and only this harness -- which
+      // needs a screen -- could ever say so.
+      { doc: doc.id, page },
     );
   } catch (e) {
     why = String(e);
@@ -10562,14 +10580,20 @@ async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
     return;
   }
 
+  // `baselineOf` for the reason the call above states, and these two are why
+  // that one mattered so little on its own: the `.catch(() => null)` turns a
+  // REFUSED ARGUMENT into a plausible `null`, so a wiring bug arrives as "the
+  // backend measured nothing" -- and every check below reads `undefined` and
+  // blames the geometry. Three call sites, one mistake, and only the one
+  // without a catch said anything.
   const whole = await invoke<CropGeometry>("page_geometry", {
     doc: doc.id,
-    page: first.source,
+    page,
     crop: null,
   }).catch(() => null);
   const at = await invoke<CropGeometry>("page_geometry", {
     doc: doc.id,
-    page: first.source,
+    page,
     crop: found,
   }).catch(() => null);
   check(
@@ -10637,7 +10661,7 @@ async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
     try {
       mapped = await invoke<[number, number, number, number]>("page_crop_box", {
         doc: doc.id,
-        page: first.source,
+        page,
         rect: dragged,
       });
     } catch (e) {
@@ -10662,7 +10686,7 @@ async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
   // wrist at the edge --- and the answer has to stay inside the file's own box.
   const past = await invoke<[number, number, number, number]>("page_crop_box", {
     doc: doc.id,
-    page: first.source,
+    page,
     rect: [-4000, -4000, 8000, 8000],
   }).catch(() => null);
   check(

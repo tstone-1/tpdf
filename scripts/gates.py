@@ -249,6 +249,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a registered command is not classified by the window harness",
         ),
         (
+            "writers",
+            [sys.executable, str(ROOT / "scripts" / "check_writers.py")],
+            "a command that writes a file is missing from the threat model's §3 list",
+        ),
+        (
             "check",
             [npm(), "run", "check"],
             "svelte-check or tsc found a type error",

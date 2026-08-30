@@ -19363,3 +19363,45 @@ readers must move: 3379 and 3546. The demonstration that this is not ceremony is
 mutation --- sending the same colour twice turns three checks red and leaves *PDFium ignores
 it* **green**, correctly, because PDFium genuinely moved nothing. On its own that assertion
 cannot tell the finding from a broken instrument.
+
+---
+### A paragraph that names its own failure mode reads as coverage, and the count went stale three more times
+
+`docs/THREAT-MODEL.md` §3's boundary row says how many registered commands write a file on the
+webview's behalf. It has been wrong four times. Twice it was corrected and the correction was
+written up carefully --- *"the count is a number in prose and the list of commands is the thing
+that changes, so the count is wrong from the moment a command is added until somebody reads
+this sentence again. The list is now the claim and the number follows it."*
+
+That paragraph is right about the mechanism, names the remedy, and even says where a new
+writer belongs: *"in this list, in §T6.1, and in the coordinator-parsing entry at residual risk
+18."* Then three commands landed --- `split_document`, `redact_copy`, `redact_document` --- and
+none of them was added to the list. Found on 2026-08-30 by the release checklist's step 6, in
+the state that makes it visible at all: **the row said six and the list beneath it named five,
+so the document disagreed with itself on adjacent lines.** The row was not the wrong half.
+There are eight.
+
+All three were disclosed elsewhere --- the redaction writers at §T6.11, the split at §T6.9 and
+at residual risk 18 --- so nothing was hidden. What was wrong is the one place a reader goes to
+find out *how many*, and it was wrong in the direction that under-claims a boundary. A threat
+model that understates reach is worse than one that overstates it.
+
+**The lesson is not "remember to update the list".** That instruction was already written down,
+in the paragraph immediately below the row, in a document whose whole subject is not trusting
+prose. It failed three times *while being read* --- because a paragraph that names its own
+failure mode reads as a paragraph that has dealt with it. The self-awareness is what makes it
+invisible: a reader who reaches that sentence learns the count is unreliable and moves on,
+which is exactly the behaviour that leaves it unreliable.
+
+The remedy is the one the paragraph itself describes and nobody built: `scripts/check_writers.py`,
+now the `writers` gate. It derives the set from the **callee** rather than from the callers ---
+a command writes a file exactly when it reaches one of the six functions in `save.rs` that
+create or replace one --- because keying on command names would be a hand-maintained list
+checked against a hand-maintained list. Both directions, and the control is that every terminal
+name still exists in `save.rs`: a renamed helper would make the scan select nothing, and an
+empty set agrees with an empty set. All five checks were mutated and confirmed red, including
+the mirror and the control.
+
+**The general form: when a document explains why one of its own numbers cannot be trusted, that
+is a specification for a check, not a disclaimer.** The sentence that admits a number is
+fragile is the cheapest possible place to notice that the fix is mechanical.
