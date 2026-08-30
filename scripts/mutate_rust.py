@@ -217,9 +217,20 @@ MUT_SUBTYPE_GUARD = (
     "    {"
 )
 
+# **The whole predicate, comment and all**, because the deletion clause added on
+# 2026-08-30 carries six lines of comment inside it -- so an anchor naming only
+# the three code lines no longer matches, and the two mutations that share this
+# both went red in the gate on the commit that added it.
 MUT_APPENDABLE = (
     "        (!self.marks.is_empty() || !self.notes.is_empty())\n"
     "            && self.redactions.is_empty()\n"
+    "            // **A removal, and an append only adds.** Without this clause a plan\n"
+    "            // that highlights one line and deletes one comment classifies as an\n"
+    "            // append, writes the highlight, drops the deletion and reports\n"
+    "            // success -- and a fixture holding only the deletion cannot see it,\n"
+    "            // because with no marks and no note edits the first clause makes the\n"
+    "            // answer false either way. `docs/TRAPS.md` has that.\n"
+    "            && self.discards.is_empty()\n"
     "            && self.pages_are_the_file()"
 )
 
@@ -5374,7 +5385,7 @@ MUTATIONS += [
         "append: append any plan that carries a mark",
         "src/edits.rs",
         MUT_APPENDABLE,
-        "        (!self.marks.is_empty() || !self.notes.is_empty())\n            && self.redactions.is_empty()",
+        "        (!self.marks.is_empty() || !self.notes.is_empty())\n            && self.redactions.is_empty()\n            && self.discards.is_empty()",
         "a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten",
     ),
     Mutation(
@@ -5809,8 +5820,8 @@ MUTATIONS += [
         # apply -- and the reader has an undo step for it.
         "notes: accept a comment with no object of its own",
         "src/edits.rs",
-        "        if object.0 == 0 {",
-        "        if false {",
+        "        if object.0 == 0 {\n            return Err(\"that comment has no object to write over\".to_string());",
+        "        if false {\n            return Err(\"that comment has no object to write over\".to_string());",
         "a_comment_with_no_object_of_its_own_is_refused_here_and_spends_nothing",
     ),
     Mutation(
@@ -5902,7 +5913,7 @@ MUTATIONS += [
         "redact: let a plan carrying a redaction be appended",
         "src/edits.rs",
         MUT_APPENDABLE,
-        "        (!self.marks.is_empty() || !self.notes.is_empty())\n            && self.pages_are_the_file()",
+        "        (!self.marks.is_empty() || !self.notes.is_empty())\n            && self.discards.is_empty()\n            && self.pages_are_the_file()",
         "a_plan_that_only_redacts_is_neither_the_file_nor_an_append",
     ),
     Mutation(
@@ -6174,8 +6185,8 @@ MUTATIONS += [
         # the defect `redact-apply-probe` found by grepping pixels.
         "image: leave the unlinked picture for the writer to emit",
         "src/save.rs",
-        "        || redacted.images > 0\n    {\n        crate::sweep::collect(&mut doc)?;",
-        "    {\n        crate::sweep::collect(&mut doc)?;",
+        "        || redacted.images > 0\n        || discarded > 0\n    {\n        crate::sweep::collect(&mut doc)?;",
+        "        || discarded > 0\n    {\n        crate::sweep::collect(&mut doc)?;",
         "a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file",
     ),
     Mutation(
@@ -7144,6 +7155,99 @@ MUTATIONS += [
         '        Paint::Path => (mark.width, "1 J 1 j "),',
         '        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
         "the_stroke_width_is_the_nib_the_reader_chose",
+    ),
+]
+
+# Deleting a comment the file came with: the one edit that cannot be an append,
+# the sweep clause that keeps its bytes out of the file, and the refusal replying
+# made it need.
+MUTATIONS += [
+    Mutation(
+        # Let a deletion append. An append only adds objects, so the highlight
+        # beside it is written, the deletion is dropped, and the save reports
+        # success -- and a fixture holding only the deletion cannot see it,
+        # because with no marks and no note edits the first clause makes the
+        # answer `Rewrite` either way.
+        "edits: let a deleted comment be written as an append",
+        "src/edits.rs",
+        "            && self.discards.is_empty()\n",
+        "",
+        "a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten",
+    ),
+    Mutation(
+        # Stop sweeping after a deletion. `pagetree::forget` removes the
+        # annotation and every reference to it, which leaves its appearance
+        # stream -- a drawing of the words the reader deleted -- reachable from
+        # nothing and written out regardless. The page draws nothing and every
+        # byte is still there, which is the picture's trap in the one place the
+        # leftover is text somebody asked to be rid of.
+        "save: leave a deleted comment's bytes in the file",
+        "src/save.rs",
+        "        || discarded > 0\n",
+        "",
+        "a_deleted_comment_leaves_the_page_and_leaves_no_bytes_behind",
+    ),
+    Mutation(
+        # Take the deletion off the page without removing the object, which is
+        # the smaller-looking implementation and is what the redaction path's own
+        # comment argues against: a structure element's `/OBJR` or an AcroForm's
+        # `/Fields` names the annotation too, so pruning the one list a caller
+        # has in mind leaves it alive.
+        "save: prune the page's list instead of forgetting the object",
+        "src/save.rs",
+        "    let taken = doomed.len();\n    crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;",
+        "    let taken = doomed.len();\n    for id in &doomed {\n        doc.objects.remove(id);\n    }",
+        "a_deleted_comment_leaves_the_page_and_leaves_no_bytes_behind",
+    ),
+    Mutation(
+        # Accept a plan naming an object that is not an annotation, which would
+        # let a caller delete a font, a page or the catalog out of the file.
+        "save: delete whatever object a plan names",
+        "src/save.rs",
+        "            return Err(\"that comment is not an annotation\".into());\n        }\n        doomed.insert(id);",
+        "        }\n        doomed.insert(id);",
+        "a_deletion_naming_something_that_is_not_an_annotation_is_refused",
+    ),
+    Mutation(
+        # Let a comment one of the reader's own replies answers be deleted. The
+        # reply's `/IRT` then points at nothing, which is a malformed thread in
+        # every reader that draws one -- and no reader would see it until the
+        # file was reopened somewhere else.
+        "docmodel: delete a comment a reply of the reader's own answers",
+        "src/docmodel.rs",
+        "        if self.answered_by_a_reply(object) {\n            return Err(Refusal::ReplyAnswersIt(object));\n        }\n",
+        "",
+        "a_comment_a_reply_answers_cannot_be_discarded",
+    ),
+    Mutation(
+        # Count every mark ever made rather than the live ones. A reader who
+        # removes their reply is then still refused, for ever, and the refusal's
+        # own advice -- delete the reply first -- stops working.
+        "docmodel: count removed replies as replies",
+        "src/docmodel.rs",
+        "        self.now\n            .all_marks()\n            .into_iter()\n            .filter_map(|(_, id)| self.mark(id))",
+        "        self.marks\n            .keys()\n            .copied()\n            .filter_map(|id| self.mark(id))",
+        "removing_the_reply_makes_the_comment_deletable_again",
+    ),
+    Mutation(
+        # Let a deleted page's discards outlive it. The model then hands the
+        # writer a deletion for a comment on a page the plan does not carry.
+        "docmodel: keep a deleted page's discards",
+        "src/docmodel.rs",
+        "                self.discards.retain(|_, on| *on != page);\n",
+        "",
+        "deleting_a_page_takes_the_discards_on_it_and_no_others",
+    ),
+    Mutation(
+        # Throw the rewrite away when the comment is deleted, which is the
+        # tempting single-map implementation. Undoing the deletion then brings
+        # the comment back reading what the *file* said rather than what the
+        # reader typed.
+        "docmodel: drop a comment's edit when it is deleted",
+        "src/docmodel.rs",
+        "                self.discards.insert(object, page);",
+        "                self.rewrites.remove(&object);\n                self.discards.insert(object, page);",
+        "a_comment_can_be_rewritten_and_then_discarded_and_undo_keeps_the_edit",
     ),
 ]
 

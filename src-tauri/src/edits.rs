@@ -267,6 +267,28 @@ pub struct NoteEditView {
     pub shown: Option<String>,
 }
 
+/// One comment **out of the file** a reader has deleted, as the backend reports
+/// it.
+///
+/// **Two fields where [`NoteEditView`] has five, and every absent one is absent
+/// because a deleted comment has no body.** There is nothing to show, nothing to
+/// date, and nothing a panel puts in a byline; what the frontend needs is the
+/// identity, so a row it read from `annots.rs` can be crossed out or dropped, and
+/// the page, so a row on a deleted page goes with it.
+///
+/// **Deliberately not a [`NoteEditView`] with an empty body**, which was the
+/// smaller-looking arrangement. An empty body is a real edit --- a reader can
+/// clear a comment's text and keep the comment --- so the two would be
+/// indistinguishable in the one place it matters, and a writer told to blank a
+/// comment would be told the same thing as a writer told to remove one.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct DiscardView {
+    /// The annotation object, as `[number, generation]`.
+    pub object: (u32, u16),
+    /// The page it was on, by [`PageView::id`] --- never a position.
+    pub page: u64,
+}
+
 /// What the frontend asks for when a reader makes a mark.
 ///
 /// A struct rather than a parameter list, and not only because clippy counts to
@@ -435,6 +457,16 @@ pub struct EditState {
     /// Empty for every document nobody has edited a foreign comment in, which is
     /// almost all of them.
     pub notes: Vec<NoteEditView>,
+    /// Every comment out of the file the reader has deleted, in page order.
+    ///
+    /// A fourth list rather than a flag on `notes`, for [`DiscardView`]'s
+    /// reason: a comment can be rewritten *and* deleted, so the two are not
+    /// alternatives, and an empty body already means something else.
+    ///
+    /// The panel uses it to cross a row out. It cannot simply drop the row,
+    /// because the rows come from `annots.rs`'s scan of the file, which is
+    /// re-read on every open and knows nothing about what a reader has deleted.
+    pub discards: Vec<DiscardView>,
     /// Whether anything differs from the file on disk.
     ///
     /// Read from the journal cursor rather than by comparing the working
@@ -1099,6 +1131,39 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Takes a comment out of the file off the page it is on.
+    ///
+    /// [`rewrite`](Edits::rewrite)'s counterpart, and it keeps that method's
+    /// refusal of object 0 for the same reason: `annots::Comment::object` reports
+    /// `(0, 0)` for a comment it could not name, and a plan carrying that would
+    /// tell the writer to look for an object no document has.
+    ///
+    /// **Nothing about the file is checked here**, which is `rewrite`'s note: the
+    /// object being an annotation, and being present at all, are the writer's
+    /// refusals, because they are the ones a reader can act on.
+    ///
+    /// ⚠ **This is the one edit command that forces a full rewrite.** An
+    /// incremental save only adds objects, so a deletion cannot be an append ---
+    /// see [`Plan::is_appendable`]. A reader deleting a comment on a very large
+    /// document therefore waits for the rewrite rather than the append, and that
+    /// is a property of what they asked for rather than a shortcoming here.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the object is 0; the page does not
+    /// exist or was deleted.
+    pub fn discard(&self, doc: u32, object: (u32, u16), page: u64) -> Result<EditState, String> {
+        if object.0 == 0 {
+            return Err("that comment has no object to remove".to_string());
+        }
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .discard(ObjectId::new(object.0, object.1), PageId::from_raw(page))
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Replaces what one mark is drawn in, addressed by identity.
     ///
     /// [`renote`](Edits::renote)'s shape exactly, and not routed through
@@ -1226,6 +1291,8 @@ impl Edits {
             marks: planned_marks(model, &pages),
             // Before `pages` too, and for its reason.
             notes: planned_notes(model, &pages),
+            // And this one, for the same reason again.
+            discards: planned_discards(model, &pages),
             pages,
             // Empty, always. See the field.
             redactions: Vec::new(),
@@ -1349,6 +1416,11 @@ impl Edits {
 
         let marks = planned_marks(model, &pages);
         let notes = planned_notes(model, &pages);
+        // **Carried into a subset, exactly as `notes` is.** A reader who deletes
+        // a comment and then extracts the page it was on gets the page without
+        // it; dropping the list here would put the comment back in the extracted
+        // file, which reads as the deletion having silently failed.
+        let discards = planned_discards(model, &pages);
         Ok(Plan {
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
@@ -1356,6 +1428,7 @@ impl Edits {
             marks,
             redactions: Vec::new(),
             notes,
+            discards,
         })
     }
 }
@@ -1447,6 +1520,23 @@ fn planned_notes(model: &Doc, pages: &[PageView]) -> Vec<PlannedNoteEdit> {
         .collect()
 }
 
+/// The foreign comments deleted on `pages`, in page order.
+///
+/// [`planned_notes`]' twin, filtered the same way and for the same reason: a
+/// discard is held per object, so the kept pages are a filter rather than a walk.
+fn planned_discards(model: &Doc, pages: &[PageView]) -> Vec<PlannedDiscard> {
+    let kept: Vec<PageId> = pages.iter().map(|view| PageId::from_raw(view.id)).collect();
+    model
+        .working()
+        .all_discards()
+        .into_iter()
+        .filter(|(page, _)| kept.contains(page))
+        .map(|(_, object)| PlannedDiscard {
+            object: (object.number(), object.generation()),
+        })
+        .collect()
+}
+
 /// The working document as something that writes a file needs it.
 ///
 /// Not sent to the frontend. It is what [`save::write_copy`](crate::save::write_copy)
@@ -1512,6 +1602,16 @@ pub struct Plan {
     /// written before this existed parses as the one it meant.
     #[serde(default)]
     pub notes: Vec<PlannedNoteEdit>,
+    /// Comments out of the file to take off their pages.
+    ///
+    /// `#[serde(default)]` for [`Plan::notes`]' reason. ⚠ **And unlike every
+    /// other list here, a non-empty one forbids an append** --- an incremental
+    /// save only adds objects, so a deletion has nothing it can write. See
+    /// [`Plan::is_appendable`], whose clause for this is what stops *highlight
+    /// one line and delete one comment* being written as an append that drops
+    /// half of what the reader asked for.
+    #[serde(default)]
+    pub discards: Vec<PlannedDiscard>,
 }
 
 /// One edit to a comment that came out of the file.
@@ -1537,6 +1637,18 @@ pub struct PlannedNoteEdit {
     /// edits a note and sees somebody else's date beside their own words has
     /// been told something false, and every viewer shows that date.
     pub made: String,
+}
+
+/// One comment out of the file the writer must take off its page.
+///
+/// [`PlannedNoteEdit`] without a body, for [`DiscardView`]'s reason: there is
+/// nothing to write. What the writer does with it is remove the reference from
+/// the page's `/Annots`, after which the sweep collects the object --- see
+/// `save::discard_notes`.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct PlannedDiscard {
+    /// The annotation object, as `[number, generation]`.
+    pub object: (u32, u16),
 }
 
 /// One baseline page and the regions marked on it.
@@ -1757,6 +1869,13 @@ impl Plan {
         // records the same shape in a test name.
         (!self.marks.is_empty() || !self.notes.is_empty())
             && self.redactions.is_empty()
+            // **A removal, and an append only adds.** Without this clause a plan
+            // that highlights one line and deletes one comment classifies as an
+            // append, writes the highlight, drops the deletion and reports
+            // success -- and a fixture holding only the deletion cannot see it,
+            // because with no marks and no note edits the first clause makes the
+            // answer false either way. `docs/TRAPS.md` has that.
+            && self.discards.is_empty()
             && self.pages_are_the_file()
     }
 
@@ -1841,6 +1960,14 @@ fn describe(why: Refusal) -> String {
         // is a comment's own popup, which cannot offer a highlight.
         Refusal::ReplyMismatch(kind) => {
             format!("a {kind:?} mark cannot answer a comment")
+        }
+        // **The one in this family a reader causes on purpose**, unlike the
+        // three above, so it is worded as a next step rather than as a
+        // diagnosis: the reader wrote the reply, knows where it is, and can act
+        // on being told which order to do the two in. The object number is left
+        // out for that reason --- it names nothing a reader has seen.
+        Refusal::ReplyAnswersIt(_) => {
+            "delete your reply to that comment first, then the comment".into()
         }
         // The three redaction refusals, worded for a reader rather than for a
         // sender: unlike the two above, every one of them is reachable from a
@@ -1999,12 +2126,22 @@ fn snapshot(model: &Doc) -> EditState {
         })
         .collect();
 
+    let discards = working
+        .all_discards()
+        .into_iter()
+        .map(|(page, object)| DiscardView {
+            object: (object.number(), object.generation()),
+            page: page.get(),
+        })
+        .collect();
+
     let (applied, _) = model.depth();
     EditState {
         pages,
         marks,
         redactions,
         notes,
+        discards,
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,

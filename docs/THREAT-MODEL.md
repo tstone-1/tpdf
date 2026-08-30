@@ -1472,6 +1472,39 @@ changes anything, and cannot restore the file's own text. Undo is what restores 
 replaying without the command — which is the same mechanism every other edit uses, and is why
 there is no "revert" command with a document read behind it.
 
+#### T6.15 — Deleting a comment the file came with, added 2026-08-30
+
+**The same new thing §T6.13 names, and the same bound.** `annot_discard` takes a document
+handle, a page identity and **an object number out of the document's own graph** — the second
+command to do so. It is bounded the same way: the model checks only the page, and the writer
+refuses an object it cannot find or that is not an annotation, so a plan naming a font, a page
+or the catalog is refused rather than acted on. There is no new authority, no file is opened
+and no worker is reached; the deletion is a `BTreeMap` entry in the app process until a save.
+
+**What is genuinely different is that this one removes bytes.** Every write command before it
+adds. `pagetree::forget` takes the annotation's dictionary and every reference to it, and the
+rewrite's mark-and-sweep then collects what the annotation was the only reference *to* — its
+appearance stream, which for a comment is a drawing of the words. Without the sweep those
+bytes stay in the file with nothing pointing at them, which is exactly the leftover
+§T6.11's picture case records; the condition the sweep runs on gained a clause for it and a
+test greps the written bytes rather than asking what the page draws.
+
+**It is not a redaction and must not be read as one.** What is promised is narrow and is the
+one thing a reader can believe: *tpdf does not leave behind what it was told to remove*. A
+comment's words may still be elsewhere in the document — quoted in another annotation, in the
+page's own text, in an XMP packet — and nothing here looks for them. Whole-document sanitation
+is `docs/PLAN.md` §6 and is a different promise.
+
+**A deletion forces a full rewrite**, which is a security-relevant consequence rather than
+only a performance one: the previous revision does not survive, so a signed revision that an
+append would have left intact for a validator is gone. §T6.7's residual already states that
+trade for the rewrite path; a deletion is the one edit that cannot choose the other side of
+it.
+
+**Residual.** A comment one of the reader's own replies answers is refused, so `/IRT` cannot
+be left dangling by this command. A reply naming an object the *file* does not have is still
+the writer's check, unchanged.
+
 #### T6.14 — The nib a reader picks, added 2026-08-30
 
 **No new command and no new authority.** Choosing a nib calls no Tauri command at all: it

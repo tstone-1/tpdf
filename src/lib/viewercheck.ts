@@ -3191,6 +3191,11 @@ async function appCommandChecks(
       viewer.replyToComment();
       return 1;
     },
+    canDeleteComment: () => viewer.commentDeletable,
+    deleteComment: () => {
+      viewer.deleteComment();
+      return 1;
+    },
     // Recorded rather than driven, like the update pair: `file.save` is in
     // `undriven` below, because a ⌘S here would write the corpus fixture that
     // every other check in the run is reading. False so the command stays out
@@ -4188,6 +4193,22 @@ async function appCommandChecks(
     // `cropCommandChecks` above, which drives all three against this backend.
     "edit.cropToContent": "its outcome is two IPC replies the probe cannot wait for",
     "edit.resetCrop": "its outcome is an IPC reply the probe cannot wait for",
+    // **The three foreign-comment commands, and one reason for all three.**
+    // Each needs a comment popup open on a comment that has an object of its
+    // own, and this phase runs before the comments phase and on corpora that
+    // may have no comments at all. A probe here would pass wherever the
+    // comments happened to exist and say nothing where they did not, which is
+    // the shape `docs/TRAPS.md` records as a check borrowing its neighbour's
+    // precondition. Both directions of each guard are asserted in
+    // `appcommands.test.ts`, which needs no corpus.
+    //
+    // ⚠ **The first two were registered on 2026-08-29 and left out of this
+    // table**, so the classification check below was red from that day and
+    // nothing said so --- this harness needs a screen and runs by hand. That is
+    // what `scripts/check_classified.py` now catches on every commit.
+    "edit.editForeignMark": "needs an open comment popup, which this phase has no corpus for",
+    "edit.replyToComment": "needs an open comment popup, which this phase has no corpus for",
+    "edit.deleteComment": "needs an open comment popup, which this phase has no corpus for",
   };
 
   const registered = registry.all().map((command) => command.id);

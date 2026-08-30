@@ -340,6 +340,18 @@ export interface AppActions {
   /** Opens an empty editor whose text becomes a reply to the open comment. */
   replyToComment(): void;
   /**
+   * Whether the comment on show is one the reader can delete.
+   *
+   * {@link AppActions.canEditComment}'s two conditions a third time, and its own
+   * member for that entry's reason. **It does not ask whether one of the
+   * reader's replies answers the comment**, which is the one refusal deleting
+   * has that the other two do not: that is the model's knowledge, and it answers
+   * with a message saying which order to do the two in.
+   */
+  canDeleteComment(): boolean;
+  /** Deletes the comment on show. Does nothing if it cannot. */
+  deleteComment(): void;
+  /**
    * Picks the colour marks are drawn in, by a `markcolors.ts` swatch id.
    *
    * One call for both meanings --- what the next mark will be, and what the mark
@@ -922,6 +934,25 @@ export function registerAppCommands(
       title: "Edit this comment",
       enabled: () => withDocument() && actions.canEditComment(),
       run: () => actions.editComment(),
+    },
+    {
+      // **Acts rather than arming**, which is where it parts company with the
+      // two commands around it: editing and replying open a box for the reader
+      // to type in, and there is nothing to type here. Undo is what makes that
+      // safe to do without asking, exactly as it is for deleting a page.
+      //
+      // No keyboard binding, for the reason the one above has none --- the popup
+      // has to be open for it to mean anything, so a key that did nothing at
+      // every other moment would be a key spent on almost nothing.
+      id: "edit.deleteComment",
+      // "this comment" for the two commands beside it, and the verb is *delete*
+      // rather than *remove*: "Remove mark" takes one of the reader's own marks
+      // off the page, and a reader choosing between the two in a palette is
+      // choosing between their annotation and somebody else's. Two words for one
+      // act would be worse than the asymmetry.
+      title: "Delete this comment",
+      enabled: () => withDocument() && actions.canDeleteComment(),
+      run: () => actions.deleteComment(),
     },
     {
       // Beside the command above, and arming rather than acting for its reason.

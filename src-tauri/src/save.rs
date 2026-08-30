@@ -2562,6 +2562,19 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // plan.
     let replies = check_replies(&doc, &plan.marks)?;
 
+    // **After both of those, and the order is a rule rather than a preference.**
+    // A comment can be rewritten and then deleted, so `rewrite_note_edits` has to
+    // run first or `set_note` is refused with "not in this document any more" ---
+    // a true sentence about the file being built and the wrong diagnosis of the
+    // reader's plan, which is the mistake the two comments above record making
+    // once. And `check_replies` has to run first because a reply names an
+    // annotation by object: forgetting one before that check would refuse the
+    // reply with "not an annotation", which is the same wrong diagnosis in the
+    // other direction. The model refuses that combination outright --- see
+    // `Refusal::ReplyAnswersIt` --- so this ordering is what keeps the diagnosis
+    // right for a plan that reached here anyway.
+    let discarded = discard_notes(&mut doc, &plan.discards)?;
+
     // **Below the last refusal and above `materialise`, and both halves of that
     // are load-bearing.** A page tpdf made is not in the tree, and the only step
     // that can put it there is the rebuild below --- which is handed a list of
@@ -2667,12 +2680,20 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // it. `redact-apply-probe` found that by grepping the written bytes for the
     // picture's own pixels rather than asking what the page draws, which are
     // different claims and only the second is a redaction.
+    // And so does a **deleted comment**, which is the same shape a fifth time and
+    // is the one this condition was missing when the deletion landed.
+    // `pagetree::forget` removes the annotation's dictionary and every reference
+    // to it, which leaves its appearance stream --- a drawing of the words the
+    // reader deleted --- reachable from nothing and written out regardless. That
+    // is the picture's trap exactly, in the one subsystem where the leftover is
+    // text somebody asked to be rid of.
     if !dropped.is_empty()
         || moved
         || redacted.annots > 0
         || redacted.outline > 0
         || redacted.fields > 0
         || redacted.images > 0
+        || discarded > 0
     {
         crate::sweep::collect(&mut doc)?;
     }
@@ -4100,6 +4121,63 @@ fn rewrite_note_edits(
     Ok(())
 }
 
+/// Takes every planned deletion off the document, and says how many.
+///
+/// **`pagetree::forget` rather than pruning `/Annots`**, which is the redaction
+/// path's argument word for word: pruning the one list a caller has in mind is
+/// what leaves the object alive, because a structure element's `/OBJR` or an
+/// AcroForm's `/Fields` names it too, and an annotation still reachable is an
+/// annotation still written.
+///
+/// The count is what the sweep is conditioned on. It is returned rather than
+/// inferred from `plan.discards.len()`, and the difference is real: a plan may
+/// name an object this document does not have, which is refused below, so the
+/// two numbers are equal exactly when nothing went wrong --- and conditioning a
+/// sweep on the number of things *asked for* is how a sweep comes to run when
+/// nothing happened, or not run when something did.
+///
+/// # Errors
+///
+/// The object not being in the document, or not being an annotation. Both are
+/// `set_note`'s refusals and are checked here for its reason: a plan naming an
+/// arbitrary object would otherwise let a caller delete a font, a page or the
+/// catalog out of the file.
+fn discard_notes(
+    doc: &mut Document,
+    discards: &[crate::edits::PlannedDiscard],
+) -> Result<usize, Refusal> {
+    let mut doomed = std::collections::HashSet::new();
+    for discard in discards {
+        let id = (discard.object.0, discard.object.1);
+        let dictionary = doc
+            .get_object(id)
+            .map_err(|e| {
+                Refusal::changed(format!(
+                    "the comment being deleted is not in this document any more: {e}"
+                ))
+            })?
+            .as_dict()
+            .map_err(|_| Refusal::from("that comment is not an annotation"))?;
+        if dictionary
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_err()
+        {
+            // `set_note`'s check and its reason: not "has the subtype we
+            // expect", because any annotation has one and what matters is that
+            // this is an annotation at all.
+            return Err("that comment is not an annotation".into());
+        }
+        doomed.insert(id);
+    }
+    if doomed.is_empty() {
+        return Ok(0);
+    }
+    let taken = doomed.len();
+    crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;
+    Ok(taken)
+}
+
 /// Writes one planned body over the annotation it names.
 ///
 /// # Errors
@@ -5169,6 +5247,7 @@ mod tests {
                 .collect(),
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: Vec::new(),
         }
     }
@@ -5192,6 +5271,7 @@ mod tests {
                 .collect(),
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: Vec::new(),
         }
     }
@@ -8348,6 +8428,7 @@ mod tests {
             }],
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: vec![PlannedMark {
                 kind,
                 // The biconditional the model enforces, restated here because
@@ -8440,6 +8521,7 @@ mod tests {
                 body: "after".into(),
                 made: "D:20260829120000Z".into(),
             }],
+            discards: Vec::new(),
         };
         assert!(
             plan.is_appendable(),
@@ -8525,6 +8607,161 @@ mod tests {
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).expect("the fixture must save");
         (bytes, annot)
+    }
+
+    /// A two-page fixture whose comment on the second page carries a **drawn
+    /// appearance**, and the marker its stream holds.
+    ///
+    /// [`document_with_a_comment_on_the_second_page`]'s shape with one addition,
+    /// and the addition is the whole point: `/AP` is a stream reachable only from
+    /// the annotation, so removing the annotation orphans it. A fixture without
+    /// one cannot tell a writer that sweeps from one that does not --- `forget`
+    /// deletes the annotation's own dictionary either way, and the leftover a
+    /// reader would care about is the picture of the words.
+    ///
+    /// **Uncompressed on purpose.** The check greps the written bytes for the
+    /// marker, which is the only way to ask whether the stream is *gone* rather
+    /// than merely unreachable, and a deflated stream answers that question with
+    /// noise. `docs/TRAPS.md` records the image removal this is copied from.
+    fn document_with_a_drawn_comment() -> (Vec<u8>, lopdf::ObjectId, &'static str) {
+        use lopdf::dictionary;
+        use lopdf::Stream;
+
+        const MARKER: &str = "sackedFromTheBoard";
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let appearance = document.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 20.into(), 20.into()],
+            },
+            format!("BT /F1 12 Tf ({MARKER}) Tj ET").into_bytes(),
+        ));
+        let annot = document.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+            "Contents" => Object::string_literal("before"),
+            "M" => Object::string_literal("D:20260101000000Z"),
+            "AP" => dictionary! { "N" => appearance },
+        });
+        let first = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        });
+        let second = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => vec![annot.into()],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![first.into(), second.into()],
+                "Count" => 2,
+            }),
+        );
+        let catalog = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("the fixture must save");
+        assert!(
+            String::from_utf8_lossy(&bytes).contains(MARKER),
+            "the fixture must hold the marker in the clear, or the check below \
+             cannot fail"
+        );
+        (bytes, annot, MARKER)
+    }
+
+    #[test]
+    fn a_deleted_comment_leaves_the_page_and_leaves_no_bytes_behind() {
+        // **Two assertions and only the second is the interesting one.** That the
+        // page stops listing the annotation is what `pagetree::forget` does and
+        // is easy; that the annotation's *appearance stream* is gone from the
+        // file is the sweep, which runs on a condition this deletion had to be
+        // added to. Without that clause the page draws nothing, the annotation
+        // is unreachable, and every byte of the words the reader deleted is
+        // still in the file --- which is the picture's trap, in the one place
+        // the leftover is text somebody asked to be rid of.
+        let (original, annot, marker) = document_with_a_drawn_comment();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.discards = vec![crate::edits::PlannedDiscard {
+            object: (annot.0, annot.1),
+        }];
+        assert!(
+            !plan.is_appendable(),
+            "the premise: a deletion cannot be an append"
+        );
+
+        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
+        assert_eq!(after.get_pages().len(), 2, "both pages were kept");
+
+        for page in after.get_pages().values() {
+            let annots = after
+                .get_dictionary(*page)
+                .expect("the page")
+                .get(b"Annots")
+                .and_then(Object::as_array)
+                .map_or(0, Vec::len);
+            assert_eq!(annots, 0, "a page still lists the deleted comment");
+        }
+
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(marker),
+            "the deleted comment's appearance stream is still in the file"
+        );
+
+        // **The control, and it is what makes the grep mean anything.** The same
+        // fixture and the same writer with nothing deleted: the marker is there.
+        // Without this the assertion above passes for a writer that never wrote
+        // the stream at all, and for a fixture that never held it.
+        let kept = rewrite_update(&original, &plan_of(&[0, 0]), NO_VIEW_TURN, None)
+            .expect("the rewrite with nothing deleted");
+        assert!(
+            String::from_utf8_lossy(&kept).contains(marker),
+            "the control lost the stream too, so the check above says nothing"
+        );
+    }
+
+    #[test]
+    fn a_deletion_naming_something_that_is_not_an_annotation_is_refused() {
+        // `set_note`'s refusal and its reason: a plan naming an arbitrary object
+        // would otherwise let a caller delete a font, a page or the catalog out
+        // of the file. Both halves, because a writer that refused everything
+        // would satisfy either one alone --- and the control is the same call
+        // with the real annotation, which is the test above.
+        let (original, _, _) = document_with_a_drawn_comment();
+
+        let mut plan = plan_of(&[0, 0]);
+        plan.discards = vec![crate::edits::PlannedDiscard { object: (9_999, 0) }];
+        assert!(
+            rewrite_update(&original, &plan, NO_VIEW_TURN, None).is_err(),
+            "an object the document does not have was accepted"
+        );
+
+        // A page, which is in the document and is not an annotation.
+        let page = *Document::load_mem(&original)
+            .expect("reload")
+            .get_pages()
+            .values()
+            .next()
+            .expect("a page");
+        plan.discards = vec![crate::edits::PlannedDiscard {
+            object: (page.0, page.1),
+        }];
+        assert!(
+            rewrite_update(&original, &plan, NO_VIEW_TURN, None).is_err(),
+            "a page was accepted as a comment to delete"
+        );
     }
 
     /// A page tpdf made is written as a page, in the reader's order, and is
@@ -9178,6 +9415,21 @@ mod tests {
             crop: None,
         });
         assert_eq!(mode_for(&inserted, small), Mode::Rewrite, "an insert");
+
+        // The sixth, and the only one that is not about the pages. An append
+        // adds objects and cannot remove one, so a deletion has nothing it could
+        // write --- and unlike the five above, the fixture has to keep the mark:
+        // a plan holding only the deletion has no marks and no note edits, which
+        // makes the answer `Rewrite` for the *first* clause whether or not this
+        // one exists. `docs/TRAPS.md` has that as the entry about a fixture where
+        // the right rule and the wrong rule agree.
+        let mut deleted_comment = marked.clone();
+        deleted_comment.discards = vec![crate::edits::PlannedDiscard { object: (7, 0) }];
+        assert_eq!(
+            mode_for(&deleted_comment, small),
+            Mode::Rewrite,
+            "a deleted comment, beside a mark that would otherwise append"
+        );
     }
 
     /// The size condition, at the boundary rather than near it.
@@ -10716,6 +10968,7 @@ mod tests {
             ],
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
@@ -10769,6 +11022,7 @@ mod tests {
                 .collect(),
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
@@ -10826,6 +11080,7 @@ mod tests {
             }],
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: Vec::new(),
         };
         assert!(plain.is_identity());
@@ -10860,6 +11115,7 @@ mod tests {
             }],
             redactions: Vec::new(),
             notes: Vec::new(),
+            discards: Vec::new(),
             marks: Vec::new(),
         };
         assert!(plan.is_identity(), "the control: nothing is edited");

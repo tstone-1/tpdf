@@ -502,8 +502,8 @@ workflow-parity check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
-doc-comment check, `npm run check`, `npm run test`, `npm run build`, and a
-third-party-notices check. Two of them are
+doc-comment check, a command-classification check, `npm run check`, `npm run test`,
+`npm run build`, and a third-party-notices check. Two of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped.
@@ -555,6 +555,10 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   `ViewerOptions` is every optional `on*` callback the frontend declares --- 19 of them.
   `AppActions`' 51 members are deliberately **not** here: they are required, so `npm run check`
   refuses a missing one, and a gate over them would have no reachable subject.
+- `classified` --- every registered command is in the window harness's `probes` or its
+  `undriven` table. That harness asserts it already; it needs a screen and is run by hand,
+  so two commands shipped unclassified on 2026-08-29 and the check was red for a day with
+  every gate green. This one reads the source text and buys the day, not the certainty.
 - `dates` --- no date in a tracked file may be later than today. Provenance here is written as
   dated measurements, and on 2026-08-28 there were **70** stamps reading a day or two ahead,
   every one written by a commit dated 2026-08-28. A stamp in the future does not merely
@@ -997,6 +1001,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Four checks that say where the ink is, and none that says how long it is (the rectangle is derived from the strokes, so nothing relating the two can fail; the lesson was already written down forty lines below)
 - A check that measures along the axis it is policing shrinks its expectation with its measurement (`14.2 pt of 14.4, needs 11.5` — passing; the ratio is preserved exactly when the decision is wrong)
 - A bound no correct input can reach makes a check that cannot pass, and a manual-only harness is where that survives (born red, still red a day later on a `main` CI called green; `71% against 80%` reads as drift and is a ceiling)
+- Two mechanisms for one rule, and it took two survivors to see it (one line of product behaviour enforced by an outer guard *and* by optional chaining, so deleting either changed nothing and both mutations survived with two different correct excuses; the tell is the second excuse, not the first survivor, and the fix is to keep one mechanism rather than write a cleverer mutation --- a wildcard in one half is still refused by the other, which would have been a third. Symmetry with a neighbour is a reason to look at the neighbour, not to keep a second copy of a rule)
+- A check no gate runs is a check nobody runs, and two commands shipped past it (the window harness's *every registered command is classified* is correct and has no schedule: it needs a screen and runs by hand, so it was red for a day with 20/20 gates and both CI legs green, and it was found by grepping rather than by any instrument --- the sequel to the entry above with the opposite fix, since *read the whole log* does nothing for a check that never ran; the static twin is deliberately weaker and buys the day rather than the certainty. Ask of every harness which of its checks are asserted only there)
 - A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships (the entry above blames a manual-only harness; this one is a `gates.py` gate that went red on both CI legs the day it landed and shipped anyway, because `18/19 gates passed` at the end of a long log reads like a pass --- and the obvious repair, exempting the checker's own file, removes the prose the gate exists to cover)
 - A readings table outlived the code that produced it, and every document still agreed (extracting two helpers replaced the region two `say` calls sat in; the Windows cross-check, 19 gates and both CI legs were green and the printed report looked complete, so a measured `MaxImageDimension` of 10000 px sat in `BUILD.md` with no instrument left to re-take it --- found by diffing the run's OUTPUT against the previous run, and the thing to protect when a document records a number is the CALL, not the number)
 - An accounting observable nobody reads is the same as not having one (the observable was written for exactly this leak and no test read it; a catch-all `_ => {}` is what makes forgetting the quiet outcome)

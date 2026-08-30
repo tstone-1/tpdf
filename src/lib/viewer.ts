@@ -461,6 +461,15 @@ export interface ViewerOptions {
    * still shows comments, and the Reply button simply does not save anything.
    */
   onCommentReply?: (comment: Comment, body: string) => void;
+  /**
+   * The reader deleted a comment the file came with.
+   *
+   * The whole comment for {@link onCommentEdit}'s reason. Optional for
+   * {@link onDrawn}'s: a viewer with no model behind it still has to show
+   * comments, and one that could not be given this would have to be given a
+   * no-op.
+   */
+  onCommentDelete?: (comment: Comment) => void;
   /** Called when the reader asked to take one of their own marks off the page. */
   onMarkRemove?: (mark: number) => void;
   /**
@@ -1362,6 +1371,7 @@ export class Viewer {
       onClose: () => this.closeComment(),
       onRewrite: (comment, body) => this.opts.onCommentEdit?.(comment, body),
       onReply: (comment, body) => this.opts.onCommentReply?.(comment, body),
+      onDiscard: (comment) => this.opts.onCommentDelete?.(comment),
     });
 
     // The reader's own marks get their own box, for the reason `markpopup.ts`
@@ -3235,6 +3245,22 @@ export class Viewer {
   /** Opens an empty editor for a reply. Does nothing if it cannot. */
   replyToComment(): void {
     this.popup.reply();
+  }
+
+  /**
+   * Whether the comment on show can be deleted.
+   *
+   * {@link Viewer.commentEditable}'s third twin, and a third accessor for that
+   * entry's reason: the three commands ask three questions and only happen to
+   * agree today.
+   */
+  get commentDeletable(): boolean {
+    return this.popup.deletable;
+  }
+
+  /** Deletes the comment on show. Does nothing if it cannot. */
+  deleteComment(): void {
+    this.popup.remove();
   }
 
   /** Closes the note, if one is open. */

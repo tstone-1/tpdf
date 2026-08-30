@@ -397,6 +397,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
             .collect(),
         redactions: Vec::new(),
         notes: Vec::new(),
+        discards: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,

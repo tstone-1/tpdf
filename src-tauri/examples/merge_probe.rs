@@ -304,6 +304,7 @@ fn whole(pages: u32) -> Plan {
             .collect(),
         redactions: Vec::new(),
         notes: Vec::new(),
+        discards: Vec::new(),
         marks: Vec::new(),
     }
 }

@@ -53,6 +53,10 @@ function harness(
   // and one flag driving both would make a mutation that swaps the two commands'
   // guards survive, because every harness reading would move together.
   commentReplyable = false,
+  // A third flag for the second one's reason exactly, and the argument gets
+  // stronger with each: three guards that agree today, and one flag driving all
+  // three would make a mutation that swaps any two of them survive.
+  commentDeletable = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -134,6 +138,8 @@ function harness(
     editComment: () => fired.push("editComment"),
     canReplyToComment: () => commentReplyable,
     replyToComment: () => fired.push("replyToComment"),
+    canDeleteComment: () => commentDeletable,
+    deleteComment: () => fired.push("deleteComment"),
     // Default false, on the reasoning the journal pair above states: a document
     // opens with nothing to save, so a test that says nothing about edits
     // exercises the direction where Save is withheld.
@@ -422,6 +428,8 @@ describe("every registered command", () => {
       // the reason the harness gives: one flag for both would let a swap of the
       // two commands' guards pass unnoticed.
       true,
+      // And a deletable one, for `edit.deleteComment`. Third flag, same reason.
+      true,
     );
     const shell = registry
       .all()
@@ -681,6 +689,31 @@ describe("the page operations", () => {
       harness(false, {}, {}, false, false, false, {}, false, false, true)
         .registry.all()
         .find((c) => c.id === "edit.replyToComment")
+        ?.enabled?.(),
+    ).toBe(false);
+  });
+
+  it("offers deleting a comment exactly when the popup says it can be deleted", () => {
+    // The third guard, and its own flag for the second one's reason: three
+    // conditions that agree today, and one flag driving all three would let a
+    // swap of any two of the commands' guards pass unnoticed.
+    const deletable = (commentDeletable: boolean) =>
+      harness(true, {}, {}, false, false, false, {}, false, false, false, commentDeletable)
+        .registry.all()
+        .find((c) => c.id === "edit.deleteComment")
+        ?.enabled?.();
+    expect(deletable(false)).toBe(false);
+    expect(deletable(true)).toBe(true);
+  });
+
+  it("withholds deleting a comment with no document, however deletable", () => {
+    // The other half of this command's conjunction, for the reason the two
+    // cases below give: a test that only ever varies one operand of an `&&`
+    // covers the whole and is unfalsifiable in each half.
+    expect(
+      harness(false, {}, {}, false, false, false, {}, false, false, false, true)
+        .registry.all()
+        .find((c) => c.id === "edit.deleteComment")
         ?.enabled?.(),
     ).toBe(false);
   });
@@ -1080,6 +1113,8 @@ describe("the window shortcuts for editing", () => {
       editComment: () => 0,
       canReplyToComment: () => false,
       replyToComment: () => 0,
+      canDeleteComment: () => false,
+      deleteComment: () => 0,
       saveDocument: () => fired.push("saveDocument"),
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),

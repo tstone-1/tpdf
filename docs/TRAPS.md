@@ -12032,6 +12032,93 @@ Related, and different in the half that matters: the `NaN` entry is about an ass
 cannot pass *loudly* — it fails on the first run and reads as a broken harness. This one
 fails quietly, in a phase of 250 checks, in a harness nobody runs on a schedule.
 
+### Two mechanisms for one rule, and it took two survivors to see it
+
+The rule is one line of product behaviour: **a comment the file wrote as a direct dictionary
+has no object number, so no deletion can name it.** Written down first as
+
+```ts
+if (
+  comment.object &&
+  discards.some(
+    (gone) =>
+      gone.object[0] === comment.object?.[0] &&
+      gone.object[1] === comment.object[1],
+  )
+)
+```
+
+with a test for it. Two mutations were written to prove that test can fail, and **both
+survived, for two different reasons**:
+
+- Deleting `comment.object &&` changed nothing. The comparison inside is already
+  `gone.object[0] === comment.object?.[0]`, which for a missing object is `something ===
+  undefined` — false, and `&&` short-circuits before the unguarded `[1]` is reached. The
+  first write-up of this concluded the outer guard was simply redundant.
+- So the second mutation made that comparison a wildcard —
+  `?? gone.object[0]` — and it survived too, because **the outer guard refuses first** and
+  the inner comparison is never evaluated.
+
+Each explanation is correct and each is only half of it. The rule is enforced **twice**, and
+either mechanism alone is sufficient, so a mutation of either one is a no-op while the other
+stands. Neither survivor was a weak assertion: the test is fine and always was.
+
+**The tell is two survivors with two different excuses for the same rule.** One survivor
+invites a story about that one line; a second, needing a *different* story, is the shape that
+should make you count the mechanisms instead. `docs/TRAPS.md` already carries *two mechanisms
+with the same limit make one of them untestable* — this is that, arriving through the
+mutation harness rather than through reading.
+
+**The fix is to keep one, not to write a cleverer mutation.** The outer guard went, both
+halves use `?.`, and the mutation now replaces the **whole predicate** — because a wildcard in
+one half alone is still refused by the other, which would have been a third survivor.
+
+The redundancy was not carelessness, which is worth saying: the rewrite join four lines below
+has the identical `comment.object ? ... : undefined` shape, and copying it is how the second
+mechanism arrived. **Symmetry with a neighbour is a reason to look at the neighbour, not a
+reason to keep a second copy of a rule.**
+
+### A check no gate runs is a check nobody runs, and two commands shipped past it
+
+`viewercheck.ts` asserts something no other instrument here does:
+
+> every registered command is classified, and every classification is registered
+
+Every command must be in its `probes` list, which drives it from the palette and reads the
+result, or in its `undriven` table, which names it with a written reason. There is no third
+state, so a command cannot arrive unnoticed. The check is correct and has been for months.
+
+**It has never been part of a gate, and on 2026-08-29 that stopped being theoretical.**
+`edit.editForeignMark` and `edit.replyToComment` were registered and left out of both tables.
+The check was red from that commit. Nothing said so: `viewercheck.ts` drives a real window,
+needs an unlocked and unoccluded screen, and is run by hand — so *20 of 20 gates passed* was
+true, both CI legs were green, and the one instrument that disagreed was not running.
+
+It was found on 2026-08-30 by grepping the harness for a sibling command's id while adding a
+third to the same family. Not by any instrument — by looking.
+
+**This is the sequel to the entry below it and it is a different mechanism.** That one is a
+`gates.py` gate whose red line was buried under eighteen green ones in a long log; the check
+ran and the reader missed it. This one never ran. The two failure shapes look identical from
+the outside — a check that exists, is right, and is not protecting anything — and they have
+opposite fixes: *read the whole log* does nothing here.
+
+**The fix is a static twin, and it is deliberately weaker.** `scripts/check_classified.py`
+does the same set comparison by reading the two files' string literals: `id: "..."` in
+`appcommands.ts` against `probes` and `undriven` in `viewercheck.ts`, with the four
+table-built families (`edit.color.`, `edit.stamp.`, `edit.nib.`, `edit.insertPage.`) matched
+by prefix on both sides. It can be fooled by an id built some third way; the harness reads
+the live registry and cannot. **What it buys is the day, not the certainty** — a missing
+classification goes red on the commit that causes it instead of on whichever later day
+somebody runs a window check. All three of its failure modes were proved by mutation before
+it was trusted: a command left out, a classification naming nothing registered, and a family
+dropped.
+
+**The general question, and it is worth asking of every harness this repository has:** which
+of its checks are asserted *only* there? A harness that needs a screen, a corpus, a network
+or a person is one whose assertions have no schedule. Where the same question can be asked of
+source text, ask it twice.
+
 ### A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships
 
 `scripts/check_dates.py` refuses any ISO date in a tracked file that has not happened yet,

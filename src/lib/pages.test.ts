@@ -240,6 +240,57 @@ describe("PageMap", () => {
       expect(one?.body).toBe("the later generation");
     });
 
+    it("drops a comment the reader deleted, and no other", () => {
+      // Two comments with objects, one deletion. The second is the control and
+      // it is what makes this about *matching*: a join ignoring the object would
+      // drop both, and one ignoring the list would drop neither.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, [12, 0]), comment(2, 0, [34, 0])];
+      const left = commentsIn(items, pages, [], [
+        { object: [34, 0], page: pageId(1) },
+      ]);
+      expect(left.map((one) => one.id)).toEqual([1]);
+    });
+
+    it("matches a deletion on the generation too", () => {
+      // The rewrite join's own trap, on the other list: two comments, one id,
+      // one page, differing only in the generation. A `[0]`-only comparison
+      // drops both.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, [12, 0]), comment(1, 0, [12, 1])];
+      const left = commentsIn(items, pages, [], [
+        { object: [12, 1], page: pageId(1) },
+      ]);
+      expect(left.map((one) => one.object)).toEqual([[12, 0]]);
+    });
+
+    it("leaves a comment with no object of its own out of the deletion join", () => {
+      // A direct dictionary has no name a deletion could address, so a join
+      // treating `null` as a wildcard would make one deletion drop every such
+      // comment in the document.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, null), comment(2, 0, null)];
+      const left = commentsIn(items, pages, [], [
+        { object: [12, 0], page: pageId(1) },
+      ]);
+      expect(left).toHaveLength(2);
+    });
+
+    it("deletes and rewrites independently, and the deletion wins", () => {
+      // A comment can be edited and then deleted --- the model records both, so
+      // the join meets both. Dropping it is right: a reader who deleted a
+      // comment has not asked to see their own edit of it.
+      const pages = map([1, 0]);
+      const items = [comment(1, 0, [12, 0])];
+      const left = commentsIn(
+        items,
+        pages,
+        [edited([12, 0], "what I think")],
+        [{ object: [12, 0], page: pageId(1) }],
+      );
+      expect(left).toEqual([]);
+    });
+
     it("leaves a comment with no object of its own alone", () => {
       // A direct dictionary inside `/Annots`. It has no name an incremental
       // update could override, so nothing can be addressed to it -- and a join

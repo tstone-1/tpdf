@@ -1424,6 +1424,30 @@ async fn annot_rewrite(
     )
 }
 
+/// Takes a comment out of the file off the page it is on.
+///
+/// [`annot_rewrite`]'s counterpart, and its two parameters mean exactly what
+/// they mean there: `object` is the name the **file** gave the annotation, and
+/// `page` is the model's identity for the page, which is what makes a deleted
+/// page take the deletion with it.
+///
+/// **No date**, unlike every other write command here. `/M` says when a comment
+/// was last modified, and a comment that is gone has nothing to say it about ---
+/// so there is no clock reading to take and nothing for a caller to choose.
+///
+/// ⚠ **This is the one edit that forces a full rewrite of the file on save.** An
+/// incremental save only adds objects; a deletion has nothing it can add. See
+/// `edits::Plan::is_appendable`.
+#[tauri::command]
+async fn annot_discard(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    object: (u32, u16),
+    page: u64,
+) -> Result<edits::EditState, String> {
+    edits.discard(doc, object, page)
+}
+
 /// Replaces what one mark is drawn in.
 ///
 /// The whole colour, not a channel --- see [`docmodel::Command::Recolor`]. Three
@@ -3238,6 +3262,7 @@ pub fn run() {
             annot_erase,
             annot_note,
             annot_rewrite,
+            annot_discard,
             annot_recolor,
             annot_move,
             edit_undo,

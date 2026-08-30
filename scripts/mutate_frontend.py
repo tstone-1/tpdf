@@ -1183,10 +1183,23 @@ MUTATIONS = [
         # Compare two orders by which page of the file is in each slot rather
         # than by identity. A page restored by an undo is then "the same page",
         # and the viewer takes the cheap path that only re-reads the turns.
+        # ⚠ **Structurally, not with `===`, and the first version got that wrong
+        # for as long as it stood.** `PageSource` is an object, so `page.source
+        # === other.source` is an *identity* comparison between two separately
+        # built objects and is false almost everywhere -- which made `sameOrder`
+        # answer false for two identical orders and reddened the positive test
+        # rather than the negative one this names. The mutation was caught and
+        # the harness said so, by printing the test that went red beside the one
+        # it expected; without that line it would have read as a pass.
+        #
+        # Comparing the sources' *shape* is what the entry means, and it is the
+        # defect a reader could actually write: two orders holding the same file
+        # pages in the same slots under different page identities then compare
+        # equal, so an undo that restored a page reads as no change at all.
         "pages: compare two orders by source rather than by identity",
         "src/lib/pages.ts",
         "    return this.views.every((page, slot) => page.id === other.views[slot]?.id);",
-        "    return this.views.every((page, slot) => page.source === other.views[slot]?.source);",
+        "    return this.views.every(\n      (page, slot) =>\n        JSON.stringify(page.source) === JSON.stringify(other.views[slot]?.source),\n    );",
         "is false when the same sources arrive under different identities",
     ),
     Mutation(
@@ -6519,6 +6532,89 @@ MUTATIONS += [
         "      run: () => actions.setNib(entry.id),",
         '      run: () => actions.setNib("medium"),',
         "every nib command asks for its own nib",
+    ),
+]
+
+# Deleting a comment the file came with: the join that drops the row, the popup
+# that sends it, and the guard that offers the command.
+MUTATIONS += [
+    Mutation(
+        # Drop nothing. Every deleted comment goes on being listed by the panel
+        # and openable in the popup until the file is saved and reopened -- the
+        # scan is a reading of the file on disk and cannot know, so this join is
+        # the only place a deletion can show.
+        "pages: go on listing a comment the reader deleted",
+        "src/lib/pages.ts",
+        "      continue;\n    }\n    const edit = comment.object",
+        "    }\n    const edit = comment.object",
+        "drops a comment the reader deleted, and no other",
+    ),
+    Mutation(
+        # Match on the object number alone. Two comments differing only in the
+        # generation are then one comment to this join, so deleting either drops
+        # both -- which is the rewrite join's own trap, on the other list.
+        "pages: match a deletion on the object number and not the generation",
+        "src/lib/pages.ts",
+        "          gone.object[0] === comment.object?.[0] &&\n          gone.object[1] === comment.object?.[1],",
+        "          gone.object[0] === comment.object?.[0],",
+        "matches a deletion on the generation too",
+    ),
+    Mutation(
+        # Treat a missing object as a wildcard, which makes one deletion drop
+        # every direct-dictionary comment in the document.
+        #
+        # ⚠ **Both halves of the comparison, and it took two survivors to get
+        # here.** The first try deleted an outer `comment.object &&` guard and
+        # SURVIVED, because the chaining below already refused; the second made
+        # one half of the chaining a wildcard and SURVIVED too, because the outer
+        # guard refused first. Two mechanisms for one rule, each untestable while
+        # the other stands. The guard is gone now, and this mutates the whole
+        # predicate: a wildcard in one half alone is still refused by the other,
+        # so a mutation aimed at either half would survive for a third time.
+        "pages: let a comment with no object match any deletion",
+        "src/lib/pages.ts",
+        "          gone.object[0] === comment.object?.[0] &&\n          gone.object[1] === comment.object?.[1],",
+        "          gone.object[0] === (comment.object?.[0] ?? gone.object[0]) &&\n          gone.object[1] === (comment.object?.[1] ?? gone.object[1]),",
+        "leaves a comment with no object of its own out of the deletion join",
+    ),
+    Mutation(
+        # Delete without closing. The state reply then rebuilds the panel from a
+        # list this comment is no longer in while the popup goes on showing it,
+        # which reads as the deletion not having happened.
+        "commentpopup: leave the popup open after deleting the comment it shows",
+        "src/lib/commentpopup.ts",
+        "    this.hide();\n    this.opts.onDiscard?.(comment);",
+        "    this.opts.onDiscard?.(comment);",
+        "sends the comment on show to be deleted, and closes",
+    ),
+    Mutation(
+        # Send a deletion for a comment that has no object to name, which the
+        # backend refuses -- so the reader gets an error for a command the popup
+        # should not have offered.
+        "commentpopup: send a deletion for a comment with no object",
+        "src/lib/commentpopup.ts",
+        "  remove(): void {\n    if (!this.deletable) return;",
+        "  remove(): void {",
+        "deletes nothing for a comment the file wrote without an object",
+    ),
+    Mutation(
+        # Read the Edit guard for the Delete command. The two agree today, which
+        # is exactly why one flag would not catch this and the harness gives each
+        # its own.
+        "appcommands: guard deleting a comment on whether it can be edited",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.canDeleteComment(),",
+        "      enabled: () => withDocument() && actions.canEditComment(),",
+        "offers deleting a comment exactly when the popup says it can be deleted",
+    ),
+    Mutation(
+        # Drop the document half of the conjunction, which is the operand a test
+        # varying only the popup's answer cannot see.
+        "appcommands: offer deleting a comment with no document open",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.canDeleteComment(),",
+        "      enabled: () => actions.canDeleteComment(),",
+        "withholds deleting a comment with no document, however deletable",
     ),
 ]
 

@@ -200,6 +200,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // it says" before "add to the thread", which is the order the two commands
       // were built in and the order the popup shows their buttons.
       "edit.replyToComment",
+      // Last of the three, and last because it is the destructive one: a reader
+      // scanning down meets "change what it says" and "add to the thread"
+      // before "take it away", which is the order of increasing consequence
+      // rather than the order they were built in.
+      "edit.deleteComment",
       SEPARATOR,
       // A group of their own, and the whole palette rather than a selection of
       // it: a menu that offered four of the six colours the swatch row shows
