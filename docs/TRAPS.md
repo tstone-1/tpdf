@@ -11359,6 +11359,12 @@ Two habits close it:
   * **A wait whose condition is "a command failed" needs the command to exist.**
     `command -v pgrep` answers in one call. On this box: it does not.
 
+**Name the shell, not the machine.** The absence is Git Bash's, and `pgrep` is
+`/usr/bin/pgrep` on the Macs, so a wait written on one and carried to the other
+is fine in one direction and silently instant in the other. This entry's index
+line said only "absent here" until 2026-08-21 --- which is the one word that
+makes the claim checkable, dropped in the compression.
+
 The general form is the one this file keeps arriving at from new directions:
 **a check that cannot fail and a check that passes are the same output.** Here
 it was a *wait* that could not wait, and what it certified was two corpora out
@@ -19585,3 +19591,53 @@ still fails, which reads as the first fix having been wrong.
 **The control is free and settles both at once:** `cliclick m:<x>,<y>`, then `screencapture -C`,
 which draws the cursor into the capture. Where the pointer actually is stops being an
 inference.
+
+### The checker tolerated the thing the rule forbade, and the index grew until nothing loaded it
+
+`AGENTS.md` has said since the split that **only the titles are here**. `check_trap_index.py`
+compares the two sets of titles, and to let one bullet warn that its title names the wrong
+mechanism, `title_of()` strips a trailing ` (...)` before matching. Its own docstring recorded
+the scale of that exemption: *"one bullet does that today"*.
+
+By 2026-08-31 it was **323 of 588**, worth **62,440 characters** --- 38% of the file --- and
+`AGENTS.md` had reached 162,732 characters against a harness limit of 150,000, at which point
+the file the whole scheme exists to keep loadable stops being loaded whole.
+
+**Nothing went red, and nothing could have.** The rule was prose; the gate compared sets; and
+the one line of code that saw a tail was written to ignore it. Each tail was individually
+defensible --- a sentence of context on a title that is genuinely terse --- so there was never a
+commit where the wrong thing happened, only 323 where a slightly bigger thing did.
+
+**What the audit found is the part that decides the repair.** Every tail was scored against the
+body of the entry it names, by whether its code spans, measurements and distinctive words appear
+there. 141 were covered word for word. Of the 17 whose numbers or code spans looked absent, 16
+were the same fact in another form --- `6 s` sliced out of "6 surviving reads", `621` against the
+entry's "600-odd", `31 bytes` against its "8,097 on both runners and 8,128 here". **One** carried
+something its entry did not: that `pgrep` is `/usr/bin/pgrep` on the Macs, so the absence is Git
+Bash's rather than the machine's. That fact was merged into the entry, where it is checkable, and
+the tail deleted with the other 321.
+
+So the tails were not knowledge being kept in the index. They were the entry, restated in the
+file that is read on every task, to save a `grep` in the file that is read once.
+
+Two rules now, and the second exists because the first does not bound the right quantity:
+
+  * **A bullet is its title**, unless `ALLOWED_PARENTHETICAL` names the title and says why. It
+    holds one entry, which is what the docstring always claimed. A gloss that restates the entry
+    does not qualify --- the warning that a title can mislead is in the section's preamble, where
+    it covers all 588 at no cost per entry.
+  * **A ceiling on the whole file**, 130,000 characters. Titles average 76 characters and the
+    corpus went from 116 traps to 588 in a month, so the index floor rises about 1.3 KB a day
+    with every bullet perfectly disciplined. The ceiling is a deadline, not a target: when it
+    fires, move a section out to a file the index points at.
+
+All four behaviours were proved by mutation before the gate was trusted --- a bullet regaining a
+parenthetical goes red, the file growing past the ceiling goes red, an allowlist entry naming a
+vanished title goes red, and the control, the allowlisted bullet keeping its parenthetical, stays
+green.
+
+**The general form, which this file keeps meeting from new directions: a tolerance in the checker
+is the real rule, and the prose is a wish.** The exemption was added for one case, correctly, and
+it silently defined the ceiling for every case after it. When you widen a matcher to admit a known
+exception, the question is not whether that exception is legitimate --- it is what stops the second
+one, and the three-hundredth. An allowlist answers it; a pattern does not.

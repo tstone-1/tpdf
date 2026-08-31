@@ -23,6 +23,25 @@ followed by a parenthetical the index adds for a title that misleads on its own
 So a bullet matches a title if it equals it, or if it equals it followed by
 ` (...)`. Anything else is a mismatch and is reported as one.
 
+**That tolerance is also how the index grew to 111 KB.** The rule above was
+written down and enforced by nobody: a tail is invisible to the set diff, so by
+2026-08-31 **323** of 588 bullets carried one, 62,440 characters of them, and
+`AGENTS.md` went over the 150,000-character limit at which the harness stops
+loading it whole. Every tail read was a compression of the entry it points at --
+audited one by one, exactly one carried a fact its entry did not, and that fact
+was merged into the entry rather than kept in the index. So the tolerance is now
+an allowlist: a bullet must be its title, unless `ALLOWED_PARENTHETICAL` names
+the title and says why. An entry there for a title that no longer exists is a
+failure too, because an allowlist nobody prunes excuses things nobody chose.
+
+**And a second rule, because the first only bounds what a bullet may hold, not
+how many there are.** Titles average 76 characters and the corpus grew from 116
+traps to 588 in a month, so the index has a floor that rises about 1.3 KB a day
+whatever the tails do, and the other sections grow beside it. `SIZE_CEILING`
+fails while there is still room to act. It is a deadline, not a target: when it
+fires, the fix is to move a section out to a file the index points at, the way
+`docs/TRAPS.md` and `docs/RATIONALE.md` were split off in the first place.
+
 Three refusals besides the diff, because a scan that examined nothing reports no
 findings and so does a clean one: no titles found, no bullets found, or a
 duplicate on either side (a duplicate makes a set comparison lie -- two bullets
@@ -51,6 +70,22 @@ AGENTS = ROOT / "AGENTS.md"
 INDEX_SECTION = "## Known traps"
 GROUP = "### "
 ENTRY = "### "
+
+# Titles whose bullet may carry a parenthetical, and the reason each one does.
+# A title is a claim rather than the lesson, and the section's own prose already
+# warns that several are the opposite of what they sound like -- so a gloss that
+# merely restates the entry does not belong here. This is for a title that is
+# actively wrong about its own subject, where a reader who trusts it is misled.
+ALLOWED_PARENTHETICAL = {
+    "Restoring a mutated file by *moving* a backup over it tests the mutated binary": (
+        "the title names the wrong mechanism, and the entry below it is the correction"
+    ),
+}
+
+# The whole of AGENTS.md, in characters. The harness stops loading the file at
+# 150,000, so this fires with room to move a section out rather than at the
+# moment the file has already stopped being read.
+SIZE_CEILING = 130_000
 
 
 def read(path: Path) -> "list[str]":
@@ -127,10 +162,13 @@ def main() -> int:
     known = set(entries)
     named = [title_of(bullet, known) for _, bullet in index]
 
+    size = len(AGENTS.read_bytes().decode("utf-8"))
+
     groups = len({group for group, _ in index})
     print(
         f"docs/TRAPS.md: {len(entries)} entries; "
-        f"AGENTS.md index: {len(index)} bullets in {groups} groups",
+        f"AGENTS.md index: {len(index)} bullets in {groups} groups; "
+        f"AGENTS.md: {size:,} chars of {SIZE_CEILING:,}",
         flush=True,
     )
 
@@ -155,6 +193,27 @@ def main() -> int:
     for title in named:
         if title not in known:
             problems.append(f"in the index, no such entry in {TRAPS.name}: {title}")
+
+    # A bullet is its title. The set diff above cannot see a tail, which is how
+    # 323 of them accumulated; this is the rule that was written down and had
+    # nothing enforcing it.
+    for (_, bullet), title in zip(index, named):
+        if bullet != title and title in known and title not in ALLOWED_PARENTHETICAL:
+            problems.append(
+                f"index bullet carries a parenthetical the entry should: {bullet}"
+            )
+
+    # And the allowlist itself, which otherwise rots into a list of exemptions
+    # for entries nobody can find.
+    for title in ALLOWED_PARENTHETICAL:
+        if title not in known:
+            problems.append(f"ALLOWED_PARENTHETICAL names no entry in {TRAPS.name}: {title}")
+
+    if size > SIZE_CEILING:
+        problems.append(
+            f"{AGENTS.name} is {size:,} chars, over the {SIZE_CEILING:,} ceiling -- "
+            "move a section out to a file the index points at"
+        )
 
     if problems:
         print(

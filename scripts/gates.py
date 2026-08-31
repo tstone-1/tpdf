@@ -145,7 +145,8 @@ def gates() -> "list[tuple[str, list[str], str]]":
         (
             "traps",
             [sys.executable, str(ROOT / "scripts" / "check_trap_index.py")],
-            "docs/TRAPS.md and the AGENTS.md trap index name different sets of traps",
+            "the AGENTS.md trap index disagrees with docs/TRAPS.md, carries an "
+            "unallowlisted parenthetical, or AGENTS.md is over its size ceiling",
         ),
         (
             # Cheap, and it guards the instrument every other dated claim in the
