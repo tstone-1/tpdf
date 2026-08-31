@@ -1354,6 +1354,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A sweep that stays inside one drawing really is one undo, and four files said that meant every sweep was
 - The unchecked clause of a two-sided decision was the one carrying the cost, and checking it inverted the answer
 - The checker tolerated the thing the rule forbade, and the index grew until nothing loaded it
+- A claim about somebody else's program has no gate here, and this one was false for months
+- A handover telling a person what to expect is a second implementation, and mine was wrong
 
 ## Repository facts
 

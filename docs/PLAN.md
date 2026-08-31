@@ -7578,7 +7578,11 @@ that work --- the `Kind` enum, which is the set of subtypes tpdf understands, an
 that a reply is `/IRT` plus `/RT /R` rather than a nesting of its own.
 
 **Exit criterion:** a document can be marked up, saved, reopened in Acrobat and Preview,
-and look right.
+and look right. **Met 2026-08-31**, and by the criterion's own wording rather than a
+weaker one: Preview through PDFKit (`--mode preview`, 2026-08-20), the Windows engine
+through `Windows.Data.Pdf` (`--mode winreader`, 2026-08-31), and Acrobat by eye the same
+day, because that program exposes no automation interface in the copy installed here.
+Each run is written up where the work is, and the Acrobat one is the last of the three.
 
 #### Turning a page, and writing it out --- done 2026-08-16
 
@@ -9824,15 +9828,17 @@ rectangle, and measures containment against the rectangle PDFKit reports, since
 the icon hangs below ours.
 
 **PDFKit draws an annotation that has no appearance stream**, generating its own
---- 1056 px for a `/Square` against 1306 with ours. Which also means
+--- 1056 px for a `/Square` against 1306 with ours. ~~Which also means
 `docmodel.rs`'s note that Acrobat draws such a square as nothing is still
-unchecked: PDFKit is not Acrobat, and nothing here has asked it.
+unchecked: PDFKit is not Acrobat, and nothing here has asked it.~~ **Asked
+2026-08-31, and the note was wrong: Acrobat draws it too.** See the Acrobat run
+below.
 
 ~~**Not done:** an Acrobat run, which is the other half of the criterion's own
-wording and needs a licence and a person; and any of this on Windows.~~ **The
-Windows half is done --- see below. The Acrobat half is still open and the
-reason recorded for it was wrong: Acrobat is installed on the desktop, so it
-needs a person rather than a licence.**
+wording and needs a licence and a person; and any of this on Windows.~~ **Both
+halves are done --- Windows below, Acrobat below that.** The reason recorded
+against the Acrobat half was wrong twice over: it needed neither a licence nor
+an automation interface, only twelve files and five minutes of somebody's eyes.
 
 
 #### An eraser --- done 2026-08-20
@@ -13403,13 +13409,78 @@ above is trustworthy: every row was taken in a run where it passed.
 ##### What it cannot say
 
 Nothing about **Acrobat**, which is a different program with a different
-renderer, and which is still the other half of the criterion's own wording. And
-nothing about the *correctness* of a mark's kind, colour or note, because a pixel
-difference is agnostic about all three --- `--mode roundtrip` owns those.
+renderer, and which is the other half of the criterion's own wording --- see the
+run below. And nothing about the *correctness* of a mark's kind, colour or note,
+because a pixel difference is agnostic about all three --- `--mode roundtrip`
+owns those.
 
-**Not done:** the Acrobat run. It no longer needs a licence --- Adobe Acrobat
-26.001.21789 is installed on the Windows desktop --- but the `AcroExch.*` COM
-classes are absent, so it runs in Reader mode with no automation API, and the
-check has to be driven from the screen rather than through an interface. That is
-the class of instrument this repository has the most traps about, and it is its
-own increment.
+~~**Not done:** the Acrobat run.~~ **Done 2026-08-31, by eye, and it closes the
+criterion.**
+
+
+#### Acrobat --- measured 2026-08-31
+
+Adobe Acrobat 26.001.21789 on the Windows desktop, in Reader mode: the
+`AcroExch.*` COM classes are absent, so there is no automation interface and the
+answer has to come from a person. The instrument is therefore twelve files and a
+checklist, which cost about five minutes and needed no code.
+
+`annot-probe --out` supplied them, all from `testdata/text-base14.pdf` and all
+carrying one mark on the first line of text at the identical rectangle
+`60.322 717.074 313.652 730.192`: the ten kinds `save.rs` can write, the
+unmarked source as a control, and a twelfth file that is `square.pdf` with its
+`/AP` stripped --- 1471 bytes against 1456, one difference.
+
+| question | answer |
+|---|---|
+| any repair or damage dialog, on any of the twelve | **none** |
+| the mark drawn, on line 1, in the colour written | **all ten kinds** |
+| listed in the Comments pane, author `annot-probe`, body `written by annot-probe` | **all ten** |
+| the control, with no mark | **nothing drawn, nothing listed** |
+
+**The dialog row is the one no other check here can produce.** Acrobat is the
+strictest reader of PDF structure in circulation, these are incremental saves
+written by `lopdf` over a file it did not create, and it accepted every one
+without a word. Neither PDFium nor PDFKit nor `Windows.Data.Pdf` will tell you
+that; they repair quietly.
+
+##### Two readings that arrive looking like defects
+
+The reporter raised both, which is what the checklist is for.
+
+**The mark stops after `lazy ` and does not cover `dog.`** It is exact. The
+probe marks the first 40 characters and the 40th is the space after `lazy`; the
+rectangle's right edge is `313.65198`, and 40 characters of Helvetica at 14 pt
+end at **313.652**. Acrobat placed the edge within a thousandth of a point of
+where the text engine puts that character. The handover document was the thing
+that was wrong --- it described the mark as reaching "about `...jumps ove`",
+from a miscount --- and that has a trap of its own.
+
+**Every rectangle hugs the glyphs.** The box's top line crosses the bar of the
+`T` and its bottom sits on the tail of the `y`, which is the rectangle being the
+text run's own glyph box: top `730.192` against the cap at `730.05`, bottom
+`717.074` against the descender at `717.10`, so **0.14 pt above and 0.03 pt
+below**. It is the probe's fixture rather than the product: a box or an ellipse
+in the application comes from a drag and never inherits a text rectangle. Same
+cause for the text box's words sitting low and overlapping the page's own ---
+`/FreeText` draws at 11 pt with its baseline pinned to the bottom of its
+rectangle, `717.19`, where the document's baseline is `720`.
+
+##### The finding: `docmodel.rs` was wrong about Acrobat
+
+The twelfth file is the one that changes something. `docmodel.rs` has said since
+the kind was added that "a `/Square` with no `/AP` is an annotation Acrobat
+draws as nothing at all", and that claim is the stated reason a box is written
+with an appearance stream at all. It was written from the specification's
+wording, and nothing had asked.
+
+**Acrobat draws it**, indistinguishably from the file carrying our stream. That
+is the third reader to do so: PDFium generates a shape covering 23% of the quad,
+PDFKit 1056 px against 1306 with ours. All three synthesise, and all three
+synthesise differently.
+
+The practice stands and the premise does not, which is worth stating precisely
+rather than quietly rewriting: an `/AP` is written so that the reader sees the
+box **tpdf** drew rather than that reader's own guess at its border --- and the
+three numbers above are what makes that a reason rather than a preference. The
+comment is corrected in place, with the false version kept.

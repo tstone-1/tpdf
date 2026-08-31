@@ -19715,3 +19715,59 @@ matter, and the argument was never measured against the machine's busiest moment
 The general form: **when a comment says a constant's size does not matter, that is a
 claim about a range of loads, and it names the experiment.** Ask what the busiest
 caller looks like, and whether anything in the suite reproduces it.
+
+### A claim about somebody else's program has no gate here, and this one was false for months
+
+`docmodel.rs`'s `MarkKind::Square` carried this, as the stated reason a box is written with
+an appearance stream:
+
+> a box needs one, because no reader synthesises a rectangle, and a `/Square` with no `/AP`
+> is an annotation Acrobat draws as nothing at all.
+
+Measured 2026-08-31 by opening such a file in Adobe Acrobat 26.001.21789: **it draws the
+rectangle**, indistinguishably from the file carrying our stream. Third reader to do so ---
+PDFium generates a shape covering 23% of the quad, PDFKit 1056 px against 1306 with ours.
+
+**Nothing in this repository could ever have caught it, and that is the entry.** Every gate
+here, and every probe, observes code we run or files we write. A sentence about how *Adobe's
+renderer* behaves is outside all of it: there is no test to write, no mutation to survive, no
+differential to run, because the subject is a program with no automation interface in the copy
+installed here. It sat as a premise for as long as it took for somebody to open the program,
+and the only reason it was ever checked is that a person was asked to look at twelve files.
+
+**The practice survived the premise, which is how it stayed comfortable.** Writing an `/AP` is
+still right --- the three readers draw three different rectangles, so the stream is what
+decides the reader sees the box tpdf drew rather than that reader's guess at its border. A
+false reason holding up a correct practice produces no symptom at all, so nothing ever
+prompts the check.
+
+The general rule: **an assertion about an external program's behaviour is a to-do, not a
+fact, until somebody has run that program** --- and it should be written that way, because
+the reader of the comment cannot tell the two apart. Adjacent to *A comment's stated reason
+was checkable and false, and the next feature copied it*, and worse in one respect: that one
+was falsifiable by a command anybody could type.
+
+### A handover telling a person what to expect is a second implementation, and mine was wrong
+
+The Acrobat check above was handed over as twelve files and a `README.txt` describing what
+each mark should look like. One line said the mark covered "roughly the first 40 characters,
+from the `T` to about `...jumps ove`".
+
+The probe does mark the first 40 characters. The 40th is the **space after `lazy`** --- I had
+counted to about 30 and written the result as fact. So the reporter came back with *"the
+markings end after `lazy ` and don't span `dog.`"*, reporting an exactly correct render as a
+possible defect, and the arithmetic that settles it takes a minute: the rectangle's right edge
+is `313.65198` and 40 characters of Helvetica at 14 pt end at `313.652`.
+
+**The direction it failed in was the safe one, and that is luck rather than design.** A
+hand-written expectation is a second implementation of the thing under test, computed by
+hand, with nothing checking it. Wrong in the direction mine was, it produces a false alarm
+and costs a round trip. Wrong in the *other* direction --- an expectation that happens to
+match a defective render --- it produces a **confirmation**, and a human check that cannot
+fail is worth less than no check, because it is written down afterwards as evidence.
+
+**Derive the expectation, do not compose it.** Every number in that README was available from
+the file: the rectangle is in the PDF, the font is Base 14, and the arithmetic above is six
+lines of Python. What went into the document instead was a description written from memory of
+what the probe does. Where a description genuinely has to be prose --- "a red zigzag under
+line 1" --- keep it qualitative, and let the numbers come from the artifact.

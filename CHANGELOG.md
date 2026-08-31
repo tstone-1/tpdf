@@ -19,6 +19,40 @@ have the binary.)
 
 ## [26.8.13] - Unreleased
 
+### Fixed: Acrobat draws a box we told it would draw nothing
+
+Phase 2's exit criterion is that a document can be marked up, saved, reopened **in Acrobat
+and Preview**, and look right. Preview and the Windows engine are answered by probes. Acrobat
+exposes no automation interface in the copy installed here, so the last third was answered by
+a person: twelve one-page files, all from the same source, each carrying one mark at the same
+rectangle, plus the unmarked source as a control.
+
+**All ten kinds draw, in the right place, in the colour written, and all ten are listed in the
+Comments pane with the author and the note.** No file drew a repair or damage dialog --- the
+one thing no other reader here can tell us, since these are incremental saves written over a
+file we did not create and Acrobat is the strictest structural reader in circulation.
+
+**The twelfth file overturns a source comment.** `docmodel.rs` has said since the kind was
+added that "a `/Square` with no `/AP` is an annotation Acrobat draws as nothing at all",
+written from the specification's wording and never asked; it is the stated reason a box is
+written with an appearance stream at all. Acrobat draws it, indistinguishably from the file
+carrying our stream --- the third reader to do so, after PDFium at 23% coverage of the quad
+and PDFKit at 1056 px against 1306 with ours.
+
+The practice stands and the premise does not, and the difference is worth keeping: an `/AP`
+is written so the reader sees the box **tpdf** drew rather than that reader's own guess at
+its border, which those three numbers make a reason rather than a preference. The comment is
+corrected with the false version kept, because a claim about somebody else's program has no
+gate in this repository and nothing here would ever have caught it.
+
+Two of the reporter's three observations arrived looking like defects and are the run's best
+evidence of correctness. The mark stopping after `lazy ` and not covering `dog.` is exact ---
+the probe marks 40 characters, the 40th is that space, and the rectangle's right edge
+`313.65198` is where 40 characters of Helvetica at 14 pt end. The rectangles hugging the
+glyphs to a tenth of a point is the probe's fixture rather than the product: it takes every
+mark's rectangle from the text run's own glyph box, where the application takes a box or an
+ellipse from a drag.
+
 ### Added: the OS's own renderer is asked whether it draws our marks
 
 Phase 2's exit criterion asks that a marked-up document reopen in somebody else's reader

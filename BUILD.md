@@ -794,6 +794,35 @@ for kind in highlight underline strikeout squiggly note ink textbox square ellip
       testdata/text-base14.pdf --mode winreader --kind $kind
 done
 #
+# ACROBAT IS THE THIRD READER AND THE ONLY ONE THAT NEEDS A PERSON. It exposes no
+# automation interface in the copy installed here -- Adobe Acrobat 26.001.21789,
+# Reader mode, no `AcroExch.*` COM classes -- so the instrument is a folder of
+# files and a pair of eyes. Done 2026-08-31; `docs/PLAN.md` has the results. Five
+# minutes, and it is the only check that can see a repair dialog, which is what
+# the strictest structural reader in circulation says about an incremental save
+# written by `lopdf` over a file it did not create.
+#
+# DERIVE THE EXPECTATIONS FROM THE FILE, do not write them from memory. The
+# handover for the first run described the mark as covering "about `...jumps
+# ove`" when 40 characters of Helvetica end after `lazy `, so a byte-exact render
+# was reported back as a possible defect. Wrong the other way it would have been
+# reported as a confirmation. `docs/TRAPS.md`: "A handover telling a person what
+# to expect is a second implementation".
+DROP="$HOME/Desktop/acrobat-check-$(date +%F)"; mkdir -p "$DROP"
+cp testdata/text-base14.pdf "$DROP/00-CONTROL-unmarked.pdf"
+for kind in highlight underline strikeout squiggly note square ellipse textbox ink stamp; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+      testdata/text-base14.pdf --mode roundtrip --kind $kind --out "$DROP/$kind.pdf"
+done
+# The twelfth file is the one that found something: `square.pdf` with its /AP
+# stripped, 15 bytes smaller and otherwise identical. Acrobat draws it.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+    testdata/text-base14.pdf --mode noap --kind square --out "$DROP/square-no-appearance.pdf"
+#
+# ASK FOUR THINGS of each file: a repair or damage dialog on open; the mark drawn
+# on line 1 in the colour written; the Comments pane listing it as `annot-probe`
+# with the body `written by annot-probe`; and NOTHING of either on the control.
+#
 # WHAT IT CANNOT CATCH is in the mode's own doc comment as a measured table, and
 # is worth reading before trusting a green run: every check is between two
 # READERS, so a writer that moves something legally moves it for both. A /Rect
