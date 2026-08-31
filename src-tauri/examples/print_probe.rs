@@ -670,55 +670,31 @@ mod imp {
 
     /// Non-white pixels in a rendered BMP, and the bounding box they occupy.
     ///
-    /// Scans the pixel rows the header describes, so a 24-bit and a 32-bit image are
-    /// both handled and a stride surprise is an error rather than a wrong number.
+    /// **The decoding is `print_win::Raster`, not a reader of its own.** This
+    /// function had one, written from the header offsets by hand, and it was a
+    /// second parser of the same bytes with the same stride and row-order rules to
+    /// get right --- a second thing to drift, which this repository has more than
+    /// one entry about. `Raster` is built on `parse_bmp`, which already refuses
+    /// every malformed header both would have had to, and its `y` counts from the
+    /// top so the bottom-up flip is decided once rather than per caller.
     fn measure(bmp: &[u8]) -> Result<Page, String> {
-        if bmp.len() < 54 || &bmp[..2] != b"BM" {
-            return Err("the OS renderer produced something that is not a BMP".to_owned());
-        }
-        let offset = u32::from_le_bytes([bmp[10], bmp[11], bmp[12], bmp[13]]) as usize;
-        let width =
-            i32::from_le_bytes([bmp[18], bmp[19], bmp[20], bmp[21]]).unsigned_abs() as usize;
-        let height =
-            i32::from_le_bytes([bmp[22], bmp[23], bmp[24], bmp[25]]).unsigned_abs() as usize;
-        let bpp = u16::from_le_bytes([bmp[28], bmp[29]]) as usize;
-        if !(bpp == 24 || bpp == 32) {
-            return Err(format!("a {bpp}-bit BMP is not handled here"));
-        }
-        let bytes_per_pixel = bpp / 8;
-        // BMP rows are padded to a four-byte boundary. Ignoring that reads the
-        // padding as pixels and drifts across the image, which for a mostly-white
-        // page produces a plausible small number rather than an obvious error.
-        let stride = (width * bytes_per_pixel).div_ceil(4) * 4;
-        let pixels = bmp
-            .get(offset..)
-            .ok_or("the BMP is shorter than its own pixel offset")?;
-        if pixels.len() < stride * height {
-            return Err(format!(
-                "the BMP holds {} pixel bytes, {} rows of {stride} need {}",
-                pixels.len(),
-                height,
-                stride * height
-            ));
-        }
+        let raster = print_win::Raster::of(bmp)?;
+        let (width, height) = (raster.width(), raster.height());
+
         let mut inked = 0u32;
         // Deliberately initialised inverted, so that a page with no ink at all leaves
         // them crossed and produces a zero span rather than a full-page one. A blank
         // page reporting "ink spans the whole sheet" is the one wrong answer that
         // would make the check above unfalsifiable.
         let (mut min_x, mut max_x, mut min_y, mut max_y) = (width, 0usize, height, 0usize);
-        for row in 0..height {
-            let start = row * stride;
-            for (col, px) in pixels[start..start + width * bytes_per_pixel]
-                .chunks_exact(bytes_per_pixel)
-                .enumerate()
-            {
-                if px[0] != 0xFF || px[1] != 0xFF || px[2] != 0xFF {
+        for y in 0..height {
+            for x in 0..width {
+                if raster.inked(x, y) {
                     inked += 1;
-                    min_x = min_x.min(col);
-                    max_x = max_x.max(col);
-                    min_y = min_y.min(row);
-                    max_y = max_y.max(row);
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
                 }
             }
         }

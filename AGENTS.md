@@ -1248,6 +1248,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - "Inherit nothing" cannot be spelled as an empty handle list
 - A safe function taking a raw `HANDLE` has an unstated contract, and clippy says so
 - `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
+- A bound documented as "not load-bearing", measured under the only load it will meet
 - A pipe reaches EOF before the process it belonged to is signalled
 - `eprintln!` is not one write, and every worker shares the parent's stderr
 - A test whose child never answers cannot see the pipes being crossed
@@ -1297,6 +1298,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A test whose oracle is the heuristic the code replaced fails once in 256 runs, on correct code
 - A `-manifest.json` sidecar enrols a fixture in a check it never claimed
 - A `/Text` annotation's rectangle is advisory, and PDFKit replaces it
+- The second reader substitutes the same icon and centres it, where the first anchored it
 - A rotated page makes a document mixed-size, and two checks assume it is not
 - A new corpus has to satisfy the sample points every existing check hardcodes
 - An empty transcript is what a *running* viewer check looks like

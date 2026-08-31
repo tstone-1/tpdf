@@ -9752,8 +9752,24 @@ regenerates our appearance. Nobody has shown one.
 ~~**Not done:** a standing check for any of this.~~ Done the same day --- see
 below. The shape it took is the one predicted: metadata on every page, the
 positional assertion upright-only. What was wrong in the prediction is the
-Windows half; `Windows.Data.Pdf` renders and exposes no annotation object model,
-so there is nothing there to ask these questions of.
+Windows half; ~~`Windows.Data.Pdf` renders and exposes no annotation object model,
+so there is nothing there to ask these questions of.~~
+
+⚠ **That last clause was over-broad, and it closed the Windows half of the exit
+criterion for eleven days on an argument that only covers part of it.** The
+premise is right --- there is no annotation object model --- and it settles the
+*metadata* questions `--mode preview` asks: the subtype, the author, the note,
+the rectangle. It settles nothing about the **pixels**. A renderer draws our mark
+or it does not, whether or not it will answer questions about it, and *does
+somebody else's reader show the mark* is the pixel question. `--mode winreader`
+asks it and the answer is yes for all nine kinds --- see *The OS's own renderer
+draws them too*, below.
+
+The shape of the mistake is worth more than the sentence: **a true reason for
+half a claim, stated as the whole claim.** Nothing about it reads as
+provisional --- it names a real limitation of a real API --- and the way out was
+not more thought about the API but noticing that "these questions" is two
+populations with different answers.
 
 #### `--mode preview`, and what a two-reader check can never see --- 2026-08-20
 
@@ -9812,8 +9828,11 @@ the icon hangs below ours.
 `docmodel.rs`'s note that Acrobat draws such a square as nothing is still
 unchecked: PDFKit is not Acrobat, and nothing here has asked it.
 
-**Not done:** an Acrobat run, which is the other half of the criterion's own
-wording and needs a licence and a person; and any of this on Windows.
+~~**Not done:** an Acrobat run, which is the other half of the criterion's own
+wording and needs a licence and a person; and any of this on Windows.~~ **The
+Windows half is done --- see below. The Acrobat half is still open and the
+reason recorded for it was wrong: Acrobat is installed on the desktop, so it
+needs a person rather than a licence.**
 
 
 #### An eraser --- done 2026-08-20
@@ -13317,3 +13336,80 @@ that it presented several genuinely unresolved questions as settled architecture
     unprintable --- is refused outright rather than shown with a flag beside it. The first
     is the one worth answering before any of this is built, because it decides whether
     there is a settings surface at all.
+
+#### The OS's own renderer draws them too --- measured 2026-08-31
+
+`annot-probe --mode winreader`, the Windows counterpart of `--mode preview` and a
+strictly smaller question. It renders the source page and the saved page with
+`print_win::render_page` --- `Windows.Data.Pdf`, already in the tree because the
+print path rasterises with it --- and asks where the two differ. A
+before-and-after inside **one** reader, not a differential between two, which is
+what makes it answerable without an object model.
+
+It draws all nine kinds. On `text-base14.pdf` at one pixel per point:
+
+| kind | px changed | inside the mark's rectangle | of that rectangle |
+|---|---|---|---|
+| highlight | 2,973 | 100% | 83.6% |
+| ink | 1,536 | 100% | 40.0% |
+| ellipse | 1,205 | 100% | --- |
+| square | 802 | 100% | --- |
+| squiggly | 576 | 100% | 16.2% |
+| text box | 448 | 100% | 12.6% |
+| note | 282 | see below | --- |
+| underline | 254 | 100% | 7.1% |
+| strikeout | 254 | 100% | 7.1% |
+
+##### The note is a new fact about a trap already recorded
+
+`docs/TRAPS.md` records PDFKit replacing a `/Text` annotation's rectangle with a
+standard 24x24 icon **anchored on the top-left corner**, hanging below it, so a
+comment written at `[60.322 717.074 313.652 730.192]` comes back as
+`(60.322, 706.192) 24 x 24`. `Windows.Data.Pdf` substitutes an icon too and
+**centres** it: the same 254x14 pt rectangle at 60,111 comes back as an **18x19
+box at 178,109**, centred in both axes and overhanging above and below.
+
+So two readers replace the rectangle, and they disagree about where the
+replacement goes. 84.4% of the note's changed pixels land inside our rectangle
+and **that is the correct picture** --- a containment check written against
+PDFKit's anchor rule condemns a correct render here. What survives both readers
+is that the icon is *small* and *sits on the rectangle*, which is what this mode
+asks for that kind, and it is also what a person checking by eye would ask.
+
+The general form, and the reason it is in the trap index rather than only here: a
+rule learned from one foreign reader is a fact about that reader until a second
+one is asked. The recorded entry assigned the substitution to PDFKit; the
+substitution is the format's, and the placement is each reader's own.
+
+##### Two controls, and the second is what lets the placement check fail
+
+The renderer must draw the same page identically, asserted **in pixels rather
+than in bytes**. Those are different questions and only one is about the picture:
+a byte comparison would condemn a renderer that draws the same image every time,
+and a check that fails on correct input is worse than none.
+
+And the mark's rectangle must be a **minority of the page**. *The difference is
+inside the rectangle* is satisfied by any rectangle covering the sheet, so
+without this the finding is true by construction --- the shape this document
+keeps recording under other names.
+
+**One observation about the instrument, recorded rather than explained.** The
+first-ever run on this machine failed the determinism control by 17 px, with the
+BMP bytes differing too; ten runs since, in ten fresh processes, are
+byte-identical. A first-use effect somewhere below us is the obvious guess and it
+is only a guess, so no mechanism is offered. The control is the reason the table
+above is trustworthy: every row was taken in a run where it passed.
+
+##### What it cannot say
+
+Nothing about **Acrobat**, which is a different program with a different
+renderer, and which is still the other half of the criterion's own wording. And
+nothing about the *correctness* of a mark's kind, colour or note, because a pixel
+difference is agnostic about all three --- `--mode roundtrip` owns those.
+
+**Not done:** the Acrobat run. It no longer needs a licence --- Adobe Acrobat
+26.001.21789 is installed on the Windows desktop --- but the `AcroExch.*` COM
+classes are absent, so it runs in Reader mode with no automation API, and the
+check has to be driven from the screen rather than through an interface. That is
+the class of instrument this repository has the most traps about, and it is its
+own increment.

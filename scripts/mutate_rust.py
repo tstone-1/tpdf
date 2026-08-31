@@ -7472,5 +7472,58 @@ MUTATIONS += [
     ),
 ]
 
+MUTATIONS += [
+    Mutation(
+        # Read a bottom-up BMP as top-down and the other way round. The image is
+        # still the right size, still the right colours and still plausible --- it
+        # is upside down, so a mark's rectangle is read from the wrong end of the
+        # page and a coverage figure comes back small rather than wrong-looking.
+        # A symmetric fixture cannot tell this from an identity, which is why
+        # `three_rows` is not symmetric.
+        "raster: read the rows in the other direction",
+        "src/print_win.rs",
+        "        let row = if self.top_down {\n            y\n        } else {\n            self.height - 1 - y\n        };",
+        "        let row = if self.top_down {\n            self.height - 1 - y\n        } else {\n            y\n        };",
+        "the_top_row_is_the_top_row_whichever_way_the_bmp_stores_it",
+        only_on="windows",
+    ),
+    Mutation(
+        # Walk the pixels without the row padding. Three 24-bit pixels are 9 bytes
+        # in a 12-byte row, so this drifts three bytes further into the image on
+        # every row and reads padding as colour -- which on a mostly-white page is
+        # a small plausible count rather than an obvious error.
+        "raster: ignore the four-byte row padding",
+        "src/print_win.rs",
+        "        let stride = (width * bytes_per_pixel).div_ceil(4) * 4;",
+        "        let stride = width * bytes_per_pixel;",
+        "a_row_is_read_past_the_padding_that_follows_it",
+        only_on="windows",
+    ),
+    Mutation(
+        # Take the bounds check off `pixel`. A rectangle that overhangs the page is
+        # a question a check may legally ask, and this turns the answer into a
+        # panic -- so a check's failure becomes a crash rather than a reading.
+        "raster: let a pixel outside the image be read anyway",
+        "src/print_win.rs",
+        "        if x >= self.width || y >= self.height {\n            return [0xFF, 0xFF, 0xFF];\n        }",
+        "        if false {\n            return [0xFF, 0xFF, 0xFF];\n        }",
+        "a_pixel_outside_the_image_reads_white_rather_than_panicking",
+        only_on="windows",
+    ),
+    Mutation(
+        # Accept an indexed image. Its bytes are palette *indices*, so every
+        # comparison downstream would be comparing index numbers as if they were
+        # colours -- and two different colours with adjacent indices would read as
+        # nearly the same pixel.
+        "raster: compare an indexed image without its palette",
+        "src/print_win.rs",
+        "        if !(bpp == 24 || bpp == 32) {",
+        "        if false {",
+        "an_indexed_bmp_is_refused_rather_than_compared_without_its_palette",
+        only_on="windows",
+    ),
+]
+
+
 if __name__ == "__main__":
     sys.exit(main())

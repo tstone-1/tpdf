@@ -412,12 +412,30 @@ pub const KILLED_EXIT: u32 = 0xE000_0001;
 
 /// How long [`Contained::epitaph`] waits for a child it believes is dying.
 ///
-/// Milliseconds, and the size is not load-bearing --- the gap being closed is
-/// the microseconds between a process's handles closing and its process object
-/// being signalled. It is bounded rather than generous on purpose: an epitaph is
+/// Milliseconds. It is bounded rather than unbounded on purpose: an epitaph is
 /// produced on an error path, and a diagnostic that can stall a UI thread is one
-/// nobody will leave in.
-const EPITAPH_GRACE: u32 = 100;
+/// nobody will leave in. Nothing waits the full value in the ordinary case ---
+/// [`Contained::wait_timeout`] returns the moment the process object is
+/// signalled, so the bound is only paid when the child genuinely has not been
+/// reaped yet.
+///
+/// ⚠ **It was 100, under a comment saying the size was "not load-bearing" and
+/// that the gap being closed was "the microseconds between a process's handles
+/// closing and its process object being signalled".** That is true of an idle
+/// machine and false of a busy one, and the difference is not microseconds. On
+/// 2026-08-31 `worker::tests::a_worker_whose_child_dies_says_so_rather_than_blocking`
+/// failed **two full `cargo test` runs out of four** on this desktop --- 1,155
+/// tests in parallel --- with the parent reporting `worker stopped answering
+/// (still running)` for a child that had exited. Run alone the same test passed
+/// 7 times out of 7 in 0.01 s, which is what made it read as a flake rather than
+/// as a bound that is too small under the only load it will ever meet.
+///
+/// The failure is the reassuring shape: the parent *does* notice, and its
+/// sentence is a true statement about the instant it looked. What is lost is the
+/// epitaph --- how the child died --- which is the whole reason this function
+/// exists, and `docs/TRAPS.md` records a crash test that reported the wrong
+/// cause and how much that difference was worth.
+const EPITAPH_GRACE: u32 = 1_000;
 
 /// A spawned child, still suspended, with the handles that reach it.
 pub struct Contained {

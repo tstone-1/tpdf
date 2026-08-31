@@ -990,7 +990,9 @@ pub fn present(bytes: &[u8], title: &str, owner: Option<HWND>) -> Result<bool, S
 
 #[cfg(test)]
 mod tests {
-    use super::{header_bytes, parse_bmp, pixel_bytes, read, render_page, BI_BITFIELDS, BI_RGB};
+    use super::{
+        header_bytes, parse_bmp, pixel_bytes, read, render_page, Raster, BI_BITFIELDS, BI_RGB,
+    };
 
     /// A minimal one-page PDF, assembled here rather than by `lopdf`.
     ///
@@ -1141,5 +1143,204 @@ mod tests {
         // after it, and the format the OS encoder produces needs nothing extra.
         assert_eq!(header_bytes(124, 32, BI_BITFIELDS, 0), 124);
         assert_eq!(header_bytes(40, 32, BI_RGB, 0), 40);
+    }
+
+    /// A BMP built byte by byte, so a test can decide its row order.
+    ///
+    /// Hand-assembled for the reason `one_page` gives about itself: every check
+    /// below is about how [`Raster`] reads bytes it did not write, and generating
+    /// the input with the same code that reads it would put one implementation on
+    /// both ends. `rows` is given **top row first**, whatever `top_down` says, so
+    /// the expected image is the same sentence in both directions and the test
+    /// cannot inherit the convention it is checking.
+    fn bmp(rows: &[Vec<[u8; 3]>], top_down: bool) -> Vec<u8> {
+        let height = rows.len();
+        let width = rows[0].len();
+        let stride = (width * 3).div_ceil(4) * 4;
+        let mut pixels = vec![0u8; stride * height];
+        for (index, row) in rows.iter().enumerate() {
+            // A bottom-up BMP stores the last row first, so the top row of the
+            // image is the last row of the buffer.
+            let at = if top_down { index } else { height - 1 - index };
+            for (x, px) in row.iter().enumerate() {
+                let start = at * stride + x * 3;
+                pixels[start..start + 3].copy_from_slice(px);
+            }
+        }
+
+        let offset = 14 + 40;
+        let mut out = Vec::with_capacity(offset + pixels.len());
+        out.extend_from_slice(b"BM");
+        out.extend_from_slice(&u32::try_from(offset + pixels.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(offset).unwrap().to_le_bytes());
+
+        out.extend_from_slice(&40u32.to_le_bytes());
+        out.extend_from_slice(&i32::try_from(width).unwrap().to_le_bytes());
+        let signed = i32::try_from(height).unwrap();
+        out.extend_from_slice(&if top_down { -signed } else { signed }.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&24u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(pixels.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&2835i32.to_le_bytes());
+        out.extend_from_slice(&2835i32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&pixels);
+        out
+    }
+
+    /// Three rows that are distinguishable from each other and from their reverse.
+    ///
+    /// The middle row is not the mirror of anything, so an image read upside down
+    /// disagrees with this in the first pixel a test looks at. A symmetric fixture
+    /// is the one that cannot tell a flip from an identity.
+    fn three_rows() -> Vec<Vec<[u8; 3]>> {
+        vec![
+            vec![[1, 1, 1], [2, 2, 2], [3, 3, 3]],
+            vec![[4, 4, 4], [5, 5, 5], [6, 6, 6]],
+            vec![[7, 7, 7], [8, 8, 8], [9, 9, 9]],
+        ]
+    }
+
+    #[test]
+    fn the_top_row_is_the_top_row_whichever_way_the_bmp_stores_it() {
+        let rows = three_rows();
+        let up = bmp(&rows, false);
+        let down = bmp(&rows, true);
+        // The two files really are different, or this compares one thing with
+        // itself and holds however the flip is written.
+        assert_ne!(up, down, "the control: the two encodings differ on disk");
+
+        let up = Raster::of(&up).expect("bottom-up");
+        let down = Raster::of(&down).expect("top-down");
+        for (y, row) in rows.iter().enumerate() {
+            for (x, px) in row.iter().enumerate() {
+                assert_eq!(up.pixel(x, y), *px, "bottom-up at {x},{y}");
+                assert_eq!(down.pixel(x, y), *px, "top-down at {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_row_is_read_past_the_padding_that_follows_it() {
+        // Three 24-bit pixels are 9 bytes and a row is padded to 12, so a reader
+        // that walks 9 bytes per row drifts three bytes further into the image on
+        // every row --- which on a real page produces a plausible small count
+        // rather than an obvious error. Row 2 is where a three-byte drift first
+        // shows, because row 1 is only one padding away.
+        let rows = three_rows();
+        let image = bmp(&rows, true);
+        let raster = Raster::of(&image).expect("top-down");
+        assert_eq!(raster.pixel(0, 2), [7, 7, 7]);
+        assert_eq!(raster.pixel(2, 2), [9, 9, 9]);
+    }
+
+    #[test]
+    fn a_pixel_outside_the_image_reads_white_rather_than_panicking() {
+        let image = bmp(&three_rows(), true);
+        let raster = Raster::of(&image).expect("top-down");
+        assert_eq!(raster.width(), 3);
+        assert_eq!(raster.height(), 3);
+        // A rectangle that overhangs the page is a question a check may legally
+        // ask, and answering it with a panic would make the check's failure a
+        // crash rather than a reading.
+        assert_eq!(raster.pixel(3, 0), [0xFF, 0xFF, 0xFF]);
+        assert_eq!(raster.pixel(0, 3), [0xFF, 0xFF, 0xFF]);
+        assert!(!raster.inked(3, 3));
+        // And the control, or "outside is white" is satisfied by everything being
+        // white.
+        assert!(raster.inked(0, 0));
+    }
+
+    /// A **valid** 8-bit BMP: 40-byte header, a full 256-entry palette, one row.
+    ///
+    /// Valid on purpose, and that is the whole point of the helper. The first
+    /// version of the test below took a 24-bit image and wrote `8` into its depth
+    /// field, which leaves the palette `parse_bmp` then requires missing --- so
+    /// that function refused it and [`Raster`]'s own depth check never ran. The
+    /// mutation deleting that check SURVIVED, and the test's own comment had
+    /// excused it in advance: *"either refusal is correct here"*. A guard whose
+    /// neighbour refuses the same input cannot be tested by it.
+    fn indexed_bmp() -> Vec<u8> {
+        let (width, height) = (4usize, 1usize);
+        let offset = 14 + 40 + 256 * 4;
+        let mut out = Vec::with_capacity(offset + width * height);
+        out.extend_from_slice(b"BM");
+        out.extend_from_slice(
+            &u32::try_from(offset + width * height)
+                .unwrap()
+                .to_le_bytes(),
+        );
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(offset).unwrap().to_le_bytes());
+
+        out.extend_from_slice(&40u32.to_le_bytes());
+        out.extend_from_slice(&i32::try_from(width).unwrap().to_le_bytes());
+        out.extend_from_slice(&(-i32::try_from(height).unwrap()).to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&8u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(width * height).unwrap().to_le_bytes());
+        out.extend_from_slice(&2835i32.to_le_bytes());
+        out.extend_from_slice(&2835i32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        // The palette, and the reason an index is not a colour: entry 1 is black
+        // and entry 2 is white, so two pixels one apart in index are as far apart
+        // in colour as this image goes.
+        for entry in 0..256u32 {
+            let value = u8::try_from(entry).unwrap_or(0);
+            out.extend_from_slice(&[value, value, value, 0]);
+        }
+        // One padded row of four indices.
+        out.extend_from_slice(&[1, 2, 3, 4]);
+        out
+    }
+
+    #[test]
+    fn an_indexed_bmp_is_refused_rather_than_compared_without_its_palette() {
+        let indexed = indexed_bmp();
+        // **The control, and it is what makes the assertion below about `Raster`.**
+        // If `parse_bmp` refused this too, the refusal underneath would satisfy the
+        // test whatever `Raster` did --- which is exactly how the first version of
+        // this test let its mutation survive.
+        assert!(
+            parse_bmp(&indexed).is_ok(),
+            "the control: a well-formed indexed BMP parses, so the depth check is \
+             the only thing left to refuse it"
+        );
+        assert!(
+            Raster::of(&indexed).is_err(),
+            "an 8-bit image must not be compared pixel for pixel: its bytes are \
+             palette indices, and two colours with adjacent indices would read as \
+             nearly the same pixel"
+        );
+    }
+
+    #[test]
+    fn a_render_reads_back_as_pixels_of_the_size_it_was_asked_for() {
+        // The synthetic images above prove the reading; this proves the type is
+        // pointed at the right thing, on bytes WinRT actually produced. Without it
+        // every test here could pass against an encoder this never meets.
+        let bmp = render_page(&one_page(0), 0, 72.0).expect("render");
+        let raster = Raster::of(&bmp).expect("a rendered page is readable");
+        assert_eq!((raster.width(), raster.height()), (200, 100));
+
+        // **`one_page` carries no `/Contents` at all**, so the honest expectation
+        // is that every pixel is white --- and the first draft of this asserted the
+        // opposite, requiring ink no correct render of a blank page could produce.
+        // What this does prove is that the whole declared buffer is readable and
+        // holds a plausible colour rather than uninitialised memory; what it cannot
+        // prove is that ink would be *found*, which is what the synthetic images
+        // above are for.
+        let inked = (0..raster.height())
+            .flat_map(|y| (0..raster.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| raster.inked(x, y))
+            .count();
+        assert_eq!(inked, 0, "a page with no /Contents renders blank");
     }
 }
