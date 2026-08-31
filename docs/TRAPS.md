@@ -19641,3 +19641,77 @@ is the real rule, and the prose is a wish.** The exemption was added for one cas
 it silently defined the ceiling for every case after it. When you widen a matcher to admit a known
 exception, the question is not whether that exception is legitimate --- it is what stops the second
 one, and the three-hundredth. An allowlist answers it; a pattern does not.
+
+### The second reader substitutes the same icon and centres it, where the first anchored it
+
+The entry above records PDFKit replacing a `/Text` annotation's rectangle with a
+standard 24x24 icon on the rectangle's **top-left corner**, hanging below it, and
+`--mode preview` asserts that anchor and that size for the kind. Correct, and it is a
+fact about PDFKit rather than about the format.
+
+`Windows.Data.Pdf` substitutes an icon too, and puts it somewhere else. Measured
+2026-08-31 by `annot-probe --mode winreader` on `text-base14.pdf`, at one pixel per
+point: a comment written into a **254x14** pt rectangle at **60,111** changes an
+**18x19** box at **178,109** --- centred on the rectangle in both axes, overhanging
+it two pixels above and two below, and nowhere near its top-left corner.
+
+**So the containment check that is right for one reader condemns a correct render by
+the other.** 84.4% of the note's changed pixels fall inside the rectangle, against
+100% for every other kind, and the missing sixth is the overhang. A check inheriting
+PDFKit's rule --- anchor at the corner, 24x24 --- fails here on a picture nobody would
+object to.
+
+What survives both readers is weaker and is the thing worth asserting: the icon is
+**small** and it **sits on the rectangle**. `--mode winreader` takes the bounding box
+of the changed pixels, requires its centre inside the mark's rectangle and its size
+under 64 px, and that is what a person checking by eye is doing.
+
+**The general form.** A rule learned from one foreign reader is a fact about that
+reader until a second one has been asked. The substitution is the format's --- PDF
+32000-1 leaves a `/Text` annotation's appearance to the reader, so both are within
+their rights --- and the *placement* is each reader's own. When a check encodes a
+constant learned from an oracle, the question to ask before reusing it is which of
+the two it belongs to.
+
+Same shape as this file's entry about a cross-check read in the wrong convention, and
+it arrives from the direction that is harder to see: not a reader that is wrong, but
+two readers that are both right and differ.
+
+### A bound documented as "not load-bearing", measured under the only load it will meet
+
+`sandbox_win::EPITAPH_GRACE` is how long a parent waits for a child it believes is
+dying, so that it can say **how** it died rather than that it stopped answering. It
+was 100 ms, under a comment stating that the size was *"not load-bearing"* because
+the gap being closed was *"the microseconds between a process's handles closing and
+its process object being signalled"*.
+
+That is true of an idle machine. On 2026-08-31,
+`worker::tests::a_worker_whose_child_dies_says_so_rather_than_blocking` failed **two
+full `cargo test` runs out of four** on the Windows desktop --- 1,155 tests in
+parallel --- with the parent reporting `worker stopped answering (still running)` for
+a child that had already exited. Run alone, the same test passed **7 times out of 7,
+in 0.01 s**.
+
+**That ratio is the trap, not the constant.** A test that passes alone and fails in
+the suite reads as a flake, and a flake gets re-run rather than read. It was written
+off twice, once by the session that first saw it. The discriminator costs one command:
+run the thing alone, then run it in the crowd, and notice that the *only* load this
+bound will ever meet is the crowd.
+
+**The failure is the reassuring shape.** The parent does notice the child is gone, and
+its sentence is a true statement about the instant it looked --- `GetExitCodeProcess`
+had not yet been given an exit code, and this file already records that a pipe reaches
+EOF before the process it belonged to is signalled. What is lost is the epitaph, which
+is the whole reason the function exists; the entry about a crash test reporting
+"exited with code 9" where a segfault should have said "killed by signal 11" is what
+that difference is worth.
+
+**A bound is only bounded on the path that pays it.** `wait_timeout` returns the
+moment the process object is signalled, so raising 100 to 1,000 costs nothing in the
+ordinary case and the original comment's real concern --- a diagnostic that stalls a UI
+thread --- is unaffected. The number was small because the comment argued it did not
+matter, and the argument was never measured against the machine's busiest moment.
+
+The general form: **when a comment says a constant's size does not matter, that is a
+claim about a range of loads, and it names the experiment.** Ask what the busiest
+caller looks like, and whether anything in the suite reproduces it.

@@ -763,6 +763,37 @@ done
 # rectangle. macOS only -- Windows.Data.Pdf renders but exposes no annotation
 # object model, so the mode refuses there rather than half-running.
 #
+# THE WINDOWS COUNTERPART IS `--mode winreader`, and it asks a strictly smaller
+# question. The sentence above is about METADATA -- the subtype, the author, the
+# note, the rectangle -- and it is right about those. It is not about the pixels:
+# a renderer draws our mark or it does not, whether or not it will answer
+# questions about it. So this is a before-and-after inside ONE reader rather than
+# a differential between two. Windows only; on macOS it refuses and names
+# `--mode preview` as the mode that answers there.
+#
+# Five checks per kind, and TWO of them are controls. The renderer must draw the
+# same page identically -- in PIXELS, not in bytes, because WinRT's BMP encoder
+# is not reproducible and a byte comparison would condemn a correct renderer.
+# And the mark's rectangle must be a MINORITY of the page, or "the difference is
+# inside the rectangle" is true by construction.
+#
+# All nine kinds, 5/5 each, on `text-base14.pdf` at one pixel per point.
+# Reference run: highlight 2,973 px changed with 100% inside its own rectangle,
+# ink 1,536, ellipse 1,205, square 802, squiggly 576, text box 448, underline and
+# strikeout 254 each. A run whose px counts differ by a few is antialiasing; one
+# whose INSIDE share drops below 100% for anything but a note is not.
+#
+# THE NOTE IS THE EXCEPTION AND IT IS NOT A DEFECT. `Windows.Data.Pdf` replaces a
+# /Text rectangle with its own icon, as PDFKit does -- and CENTRES it where PDFKit
+# anchors it to the top-left corner. A 254x14 rectangle at 60,111 changes an
+# 18x19 box at 178,109. So 84.4% of its pixels are inside and that is correct;
+# the mode asks whether the icon is small and sits on the rectangle instead.
+# `docs/TRAPS.md` has it under "The second reader substitutes the same icon".
+for kind in highlight underline strikeout squiggly note ink textbox square ellipse; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
+      testdata/text-base14.pdf --mode winreader --kind $kind
+done
+#
 # WHAT IT CANNOT CATCH is in the mode's own doc comment as a measured table, and
 # is worth reading before trusting a green run: every check is between two
 # READERS, so a writer that moves something legally moves it for both. A /Rect

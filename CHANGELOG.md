@@ -19,6 +19,57 @@ have the binary.)
 
 ## [26.8.13] - Unreleased
 
+### Added: the OS's own renderer is asked whether it draws our marks
+
+Phase 2's exit criterion asks that a marked-up document reopen in somebody else's reader
+and look right. `annot-probe --mode preview` answers that on macOS with PDFKit;
+`docs/PLAN.md` recorded the Windows half as unanswerable, because `Windows.Data.Pdf`
+exposes no annotation object model.
+
+That is true of the **metadata** questions --- the subtype, the author, the note, the
+rectangle --- and it is not true of the pixels. A renderer draws our mark or it does not,
+whether or not it will answer questions about it. `--mode winreader` renders the source
+page and the saved page with the OS rasteriser already in the tree for printing, and asks
+where the two differ: a before-and-after inside one reader rather than a differential
+between two.
+
+**It draws all nine kinds**, 5 checks each on `text-base14.pdf` at one pixel per point ---
+highlight 2,973 px changed with 100% of them inside the mark's own rectangle, ink 1,536,
+ellipse 1,205, square 802, squiggly 576, text box 448, underline and strikeout 254 each.
+
+**The note is the exception and it is a new fact rather than a defect.** PDFKit replaces a
+`/Text` rectangle with a standard 24x24 icon anchored on its **top-left corner**;
+`Windows.Data.Pdf` substitutes an icon too and **centres** it, so a 254x14 pt rectangle at
+60,111 comes back as an 18x19 box at 178,109. 84.4% of its pixels land inside the
+rectangle and that is the correct picture --- a containment check inheriting the other
+reader's anchor rule condemns a correct render. Recorded as a trap: a rule learned from
+one foreign reader is a fact about that reader until a second one has been asked.
+
+Two of the five checks are controls, and the second is what lets the placement check fail
+at all: the renderer must draw the same page identically --- in pixels rather than bytes,
+since WinRT's BMP encoder is not reproducible and a byte comparison condemns a correct
+renderer --- and the mark's rectangle must be a minority of the page.
+
+### Changed: one BMP reader instead of two
+
+`print_win::Raster` is the pixel view both probes now use, built on `parse_bmp` rather
+than beside it: that function already refuses every malformed header a second reader would
+have to, and `examples/print_probe.rs` had a second one written from the offsets by hand.
+Its `y` counts from the top always, so the bottom-up flip is decided once rather than per
+caller --- a caller that gets it backwards reads a mark's rectangle at the wrong end of the
+page, which on a symmetric fixture gives a plausible number rather than an obvious error.
+
+Proved a no-op by running `print-probe` either side of the change: every reading identical
+except the temporary filename, which carries the pid.
+
+Five unit tests and four mutations, and the fourth mutation is why one of the tests was
+rewritten. *An indexed BMP is refused* first built its fixture by writing `8` into a
+24-bit image's depth field, which leaves the palette `parse_bmp` requires missing --- so
+that function refused it, `Raster`'s own depth check never ran, and deleting that check
+SURVIVED. The test's own comment had excused it in advance: *"either refusal is correct
+here"*. The fixture is a **valid** 8-bit BMP now, with a full 256-entry palette, and the
+test asserts `parse_bmp` accepts it before asserting `Raster` does not.
+
 ### Changed: the trap index is titles again, and the `traps` gate holds it there
 
 `AGENTS.md` went over the 150,000-character limit at which the harness stops loading it
