@@ -519,11 +519,25 @@ library you need"* had arrived inside the script whose docstring names that same
 is the set of titles and a set diff needs no number, which is the doctrine one level up: on
 2026-08-02 the tally was right while the index nobody counts was three entries short, added by
 the commit that had updated the number. The rule it enforces is the file's own --- a bullet is
-the title verbatim, optionally with a parenthetical the index adds where a title misleads on its
-own. It refuses an empty scan on either side and a duplicate on either side, since two bullets
-covering one title can hide a third going missing. Proved four ways, all red: removing a bullet,
-adding one naming nothing, duplicating one, and disabling the parenthetical rule in the
-checker.
+the title verbatim. It refuses an empty scan on either side and a duplicate on either side,
+since two bullets covering one title can hide a third going missing. Proved four ways, all red:
+removing a bullet, adding one naming nothing, duplicating one, and disabling the parenthetical
+rule in the checker.
+
+**And it took the whole scheme past the limit it exists to respect, because the checker
+tolerated what the rule forbade.** To let one bullet warn that its title names the wrong
+mechanism, the matcher strips a trailing ` (...)` before comparing --- so a bullet's tail was
+invisible to the set diff by design, and by 2026-08-31 **323** of 588 bullets carried one,
+62,440 characters, with `AGENTS.md` at 162,732 against a harness limit of 150,000. Every tail
+was audited against the entry it names; one carried a fact its entry did not, which was merged
+into the entry, and the other 322 were deleted. The tolerance is an allowlist now
+(`ALLOWED_PARENTHETICAL`, one title), and a second rule holds the whole file to 130,000
+characters, since the first bounds what a bullet costs and not how many there are --- 116 traps
+to 588 in a month is about 1.3 KB a day of index floor with every bullet disciplined. Four more
+mutations, all behaving: a bullet regaining a parenthetical goes red, the file passing the
+ceiling goes red, an allowlist entry naming a vanished title goes red, and the allowlisted
+bullet keeping its parenthetical stays green. The trap entry is *The checker tolerated the thing
+the rule forbade, and the index grew until nothing loaded it*.
 
 **`wiring` exists because the box shipped inert and three layers of tests said otherwise.**
 `Viewer` reports what it cannot decide through optional callbacks on `ViewerOptions`;

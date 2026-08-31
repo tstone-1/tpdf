@@ -19,6 +19,36 @@ have the binary.)
 
 ## [26.8.13] - Unreleased
 
+### Changed: the trap index is titles again, and the `traps` gate holds it there
+
+`AGENTS.md` went over the 150,000-character limit at which the harness stops loading it
+whole --- 162,732, of which the trap index was 111 KB. The file has said since the split
+that **only the titles are here**, and 323 of its 588 bullets carried a parenthetical gloss
+on top of the title, 62,440 characters of them. `check_trap_index.py` could not see any of
+it: to let one bullet warn that its title names the wrong mechanism, its matcher strips a
+trailing ` (...)` before comparing, so a tail was invisible to the set diff by design.
+
+Every tail was audited against the entry it points at before anything was deleted. 141 were
+covered word for word; of the 17 whose measurements or code spans looked absent, 16 were the
+same fact in another form. **One** carried something its entry did not --- that `pgrep` is
+`/usr/bin/pgrep` on the Macs, so the absence that entry describes is Git Bash's rather than
+the machine's --- and that has been merged into the entry, where it is checkable. The other
+322 tails are gone. `AGENTS.md` is 101,931 characters.
+
+The gate now enforces two rules rather than one, both proved able to fail by mutation:
+
+- **A bullet is its entry's title**, unless `ALLOWED_PARENTHETICAL` names the title and says
+  why. It holds one entry, which is the number the checker's docstring had claimed all along.
+- **`AGENTS.md` has a 130,000-character ceiling**, because the first rule bounds what a bullet
+  may cost and not how many there are: titles average 76 characters and the corpus went from
+  116 traps to 588 in a month, so the index floor climbs about 1.3 KB a day on its own. When
+  it fires, the fix is to move a section out to a file the index points at.
+
+The trap is recorded under *The checker tolerated the thing the rule forbade, and the index
+grew until nothing loaded it*. The general form: a tolerance in the checker is the real rule,
+and the prose beside it is a wish. The exemption was added for one legitimate case and
+silently set the ceiling for every case after it.
+
 ### Added: hold the middle mouse button to drag the view
 
 The gesture every PDF reader has, and tpdf did not: hold the middle button and the pages
