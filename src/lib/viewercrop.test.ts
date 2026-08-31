@@ -147,6 +147,7 @@ function comment(rect: [number, number, number, number]): Comment {
     object: null,
     reply_to: null,
     hidden: false,
+    color: null,
   };
 }
 

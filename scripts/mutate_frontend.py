@@ -81,6 +81,134 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        # Pan on any button. The primary one then fights the text selection and
+        # every drawing tool for the same press, which is the direction that
+        # looks like the viewer ignoring a gesture rather than adding one.
+        "viewer: pan on any button, not the middle one",
+        "src/lib/viewer.ts",
+        "    if (event.button !== MIDDLE_BUTTON) return;",
+        "    if (false) return;",
+        "is the middle button and no other",
+    ),
+    Mutation(
+        # Send the view the way the pointer went instead of the page. The pan
+        # still works, in the wrong direction --- which is the hand-tool
+        # convention inverted, and reads as the page fighting the hand holding
+        # it.
+        "viewer: send a pan the way the pointer went, not the page",
+        "src/lib/viewer.ts",
+        "    this.scrollTo(from.top - (event.clientY - from.y));",
+        "    this.scrollTo(from.top + (event.clientY - from.y));",
+        "moves the view with the pointer, on both axes",
+    ),
+    Mutation(
+        # Vertical only. The gesture works everywhere it is not needed and does
+        # nothing at the zoom a reader reaches for it, because `maxPan` is zero
+        # until the page overflows the window --- so a fixture at a fit zoom
+        # cannot tell this from the real thing.
+        "viewer: pan vertically and not sideways",
+        "src/lib/viewer.ts",
+        "    if (this.scroller.setPan(from.pan - (event.clientX - from.x))) this.wake();",
+        "    if (false) this.wake();",
+        "moves the view with the pointer, on both axes",
+    ),
+    Mutation(
+        # Say something else while panning. The only thing that tells a reader
+        # the button they are holding is doing anything.
+        "viewer: show the wrong cursor through a pan",
+        "src/lib/viewer.ts",
+        '        "grabbing"',
+        '        "progress"',
+        "says a pan is happening, and stops saying so",
+    ),
+    Mutation(
+        # Let an armed tool outrank the pan. The crosshair then describes what
+        # the next primary press would do, through a gesture the reader is
+        # making now with a different button.
+        "viewer: rank an armed tool's cursor above a pan in progress",
+        "src/lib/viewer.ts",
+        "    this.surfaceHost.style.cursor = this.panFrom",
+        "    this.surfaceHost.style.cursor = this.panFrom && !this.drawKind",
+        "outranks an armed tool's cursor while the button is down",
+    ),
+    Mutation(
+        # Leave the three listeners on the root. **No drag can see this**:
+        # `onPanEnd` clears `panFrom` as well, and that alone stops a stray move
+        # panning, so the leak is invisible to every behavioural assertion --- it
+        # costs one set of listeners per drag on an element that lives as long as
+        # the document. The test named here counts them, which is the only
+        # instrument that can.
+        "viewer: leave a pan's listeners on the root",
+        "src/lib/viewer.ts",
+        """    this.root.removeEventListener("pointermove", this.onPanMove);
+    this.root.removeEventListener("pointerup", this.onPanEnd);
+    this.root.removeEventListener("pointercancel", this.onPanEnd);
+    this.showCursor();
+  };""",
+        """    this.showCursor();
+  };""",
+        "takes its listeners back off, which no drag can notice",
+    ),
+    Mutation(
+        # Pan from a press on the scrollbar. The track has its own drag and does
+        # not test the button, so the two then run at once and the view jumps to
+        # wherever the thumb was dragged *and* follows the pointer.
+        "viewer: pan from a press on the scrollbar track",
+        "src/lib/viewer.ts",
+        """    if (this.track.contains(event.target as Node)) return;
+    // A reader who pans""",
+        "    // A reader who pans",
+        "leaves a press on the scrollbar to the scrollbar",
+    ),
+    Mutation(
+        # Never apply the pan. Every page stays centred, the gesture reports
+        # movement, and the right-hand side of a zoomed page stays unreachable.
+        "scroller: lay the pages out as though nothing had been panned",
+        "src/lib/scroller.ts",
+        "    return Math.max(0, (this.opts.viewport.width - width) / 2) - this.pan;",
+        "    return Math.max(0, (this.opts.viewport.width - width) / 2);",
+        "moves every page by the same amount, whatever its width",
+    ),
+    Mutation(
+        # Read the pan unclamped. A drag past the right-hand edge then carries
+        # the pages off the window entirely, and the reader has to drag exactly
+        # as far back to find them.
+        "scroller: read the pan without clamping it to the bound",
+        "src/lib/scroller.ts",
+        "    return Math.max(0, Math.min(this.panX, this.maxPan));",
+        "    return this.panX;",
+        "clamps a pan to the bound at each end",
+    ),
+    Mutation(
+        # Accept a non-finite pan. `NaN` survives both clamps unchanged and
+        # reaches the DOM as `left:NaNpx`, which lays out nothing at all and
+        # says nothing about why.
+        "scroller: accept a pan that is not a number",
+        "src/lib/scroller.ts",
+        "    this.panX = Number.isFinite(px) ? px : 0;",
+        "    this.panX = px;",
+        "parks at the left edge for a pan that is not a number",
+    ),
+    Mutation(
+        # Always report that the pan moved. The viewer then wakes the frame loop
+        # on every move of a drag that has run out of page.
+        "scroller: report a pan as moved when it did not",
+        "src/lib/scroller.ts",
+        "    if (this.pan === before) return false;",
+        "    if (false) return false;",
+        "reports whether the applied pan actually moved",
+    ),
+    Mutation(
+        # Leave the widest page at zero, so `maxPan` is always zero and the pan
+        # is inert on every document. It is inert at every fit zoom anyway,
+        # which is why the fixture behind this one has to overflow the window.
+        "scroller: never grow the widest page",
+        "src/lib/scroller.ts",
+        "      widest = Math.max(widest, widthDev / dpr);",
+        "      widest = Math.max(widest, 0);",
+        "has nothing to pan while every page fits, and the widest page sets the bound",
+    ),
+    Mutation(
         # Drop the counts and keep only the warning. A merge whose report says
         # nothing about how much went in is a copy's report on an operation the
         # reader cannot check by looking at what they asked for.
@@ -4846,6 +4974,11 @@ TEST_FILES = [
     "src/lib/commentlist.test.ts",
     "src/lib/commentpopup.test.ts",
     "src/lib/links.test.ts",
+    # Added 2026-08-31 with the pan, in the same edit as its mutations and for
+    # the reason the note above `recovery.test.ts` gives --- the `mutations`
+    # gate caught its absence here before the harness ever ran, which is what
+    # that gate is for.
+    "src/lib/viewerpan.test.ts",
     # The window reads `ViewerStatus` and the other viewer tests read the
     # accessors, so this is the only file where a mutation to `report`'s own
     # summary can go red. It was listed a second time lower down on 2026-08-22,

@@ -1553,6 +1553,7 @@ describe("the eraser on marks that have no strokes", () => {
         object: null,
         reply_to: null,
         hidden: false,
+        color: null,
       },
     ]);
     await settle();

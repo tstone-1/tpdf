@@ -35,6 +35,7 @@ function comment(over: Partial<Comment> & { id: number }): Comment {
     quads: [],
     reply_to: null,
     hidden: false,
+    color: null,
     ...over,
   };
 }

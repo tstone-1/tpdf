@@ -2615,6 +2615,78 @@ MUTATIONS = [
         "a_string_that_is_not_a_date_produces_no_date",
     ),
     Mutation(
+        # Keep the components that parsed and drop the one that did not. The
+        # array is then *shorter*, so `[/Red 0 0 0]` is read as a legal
+        # DeviceRGB triple and the comment comes out black -- which is why the
+        # test's fixture is four entries long rather than three.
+        "annots: skip an unreadable colour component instead of declining the array",
+        "src/annots.rs",
+        "    if values.len() != array.len() {",
+        "    if false {",
+        "a_colour_with_a_value_that_is_not_a_number_is_declined_whole",
+    ),
+    Mutation(
+        # Let an infinity or a `NaN` through to the clamp. An infinity clamps to
+        # a bound and looks like a colour; a `NaN` clamps to `NaN` and reaches
+        # serde, which refuses it -- so this one is a wrong colour on one input
+        # and a failed reply on the other.
+        "annots: clamp a colour component without checking it is finite",
+        "src/annots.rs",
+        "    if values.iter().any(|value| !value.is_finite()) {\n        return None;\n    }\n    let rgb = match values[..] {",
+        "    if false {\n        return None;\n    }\n    let rgb = match values[..] {",
+        "a_colour_with_a_value_that_is_not_a_number_is_declined_whole",
+    ),
+    Mutation(
+        # Read DeviceGray into the red channel alone. Every gray then comes out
+        # a shade of red, and 0.0 -- black -- is the one value that still looks
+        # right, which is why the test uses 0.25.
+        "annots: read a one-number colour into one channel",
+        "src/annots.rs",
+        "        [gray] => [gray, gray, gray],",
+        "        [gray] => [gray, 0.0, 0.0],",
+        "a_colour_names_its_space_by_how_many_numbers_it_has",
+    ),
+    Mutation(
+        # Drop the black component from the CMYK conversion. Correct for every
+        # colour with `k` of zero, which is most of a palette.
+        "annots: convert a CMYK colour without its black component",
+        "src/annots.rs",
+        "            (1.0 - c) * (1.0 - k),",
+        "            1.0 - c,",
+        "a_colour_names_its_space_by_how_many_numbers_it_has",
+    ),
+    Mutation(
+        # Read an array of any other length as black rather than as no colour.
+        # An empty `/C` -- which §12.5.2 spells *no colour* -- then paints a
+        # black comment, and so does a malformed two-number array.
+        "annots: read a colour of an illegal length as black",
+        "src/annots.rs",
+        "        _ => return None,\n    };\n    // Legal values",
+        "        _ => [0.0, 0.0, 0.0],\n    };\n    // Legal values",
+        "an_array_that_is_not_one_of_the_four_legal_lengths_is_not_a_colour",
+    ),
+    Mutation(
+        # Pass a component outside 0..1 through. Harmless for a value a producer
+        # rounded past 1.0 and not for one a document chose, and either way it
+        # is a number no consumer of this field expects.
+        "annots: do not clamp a colour component to its legal range",
+        "src/annots.rs",
+        "    Some(rgb.map(|component| component.clamp(0.0, 1.0)))",
+        "    Some(rgb)",
+        "a_component_outside_the_legal_range_is_clamped_rather_than_declined",
+    ),
+    Mutation(
+        # Never read `/C` at all. Every unit test above still passes, because
+        # they call `color_of` directly -- this is the one that says the reader
+        # is *wired in*, and the only test that can see it is the one that goes
+        # through `scan`.
+        "annots: do not read a colour onto the comment",
+        "src/annots.rs",
+        "        color: color_of(annot, document),",
+        "        color: None,",
+        "the_scan_reads_the_colour_onto_the_comment",
+    ),
+    Mutation(
         # Rebuild from the newest snapshot rather than the newest one at or below
         # the target. Correct whenever undo has not crossed a snapshot, which is
         # most of the time.

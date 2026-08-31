@@ -189,6 +189,7 @@ describe("PageMap", () => {
         object,
         reply_to: null,
         hidden: false,
+        color: null,
       };
     }
 

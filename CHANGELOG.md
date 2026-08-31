@@ -17,6 +17,35 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.8.13] - Unreleased
+
+### Added: hold the middle mouse button to drag the view
+
+The gesture every PDF reader has, and tpdf did not: hold the middle button and the pages
+follow the pointer. It is not a mode --- there is no hand tool to arm and nothing to leave
+switched on --- so it costs nothing to discover and cannot be left on by accident.
+
+It moves **both** axes, and the horizontal one is the part that was missing rather than
+merely inconvenient. Until now the scroller had no horizontal offset at all: pages were
+centred and clipped, so a reader zoomed past fit-width could see the left of a page and
+had no way to reach the right of it. `Scroller.maxPan` is zero whenever every page fits,
+which is every document at every fit zoom, so on an ordinary page this is a vertical drag
+until the reader zooms in.
+
+The pan is one term inside the single function that places a page horizontally, so the
+tiles, the overlay, the hit tests and the tile window all move together rather than by
+seven call sites remembering to subtract it. A pan the zoom has made unreachable is kept
+and given back when the reader zooms in again --- the same courtesy the centre-anchored
+zoom gives them vertically.
+
+### Added: a comment's own colour is read out of the file
+
+`/C` now reaches the comment record, following §12.5.2 --- one number is DeviceGray, three
+DeviceRGB, four DeviceCMYK, and any other length is not a colour with a component missing
+but not a colour at all. Nothing draws it yet; PDFium synthesises a `/Text` icon in its own
+yellow and ignores `/C`, which `docs/PLAN.md` §10 question 8 records as a defect in the
+view rather than in the file.
+
 ## [26.8.12] - 2026-08-30
 
 ### Fixed: one sweep of the eraser is one press of undo

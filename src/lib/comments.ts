@@ -87,6 +87,18 @@ export interface Comment {
   quads: number[];
   reply_to: number | null;
   hidden: boolean;
+  /**
+   * `/C`, the colour the *file* gives this annotation, as RGB in 0..1.
+   *
+   * `null` where the document names no colour and where it names one
+   * `annots.rs` could not read --- a `/C` of the wrong length is not a colour
+   * with a component missing, it is not a colour.
+   *
+   * **The rendered tile does not carry it.** PDFium draws a `/Text` icon in its
+   * own yellow whatever `/C` says, so a comment shown in the colour somebody
+   * chose has to be drawn by the overlay from this field.
+   */
+  color: [number, number, number] | null;
 }
 
 /** What the scan cut, so the panel can say the list is incomplete. */
