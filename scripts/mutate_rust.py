@@ -44,6 +44,7 @@ Usage:
     scripts/mutate_rust.py --list
     scripts/mutate_rust.py --only save
     scripts/mutate_rust.py --since HEAD~3   # only what the diff touched
+    scripts/mutate_rust.py --resume         # reuse a killed run's verdicts
 """
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
+import mutation_resume  # noqa: E402
 import mutation_since  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -5492,6 +5494,17 @@ def main() -> int:
         metavar="REF",
         help="only mutations in files changed since REF (plus the working tree)",
     )
+    # Written for the kill this table keeps meeting: it is measured in tens of
+    # minutes, and a process that dies loses every verdict it had proved *and*
+    # leaves its current mutation in the tree, because the restore below is in a
+    # `finally` and a `finally` does not survive a kill. See
+    # `mutation_resume.py` for what makes a stored verdict reusable, and note
+    # that the recovery half runs whether or not this flag is passed.
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse verdicts from an earlier run, if the tracked tree has not moved",
+    )
     args = parser.parse_args()
     chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
     if args.since:
@@ -5539,6 +5552,18 @@ def main() -> int:
         print(f"[FAIL] every mutation matching {args.only!r} is for another platform")
         return 1
 
+    # Before the control run, and before the fingerprint: a tree still holding
+    # somebody else's mutation is neither green nor the tree these verdicts
+    # would be about.
+    resume = mutation_resume.Resume("rust", reuse=args.resume)
+    code, lines = resume.recover()
+    for line in lines:
+        print(line, flush=True)
+    if code:
+        return code
+    for line in resume.open(chosen):
+        print(line, flush=True)
+
     print("--- control: the suite must be green before anything is broken", flush=True)
     names, counted, out = run_tests()
     if counted is None:
@@ -5565,9 +5590,40 @@ def main() -> int:
         return 1
     print(f"[OK]   every mutation names one of the {len(known)} tests", flush=True)
 
+    def tally(ok: bool) -> int:
+        """What one mutation adds to `problems`: 0 when it was caught, 1 otherwise.
+
+        One line, and it exists because a reused verdict and one taken just now
+        reach `problems` by different routes. Written at both, the rule would be
+        two copies of itself --- the shape this repository keeps finding drifted,
+        and the one a mutation of either half survives.
+        """
+        return 0 if ok else 1
+
+    def say(mutation, ok: bool, *lines: str) -> int:
+        """Print one mutation's verdict and file it, in that order.
+
+        Every outcome below goes through this, so a run that is killed a moment
+        later has already recorded everything it decided. The return value is
+        what the caller adds to `problems`, which keeps the two from drifting.
+        """
+        for line in lines:
+            print(line, flush=True)
+        resume.record(mutation, ok, "\n".join(lines))
+        return tally(ok)
+
     problems = 0
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-rs-") as scratch:
         for mutation in chosen:
+            stored = resume.done(mutation)
+            if stored is not None:
+                # Marked, because a reused verdict and one taken just now are
+                # the same claim about the tree and not the same run --- and a
+                # transcript that cannot tell them apart is where somebody
+                # reads "all caught" for a table that was never executed here.
+                print(f"{stored.line}   [reused]", flush=True)
+                problems += tally(stored.ok)
+                continue
             target = CRATE / mutation.path
             # Copied aside and written *back*, never moved: docs/TRAPS.md
             # records a restore-by-move that left the mutated build in place.
@@ -5608,17 +5664,23 @@ def main() -> int:
                 crlf = "\r\n" in raw
                 source = raw.replace("\r\n", "\n") if crlf else raw
                 if source.count(mutation.before) != 1:
-                    print(
+                    problems += say(
+                        mutation,
+                        False,
                         f"[FAIL] {mutation.name}: its anchor appears "
                         f"{source.count(mutation.before)} times, so the mutation is not the "
-                        "one described"
+                        "one described",
                     )
-                    problems += 1
                     continue
                 mutated = source.replace(mutation.before, mutation.after)
                 if crlf:
                     mutated = mutated.replace("\n", "\r\n")
-                target.write_bytes(mutated.encode("utf-8"))
+                payload = mutated.encode("utf-8")
+                # Recorded BEFORE the bytes land. The other order leaves a
+                # window in which a kill puts a mutation in the tree that no
+                # record names, which is the one state recovery cannot answer.
+                resume.begin(mutation, target, backup.read_bytes(), payload)
+                target.write_bytes(payload)
                 # The test this mutation names, first and alone. When it goes
                 # red -- which is the whole table's expected outcome -- the
                 # verdict is settled and the run stops there.
@@ -5639,22 +5701,25 @@ def main() -> int:
                 first = next(
                     (line for line in out.splitlines() if line.startswith("error")), ""
                 )
-                print(
+                problems += say(
+                    mutation,
+                    False,
                     f"[FAIL] {mutation.name}: no summary line -- the run did not finish"
-                    + (f" ({first})" if first else "")
+                    + (f" ({first})" if first else ""),
                 )
-                problems += 1
                 continue
             if len(names) != counted:
-                print(
+                problems += say(
+                    mutation,
+                    False,
                     f"[FAIL] {mutation.name}: {len(names)} failing test lines but the summary "
-                    f"says {counted} -- this harness cannot read its own output"
+                    f"says {counted} -- this harness cannot read its own output",
                 )
-                problems += 1
                 continue
             if not names:
-                print(f"[FAIL] {mutation.name}: SURVIVED -- no test noticed")
-                problems += 1
+                problems += say(
+                    mutation, False, f"[FAIL] {mutation.name}: SURVIVED -- no test noticed"
+                )
                 continue
             hit = any(mutation.expect in name for name in names)
             mark = "[OK]  " if hit else "[FAIL]"
@@ -5662,19 +5727,21 @@ def main() -> int:
             # the two cases: `1 red` out of the one test named for the mutation
             # is not the same statement as `1 red` out of 607.
             scope = "the test named for it" if narrow else f"{len(known)} tests"
-            print(
+            verdict = [
                 f"{mark} {mutation.name}: {counted} red of {scope}"
                 + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
-            )
+            ]
             if not hit:
-                print(f"         red instead: {sorted(names)}")
-                problems += 1
+                verdict.append(f"         red instead: {sorted(names)}")
+            problems += say(mutation, hit, *verdict)
 
     print()
     # The skip count rides on the verdict rather than sitting in a line above it.
     # A run that could not execute part of its own table must not read, three
     # scrollbacks later, like one that executed all of it.
     aside = f", {len(elsewhere)} skipped as not runnable on {HERE}" if elsewhere else ""
+    for line in resume.closing():
+        print(line)
     print(
         f"[OK] all {len(chosen)} mutations caught by the test named for them{aside}"
         if problems == 0

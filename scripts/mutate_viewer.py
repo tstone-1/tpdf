@@ -40,6 +40,8 @@ Usage:
     scripts/mutate_viewer.py                     # every mutation
     scripts/mutate_viewer.py --list
     scripts/mutate_viewer.py --only "Cmd-K"      # substring of the name
+    scripts/mutate_viewer.py --since HEAD~3      # only what the diff touched
+    scripts/mutate_viewer.py --resume            # reuse a killed run's verdicts
 """
 
 from __future__ import annotations
@@ -57,6 +59,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
+import mutation_resume  # noqa: E402
 import mutation_since  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1738,6 +1741,16 @@ def main() -> int:
         metavar="REF",
         help="only mutations in files changed since REF (plus the working tree)",
     )
+    # This table is measured in hours and every mutation rebuilds the
+    # application, so a run that dies loses more here than anywhere else --- and
+    # this harness keeps the original bytes in memory alone, so a kill leaves
+    # its mutation with no backup at all. `mutation_resume.py` answers both, and
+    # its recovery half runs whether or not this flag is passed.
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse verdicts from an earlier run, if the tracked tree has not moved",
+    )
     args = parser.parse_args()
     global RAISE_WINDOW
     RAISE_WINDOW = args.raise_window
@@ -1763,6 +1776,13 @@ def main() -> int:
     # Only the fixtures the chosen runners actually open. Demanding all of them
     # would refuse a `--runner viewer` run on a machine that has never built the
     # tagged corpus, which is a fixture problem invented by the harness.
+    #
+    # They are also what this harness hands the resume fingerprint as `also=`.
+    # The corpus is generated and therefore gitignored, so git cannot see it at
+    # all --- and a regenerated fixture changes what every check reads while the
+    # tracked tree stays byte-identical. That is the largest part of the gap
+    # `mutation_resume.py` names, and it is closed here because this is the
+    # harness whose verdicts are worth most and whose inputs are files.
     fixtures = {
         "viewer": FIXTURE,
         "viewer-tagged": TAGGED_FIXTURE,
@@ -1771,14 +1791,38 @@ def main() -> int:
         "viewer-comments": COMMENTS_FIXTURE,
         "viewer-inherited": INHERITED_FIXTURE,
     }
-    for needed in {fixtures[m.runner] for m in chosen if m.runner in fixtures}:
+    needed_fixtures = sorted({fixtures[m.runner] for m in chosen if m.runner in fixtures})
+
+    # Before the fixture check and before any build: a tree still holding a
+    # mutation from a killed run would be what the baseline is taken against,
+    # and a missing fixture would return 1 with that mutation still in place.
+    resume = mutation_resume.Resume("viewer", reuse=args.resume, also=needed_fixtures)
+    code, lines = resume.recover()
+    for line in lines:
+        print(line, flush=True)
+    if code:
+        return code
+
+    for needed in needed_fixtures:
         if not needed.exists():
             print(f"[FAIL] {needed} is missing --- testdata is generated, not committed")
             return 1
+    for line in resume.open(chosen):
+        print(line, flush=True)
 
     # One baseline per runner in play, since each has its own check names and a
     # mutation's expectation is validated against the runner that will judge it.
-    wanted = sorted({m.runner for m in chosen})
+    #
+    # In play means *with something left to run*. A reused verdict was taken
+    # against this same tree and its expectation was validated against this same
+    # baseline at the time, so building and running a runner whose every
+    # mutation is reused costs about 78 s and establishes nothing --- ten of them
+    # is a quarter of an hour of a resumed run doing no work. The validation
+    # loop below reads `todo` for the same reason: a mutation that is not going
+    # to run has no baseline to be validated against, and asking for one would
+    # be the harness inventing a failure.
+    todo = [m for m in chosen if resume.done(m) is None]
+    wanted = sorted({m.runner for m in todo})
     baseline: dict[str, list[str]] = {}
     for runner in wanted:
         print(f"Baseline: building and running the {runner} harness")
@@ -1803,12 +1847,11 @@ def main() -> int:
                 print(f"         {line}")
             return 1
         baseline[runner] = lines
-    lines = baseline[wanted[0]]
 
     # Refuse to start on a name that cannot go red, and on one that is ambiguous.
     # A prefix matching two checks would report the wrong one as the catcher.
     problems = []
-    for m in chosen:
+    for m in todo:
         hits = [line for line in baseline[m.runner] if after_marker(line).startswith(m.expect)]
         if len(hits) != 1:
             problems.append(f"{m.name!r} expects {m.expect!r}, which matches {len(hits)} checks")
@@ -1824,14 +1867,48 @@ def main() -> int:
     if problems:
         print("[FAIL] " + "\n[FAIL] ".join(problems))
         return 1
-    print(
-        "Baseline green: "
-        + ", ".join(f"{len(baseline[r])} {r} check names" for r in wanted)
-        + ", every expectation names exactly one\n"
-    )
+    if wanted:
+        print(
+            "Baseline green: "
+            + ", ".join(f"{len(baseline[r])} {r} check names" for r in wanted)
+            + ", every expectation names exactly one\n"
+        )
+    else:
+        print("Every mutation in this run already has a verdict; no baseline was needed\n")
 
     survived, unreadable = [], []
+
+    def bucket(m, outcome: str) -> None:
+        """File one mutation's outcome under the list the summary counts.
+
+        Shared by the run and by a reused verdict so the two cannot disagree
+        about what a `survived` means --- the mapping written twice is the shape
+        this repository keeps finding drifted.
+        """
+        if outcome == "survived":
+            survived.append(m.name)
+        elif outcome == "unreadable":
+            unreadable.append(m.name)
+
+    def say(m, outcome: str, *lines: str) -> None:
+        """Print one mutation's verdict and file it, in that order.
+
+        Every outcome below goes through this, so a run killed a moment later
+        has already recorded everything it decided.
+        """
+        for line in lines:
+            print(line, flush=True)
+        bucket(m, outcome)
+        resume.record(m, outcome == "caught", "\n".join(lines), outcome)
+
     for index, m in enumerate(chosen, 1):
+        stored = resume.done(m)
+        if stored is not None:
+            # Marked, because a reused verdict and one taken just now are the
+            # same claim about the tree and not the same run.
+            print(f"{stored.line}   [reused]", flush=True)
+            bucket(m, stored.outcome)
+            continue
         path = ROOT / m.path
         original = path.read_bytes()
         digest = hashlib.sha256(original).hexdigest()
@@ -1855,22 +1932,26 @@ def main() -> int:
         crlf = "\r\n" in raw
         source = raw.replace("\r\n", "\n") if crlf else raw
         if source.count(m.before) != 1:
-            print(f"[FAIL] {m.name}: its anchor appears {source.count(m.before)} times")
-            unreadable.append(m.name)
+            say(m, "unreadable",
+                f"[FAIL] {m.name}: its anchor appears {source.count(m.before)} times")
             continue
 
         started = time.monotonic()
         mutated = source.replace(m.before, m.after)
         if crlf:
             mutated = mutated.replace("\n", "\r\n")
-        path.write_bytes(mutated.encode("utf-8"))
+        payload = mutated.encode("utf-8")
+        # Recorded BEFORE the bytes land, and it is the only backup that
+        # outlives this process: `original` above is a local, so a kill here
+        # used to leave the mutation with nothing anywhere to restore it from.
+        resume.begin(m, path, original, payload)
+        path.write_bytes(payload)
         try:
             built, err = build(m.runner)
             if not built:
                 # A mutation that will not compile is not a caught mutation: the
                 # checks never ran, so they said nothing about it either way.
-                print(f"[BROKEN] {m.name}: does not build\n{err[-400:]}")
-                unreadable.append(m.name)
+                say(m, "unreadable", f"[BROKEN] {m.name}: does not build\n{err[-400:]}")
                 continue
             lines, out, err = execute(m.runner)
             failures, broken = verdict(lines, out, err)
@@ -1883,14 +1964,14 @@ def main() -> int:
 
         took = time.monotonic() - started
         if broken:
-            print(f"[BROKEN] {m.name}: {broken} ({took:.0f}s)")
-            unreadable.append(m.name)
+            say(m, "unreadable", f"[BROKEN] {m.name}: {broken} ({took:.0f}s)")
         elif caught(failures, m.expect):
-            print(f"[CAUGHT] {index}/{len(chosen)} {m.name} -> {len(failures)} red ({took:.0f}s)")
+            say(m, "caught",
+                f"[CAUGHT] {index}/{len(chosen)} {m.name} -> {len(failures)} red ({took:.0f}s)")
         else:
-            print(f"[SURVIVED] {index}/{len(chosen)} {m.name}")
-            print(f"    expected {m.expect!r} to fail; {len(failures)} did: {sorted(failures)[:3]}")
-            survived.append(m.name)
+            say(m, "survived",
+                f"[SURVIVED] {index}/{len(chosen)} {m.name}",
+                f"    expected {m.expect!r} to fail; {len(failures)} did: {sorted(failures)[:3]}")
 
     # Restored, and rebuilt, so the tree is not left serving a mutated bundle --
     # a stale binary is the other way a later run reports a defect that is not
@@ -1898,6 +1979,8 @@ def main() -> int:
     print("\nRebuilding the clean tree")
     for runner in wanted:
         build(runner)
+    for line in resume.closing():
+        print(line)
     print(
         f"\n{len(chosen) - len(survived) - len(unreadable)}/{len(chosen)} caught, "
         f"{len(survived)} survived, {len(unreadable)} unreadable"
