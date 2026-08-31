@@ -2778,12 +2778,25 @@ three checks the same control source is the obvious next thing for this probe an
 deliberately not in the increment that added the fourth: they are verified checks, and
 changing what they are built on is its own piece of work.
 
-**Not done, and neither half is hidden by this.** There is no OCR **worker**: `ocr.rs`'s own
+~~**Not done, and neither half is hidden by this.** There is no OCR **worker**: `ocr.rs`'s own
 ladder measured Vision killed by SIGTRAP under the parser worker's profile and needing general
 `file-read` to run at all, so it needs a process of its own under `OCR_SANDBOX_PROFILE` and
 nothing spawns one. And nothing calls the gate --- `redact_copy` and `redact_in_place` still
-verify by byte scan alone, so the 39.1% above is unchanged today. This increment is the part
-that decides whether step 4 can be honest; the process and the caller are the two after it.
+verify by byte scan alone, so the 39.1% above is unchanged today.~~ **Both halves closed
+2026-08-27**, by the two sections immediately below --- `ocr_worker.rs` is the process, and
+`redact_copy` and `redact_document` call `ocr_gate::run` on the file they just wrote. This
+increment is the part that decides whether step 4 can be honest; the process and the caller
+are the two after it, and both are done.
+
+⚠ **This note was still standing on 2026-08-31, four days after the sections that close it.**
+The paragraph one section down struck its own note the same day (*"Not done when this was
+written, and closed the same day"*) and this one was left, so the document said in one place
+that nothing calls the gate and in two others that something does. That is the trap this file
+already carries --- *A "Not done" note outlives the work that closes it, and it is the
+recommendation nobody re-checks* --- arriving in the section that names the two increments
+that were about to close it. It was found by someone reading the roadmap to ask what came
+next, which is the reader a stale note costs most: the answer would have been an OCR worker
+that has existed since 2026-08-27.
 
 #### Step 4's process: the engine somewhere else --- built 2026-08-27
 
@@ -13252,3 +13265,55 @@ that it presented several genuinely unresolved questions as settled architecture
     settings. None of that is guessable from here — it is a product decision with a security
     dimension, and the current refusal is the conservative default that keeps the option
     open rather than a verdict on it.
+
+    **Decided 2026-08-31: tpdf opens web links, and the constraint given with the
+    decision is that the application stays safe overall.** So the question stops being
+    *whether* and becomes *what the reader is shown and what tpdf will hand to the OS* ---
+    which is where the phishing surface above lives, so the decision does not dissolve it,
+    it schedules it. What follows is the direction this takes unless something below is
+    overruled; the sub-choices that are still genuinely open are named at the end rather
+    than assumed.
+
+    **Only `http` and `https` are opened, by allowlist.** Everything else is refused with
+    the refusal it has today --- `file:`, `javascript:`, `data:`, `ms-msdt:`, `search-ms:`
+    and every custom scheme a local application may have registered. A denylist here is the
+    validation direction this repository already has an entry about: a scheme nobody listed
+    is a scheme that gets through, and on Windows the interesting ones are the ones nobody
+    has heard of. The allowlist is applied to the parsed scheme, never to the string's
+    prefix, because `https:/\evil` and a URL with a leading control character are both
+    things a stranger can write.
+
+    **The confirmation shows the host, and shows it in the form that cannot lie.**
+    Punycode is displayed **as punycode** --- `xn--80ak6aa92e.com`, never the Unicode
+    rendering, which is the homoglyph attack rendered by us on the attacker's behalf. The
+    host is the emphasised element and the rest of the URL is secondary and truncated, so
+    the reader's eye lands on the part that decides where they are going rather than on a
+    path a stranger wrote to look reassuring. No markup, no link, no styling taken from the
+    document.
+
+    **Per link, never per domain.** An "always allow this site" grant is a persistent
+    permission established from a document a stranger sent, and it is the one shape here
+    that turns a single careless click into a standing capability. A reader who opens forty
+    links in a specification confirming each is doing something tedious; a reader who
+    granted a domain once is not being asked at all.
+
+    **The URL is handed to the OS opener as a URL, never to a shell.** No string is
+    interpolated into a command line at any point. That is what keeps a URL from becoming
+    an argument, which is the second injection surface after the display one.
+
+    **T8 is the part that needs work rather than agreement.** `docs/THREAT-MODEL.md` T8
+    rests on nothing attacker-controlled reaching the frontend where it could become a
+    navigation, and this feature deliberately sends the frontend an attacker-written
+    string. The seam is the one the backend already has --- a refusal is a type
+    (`Target::Refused`), not a string --- so the URL must arrive as a value the frontend
+    can only render as text and can never turn into an `href`, a `window.open` or a
+    navigation. That property wants the `sinks` gate extended to cover it, in the same
+    commit as the feature and not after it.
+
+    **Still open, and each is a decision rather than a detail:** whether a reader may
+    switch the whole feature off in settings and what the default is on first run; whether
+    the confirmation names a browser or lets the OS choose; and whether a URL that is
+    already unreadable to a human --- mixed scripts, an embedded credential, an
+    unprintable --- is refused outright rather than shown with a flag beside it. The first
+    is the one worth answering before any of this is built, because it decides whether
+    there is a settings surface at all.
