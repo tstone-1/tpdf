@@ -639,8 +639,23 @@ pub enum MarkKind {
     /// company immediately afterwards, and the two questions this file used to
     /// answer with one predicate are now genuinely two. A comment needs *no*
     /// appearance stream, because every reader synthesises its own icon; a box
-    /// needs one, because no reader synthesises a rectangle, and a `/Square`
-    /// with no `/AP` is an annotation Acrobat draws as nothing at all.
+    /// is written with one so that the picture is **ours**.
+    ///
+    /// **That reason is the second one, and the first was false.** This comment
+    /// said until 2026-08-31 that a box "needs one, because no reader
+    /// synthesises a rectangle, and a `/Square` with no `/AP` is an annotation
+    /// Acrobat draws as nothing at all". Written from the specification's
+    /// wording and never asked. Three readers have now been asked and all three
+    /// draw it: PDFium generates a shape covering 23% of the quad
+    /// (`annot-probe --mode noap`), PDFKit draws 1056 px against 1306 with ours
+    /// (`--mode preview`), and Adobe Acrobat 26.001.21789 draws the rectangle by
+    /// eye, indistinguishable from the file that carries our stream.
+    ///
+    /// What survives is the *conclusion*, for a different reason, and the
+    /// numbers above are it: three readers draw three different rectangles, so
+    /// an `/AP` is what decides that a reader sees the box tpdf drew rather than
+    /// that reader's guess at its border. A premise that turned out false held
+    /// up a practice that is still right, which is the worst way to be right.
     ///
     /// Its ink is a **stroke**, which is the first in this enum. A filled box
     /// would cover whatever it was drawn around, and covering things is the one
