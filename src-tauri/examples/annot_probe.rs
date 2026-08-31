@@ -211,6 +211,9 @@ enum Mode {
     Preview,
     /// Whether a foreign renderer reads a comment icon's `/C` at all.
     IconColor,
+    /// What the OS's own PDF stack --- the one behind Explorer preview and
+    /// Edge --- draws for the saved file.
+    WinReader,
 }
 
 struct Args {
@@ -272,6 +275,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Refuse => refuse(args, &document),
         Mode::Preview => preview(args, &document),
         Mode::IconColor => icon_color(args, &document, bindings),
+        Mode::WinReader => win_reader(args, &document),
     }
 }
 
@@ -1181,6 +1185,284 @@ fn preview(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         let _ = std::fs::remove_file(&out);
     }
     outcome
+}
+
+/// What the operating system's own PDF stack makes of the saved file.
+///
+/// The Windows counterpart of [`Mode::Preview`], and it asks a strictly smaller
+/// question --- which is the point of writing it rather than porting the other
+/// one. `docs/PLAN.md` recorded that `Windows.Data.Pdf` "renders and exposes no
+/// annotation object model, so there is nothing there to ask these questions of",
+/// and that sentence conflates two populations. The **metadata** questions
+/// `--mode preview` asks --- the subtype, the author, the note, the rectangle ---
+/// genuinely need an object model and there is none here. The **pixel** question
+/// does not: a renderer that draws our mark draws it whether or not it will
+/// answer questions about it.
+///
+/// So this is a before-and-after inside one reader, not a differential between
+/// two. It renders the source page and the saved page with the same OS
+/// rasteriser and asks where they differ. That is the question Phase 2's exit
+/// criterion actually poses for a foreign reader --- *does somebody else's reader
+/// show the mark* --- and it is answerable on Windows with an API rather than
+/// from the screen.
+///
+/// **What it cannot say**, stated here so no reader has to infer it: nothing
+/// about Acrobat, which is a different program with a different renderer; and
+/// nothing about *correctness* of the mark's kind, colour or note, because a
+/// pixel difference is agnostic about all three. `--mode roundtrip` owns those.
+#[cfg(windows)]
+fn win_reader(args: &Args, document: &OpenDocument) -> Result<bool, String> {
+    let (out, quads) = mark_and_save(args, document)?;
+    let outcome = win_reader_render(args, document, &out, &quads);
+    if args.keep.is_none() {
+        let _ = std::fs::remove_file(&out);
+    }
+    outcome
+}
+
+/// The resolution the two renders are taken at.
+///
+/// One pixel per point, which makes the arithmetic below a scale of 1.0 in the
+/// usual case and keeps an A4 page at 595x842 --- small enough that a whole-page
+/// comparison is cheap, large enough that a rule two points thick is two pixels
+/// rather than one. The scale is still *derived* from the render rather than
+/// assumed; see below.
+#[cfg(windows)]
+const WIN_READER_DPI: f32 = 72.0;
+
+/// The comparison itself.
+#[cfg(windows)]
+fn win_reader_render(
+    args: &Args,
+    document: &OpenDocument,
+    out: &Path,
+    quads: &[Quad],
+) -> Result<bool, String> {
+    use tpdf_lib::print_win;
+
+    let page = document.page(args.page)?;
+    let (width_pt, height_pt) = (page.width_pt(), page.height_pt());
+
+    let source = std::fs::read(&args.file).map_err(|e| format!("reading the source: {e}"))?;
+    let saved = std::fs::read(out).map_err(|e| format!("reading the saved file: {e}"))?;
+
+    let before = print_win::render_page(&source, args.page, WIN_READER_DPI)
+        .map_err(|e| format!("the OS renderer refused the source page: {e}"))?;
+    let after = print_win::render_page(&saved, args.page, WIN_READER_DPI)
+        .map_err(|e| format!("the OS renderer refused the saved page: {e}"))?;
+
+    let mut ok = true;
+
+    // **The control runs first, and it is about the instrument.** Every reading
+    // below is a difference between two renders, so a renderer that is not
+    // deterministic makes all of them meaningless --- and it fails in the
+    // reassuring direction, since noise reads as "the mark was drawn". Rendering
+    // the same bytes twice must give the same bytes back.
+    let again = print_win::render_page(&source, args.page, WIN_READER_DPI)
+        .map_err(|e| format!("the OS renderer refused the source page twice: {e}"))?;
+    let bytes_equal = before == again;
+
+    let before = print_win::Raster::of(&before)?;
+    let again = print_win::Raster::of(&again)?;
+    let after = print_win::Raster::of(&after)?;
+
+    // **The control is in pixels, and the bytes are reported beside it**, because
+    // the two answers differ and only one of them is about the picture. Two renders
+    // of the same page are *not* byte-identical --- WinRT's BMP encoder does not
+    // produce a reproducible container --- so a byte comparison here would condemn
+    // a renderer that draws the same image every time, and a check that fails on
+    // correct input is worse than none. What every reading below depends on is that
+    // the same bytes in give the same pixels out; that is what is asserted.
+    let noise = pixels_differing(&before, &again);
+    ok &= check(
+        &format!(
+            "control: the OS renderer draws the same page identically ({noise} px differ,              {} bytes did)",
+            if bytes_equal { "no" } else { "some" }
+        ),
+        noise == 0,
+    );
+
+    // A mark must not change the page's geometry. If it did, every per-pixel
+    // comparison below would be comparing different places on the sheet, so this
+    // is a precondition as much as a finding.
+    ok &= check(
+        &format!(
+            "the saved page renders at the source's size ({}x{} against {}x{})",
+            after.width(),
+            after.height(),
+            before.width(),
+            before.height()
+        ),
+        before.width() == after.width() && before.height() == after.height(),
+    );
+    if before.width() != after.width() || before.height() != after.height() {
+        return Ok(false);
+    }
+
+    // **The scale is measured, not assumed**, which is what keeps the DIP trap
+    // out of this function. `Windows.Data.Pdf` reports a page in device-
+    // independent pixels at 96 to the inch rather than in points, and `render_page`
+    // converts; deriving the factor from the render that actually came back means
+    // this reads correctly whatever that conversion does.
+    #[allow(clippy::cast_precision_loss)]
+    let scale = before.width() as f32 / width_pt;
+
+    let rect = union_of(quads).ok_or("the mark produced no quads, so there is nowhere to look")?;
+    let (x0, y0, x1, y1) = (
+        (rect.left * scale).floor().max(0.0) as usize,
+        (rect.top * scale).floor().max(0.0) as usize,
+        (rect.right * scale).ceil().max(0.0) as usize,
+        (rect.bottom * scale).ceil().max(0.0) as usize,
+    );
+
+    // **The control that makes the next check able to fail.** "The difference is
+    // inside the mark's rectangle" is satisfied by any rectangle covering the
+    // page, so the rectangle has to be shown to be a minority of it first. A
+    // whole-page mark would make the finding below true by construction, which is
+    // the shape this repository has the most entries about.
+    #[allow(clippy::cast_precision_loss)]
+    let rect_share = 100.0 * ((x1.saturating_sub(x0)) * (y1.saturating_sub(y0))) as f64
+        / (before.width() * before.height()) as f64;
+    ok &= check(
+        &format!("control: the mark's rectangle is {rect_share:.1}% of the page, not most of it"),
+        rect_share > 0.0 && rect_share < 50.0,
+    );
+
+    let mut differing = 0usize;
+    let mut inside = 0usize;
+    // Inverted, so that no difference at all leaves them crossed and reports an
+    // empty box rather than the whole page --- the same reason `print_probe`'s
+    // `measure` initialises its span this way.
+    let (mut dx0, mut dx1, mut dy0, mut dy1) = (before.width(), 0usize, before.height(), 0usize);
+    for y in 0..before.height() {
+        for x in 0..before.width() {
+            if before.pixel(x, y) != after.pixel(x, y) {
+                differing += 1;
+                dx0 = dx0.min(x);
+                dx1 = dx1.max(x);
+                dy0 = dy0.min(y);
+                dy1 = dy1.max(y);
+                if x >= x0 && x < x1 && y >= y0 && y < y1 {
+                    inside += 1;
+                }
+            }
+        }
+    }
+
+    ok &= check(
+        &format!(
+            "the OS renderer draws something the source page does not ({differing} px differ)"
+        ),
+        differing > 0,
+    );
+
+    #[allow(clippy::cast_precision_loss)]
+    let share = if differing == 0 {
+        0.0
+    } else {
+        100.0 * inside as f64 / differing as f64
+    };
+    if args.kind == MarkKind::Note {
+        // **A `/Text` annotation's rectangle is advisory, and this reader replaces
+        // it too --- differently from the other one.** `docs/TRAPS.md` records
+        // PDFKit substituting a standard 24x24 icon anchored on the rectangle's
+        // *top-left corner*, hanging below it. `Windows.Data.Pdf` also substitutes
+        // an icon and **centres** it: on `text-base14.pdf` a 254x14 pt rectangle at
+        // 60,111 comes back as an 18x19 box at 178,109, centred on the rectangle in
+        // both axes and overhanging it above and below.
+        //
+        // So containment is the wrong question for this kind --- 84.4% of its
+        // pixels land inside, and that is the correct picture. The question that
+        // survives both readers is whether the icon is *small* and *where the
+        // rectangle is*, which is what a reader would check by eye and is what
+        // fails if the note is drawn on the wrong part of the page.
+        let (w, h) = (dx1 + 1 - dx0, dy1 + 1 - dy0);
+        let (cx, cy) = (dx0 + w / 2, dy0 + h / 2);
+        let centred = cx >= x0 && cx < x1 && cy >= y0 && cy < y1;
+        ok &= check(
+            &format!(
+                "the icon it substitutes is small and sits on the mark ({w}x{h} px \
+                 centred at {cx},{cy}, in {}x{} at {x0},{y0})",
+                x1.saturating_sub(x0),
+                y1.saturating_sub(y0)
+            ),
+            differing > 0 && centred && w <= 64 && h <= 64,
+        );
+    } else {
+        ok &= check(
+            &format!(
+                "and it draws it where the mark is ({inside} of {differing} px inside \
+                 {}x{} at {x0},{y0}, {share:.1}%)",
+                x1.saturating_sub(x0),
+                y1.saturating_sub(y0)
+            ),
+            differing > 0 && share > 90.0,
+        );
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    let coverage = if x1 > x0 && y1 > y0 {
+        100.0 * inside as f64 / ((x1 - x0) * (y1 - y0)) as f64
+    } else {
+        0.0
+    };
+    println!(
+        "       page {width_pt:.0}x{height_pt:.0} pt rendered {}x{} px, scale {scale:.3}; \
+         the mark covers {coverage:.1}% of its own rectangle, and what changed spans \
+         {dx0},{dy0} to {dx1},{dy1}",
+        before.width(),
+        before.height()
+    );
+
+    Ok(ok)
+}
+
+/// How many pixels two renders of the same size disagree on.
+///
+/// Zero for images of different sizes is the wrong answer, so a mismatch counts
+/// every pixel rather than returning a reassuring nothing --- an emptiness reading
+/// with nothing proving the instrument was looking is the shape this repository
+/// keeps recording.
+#[cfg(windows)]
+fn pixels_differing(a: &tpdf_lib::print_win::Raster, b: &tpdf_lib::print_win::Raster) -> usize {
+    if a.width() != b.width() || a.height() != b.height() {
+        return a.width() * a.height();
+    }
+    let mut n = 0;
+    for y in 0..a.height() {
+        for x in 0..a.width() {
+            if a.pixel(x, y) != b.pixel(x, y) {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// The rectangle a mark's quads occupy, or `None` when there are none.
+#[cfg(windows)]
+fn union_of(quads: &[Quad]) -> Option<Quad> {
+    let first = *quads.first()?;
+    Some(quads.iter().skip(1).fold(first, |acc, q| Quad {
+        left: acc.left.min(q.left),
+        top: acc.top.min(q.top),
+        right: acc.right.max(q.right),
+        bottom: acc.bottom.max(q.bottom),
+    }))
+}
+
+/// `--mode winreader` off Windows.
+///
+/// A result rather than a silent skip, for the reason `--mode preview` gives
+/// about itself: a mode that reports nothing on the wrong platform is
+/// indistinguishable from one that ran and found nothing.
+#[cfg(not(windows))]
+fn win_reader(_args: &Args, _document: &OpenDocument) -> Result<bool, String> {
+    Err(
+        "--mode winreader reads the saved file with Windows.Data.Pdf, which is \
+         Windows only. On macOS the foreign reader is PDFKit: --mode preview."
+            .to_owned(),
+    )
 }
 
 /// Whether PDFKit reads a comment icon's `/C`, asked by sending two colours.
@@ -3004,6 +3286,7 @@ fn parse_args() -> Result<Args, String> {
                     "refuse" => Mode::Refuse,
                     "preview" => Mode::Preview,
                     "iconcolor" => Mode::IconColor,
+                    "winreader" => Mode::WinReader,
                     other => return Err(format!("unknown mode {other}")),
                 }
             }

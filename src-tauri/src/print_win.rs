@@ -331,6 +331,17 @@ struct Dib<'a> {
     bits: &'a [u8],
     width: i32,
     height: i32,
+    /// Bits per pixel, as the header declares it.
+    ///
+    /// GDI reads this back out of `header`, so it is here for [`Raster`] rather
+    /// than for [`draw_bmp`] --- a pixel comparison needs the stride, and the
+    /// stride is a function of this and the width.
+    bpp: u16,
+    /// Whether the rows run top to bottom, which a BMP says with a negative height.
+    ///
+    /// [`Self::height`] is the magnitude, because that is what `StretchDIBits`
+    /// wants, so the sign has to survive somewhere or it is lost.
+    top_down: bool,
 }
 
 impl Dib<'_> {
@@ -504,7 +515,105 @@ fn parse_bmp(bytes: &[u8]) -> Result<Dib<'_>, String> {
         // The magnitude, since `StretchDIBits` takes the source rectangle in
         // whole rows and reads a top-down DIB's direction from the header.
         height: source_rows,
+        bpp,
+        top_down: height < 0,
     })
+}
+
+/// A rendered page as pixels a check can index, in the source's own orientation.
+///
+/// **Built on [`parse_bmp`] rather than beside it.** That function already refuses
+/// every malformed header this one would have to, and a second reader of the same
+/// bytes is a second thing to drift --- `examples/print_probe.rs` had one, written
+/// from the offsets by hand, and it is this type now.
+///
+/// **`y` counts from the top, always.** A BMP is bottom-up unless its height is
+/// negative, and a caller that gets that backwards reads a mark's rectangle at the
+/// wrong end of the page --- which for a symmetric fixture produces a plausible
+/// number rather than an obvious error. The flip happens once, here, so no check
+/// has to know the convention.
+pub struct Raster<'a> {
+    width: usize,
+    height: usize,
+    bytes_per_pixel: usize,
+    stride: usize,
+    top_down: bool,
+    bits: &'a [u8],
+}
+
+impl<'a> Raster<'a> {
+    /// The pixels of a BMP produced by [`render_page`].
+    ///
+    /// # Errors
+    ///
+    /// Anything [`parse_bmp`] refuses, and a bit depth below 24 --- which is not a
+    /// limitation so much as a statement about the caller: `render_page` asks WinRT
+    /// for the BMP encoder's default, and an indexed image would need the palette
+    /// applied before a pixel comparison meant anything.
+    pub fn of(bytes: &'a [u8]) -> Result<Self, String> {
+        let dib = parse_bmp(bytes)?;
+        let bpp = dib.bpp as usize;
+        if !(bpp == 24 || bpp == 32) {
+            return Err(format!(
+                "a {bpp}-bit render cannot be compared pixel for pixel without its palette"
+            ));
+        }
+        let width = dib.width.unsigned_abs() as usize;
+        let height = dib.height.unsigned_abs() as usize;
+        let bytes_per_pixel = bpp / 8;
+        // Rows are padded to a four-byte boundary. Ignoring that reads the padding
+        // as pixels and drifts across the image, which on a mostly-white page gives
+        // a small plausible count rather than an obvious error.
+        let stride = (width * bytes_per_pixel).div_ceil(4) * 4;
+        Ok(Self {
+            width,
+            height,
+            bytes_per_pixel,
+            stride,
+            top_down: dib.top_down,
+            bits: dib.bits,
+        })
+    }
+
+    /// Width in pixels.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Height in pixels.
+    #[must_use]
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// One pixel as `[b, g, r]`, with `y` counting down from the top row.
+    ///
+    /// Returns white for a coordinate outside the image, so a rectangle that
+    /// overhangs the page reads as blank rather than panicking --- the same
+    /// decision `mask_columns` makes about a region wider than its page.
+    #[must_use]
+    pub fn pixel(&self, x: usize, y: usize) -> [u8; 3] {
+        if x >= self.width || y >= self.height {
+            return [0xFF, 0xFF, 0xFF];
+        }
+        let row = if self.top_down {
+            y
+        } else {
+            self.height - 1 - y
+        };
+        let at = row * self.stride + x * self.bytes_per_pixel;
+        match self.bits.get(at..at + 3) {
+            Some(px) => [px[0], px[1], px[2]],
+            None => [0xFF, 0xFF, 0xFF],
+        }
+    }
+
+    /// Whether a pixel is anything other than white.
+    #[must_use]
+    pub fn inked(&self, x: usize, y: usize) -> bool {
+        self.pixel(x, y) != [0xFF, 0xFF, 0xFF]
+    }
 }
 
 /// Draws one rendered page onto a device context at its true physical size.
