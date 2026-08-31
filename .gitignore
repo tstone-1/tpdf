@@ -33,6 +33,12 @@ Thumbs.db
 *.log
 scratch/
 
+# Where the mutation harnesses keep the verdicts `--resume` reuses, and the
+# backup that lets a killed run's mutation be put back. Ignored because it is
+# written during the run whose tree it fingerprints -- a tracked one would make
+# every fingerprint disagree with itself. See scripts/mutation_resume.py.
+.mutations/
+
 # Generated test corpus (regenerate with the testdata/make_*.py scripts)
 testdata/*.pdf
 testdata/*.txt

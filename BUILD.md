@@ -4654,6 +4654,14 @@ starts at 0 and increments within the month.
    scripts/mutate_frontend.py --since HEAD~3
    scripts/mutate_viewer.py --since HEAD~3
 
+   # And all three take `--resume`, which is about a run that DID NOT FINISH
+   # rather than about narrowing one. Two backgrounded frontend runs were killed
+   # at about twenty-five minutes on 2026-08-30 by something neither the operator
+   # nor the harness can account for, and each cost four hundred proved verdicts
+   # AND left its mutation in the tree. `scripts/mutation_resume.py` answers both.
+   scripts/mutate_frontend.py --resume
+   scripts/mutate_viewer.py --runner viewer --resume
+
    # Or one runner at a time. The three probe runners need no webview, no bundle
    # and no unlocked screen; the three viewer ones need all three.
    scripts/mutate_viewer.py --runner structure          # structure.rs, structure-probe
@@ -4663,6 +4671,55 @@ starts at 0 and increments within the month.
    scripts/mutate_viewer.py --runner viewer-tagged      # a11y/reading/viewercheck.ts, viewer_check on tagged.pdf
    scripts/mutate_viewer.py --runner viewer-encodings   # a11y/search.ts, viewer_check on encodings.pdf
    ```
+
+   **`--resume` is two halves, and only the second one is behind the flag.**
+
+   *Recovery runs on every invocation.* Before the control run, before any baseline and
+   before the fingerprint, each harness reads `.mutations/<harness>.json` and asks what the
+   last run left behind. The record is written **before** the mutated bytes reach the file, so
+   a kill in that window leaves a record and a clean file rather than a mutation nothing
+   names. The answer is by digest and has three branches: the file is what the run started
+   from (nothing to do, and it says so --- silence there is indistinguishable from the check
+   not having run), or it is the mutation that run wrote (restored from the backup beside the
+   record, verified), or it is neither, in which case somebody has edited it since and the run
+   **refuses and exits 1**. A refusal is right: clobbering a repair made by hand is worse than
+   the mutation it would undo. Delete `.mutations/<harness>.json` to clear it.
+
+   *Reuse needs the flag.* Verdicts already proved are reused only if the tracked tree
+   fingerprints identically --- `HEAD`, the full `git diff HEAD --binary`, and every
+   untracked-but-unignored file's digest. Any edit at all discards all of them, and the run
+   says which of the two happened. That is blunt on purpose: a mutation's verdict is a claim
+   about the whole suite, so an edit anywhere can move it --- and the practical consequence is
+   worth knowing before it surprises you: editing a document, or one of the harnesses, throws
+   the verdicts away exactly as editing `search.rs` does. Finish editing, then resume. A
+   reused line is printed with `[reused]` on the end and the summary states how many came from
+   an earlier process.
+
+   `mutate_viewer.py` also skips the baseline for any runner whose every mutation is reused
+   --- that baseline was taken against this same tree when the verdicts were, so building and
+   running it again costs about 78 s and establishes nothing. A fully reused
+   `--runner structure --only ...` run measured **0.14 s against 75 s**.
+
+   **Two things it does not cover, both said rather than papered over.** The fingerprint
+   cannot see gitignored inputs --- the generated corpus under `testdata/`, `vendor/pdfium/`,
+   `node_modules/`. `mutate_viewer.py` closes the largest part of that by handing the
+   fixtures its chosen runners open to the fingerprint explicitly; the other two do not, so
+   regenerating the corpus between a kill and a resume is a reason to drop the state. And the
+   verdicts are kept whatever the flag says, so a narrow `--only` run in the middle of a
+   killed table adds one verdict rather than destroying the rest --- the first draft wiped the
+   file on every plain run, which made the feature useless in exactly the workflow it is for.
+
+   ```
+   python3 scripts/mutation_resume.py --self-test   # 24 checks, about 1.5 s
+   ```
+
+   Its 13 mutations were run on 2026-08-31 and all 13 were caught by the check named for
+   them. Three of the findings are in `docs/TRAPS.md`: a check that read the state file
+   directly **raised** under the mutation aimed at it and printed no named failure; the
+   failures were collected and printed at the end, so that crash took ten already-found
+   failures with it; and a check for "an edited anchor is a different mutation" passed under a
+   mutation that broke the key, because a case two above it had emptied the store on purpose
+   and both lookups therefore missed.
 
    **How many mutations each carries is `--list`, not this page.** It said 23, 85 and
    15 on 2026-08-03 against an actual 36, 98 and 31 --- a tally in prose, in the one

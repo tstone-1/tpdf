@@ -2783,6 +2783,92 @@ mutation's search string must occur exactly once in the file it names. It caught
 the same pass caught two mutations aimed at code that no longer exists --- see the entry
 below.
 
+**Closed 2026-08-31, and the fourth way is what closed it.** Two backgrounded
+`mutate_frontend.py` runs were killed at about twenty-five minutes on 2026-08-30 by something
+neither the operator nor the harness can account for; each left its mutation in the tree, and
+`mutate_viewer.py` is worse than the other two --- it holds the original bytes in a **local
+variable**, so a kill there leaves the mutation with no backup anywhere at all. The remedy is
+`scripts/mutation_resume.py`: before the mutated bytes reach the file, the harness writes a
+record naming the file, the digest it started from, the digest it is about to write, and a
+backup beside it. Every later run of that harness reads the record first, whether or not
+anybody asked to resume, and answers by digest --- the file is the one the run started from
+(nothing to do), or the mutation it wrote (restored, and the restore is verified against the
+backup's own digest), or it is neither, in which case somebody has edited it and the run
+**refuses**, because clobbering a repair made by hand is worse than the mutation it would undo.
+
+**The ordering is the whole of it.** The record is written before the bytes, never after: the
+other order leaves a window in which a kill puts a mutation in the tree that no record names,
+which is the one state recovery cannot answer. Proved against the real harness rather than
+argued --- `kill -9` at twenty-two seconds into `mutate_rust.py --only "gate:"` left
+`ocr_gate.rs` mutated and `git status` showing it, and the next run's first line was
+`[OK]   restored src-tauri/src/ocr_gate.rs, left mutated by a run that did not finish`.
+
+The same record carries the verdicts, so `--resume` reuses everything already proved against a
+tree that has not moved. One guard decides that and only one: the tracked tree must fingerprint
+identically --- `HEAD`, the full `git diff HEAD --binary`, and every untracked-but-unignored
+file's digest. A mutation's verdict is a claim about the whole suite, so an edit anywhere can
+move it, and per-file invalidation would be a claim this cannot support. The digest of each
+mutation is stored too and is the **index** a verdict is filed under, not a second guard: the
+table lives in a tracked file the fingerprint already covers, and two mechanisms for one rule
+is the shape this repository keeps finding drifted.
+
+### A design that wiped the state on every ordinary run was useless in the workflow it was for
+
+`mutation_resume.py`'s first draft replaced the state file wholesale unless `--resume` was
+passed, on the reasoning that a record should describe one tree. The fingerprint already
+guarantees that, so the reasoning was answering a question that was already closed --- and the
+cost was the entire point of the feature. The workflow is: a long table is killed, you run one
+narrow `--only` to check something, then you resume. That middle step threw away all four
+hundred verdicts, silently, and the run that did it looked completely ordinary.
+
+**Keeping and reusing are separate decisions, and only the second is what the flag asks
+about.** Verdicts taken against this exact tree are kept whatever the flag says; verdicts from
+another tree are dropped whatever the flag says.
+
+**The check written for it could not fail, and the reason generalises.** Written as
+*record a verdict, run plainly, assert the verdict is still there*, it passed under a mutation
+that wiped the store --- because the plain run's very next line recorded the same verdict
+again. A check that something is *preserved* has to have the preserving operation act on a
+subject it does not itself write, so the assertion needs **two** mutations: record a verdict for
+one, run the harness over the other, and ask for the first.
+
+### The check aimed at the mutation is the one that raised, and a traceback names no check
+
+`mutation_resume.py`'s self-test reads its own state file to prove that a verdict reaches disk
+the moment it is recorded. Written as a bare `json.loads(path.read_text())`, the mutation that
+stops the file being written at all makes that line **raise**, and the run exits non-zero with a
+Python stack and no named check --- so the harness that had found the defect reported it in the
+one shape that says nothing about what is wrong. The sweep's verdict logic read it correctly as
+*caught, but not as described*, which is exactly right and exactly unhelpful.
+
+Two halves, and the second is the one that hurt. Every failure was **collected and printed at
+the end**, so the crash took the ten failures already found with it: the run had caught the
+defect ten times over and printed none of them. `docs/TRAPS.md` already carries *A harness that
+prints only at the end cannot say where it stopped* about a different harness; the shape did not
+transfer because this one is thirty lines long and looked too small to need it.
+
+So: print each verdict as it happens, both ways, and read anything the mutation could remove
+through a helper that turns a missing file into a **reading** rather than a raise. The check
+then reports `got 'absent', wanted 'survived'`, which names itself.
+
+### An earlier case emptied the store the later case reads, so neither lookup ever happened
+
+The same self-test proves that an edited anchor is a different mutation, by recording a verdict
+and then asking for it under a mutation differing only in its replacement text. It passed, and a
+mutation removing the replacement from the key **survived** it.
+
+The case above it had edited the tree on purpose --- that is what it is for --- and the resulting
+fingerprint mismatch emptied the stored verdicts. So by the time the key check ran there was
+nothing in the store at all: both keys missed, the assertion `done(edited) is None` held, and it
+held for a reason that had nothing to do with keys. A check sharing mutable state with its
+neighbours inherits their side effects, and the ones that *remove* the subject are invisible ---
+a check whose subject is gone looks exactly like a check whose subject was correctly rejected.
+
+The repair is to seed the case's own subject rather than borrow the previous case's, and to
+assert **both** directions in the same breath: the verdict is still there for the mutation it
+was taken on, *and* it is not there for the edited one. The first half is what fails when the
+store is empty, and it is the half that was missing.
+
 ### An unreachable guard is worth keeping if the type can carry it instead
 
 `PreWorker::adopt` consumed the worker's readiness line before sending it a document, so that

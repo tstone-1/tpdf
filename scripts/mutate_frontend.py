@@ -21,6 +21,8 @@ exactly what a surviving mutation looks like.
 Usage:
     scripts/mutate_frontend.py            # every mutation
     scripts/mutate_frontend.py --list
+    scripts/mutate_frontend.py --since HEAD~3   # only what the diff touched
+    scripts/mutate_frontend.py --resume         # reuse a killed run's verdicts
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
+import mutation_resume  # noqa: E402
 import mutation_since  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -6216,6 +6219,17 @@ def main() -> int:
     parser.add_argument(
         "--since", default="", help="run only mutations whose file changed since this ref"
     )
+    # This is the table that was killed twice at about twenty-five minutes on
+    # 2026-08-30, losing four hundred proved verdicts and leaving its current
+    # mutation in `src/lib/pages.ts`. Both halves of that are answered by
+    # `mutation_resume.py`, and the recovery half runs whether or not this flag
+    # is passed --- a mutated tree is a defect regardless of what the next run
+    # means to do.
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse verdicts from an earlier run, if the tracked tree has not moved",
+    )
     args = parser.parse_args()
     chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
     if args.since:
@@ -6231,6 +6245,18 @@ def main() -> int:
     if not chosen:
         print(f"[FAIL] no mutation matches {args.only!r}")
         return 1
+
+    # Before the control run, and before the fingerprint: a tree still holding
+    # somebody else's mutation is neither green nor the tree these verdicts
+    # would be about.
+    resume = mutation_resume.Resume("frontend", reuse=args.resume)
+    code, lines = resume.recover()
+    for line in lines:
+        print(line, flush=True)
+    if code:
+        return code
+    for line in resume.open(chosen):
+        print(line, flush=True)
 
     print("--- control: the suite must be green before anything is broken", flush=True)
     names, counted, red_lines, out = run_tests()
@@ -6259,9 +6285,40 @@ def main() -> int:
         return 1
     print(f"[OK]   every mutation names one of the {len(known)} tests", flush=True)
 
+    def tally(ok: bool) -> int:
+        """What one mutation adds to `problems`: 0 when it was caught, 1 otherwise.
+
+        One line, and it exists because a reused verdict and one taken just now
+        reach `problems` by different routes. Written at both, the rule would be
+        two copies of itself --- the shape this repository keeps finding drifted,
+        and the one a mutation of either half survives.
+        """
+        return 0 if ok else 1
+
+    def say(mutation, ok: bool, *lines: str) -> int:
+        """Print one mutation's verdict and file it, in that order.
+
+        Every outcome below goes through this, so a run killed a moment later
+        has already recorded everything it decided. The return value is what the
+        caller adds to `problems`, which keeps the two from drifting.
+        """
+        for line in lines:
+            print(line, flush=True)
+        resume.record(mutation, ok, "\n".join(lines))
+        return tally(ok)
+
     problems = 0
     with tempfile.TemporaryDirectory(prefix="tpdf-mutate-") as scratch:
         for mutation in chosen:
+            stored = resume.done(mutation)
+            if stored is not None:
+                # Marked, because a reused verdict and one taken just now are
+                # the same claim about the tree and not the same run, and a
+                # transcript that cannot tell them apart is where somebody reads
+                # "all caught" for a table that was never executed here.
+                print(f"{stored.line}   [reused]", flush=True)
+                problems += tally(stored.ok)
+                continue
             target = ROOT / mutation.path
             # Copied aside and written *back*, never moved: a move replaces
             # the file the tooling may already be watching, and docs/TRAPS.md
@@ -6294,17 +6351,23 @@ def main() -> int:
                 crlf = "\r\n" in raw
                 source = raw.replace("\r\n", "\n") if crlf else raw
                 if source.count(mutation.before) != 1:
-                    print(
+                    problems += say(
+                        mutation,
+                        False,
                         f"[FAIL] {mutation.name}: its anchor appears "
                         f"{source.count(mutation.before)} times, so the mutation is not the "
-                        "one described"
+                        "one described",
                     )
-                    problems += 1
                     continue
                 mutated = source.replace(mutation.before, mutation.after)
                 if crlf:
                     mutated = mutated.replace("\n", "\r\n")
-                target.write_bytes(mutated.encode("utf-8"))
+                payload = mutated.encode("utf-8")
+                # Recorded BEFORE the bytes land. The other order leaves a
+                # window in which a kill puts a mutation in the tree that no
+                # record names, which is the one state recovery cannot answer.
+                resume.begin(mutation, target, backup.read_bytes(), payload)
+                target.write_bytes(payload)
                 # The file holding the test this mutation names, and only it.
                 # Nearly every mutation is caught there, and running the other
                 # nineteen files to find that out cost 5.8 s a time -- 31
@@ -6328,22 +6391,27 @@ def main() -> int:
                 target.write_bytes(backup.read_bytes())
 
             if counted is None:
-                print(f"[FAIL] {mutation.name}: no summary line -- the run did not finish")
-                problems += 1
+                problems += say(
+                    mutation,
+                    False,
+                    f"[FAIL] {mutation.name}: no summary line -- the run did not finish",
+                )
                 continue
             # The cross-check: the reporter's per-test lines and its own count
             # must agree, or one of the two has stopped describing the run. It
             # counts LINES rather than distinct names -- see `run_tests`.
             if red_lines != counted:
-                print(
+                problems += say(
+                    mutation,
+                    False,
                     f"[FAIL] {mutation.name}: {red_lines} failing test lines but the summary "
-                    f"says {counted} -- this harness cannot read its own output"
+                    f"says {counted} -- this harness cannot read its own output",
                 )
-                problems += 1
                 continue
             if not names:
-                print(f"[FAIL] {mutation.name}: SURVIVED -- no test noticed")
-                problems += 1
+                problems += say(
+                    mutation, False, f"[FAIL] {mutation.name}: SURVIVED -- no test noticed"
+                )
                 continue
             hit = any(mutation.expect in name for name in names)
             mark = "[OK]  " if hit else "[FAIL]"
@@ -6354,15 +6422,17 @@ def main() -> int:
                 if narrow
                 else f"{len(TEST_FILES)} files"
             )
-            print(
+            verdict = [
                 f"{mark} {mutation.name}: {counted} red in {scope}"
                 + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
-            )
+            ]
             if not hit:
-                print(f"         red instead: {sorted(names)}")
-                problems += 1
+                verdict.append(f"         red instead: {sorted(names)}")
+            problems += say(mutation, hit, *verdict)
 
     print()
+    for line in resume.closing():
+        print(line)
     print(
         f"[OK] all {len(chosen)} mutations caught by the test named for them"
         if problems == 0
