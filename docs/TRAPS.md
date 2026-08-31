@@ -12164,6 +12164,55 @@ has the identical `comment.object ? ... : undefined` shape, and copying it is ho
 mechanism arrived. **Symmetry with a neighbour is a reason to look at the neighbour, not a
 reason to keep a second copy of a rule.**
 
+### Two mechanisms, one outcome, and deleting either one would have been the defect
+
+The entry above ends *"the fix is to keep one, not to write a cleverer mutation."* That is
+right where the two mechanisms enforce **one** rule. Here they enforced two, and the
+outcome they share is what made them look like one.
+
+Middle-button panning ends like this:
+
+```ts
+private readonly onPanEnd = (event: PointerEvent): void => {
+  if (!this.panFrom) return;
+  this.panFrom = null;
+  release(this.root, event.pointerId);
+  this.root.removeEventListener("pointermove", this.onPanMove);
+  this.root.removeEventListener("pointerup", this.onPanEnd);
+  this.root.removeEventListener("pointercancel", this.onPanEnd);
+  this.showCursor();
+};
+```
+
+A mutation deleting all three `removeEventListener` calls **survived** a suite of seven
+tests, including one written for exactly this --- *ends on a cancelled gesture, and moves
+nothing afterwards*, which dispatches a `pointermove` after the gesture and asserts the view
+did not move. It could not fail: `panFrom` is `null` by then, and `onPanMove`'s first line
+returns on that. Two mechanisms, one behavioural outcome.
+
+**And the right answer is not to delete one.** They are not two spellings of one rule:
+
+- Clearing `panFrom` is what makes a stray move do nothing. It is *correctness*, and a
+  reader can see it.
+- Removing the listeners is what stops a set of them accumulating on an element that lives
+  as long as the document, one set per drag. It is a *leak*, and nothing a reader does can
+  see it.
+
+Keeping one would have been a defect either way round, which is the case the earlier entry
+does not cover. So the question to ask of two mechanisms is not *"which one do I delete"* but
+**what does each of them cost if it is missing** --- and if the answers differ, they are two
+rules that happen to agree on one observable.
+
+What closed it is the instrument this repository already names for a leak nothing can see:
+an **accounting observable**. The fake DOM keeps `listeners: Map<string, Set<...>>`, so the
+test counts the three names before the drag, asserts they went up during it (the control ---
+otherwise the equality afterwards is satisfied by a gesture that attached nothing), and
+asserts they came back down. The mutation then reddens exactly that one test. Two further
+things the count needs, both learned by writing it: a **second** drag, because one leak in a
+number only ever compared against the reading before it is invisible; and an assertion that
+the resting count of `pointercancel` is **zero**, or the comparison is two identical non-zero
+numbers agreeing for a reason that has nothing to do with the pan.
+
 ### A check no gate runs is a check nobody runs, and two commands shipped past it
 
 `viewercheck.ts` asserts something no other instrument here does:
@@ -19491,3 +19540,48 @@ the mirror and the control.
 **The general form: when a document explains why one of its own numbers cannot be trusted, that
 is a specification for a check, not a disclaimer.** The sentence that admits a number is
 fragile is the cheapest possible place to notice that the fix is mechanical.
+
+### A poll for something to appear has no control, so six clean absences meant the walk was broken
+
+Step 12 of the release checklist asks whether an installed 26.8.11 offers the 26.8.12 update.
+The observer was an AppleScript `entire contents` walk of the app's window, polled every ten
+seconds for the string *Update*. It printed six absences over seventy seconds, and the button
+was on screen for every one of them --- a screenshot taken immediately afterwards shows
+`Update to 26.8.12` in the toolbar, and one of the six polls had already stopped returning
+anything at all, silently, because the walk covers a 775-page document's text layer and gives
+up somewhere in it.
+
+The reading was about to become *the updater does not offer an update*, which is a serious
+false finding about a shipped feature nothing else can check.
+
+**A poll waiting for X to appear needs a control that X's neighbours are still visible.** The
+first walk of that window had listed `Find`, `Toggle sidebar`, the document's name and
+`2 / 775` --- so asserting that any one of those is still found on every pass costs nothing and
+turns the silent-walk case into a red instrument instead of a clean absence. This is the same
+shape as *An empty answer from a whole-document scan cannot say whether it looked*, arriving
+in a UI probe rather than in a document scan, and the tell is identical: the check has no
+failing case of its own.
+
+The instrument that works is a picture. `screencapture -x -o -R<x>,<y>,<w>,<h>` with the
+window's own AX bounds answers in one call and cannot be quietly empty.
+
+### A synthetic click from System Events does not reach the web view, and the pointer was 120 points off
+
+Two separate reasons the same button would not press, and each looks like the other.
+
+`tell application "System Events" to click at {x, y}` returned the element it thought it had
+hit --- a group inside the document's scroll area --- and nothing happened. This repository
+already records *A synthetic right-click posted to the window server never reaches the web
+view*; the same is true of a left click, and the remedy here is `cliclick`, which posts a real
+CGEvent and does reach it.
+
+That was not the whole of it. The coordinate was also wrong, by 120 points, and the mistake is
+one a screenshot invites: **the image handed back is scaled, and its coordinates are not the
+original's.** A 1200-point-wide region captured at 2x is 2400 px, displayed at 2000 px, so a
+button read off the picture at x=1113 is at 1113 x 1.2 / 2 = 668 points, not 556. Both wrong
+answers produce the same symptom --- a click that does nothing --- so fixing one and re-testing
+still fails, which reads as the first fix having been wrong.
+
+**The control is free and settles both at once:** `cliclick m:<x>,<y>`, then `screencapture -C`,
+which draws the cursor into the capture. Where the pointer actually is stops being an
+inference.

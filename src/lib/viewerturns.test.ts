@@ -68,6 +68,7 @@ function comment(): Comment {
     object: null,
     reply_to: null,
     hidden: false,
+    color: null,
   };
 }
 

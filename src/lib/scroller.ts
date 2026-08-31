@@ -545,6 +545,31 @@ export class Scroller {
   private estimate: PageSize;
   /** The layout, one entry per page. Rebuilt by {@link computeGeometry}. */
   private boxes: PageBox[] = [];
+  /**
+   * The widest page's box, in CSS pixels, as [`computeGeometry`] last built it.
+   *
+   * Kept rather than recomputed because [`pan`] is read once per tile placed
+   * and once per tile considered, and a walk of 775 boxes inside `pageLeftCss`
+   * would put an O(pages) loop inside an O(tiles) one. It comes out of the same
+   * loop that already accumulates `totalHeight`, so it costs nothing.
+   */
+  private widestCss = 0;
+  /**
+   * How far the reader has asked the view to move right, in CSS pixels.
+   *
+   * **Stored unclamped and clamped where it is read**, which is [`pan`]. The
+   * bound moves whenever the zoom, the rotation or the window does, so a value
+   * clamped on the way in would be silently wrong the moment any of those
+   * changed --- and every one of them would need a call site that remembered to
+   * re-clamp. Reading through one getter is what removes that class of missed
+   * call.
+   *
+   * The visible consequence is deliberate: zooming out until the page fits and
+   * back in again returns the reader to the part of the page they were looking
+   * at, which is the same courtesy `setZoom`'s centre anchoring gives them
+   * vertically.
+   */
+  private panX = 0;
   /** Total scrollable height in CSS pixels, accumulated with the boxes. */
   private totalHeight = 0;
   /**
@@ -830,6 +855,7 @@ export class Scroller {
     const { zoom, dpr, tilePx, pageCount } = this.opts;
     const boxes: PageBox[] = new Array<PageBox>(Math.max(0, pageCount));
     let top = 0;
+    let widest = 0;
     for (let page = 0; page < boxes.length; page++) {
       const shown = this.displayedPageSize(page);
       const widthDev = Math.round(shown.width_pt * zoom * dpr);
@@ -843,9 +869,11 @@ export class Scroller {
         rows: Math.ceil(heightDev / tilePx),
         top,
       };
+      widest = Math.max(widest, widthDev / dpr);
       top += heightDev / dpr + PAGE_GAP;
     }
     this.boxes = boxes;
+    this.widestCss = widest;
     // The trailing gap is between pages, so the last page does not get one.
     this.totalHeight = Math.max(0, top - PAGE_GAP);
   }
@@ -953,6 +981,51 @@ export class Scroller {
   /** The furthest the viewport can be scrolled. */
   get maxScroll(): number {
     return Math.max(0, this.documentHeight - this.opts.viewport.height);
+  }
+
+  /**
+   * How far the pages may be moved left before their right edge is exposed, in
+   * CSS pixels.
+   *
+   * [`maxScroll`]'s horizontal twin, and derived the same way --- from the
+   * **document** rather than from the page in view. The widest page decides it,
+   * so on a mixed-size document a narrow page slides off the left edge while
+   * the reader is looking at the right of the A3 insert beside it. That is what
+   * a horizontally scrolled document does, and the alternative --- a bound that
+   * changes as the reader scrolls down --- would move the pages sideways under
+   * a gesture that had not moved.
+   *
+   * Zero whenever every page fits, which is every document at every fit zoom.
+   * So the pan is inert until a reader zooms past the width of the window, and
+   * that is the only condition under which it can do anything at all.
+   */
+  get maxPan(): number {
+    return Math.max(0, this.widestCss - this.opts.viewport.width);
+  }
+
+  /** How far the view has moved right over the pages, in CSS pixels. */
+  get pan(): number {
+    return Math.max(0, Math.min(this.panX, this.maxPan));
+  }
+
+  /**
+   * Moves the view sideways over the pages.
+   *
+   * Returns whether the applied pan changed, so a caller can skip a frame it
+   * does not need --- a drag against the right-hand bound reports `false` on
+   * every move after the first.
+   *
+   * A non-finite argument parks at the left edge rather than poisoning every
+   * page's position, for `clampZoom`'s reason: a `NaN` survives `Math.max` and
+   * `Math.min` unchanged and would reach the DOM as `left:NaNpx`, which lays
+   * out nothing at all and says nothing about why.
+   */
+  setPan(px: number): boolean {
+    const before = this.pan;
+    this.panX = Number.isFinite(px) ? px : 0;
+    if (this.pan === before) return false;
+    this.relayout();
+    return true;
   }
 
   /**
@@ -1685,9 +1758,15 @@ export class Scroller {
    * vertically.
    *
    * At 400% the page is twice the width of the viewport, so a purely vertical
-   * window would request --- and wait for --- three columns nobody can see. It
-   * is prefetch in the one direction this scroller cannot move, which is to say
-   * it is waste, and it lands in the same FIFO as the tiles that are visible.
+   * window would request --- and wait for --- three columns nobody can see, and
+   * they would land in the same FIFO as the tiles that are visible.
+   *
+   * ⚠ **This paragraph used to end "prefetch in the one direction this scroller
+   * cannot move".** That was true until the pan landed, and it is now the
+   * opposite of true: the horizontal window is what makes a pan cheap, because
+   * the columns a reader pans onto are requested when they come into it rather
+   * than all of them at once. The check is unchanged; only the reason it is
+   * worth having is.
    */
   private isWanted(key: TileKey): boolean {
     const { top, bottom } = this.band();
@@ -1740,7 +1819,12 @@ export class Scroller {
    */
   private pageLeftCss(page: number): number {
     const width = this.boxes[page]?.widthCss ?? 0;
-    return Math.max(0, (this.opts.viewport.width - width) / 2);
+    // **The one horizontal term in the whole scroller.** Tiles, placeholders,
+    // blank fills, the surface painter, `isWanted`, `coverage` and
+    // `pageOrigin` all place themselves from this, so the pan applies to the
+    // overlay, the hit tests and the tile window by arithmetic rather than by
+    // seven call sites remembering to subtract it.
+    return Math.max(0, (this.opts.viewport.width - width) / 2) - this.pan;
   }
 
   /**

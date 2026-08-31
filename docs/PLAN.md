@@ -12961,12 +12961,84 @@ that it presented several genuinely unresolved questions as settled architecture
    differently than they do now. Nothing about the file changes, which is what makes it the
    right shape: the document is already correct.
 
-   **Still not done, and it is the half that would overturn this:** an Acrobat run. Preview is
-   one reader, and the decision above generalises from it plus §12.5.6.4 rather than from two.
-   `--mode iconcolor` is the instrument if a third reader can be scripted --- and if Acrobat
-   turns out to ignore `/C` as well, the trade goes back on the table with a different balance,
-   because then an appearance stream would be the only thing showing the reader's colour
-   anywhere.
+   **The lever exists, measured 2026-08-31 by `examples/hidden_probe.rs`: PDFium honours `/F`
+   bit 2, Hidden, per annotation.** That is what the whole increment turns on, because
+   `FPDF_ANNOT` is the wrong shape --- it is all the marks or none of them --- and the
+   per-annotation flag is the only other lever the API offers. The fixture carries a highlight
+   and a comment **a hundred points apart on one page**, which is the discrimination: a page
+   with one annotation cannot tell *PDFium honours Hidden* from *PDFium stopped drawing
+   annotations*, and those have opposite consequences here.
+
+   | reading | px | what it establishes |
+   |---|---|---|
+   | both marks vs the source page | 3,919 | the fixture draws two marks at all |
+   | Hidden vs not | 373 | the flag reaches the renderer |
+   | the highlight's quad, hidden vs source | 2,815 | the highlight is **still drawn** |
+   | the comment's rectangle, hidden vs source | **0** | the icon is gone |
+
+   Handed the *visible* file twice, the two live checks go red at 0 px moved and 373 px still
+   in the icon's rectangle --- which is the control, and also what shows the rectangle is aimed
+   at the icon rather than at blank paper. The 373 is the same number in both directions.
+
+   **So the remaining cost is known rather than guessed**, and it is a day rather than an
+   afternoon: `/C` into the `annots.rs` record; a pass over each page on load that sets Hidden
+   on every `/Text` annotation in the *rendering* document, which needs `RawPage` to expose
+   what it currently keeps private; an icon in the overlay at 25 pt anchored to the
+   rectangle's corner, since the rectangle is advisory and readers ignore its size; hit-testing
+   so the icon still opens the comment; and an agreement check that the drawn colour is the
+   one `/C` carries. The file is untouched throughout.
+
+   **The first of those five is done, 2026-08-31.** `annots.rs` reads `/C` onto
+   `Comment::color` as RGB in 0..1, `comments.ts` mirrors it, and seven mutations in
+   `scripts/mutate_rust.py` are each caught by the test named for them. The reader follows
+   §12.5.2 and chooses the colour space **by the count** --- one number DeviceGray, three
+   DeviceRGB, four DeviceCMYK --- so an array of two numbers is not a colour with a component
+   missing, it is not a colour, and it is declined whole exactly as `quads_of` declines a
+   malformed `/QuadPoints`. That half touches no render path and is independently useful: the
+   panel can show the colour somebody chose whether or not the icon is ever redrawn.
+
+   **What the remaining four now have that they did not is a measured blast radius, and it is
+   wider than "the overlay".** The pass that sets Hidden belongs on `RawDocument::load_page`,
+   which is the *one* page cache every render in the application comes out of --- `render.rs`
+   loads it for the tile at 1438, for the crop geometry at 1578 and for text extraction at
+   1782. Text extraction is unaffected, because `FPDFText_*` reads the page's text objects and
+   an annotation is not one; the tile is not, and the tile is what the viewer, the thumbnails
+   and every pixel-reading check in `viewer_check.py` are looking at. So the change cannot be
+   validated by the unit suite: it needs a viewer run on an unlocked screen, and a before/after
+   on `comments.pdf` specifically.
+
+   **And the corpus can barely exercise it.** `testdata/comments.pdf` carries three `/C`
+   arrays in 238 kB --- `1 0.82 0.2`, `1 1 0` and `1 0 0` --- and `comments-rotated.pdf`
+   carries none, so a fixture that discriminates the drawn colour from PDFium's yellow has to
+   be written for the purpose. That is not an argument against the increment; it is the
+   fifth item on the list arriving before the third, and worth knowing before the day is
+   spent rather than in the middle of it.
+
+   ~~**Still not done, and it is the half that would overturn this:** an Acrobat run.~~
+   **Measured 2026-08-31, and it does not overturn it --- Acrobat honours `/C` too.** The
+   decision now rests on two independent readers rather than on Preview plus §12.5.6.4, and
+   PDFium is alone.
+
+   Acrobat cannot be driven by `--mode iconcolor`, which renders through PDFKit, so the probe
+   supplied the fixtures and Acrobat supplied the pixels: `--out` keeps the four files it
+   writes, each pair differing only in `/C`, and each was opened in Adobe Acrobat DC with the
+   window captured at its own accessibility bounds. Four readings, and the last three are why
+   the first one can be believed:
+
+   | region | blue vs red | what it says |
+   |---|---|---|
+   | the icon, 120x90 px around it | **873 px**, bounding box 32x32 | Acrobat draws the comment's icon from `/C` |
+   | page text beside it, 500x90 px | **0 px** | the two captures are aligned; the window did not move |
+   | the same file opened twice | **0 px** | the capture is repeatable, so 873 is not redraw noise |
+   | a highlight, 700x130 px | **24,642 px** | Acrobat's rendering does move when the colour reaches the drawing |
+
+   The icon crops confirm it by eye as well: the same shape in the same place, blue in one file
+   and red in the other.
+
+   **Scope the comparison to a region.** A whole-window diff reported 2,114 differing pixels
+   spanning x 368..939, and the top-left of that box is the *tab title* --- `Note-blue.pdf`
+   against `Note-red.pdf`. A reading taken over the window would have been right by accident,
+   and would have been just as large for two files whose icons were identical.
 
    The mode carries its own control, and it is the reason the reading can be believed: it runs
    the same two-colour comparison on a **highlight** first, whose appearance stream carries the

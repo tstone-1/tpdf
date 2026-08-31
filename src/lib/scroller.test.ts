@@ -581,6 +581,134 @@ describe("Scroller geometry on a mixed-size document", () => {
  * true of a defect that turned the view instead, so what separates the two is a
  * neighbour that must not have moved and a `turns` option that must not have.
  */
+describe("Scroller horizontal pan", () => {
+  let dom: FakeDom;
+
+  /** A4 beside an A3 landscape, in a window narrower than the A3. */
+  function narrow(): ScrollerOptions {
+    return {
+      ...options(),
+      pageCount: 2,
+      pages: [A4, A3_LANDSCAPE],
+      tilePx: 512,
+      // Wider than the A4 and narrower than the A3, which is the whole point:
+      // one page fits and one does not, so the two are placed by different
+      // branches of `pageLeftCss` and a pan has to move both the same way.
+      viewport: { width: 800, height: 4000 },
+      maxInFlight: 64,
+    };
+  }
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    tiles.fetchTile.mockReset();
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+    tiles.fetchTile.mockImplementation(() => Promise.resolve(null));
+  });
+
+  afterEach(() => {
+    dom.restore();
+  });
+
+  function build(opts: ScrollerOptions): Scroller {
+    return new Scroller(dom.root as unknown as HTMLElement, opts);
+  }
+
+  it("has nothing to pan while every page fits, and the widest page sets the bound", () => {
+    // The control first, and it is the case a reader is in at every fit zoom:
+    // a window wider than the widest page has no right-hand side to reach.
+    const fits = build({ ...narrow(), viewport: { width: 1400, height: 4000 } });
+    expect(fits.maxPan).toBe(0);
+
+    // And the A3 sets the bound, not the A4 that happens to be page one. A
+    // bound taken from the page in view would be zero here and would grow as
+    // the reader scrolled, moving the pages sideways under a gesture that had
+    // not moved.
+    const overflows = build(narrow());
+    expect(overflows.maxPan).toBe(A3_LANDSCAPE.width_pt - 800);
+  });
+
+  it("moves every page by the same amount, whatever its width", () => {
+    const scroller = build(narrow());
+    const before = [0, 1].map((page) => scroller.pageOrigin(page).left);
+    // The two pages start in different places, or this test could not tell a
+    // document-level offset from a per-page one.
+    expect(before[0]).not.toBe(before[1]);
+
+    expect(scroller.setPan(60)).toBe(true);
+    expect(scroller.pan).toBe(60);
+    expect(scroller.pageOrigin(0).left).toBe((before[0] ?? 0) - 60);
+    expect(scroller.pageOrigin(1).left).toBe((before[1] ?? 0) - 60);
+  });
+
+  it("clamps a pan to the bound at each end", () => {
+    const scroller = build(narrow());
+    const bound = scroller.maxPan;
+
+    scroller.setPan(bound + 500);
+    expect(scroller.pan).toBe(bound);
+    scroller.setPan(-500);
+    expect(scroller.pan).toBe(0);
+
+    // The control: a pan inside the bound is not clamped, so the two
+    // assertions above are about the ends rather than about a `pan` that
+    // answers a constant.
+    scroller.setPan(bound / 2);
+    expect(scroller.pan).toBe(bound / 2);
+  });
+
+  it("parks at the left edge for a pan that is not a number", () => {
+    const scroller = build(narrow());
+    const home = scroller.pageOrigin(1).left;
+
+    scroller.setPan(Number.NaN);
+    expect(scroller.pan).toBe(0);
+    expect(scroller.pageOrigin(1).left).toBe(home);
+
+    // The control, and it is what says the assertion above is about `NaN`
+    // rather than about a `setPan` that never moves anything: a finite pan
+    // does move the page, and to a number.
+    scroller.setPan(40);
+    expect(Number.isFinite(scroller.pageOrigin(1).left)).toBe(true);
+    expect(scroller.pageOrigin(1).left).toBe(home - 40);
+  });
+
+  it("reports whether the applied pan actually moved", () => {
+    const scroller = build(narrow());
+    expect(scroller.setPan(30)).toBe(true);
+    // Already there.
+    expect(scroller.setPan(30)).toBe(false);
+    // Past the bound, twice: the first moves to the bound, the second is the
+    // one a drag makes on every move after it runs out of page. That second
+    // `false` is what lets the viewer skip a frame it does not need.
+    expect(scroller.setPan(scroller.maxPan + 1)).toBe(true);
+    expect(scroller.setPan(scroller.maxPan + 999)).toBe(false);
+  });
+
+  it("keeps a pan the zoom made unreachable, and gives it back", () => {
+    // The deliberate consequence of clamping where the pan is *read* rather
+    // than where it is written, and it is pinned because an implementation
+    // that clamped on the way in would pass every other test in this block.
+    const scroller = build(narrow());
+    const bound = scroller.maxPan;
+    scroller.setPan(bound);
+    expect(scroller.pan).toBe(bound);
+
+    // Zoomed out until the A3 fits: there is nothing to pan, and the pages sit
+    // where they would if the reader had never panned.
+    scroller.setZoom(0.5);
+    expect(scroller.maxPan).toBe(0);
+    expect(scroller.pan).toBe(0);
+
+    // And back. The reader returns to the part of the page they were looking
+    // at rather than to its left edge.
+    scroller.setZoom(1);
+    expect(scroller.pan).toBe(bound);
+  });
+});
+
 describe("Scroller page turns", () => {
   let dom: FakeDom;
   let scroller: Scroller;

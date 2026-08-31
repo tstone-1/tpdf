@@ -261,6 +261,23 @@ pub struct Comment {
     /// still something somebody wrote, and it is on the page's `/Annots` either
     /// way.
     pub hidden: bool,
+    /// `/C`, the colour the *file* gives this annotation, as RGB in 0..1.
+    ///
+    /// `None` where the document names no colour, and `None` where it names one
+    /// this cannot read --- see [`color_of`], which declines a malformed array
+    /// whole rather than keeping the part of it that parses, exactly as
+    /// [`Comment::quads`] does.
+    ///
+    /// **The renderer ignores this, which is why the field exists.** PDFium
+    /// draws a `/Text` annotation's icon in its own yellow whatever `/C` says,
+    /// and that is correct behaviour for an annotation carrying no appearance
+    /// stream --- `docs/TRAPS.md`, *PDFium draws a comment's icon in its own
+    /// colour, and the file is not wrong*. Measured against two independent
+    /// readers: PDFKit moves 439 px between two files differing only in `/C`
+    /// and PDFium moves 0. So this is the only route by which the colour
+    /// somebody chose reaches a reader of tpdf, and what reads it is the
+    /// overlay rather than any render.
+    pub color: Option<[f32; 3]>,
     /// The object this annotation **is**, as `[number, generation]`.
     ///
     /// [`Comment::id`] cannot survive a save: it is a position in one scan, so
@@ -557,7 +574,63 @@ fn comment(
             .ok()
             .and_then(|object| resolve(document, object).as_i64().ok())
             .is_some_and(|flags| flags & 2 != 0),
+        color: color_of(annot, document),
     }
+}
+
+/// Reads `/C` as RGB in 0..1, or nothing.
+///
+/// §12.5.2 gives `/C` four legal lengths and expects a reader to choose the
+/// colour space **by the count**: none, one for DeviceGray, three for DeviceRGB,
+/// four for DeviceCMYK. So an array of two numbers is not a colour with a
+/// component missing, it is not a colour, and this returns `None` for it --- the
+/// same rule [`quads_of`] applies to a `/QuadPoints` whose length is wrong.
+///
+/// An **empty** array is the one length that means something rather than being
+/// malformed: §12.5.2 says it is *no colour*, which is also `None` here, and the
+/// distinction costs a consumer nothing because there is nothing to draw either
+/// way.
+///
+/// The CMYK conversion is the naive one, `(1 - ink) * (1 - k)`, with no profile
+/// and no black generation. A comment's colour is a hue somebody picked out of a
+/// palette rather than a measurement, and this is the conversion every PDF
+/// reader applies to an annotation colour for the same reason.
+fn color_of(annot: &Dictionary, document: &Document) -> Option<[f32; 3]> {
+    let object = annot.get(b"C").ok()?;
+    let Object::Array(array) = resolve(document, object) else {
+        return None;
+    };
+    let values: Vec<f32> = array
+        .iter()
+        .filter_map(|item| resolve(document, item).as_float().ok())
+        .collect();
+    // An entry that is not a number makes the array unreadable rather than
+    // shorter, which is what stops `[1 /Foo 0]` being read as DeviceGray white.
+    if values.len() != array.len() {
+        return None;
+    }
+    // Before the clamp, not after: `f32::clamp` returns `NaN` for a `NaN` input
+    // rather than a bound, and a `NaN` component would then reach serde, which
+    // refuses it --- `docs/TRAPS.md`, *JSON refuses `NaN`, which is what made an
+    // unchecked `f32` look safe*. A number too large for an `f32` arrives here
+    // as an infinity and is refused by the same line.
+    if values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let rgb = match values[..] {
+        [gray] => [gray, gray, gray],
+        [r, g, b] => [r, g, b],
+        [c, m, y, k] => [
+            (1.0 - c) * (1.0 - k),
+            (1.0 - m) * (1.0 - k),
+            (1.0 - y) * (1.0 - k),
+        ],
+        _ => return None,
+    };
+    // Legal values are 0..1 and a document is free to write neither. Clamping
+    // rather than declining is what a renderer does, and the alternative would
+    // drop a colour over a component a producer rounded to 1.0000001.
+    Some(rgb.map(|component| component.clamp(0.0, 1.0)))
 }
 
 /// Reads one text-string field, decoded and flattened.
@@ -1949,6 +2022,196 @@ mod tests {
         assert_eq!(quads_direct(spec_order(100, 700, 300, 720)).len(), 4);
     }
 
+    /// `/C` with the given entries, read straight through [`color_of`].
+    fn color_direct(entries: Vec<Object>) -> Option<[f32; 3]> {
+        let annot = dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "C" => entries,
+        };
+        color_of(&annot, &Document::new())
+    }
+
+    #[test]
+    fn a_colour_names_its_space_by_how_many_numbers_it_has() {
+        // §12.5.2. The three lengths that are a colour, each with a value no
+        // other length could produce -- 0.25 gray is not 0.25 anything else,
+        // and the CMYK row's three components differ from each other, so a
+        // conversion that dropped `k` or reused one channel is visible here.
+        assert_eq!(
+            color_direct(vec![Object::Real(0.25)]),
+            Some([0.25, 0.25, 0.25]),
+            "one number is DeviceGray"
+        );
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(1.0),
+                Object::Real(0.5),
+                Object::Real(0.0)
+            ]),
+            Some([1.0, 0.5, 0.0]),
+            "three numbers are DeviceRGB, unchanged"
+        );
+
+        // DeviceCMYK, `(1 - ink) * (1 - k)`: c=0 m=0.5 y=1 k=0.2 gives
+        // 0.8, 0.4, 0.0.
+        let cmyk = color_direct(vec![
+            Object::Real(0.0),
+            Object::Real(0.5),
+            Object::Real(1.0),
+            Object::Real(0.2),
+        ])
+        .expect("four numbers are DeviceCMYK");
+        assert!(
+            (cmyk[0] - 0.8).abs() < 1e-6 && (cmyk[1] - 0.4).abs() < 1e-6 && cmyk[2] == 0.0,
+            "the naive CMYK conversion gave {cmyk:?}"
+        );
+    }
+
+    #[test]
+    fn an_array_that_is_not_one_of_the_four_legal_lengths_is_not_a_colour() {
+        // Two numbers is not DeviceRGB with a component missing. Reading it as
+        // one would put a colour nobody wrote on a comment, which is worse than
+        // showing none: a reader cannot tell a guess from a choice.
+        assert_eq!(
+            color_direct(vec![Object::Real(1.0), Object::Real(0.0)]),
+            None
+        );
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(1.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0)
+            ]),
+            None,
+            "five numbers name no colour space"
+        );
+
+        // An empty array is the one length that is legal and still no colour:
+        // §12.5.2 spells `no colour` exactly that way.
+        assert_eq!(color_direct(Vec::new()), None);
+
+        // And no `/C` at all.
+        let bare = dictionary! { "Type" => "Annot", "Subtype" => "Text" };
+        assert_eq!(color_of(&bare, &Document::new()), None);
+
+        // The control, through the same door: without it every assertion above
+        // is satisfied by a `color_of` that returns nothing for anything.
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(1.0),
+                Object::Real(0.5),
+                Object::Real(0.0)
+            ]),
+            Some([1.0, 0.5, 0.0])
+        );
+    }
+
+    #[test]
+    fn a_colour_with_a_value_that_is_not_a_number_is_declined_whole() {
+        // The same rule `quads_of` applies, and for the same reason: a producer
+        // that wrote a name among the components has told us nothing reliable
+        // about the others. Declining shortens the array to two numbers if the
+        // bad entry is simply skipped, which would then be refused for its
+        // *length* -- so the control below uses a four-entry array, where
+        // skipping one leaves a legal DeviceRGB triple and a wrong colour.
+        assert_eq!(
+            color_direct(vec![
+                Object::Name(b"Red".to_vec()),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0)
+            ]),
+            None
+        );
+        assert_eq!(
+            color_direct(vec![
+                Object::Null,
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0)
+            ]),
+            None
+        );
+
+        // Infinity and `NaN` are refused before the clamp rather than by it:
+        // `f32::clamp` returns `NaN` for a `NaN` input, and serde refuses a
+        // `NaN` outright, so a component that reached the clamp would fail at
+        // the process boundary instead of here.
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(f32::INFINITY),
+                Object::Real(0.0),
+                Object::Real(0.0)
+            ]),
+            None
+        );
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(f32::NAN),
+                Object::Real(0.0),
+                Object::Real(0.0)
+            ]),
+            None
+        );
+
+        // The control, through the same door.
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0)
+            ]),
+            Some([1.0, 1.0, 1.0]),
+            "four zeroes are DeviceCMYK white"
+        );
+    }
+
+    #[test]
+    fn a_component_outside_the_legal_range_is_clamped_rather_than_declined() {
+        // A producer that rounded to 1.0000001 has still named a colour, and
+        // clamping is what a renderer does with it. Declining would drop the
+        // whole comment's colour over a rounding error.
+        assert_eq!(
+            color_direct(vec![
+                Object::Real(1.5),
+                Object::Real(-0.5),
+                Object::Real(0.5)
+            ]),
+            Some([1.0, 0.0, 0.5])
+        );
+    }
+
+    #[test]
+    fn the_scan_reads_the_colour_onto_the_comment() {
+        // The unit tests above prove the rule; this one proves it is *used*.
+        // Without it a `comment()` that wrote `color: None` unconditionally
+        // would pass every assertion in this file -- `docs/TRAPS.md`, *Testing
+        // a rule is not testing that the rule is used*.
+        let comments = scan_annots(vec![dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![100.into(), 700.into(), 120.into(), 720.into()],
+            "C" => vec![Object::Real(1.0), Object::Real(0.5), Object::Real(0.0)],
+            "Contents" => Object::string_literal("Orange"),
+        }]);
+        assert_eq!(comments.items.len(), 1, "limits {:?}", comments.limits);
+        assert_eq!(comments.items[0].color, Some([1.0, 0.5, 0.0]));
+
+        // The control: the same note with no `/C` reports none, so the
+        // assertion above is about the key rather than about a constant.
+        let bare = scan_annots(vec![dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Text",
+            "Rect" => vec![100.into(), 700.into(), 120.into(), 720.into()],
+            "Contents" => Object::string_literal("Plain"),
+        }]);
+        assert_eq!(bare.items[0].color, None);
+    }
+
     #[test]
     fn quads_are_kept_only_for_the_kinds_that_mark_words() {
         // A `/Text` note with a stray `/QuadPoints` -- legal to write, and
@@ -2081,6 +2344,7 @@ mod tests {
             quads: vec![1.0, 2.0, 3.0, 4.0],
             reply_to: Some(0),
             hidden: false,
+            color: Some([1.0, 0.5, 0.0]),
             object: Some((7, 0)),
         };
 
@@ -2096,6 +2360,7 @@ mod tests {
             quads,
             reply_to,
             hidden,
+            color,
             object,
         } = comment;
 
@@ -2129,6 +2394,9 @@ mod tests {
             format!("{quads:?}"),
             reply_to.map(|id| id.to_string()).unwrap_or_default(),
             hidden.to_string(),
+            // Three more numbers the document chose, and the same argument as
+            // `quads` above: an `f32` that failed to parse never reaches here.
+            format!("{color:?}"),
         ];
         for value in derived {
             assert!(

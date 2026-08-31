@@ -624,6 +624,34 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -
 # pair has to be read together.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example annot-probe -- \
     testdata/text-base14.pdf --mode iconcolor --kind note
+# Reference run: PDFKit 439 px moved, PDFium 0, controls 3379/3546 on a highlight.
+#
+# `hidden-probe` is the sequel and asks the question the ranked overlay work
+# turns on: does PDFium honour /F bit 2, Hidden, PER ANNOTATION? It does. The
+# fixture wants a highlight and a comment a hundred points apart on one page,
+# which `--mode preview --kind note --out` builds on top of an already-marked
+# file; the note's /Rect is then moved by an equal-length byte edit so the xref
+# stays valid.
+#
+#   src-tauri/target/release/examples/hidden-probe both.pdf hidden.pdf \
+#       --source testdata/text-base14.pdf \
+#       --note-rect 50,200,110,245 --quad-rect 65,112,300,124
+#
+# 4/4 on 2026-08-31: 3919 px for the fixture's two marks, 373 moved by the flag,
+# 2815 still in the highlight's quad, 0 left in the comment's rectangle. Its
+# control is to pass the VISIBLE file twice, which reddens the two live checks at
+# 0 and 373 -- and 373 in the icon's rectangle is also what proves that rectangle
+# is aimed at the icon rather than at blank paper.
+#
+# `--out <path>` keeps the four files it writes --- two notes and two highlights,
+# each pair differing only in `/C` --- under the temporary directory as
+# `tpdf-iconcolor-<pid>-<Kind>-<blue|red>.pdf`. That is how a reader this probe
+# cannot drive gets measured: on 2026-08-31 those files went into Adobe Acrobat
+# DC, whose window was captured at its own accessibility bounds and diffed by
+# region. Acrobat honours `/C` --- 873 px in the icon, 0 beside it, 0 for the same
+# file opened twice, 24,642 for the highlight. See docs/PLAN.md §10 q8; and note
+# that a whole-window diff is wrong here, because the tab title carries the
+# filename and differs for that reason alone.
 # The stamp. `--mode stamp` exists because `--mode outline` CANNOT FAIL for this
 # kind: a stamp is a box with a word in it, so every reading that mode takes of a
 # box is satisfied by a stamp except the one it has backwards -- it requires an
@@ -5304,6 +5332,26 @@ starts at 0 and increments within the month.
 
     Needs two published releases, so it starts from the second one ever cut with the
     updater — first opportunity is applying `26.8.2` from an installed `26.8.2`+1.
+
+    **Carried out for the first time on 2026-08-31, and it passes.** 26.8.11 installed from
+    its own `.dmg` over the 26.8.12 that was there, launched normally: the toolbar showed
+    `Update to 26.8.12`, pressing it reached `Update ready — restart to finish` in **two
+    seconds**, and after quit-and-reopen the toolbar read `tpdf 26.8.12` with no update
+    offered — which is the negative direction in the same observation. The bundle on disk
+    afterwards is 26.8.12, `spctl -a -vv` says `source=Notarized Developer ID`, and the team
+    identifier is unchanged, so the payload the updater installed carries the same signature
+    the `.dmg` does. The sentence above about this step never having been carried out is
+    therefore spent; keep it, because it is the reason to run this rather than trust it.
+
+    **Two instrument failures on the way, both worth knowing before repeating this.** The
+    accessibility tree is *not* a usable observer here: an `entire contents` walk of the
+    window reported the toolbar without the update button, and a 70-second polling loop over
+    it printed six clean absences while the button was on screen the whole time. The walk
+    then began returning nothing at all, silently. **A screenshot of the window is the
+    instrument** — `screencapture -x -o -R<x>,<y>,<w>,<h>` with the window's own AX bounds.
+    And **a synthetic `click at` from System Events does not reach the WKWebView**; `cliclick`
+    posts a real event and does. Verify the pointer landed before believing a click did
+    nothing: `cliclick m:<x>,<y>` then `screencapture -C`, which draws the cursor.
 
     ```
     # With the PREVIOUS release installed in /Applications, launched normally:

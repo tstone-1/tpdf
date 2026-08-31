@@ -865,6 +865,17 @@ const MATCH_FILL = "rgba(255, 214, 0, 0.55)";
 const CURRENT_MATCH_FILL = "rgba(255, 132, 0, 0.75)";
 
 /**
+ * `PointerEvent.button` for the middle button.
+ *
+ * Named because `1` reads as "the second button" and is not: `button` numbers
+ * the *physical* button --- 0 primary, 1 middle, 2 secondary --- while
+ * `buttons` is a bit field where the middle button is 4. The two are easy to
+ * write for each other and a wrong one produces a gesture that never fires
+ * rather than one that misfires, which is the quiet direction.
+ */
+const MIDDLE_BUTTON = 1;
+
+/**
  * Captures a pointer, tolerating one that does not exist.
  *
  * `setPointerCapture` throws `NotFoundError` for an id the browser has no active
@@ -973,6 +984,22 @@ export class Viewer {
 
   private frameHandle = 0;
   private running = false;
+  /**
+   * Where a middle-button drag started, and where the view was when it did.
+   *
+   * `null` whenever no such drag is in progress, which is what
+   * {@link showCursor} reads. Both the pointer's start position **and** the
+   * view's are kept, so each move is applied as a displacement from the press
+   * rather than accumulated from the previous move: an accumulated pan drifts
+   * against the pointer whenever a move is clamped at a bound, and the reader
+   * then has to drag back further than they dragged out.
+   */
+  private panFrom: {
+    x: number;
+    y: number;
+    top: number;
+    pan: number;
+  } | null = null;
   /** Every comment in the document, in page order. Empty until it arrives. */
   private commentItems: readonly Comment[] = [];
   private linkItems: readonly Link[] = [];
@@ -1728,6 +1755,7 @@ export class Viewer {
     root.addEventListener("wheel", this.onWheel, { passive: false });
     root.addEventListener("keydown", this.onKeyDown);
     root.addEventListener("pointerdown", this.onSelectStart);
+    root.addEventListener("pointerdown", this.onPanStart);
     // Always on, unlike the drag's own `pointermove`: a reader has to be told a
     // run of text is a link *before* pressing it, and the press is too late.
     root.addEventListener("pointermove", this.onHover);
@@ -1762,6 +1790,12 @@ export class Viewer {
     this.root.removeEventListener("wheel", this.onWheel);
     this.root.removeEventListener("keydown", this.onKeyDown);
     this.root.removeEventListener("pointerdown", this.onSelectStart);
+    this.root.removeEventListener("pointerdown", this.onPanStart);
+    // A pan adds these three and its own end takes them away again --- removed
+    // here too, because `destroy` can arrive with the button still down.
+    this.root.removeEventListener("pointermove", this.onPanMove);
+    this.root.removeEventListener("pointerup", this.onPanEnd);
+    this.root.removeEventListener("pointercancel", this.onPanEnd);
     this.root.removeEventListener("pointermove", this.onHover);
     // A drag adds these two and its own `pointerup` takes them away again ---
     // which a document closed mid-drag never reaches. Removing a listener that
@@ -4305,8 +4339,14 @@ export class Viewer {
     // link. A stale position cannot survive a disarm, since a disarm is what
     // this branch runs on.
     if (this.drawKind === null) this.armedAt = null;
-    this.surfaceHost.style.cursor =
-      this.drawKind || this.cropping || this.redacting
+    this.surfaceHost.style.cursor = this.panFrom
+      ? // **First, and it outranks an armed tool deliberately.** A middle-drag
+        // is happening *now* and the tool is a statement about what the next
+        // primary press will do, so showing the crosshair through a pan would
+        // describe a gesture the reader is not making. It is also the only one
+        // of the four that ends by itself, on the button coming up.
+        "grabbing"
+      : this.drawKind || this.cropping || this.redacting
         ? "crosshair"
         : this.overLink
           ? "pointer"
@@ -6154,6 +6194,82 @@ export class Viewer {
     this.track.style.visibility =
       this.scroller.maxScroll > 0 ? "visible" : "hidden";
   }
+
+  /**
+   * Starts a middle-button drag of the view.
+   *
+   * The gesture every PDF reader has: hold the middle button and the pages
+   * follow the pointer. It is deliberately *not* a mode --- there is no hand
+   * tool to arm and no state to leave behind --- so it costs a reader nothing
+   * to discover and cannot be left switched on.
+   *
+   * It moves both axes, and the horizontal one only does anything past the
+   * width of the window: `Scroller.maxPan` is zero at every fit zoom, so on an
+   * ordinary document this is a vertical drag until the reader zooms in, and
+   * from then on it is the only way to reach the right-hand side of the page.
+   */
+  private readonly onPanStart = (event: PointerEvent): void => {
+    if (event.button !== MIDDLE_BUTTON) return;
+    // The scrollbar is inside the root and has its own drag, exactly as
+    // {@link onSelectStart} says of the primary button.
+    if (this.track.contains(event.target as Node)) return;
+    // A reader who pans and then presses an arrow key expects the arrow to
+    // scroll, and `preventDefault` below is what would otherwise stop the
+    // press moving focus here.
+    this.root.focus();
+
+    this.panFrom = {
+      x: event.clientX,
+      y: event.clientY,
+      top: this.scrollTop,
+      pan: this.scroller.pan,
+    };
+    capture(this.root, event.pointerId);
+    this.root.addEventListener("pointermove", this.onPanMove);
+    this.root.addEventListener("pointerup", this.onPanEnd);
+    this.root.addEventListener("pointercancel", this.onPanEnd);
+    this.showCursor();
+    // **Not tidiness.** A middle press inside a scrollable element starts the
+    // platform's own autoscroll, which would then fight this drag and leave an
+    // anchor glyph on the page; preventing the default on the pointer event is
+    // what suppresses the compatibility mouse event it is built on.
+    event.preventDefault();
+  };
+
+  /**
+   * Moves the view to where the press would have put it.
+   *
+   * Both displacements are taken from the press rather than from the previous
+   * move, for the reason {@link panFrom} gives.
+   */
+  private readonly onPanMove = (event: PointerEvent): void => {
+    const from = this.panFrom;
+    if (!from) return;
+    // **The content follows the pointer.** Dragging down brings the page down
+    // with it, which means the view has moved *up* the document -- so the
+    // offsets are subtracted. This is the hand-tool convention every reader
+    // uses, and the other one, where the view follows the pointer instead,
+    // sends the page the opposite way from the hand holding it.
+    this.scrollTo(from.top - (event.clientY - from.y));
+    if (this.scroller.setPan(from.pan - (event.clientX - from.x))) this.wake();
+  };
+
+  /**
+   * Ends the drag, whether the button came up or the gesture was taken away.
+   *
+   * `pointercancel` shares this handler because there is nothing to commit: a
+   * pan has no result beyond where the view already is, so an interrupted one
+   * is simply a shorter pan.
+   */
+  private readonly onPanEnd = (event: PointerEvent): void => {
+    if (!this.panFrom) return;
+    this.panFrom = null;
+    release(this.root, event.pointerId);
+    this.root.removeEventListener("pointermove", this.onPanMove);
+    this.root.removeEventListener("pointerup", this.onPanEnd);
+    this.root.removeEventListener("pointercancel", this.onPanEnd);
+    this.showCursor();
+  };
 
   private readonly onTrackPointerDown = (event: PointerEvent): void => {
     const trackTop = this.track.getBoundingClientRect().top;
