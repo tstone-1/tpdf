@@ -25,8 +25,9 @@ project conventions.
 ## What the viewer does today
 
 - Every document is parsed and rendered in **sandboxed worker processes** with no
-  filesystem or network authority --- a pool per document, and a worker that dies is
-  replaced and its request retried. Saving over a document is prepared and written
+  filesystem or network authority on macOS, and none to *write* on Windows, where the
+  boundary stops neither reading what the user can read nor opening a socket --- a pool per
+  document, and a worker that dies is replaced and its request retried. Saving over a document is prepared and written
   there too, and so is a redaction applied to it. Save a copy, Redact to a copy,
   Extract, Split, Merge and Print still read the file in the app process; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in one place
   rather than leaving the first sentence to be read as covering them.
@@ -183,8 +184,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   area you removed is rendered and put through the system's own text recogniser, which is
   the only way to catch words that were never text --- a scan, or a heading turned into
   outlines. Nothing is called clean on that evidence unless the recogniser was first shown
-  to be working on the same image, and on Windows, where there is no recogniser to ask, the
-  report says so and the file is not certified. The document you have open is untouched, so if you
+  to be working on the same image --- Vision on macOS, the system's own engine on Windows,
+  where one honest caveat applies: that engine corrects what it reads and cannot be told not
+  to, so a *clean* there rests on a control it could in principle have reconstructed rather
+  than read, and [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in full. The document you have open is untouched, so if you
   do not like the result you still have your marks. A region covering a **picture** removes
   the picture, whole and bytes included --- removing part of one would mean re-encoding it,
   so the panel says how many a region takes before you commit, and a picture the document

@@ -237,9 +237,14 @@ the seventh.
 
 **It stays, for two reasons.** The checks are built on observing the artifact that ships --- the
 frame loop, the input handlers and the layout they assert against exist nowhere else, which is why
-they need a real window at all --- so excluding them at build time would run the 109-name
+they need a real window at all --- so excluding them at build time would run the check-name
 invariant against a bundle nobody installs, which is the writer-and-its-own-reader failure this
-repository has already recorded twice from other directions. And the payload is not what decides
+repository has already recorded twice from other directions. That invariant is *every corpus
+reports the same set of check names*, which `scripts/viewer_sweep.py` asserts by diffing the
+sets pairwise; a total cannot carry it, because a name that stops being printed and a name that
+starts skipping look identical in one. This sentence said *the 109-name invariant* until
+2026-09-01, four paragraphs below the one explaining why a count in prose goes stale --- and 109
+is a reading taken on 2026-07-30 that BUILD.md still records, correctly, as dated. And the payload is not what decides
 cold start: the `blank` variant deletes the *entire* payload --- no module graph, no Svelte, no
 `@tauri-apps/api` --- and moved warm start by -8.4, +9.9 and -0.2 ms across three interleaved runs
 (`docs/PLAN.md` §0), because the webview's first custom-protocol request costs ~45 ms and whichever

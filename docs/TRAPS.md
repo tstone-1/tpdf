@@ -20011,3 +20011,311 @@ extra before you unify them.** Whether the asymmetry is even *right* is a separa
 reader-facing question --- the close has happened either way, and `with_close_note`'s own doc
 argues a reader should be told once on whichever refusal reaches them --- but changing it is a
 decision about what a reader sees, not a refactor, and it should be made as one.
+
+### A YAML comment binds to nothing, so an inserted step can steal the one below it
+
+A step was added to both workflows' `gates` job, and it landed **after** the comment block
+belonging to the step below it. The result reads perfectly: three paragraphs about why
+`win-ocr-probe` is not a gate and what its `[verdict]` lines mean, then a completely different
+step, then `win-ocr-probe` with nothing above it. Nobody wrote a wrong sentence; the sentences
+simply changed owner.
+
+**This is the third instance of one shape in this repository and the first where no language
+was involved.** The TypeScript one is two `/** */` blocks in a row, where only the second
+binds; the Rust one is an insert landing between an attribute and its item. Both of those at
+least have a rule about what a comment attaches to. **YAML has none** --- a `#` line is
+attached to whatever a reader thinks it is attached to, so there is no parse to be wrong and
+nothing that could be linted.
+
+Neither workflow gate can see it either, and the reason is worth stating because it is the
+same reason they are good gates. `scripts/check_workflow_parity.py` compares *what each step
+executes* --- every `uses:` with its SHA and every `run:` body --- and deliberately not the
+`name:`s, because labels are prose. A comment is more prose. So the check that exists
+precisely to stop these two files drifting apart is structurally blind to a comment moving
+between steps, and it passed, correctly, on a job whose most-explained step had lost its
+explanation.
+
+What caught it was reading the diff, which is also the only thing that can: the insertion looks
+like an intentional block wherever it lands, and the file reads top to bottom either way. The
+habit that pays is narrow --- **when inserting into a commented sequence, anchor on the start of
+the next item's comment block, never on the previous item's last line.** In this file that
+meant anchoring on `# NOT a gate: it measures rather than asserting` rather than on the `run:`
+above it.
+
+### A cross-reference stream states the width of its own fields, and `lopdf` believes it
+
+A **358-byte** document ends the process. A cross-reference stream's `/W` array gives the
+byte width of each field in its entries, and `lopdf` multiplies those widths out and asks for
+a zeroed `Vec<u8>` of the result without checking it against anything --- the file's length,
+the entry count, or arithmetic sense. `/W [1 4 3333333333333333332]` produces `memory
+allocation of 3333333333333333332 bytes failed`.
+
+**That is an abort, not a panic**, which is the part that decides what can be done about it.
+It goes through `handle_alloc_error`, so `catch_unwind` cannot see it, a `Result` cannot carry
+it, and no guard written in tpdf can convert it into a refusal. The threshold is sharp and was
+measured: `W[2] = 2^45` completes, `2^46` aborts. Below the threshold the cost is address
+space rather than resident memory, because the zeroed allocation is a lazy mapping --- 69 MiB
+of RSS at 2^44, 85 MiB at 2^45 --- so the failure is not preceded by a machine that gets slow.
+
+**It is on the load path, so it is every reader and the save too.** The same file was fed to
+`annots::scan`, `links::scan`, `docinfo::scan`, `encoding::scan` and `save::rewrite_update`,
+and all five die: the comments panel, the links panel, the properties dialog, the character
+mapping and a rewriting save. There is no tpdf-side pre-check available, because the thing
+that would have to check is `lopdf`'s own cross-reference parser.
+
+What contains it today is where those parses run. All five are in the worker, so the blast
+radius is a worker process, which the pool restarts --- and that meets the entry about a pool
+replacing a dead worker with the same bytes and faulting again, which is what a reader would
+see: the panel never fills. The paths that were still in the coordinator when this was found
+would have taken the application down with no refusal and no message, and that is the concrete
+argument for moving them rather than the general one.
+
+Found by fuzzing `lopdf` through our own entry points, independently by two targets, at 339,044
+and 7,892,472 executions.
+
+### The bound is on what the loader expands, not on what a caller asks for afterwards
+
+`docinfo::scan` sets `LoadOptions { max_decompressed_size: Some(MAX_DECODE), .. }`, and a
+2,289-byte document still made the worker allocate **1,081 MB**. The bound is real and it
+bounds the wrong thing: it governs what the *loader* expands while parsing, not what a caller
+later asks a `Stream` for. `read_xmp` called `Stream::decompressed_content()`, the unbounded
+variant, on the catalog's `/Metadata`, and got exactly what the document declared.
+
+| declared payload | file on disk | max RSS |
+|---|---|---|
+| 64 MiB | 735 B | 121 MiB |
+| 256 MiB | 1,052 B | 313 MiB |
+| 1,024 MiB | 2,289 B | 1,081 MiB |
+
+Nesting the filters changes nothing --- one Flate layer and two give the same figure --- which
+is worth knowing because a "decompression bomb" is usually imagined as recursive. This one is
+a single honest layer with a large output.
+
+**The correct bound was not the obvious one, and finding that out took a mutation.** The
+obvious repair is `decompressed_content_with_limit(MAX_DECODE)`, the constant already in scope,
+and it is 64x too large: `xmp::scan` discards any packet over `MAX_PACKET` (1 MiB) and reports
+it unread, so every byte between 1 MiB and 64 MiB was being inflated in order to be thrown away
+one line later. The bound belongs at the largest packet that can be **used**.
+
+**And the first test for it could not fail.** It asserted `unread`, which was already `true`
+for the bomb before the fix --- `xmp::scan` sets it for any oversized packet, decoded or not.
+Two mutations survived it: restoring the unbounded call, and dropping the refusal so it fell
+through to the raw bytes. That is an outcome two mechanisms produce, and it tests neither. The
+observable that separates them is `Xmp::bytes`, which `xmp::scan` fills from the length of what
+it is *handed* --- the decoded packet if one was inflated, the stored stream if not. With the
+assertion moved there and the fixture sized one byte past `MAX_PACKET` rather than past
+`MAX_DECODE`, both mutations go red naming the number: *the packet was inflated to 1048577
+bytes from a 1401-byte file*.
+
+The general form, and it is why the whole sequence is written out: **a resource defect whose
+answer never changed can only be tested by an observable about cost.** Asserting the answer
+finds nothing, and passes.
+
+### A gate that reads prose as code can pass for the wrong reason, and rewording a comment turns it red
+
+`scripts/check_writers.py` decides which registered commands write a file by looking for
+`save::<terminal>` in each `#[tauri::command]` function's own body. It reported `[OK] the §3
+writer list and the registry agree on all 8` --- and `print_document` was in that eight because
+its body contains the words `save::print_bytes` in a **comment**, one that exists to explain
+that it does *not* call it for a print job. Strip the comments and the count is zero.
+
+So the gate written to enforce *the list is the claim and the number follows it* was itself
+held up by a sentence. Two consequences, and the second is worse than the first. Rewording
+that comment would have dropped `print_document` out of the derived set and turned *every name
+in the §3 list reaches a writer* red --- a gate going red for a documentation edit, pointing at
+a command nobody had touched. And the classification was never evidence: nothing about the
+code had been checked for that command.
+
+**Four measurements, because two corrections that each fix it separately can hide each other.**
+Stripping comments and following one level of call were both needed, and on a healthy tree all
+four combinations report the same eight names:
+
+| comments stripped | calls followed | commands classified |
+|---|---|---|
+| no | no (the old gate) | 8 --- `print_document` held by the comment |
+| no | yes | 8 |
+| **yes** | no | **7** --- the comment removed, nothing else reaches a writer |
+| yes | yes (the gate now) | 8 --- reached through `print_job` |
+
+Each half then got a control that fires. Rewording the comment: the old gate drops to 7, the
+new one stays at 8. Planting `// a note mentioning save::write_copy` inside a command that
+writes nothing: the old gate rises to **9**, the new one stays at 8. And the mutation the gate
+must catch, deleting the real `save::print_bytes` call out of `print_job`: the new gate drops
+to 7 and goes red.
+
+**The comment stripper is a scanner and not a regex, on purpose.** `//` occurs inside
+`https://` in half the doc comments in the file it reads, and a blind strip-to-end-of-line
+would delete any real call written after one --- a false *negative* in a security gate, which
+is the direction that ships.
+
+### A mutation that leaks a file poisons the absolute-count check written to catch that leak
+
+`worker-probe`'s print check counts `tpdf-print-job.*` files in the temporary directory and
+requires **zero**. `scripts/mutate_rust.py` carries a mutation named *leave the print job's
+scratch file in the temporary directory*, whose entire purpose is to leave one.
+
+So proving the check can fail leaves behind exactly the file the check forbids, and the next
+run of the probe reports a defect that is its own evidence. Two of them were sitting in
+`$TMPDIR` when this was found, one per mutation run, 33 bytes each --- the fake writer's
+payload --- and the probe read 33/34 three times in a row on correct code.
+
+**A total is a reading about every run that has ever happened on this machine; a difference is
+a reading about this run.** Count before and after and compare, wherever the observable is a
+shared directory the harness also writes to. The absolute form is the tempting one because it
+states the property you actually want (*no scratch file survives*), and it states it about the
+wrong population.
+
+### A count over a directory the whole suite shares is not an observable while the suite runs in parallel
+
+The same scratch-file check, written as a unit test, went red inside the mutation harness's
+whole-suite control on a tree whose `cargo test` had passed a minute earlier. That is the shape
+this repository files under *flake* and it is not one.
+
+Six tests in two modules reach `save::job_scratch`, `cargo test` runs them concurrently, and a
+scratch file a neighbour had open when this test took its reading is a difference this test
+reports as a leftover. The count is correct; the population is every test running at that
+instant.
+
+The fix is a crate-level `#[cfg(test)] print_lock()` in `save.rs` taken by all six --- **in one
+place, not one per module**, because a lock per module serialises two groups against themselves
+and neither against the other, which looks like a fix and removes about half the collisions.
+Poisoning is stepped over deliberately: a panicking neighbour has already failed and reported,
+and turning that into a second failure names the wrong test.
+
+### A filtered `cargo test --exact` that matches nothing prints `test result: ok`
+
+Proving a mutation by hand, `cargo test --lib -- --exact
+the_coordinator_does_not_parse_the_document_it_copies` returned `test result: ok. 0 passed; 0
+failed; 1150 filtered out` **both before and after the edit**, and the mutation was recorded as
+SURVIVED.
+
+Under `--exact` a test name needs its module path (`save::tests::…`). Without it the filter
+selects nothing, and a run of zero tests prints the same `ok` a passing run prints. The word
+that would have told you is `0 passed`, in the middle of a line whose first word is the one
+everybody reads.
+
+The control is one line and belongs in any harness that runs a named test: **assert the passed
+count is non-zero**, not that the summary says `ok`. Same family as every other entry here
+where an empty population and a satisfied predicate print the same thing.
+
+### Interleaving controls for drift between the arms, not for a machine that is slow for both
+
+The first readings of the copy and print deltas were **+12.1 ms** and **+16.3 ms**. The same
+probe, on the same binary, an hour later read **+8.0** and **+7.0**. The variable was a load
+average of 8 to 12 from another job on the box.
+
+Interleaving A and B does not correct for that, and it is easy to assume it does, because
+interleaving is the answer to the *other* systematic error --- one arm running while the machine
+is warm and the other while it is cold. Under contention both arms are slowed, and they are not
+slowed equally: the worker arm contains a **process spawn**, which absorbs more contention than
+the in-process arm's arithmetic, so the difference moves too. Taking minima does not save it
+either, since the minimum of a contended run is still a contended sample.
+
+Take the reading when the box is quiet, or say in the same sentence that it was not. This
+repository already carries an entry about interleaving controlling for drift rather than for
+what the last variant left behind; this is the third thing it does not control for.
+
+### A link flag that makes the build succeed and the binary unable to start
+
+`cargo fuzz build` printed success and every binary it produced died inside libFuzzer's own
+first `Printf`, `SEGV ... in flockfile`, before a single input was executed. Nothing was
+printed --- so there was no missing banner to notice, no crash report to read, and a mutation
+kill was very nearly recorded from a binary that had never run anything.
+
+The route there is worth stating because each step looks like progress. `tpdf` declares
+`crate-type = ["staticlib", "cdylib", "rlib"]` and `pdfium-render` declares `["lib",
+"staticlib", "cdylib"]`; cargo builds every declared type, so a fuzz target links two shared
+libraries that have nothing to do with fuzzing. With ASan on, the link fails with `ld:
+initializer pointer has no target in ... libtauri_utils....rlib`, blamed on `tpdf (lib)`.
+`-Wl,-no_fixup_chains` does not help. `-Wl,-ld_classic` makes it link --- and produces the
+binaries above.
+
+**A build that links is not a binary that runs**, and a linker flag that turns a red build green
+has changed something about the image, not about your code. The working configuration here is
+`--sanitizer=none` plus `-Wl,-undefined,dynamic_lookup`, which defers the
+`_sancov.module_ctor_8bit_counters` symbols in those cdylibs --- correct rather than a
+suppression, since nothing ever loads them. The cost is stateable: every module under test is
+safe Rust with no `unsafe` at all, and `-Cdebug-assertions` survives, which is what makes
+`debug_assert!` and integer-overflow checks live oracles.
+
+### Without a sanitizer, libFuzzer blames whichever input was current when its sampler fired
+
+An out-of-memory report named the input `da39a3ee5e6b4b0d3255bfef95601890afd80709` --- the
+SHA-1 of the **empty string**. The empty input did not allocate anything; libFuzzer's memory
+sampler runs on a timer and attributes what it finds to whatever is executing when it fires,
+and without a sanitizer's allocator hooks it has no better attribution available.
+
+So a reproducer filename from an OOM report is a hypothesis, not a finding. Re-run the named
+input alone before writing it down: here it executed millions of times at a flat 33 MB.
+
+### Process RSS is a high-water mark, so two oversized seeds look exactly like a leak
+
+Three fuzz targets met libFuzzer's memory ceiling, which reads as a leak in the code under
+test and is not one. Three controls separate them, and each answers a different question:
+5,559,622 executions of inputs too short to parse held flat at 33 MB (*does the loop leak?*);
+400 executions of the same document held flat at 37 MB (*does one parse leak across runs?*);
+and the heaviest single input cost 108 MB (*how expensive is one legitimate parse?*).
+
+What actually raised the ceiling was two seeds: `incr-scan-40p.pdf` alone costs one target
+**1,019 MB** and `incr-scan-20p.pdf` 537 MB. A corpus seeded from a repository's own test data
+inherits whatever the largest fixture is, and RSS never comes back down, so one seed early in
+the run sets a high-water mark every later reading is compared against. Cap seed size.
+
+What remains after that is the allocator holding freed large blocks in the targets that
+allocate a large buffer per input --- not a leak either, and the honest response is to raise the
+limit for those two targets with the measurement written beside it rather than to chase it.
+
+### Nine `cargo fuzz run` invocations queue on one build lock and print nothing
+
+Started together, one builds and eight sit on cargo's build lock in silence. A fuzzer that
+has not started looks exactly like a fuzzer that has started and found nothing --- both produce
+no output --- and the exec counts that would have told you are printed at the end.
+
+Start them serially, or give each its own target directory. The general form is already in this
+file for `cargo` generally; it is worth its own line here because a fuzzing run is *expected* to
+be quiet for an hour, which is the one situation where silence carries no information at all.
+
+### macOS has no `setsid`, so a detached restart never starts
+
+A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`
+binary on macOS: the shell reports command-not-found, the child never starts, and the absence of
+the process afterwards reads as a job that died rather than as one that was never launched.
+
+Same family as `timeout` not existing here --- a missing coreutil does not fail loudly, it
+produces a plausible wrong world. Use `nohup`, or a launchd job, and check that the pid exists a
+second later rather than trusting the exit code of the line that spawned it.
+
+### Repeating a flag argparse did not declare repeatable proves what the last one says
+
+`scripts/mutate_rust.py --only A --only B --only C` ran **one** mutation and printed
+
+```
+[OK] all 1 mutations caught by the test named for them
+```
+
+`--only` was `parser.add_argument("--only", default="")` --- a plain string option, so argparse
+keeps the last value and discards the rest without a word. Two mutations were about to be
+recorded as proved on the strength of that line, in a session whose whole subject was checks
+that cannot fail.
+
+**The existing guard could not see it, and the reason is worth stating.** The harness already
+refuses an empty selection with *"this run proved nothing, which is not the same as a green
+table"*. That guard is about the selection as a whole, and the selection here was not empty ---
+one filter matched, so one mutation ran and the run was honest about the one it ran. Nothing
+anywhere held the claim *each thing you asked for happened*.
+
+So the guard is now **per filter**: a value matching no mutation is refused by name, and the
+mutations the other filters selected do not run. Proved both ways --- two good filters run two
+mutations, and one good filter beside `no such mutation zzz` exits 1 having run nothing.
+
+The general form is not about argparse. **A tool that accepts a list of requests must report on
+each request, not on the work it did**, because a count of what ran is consistent with any
+number of requests silently dropped. Same shape as the `--exact` entry above it, where a filter
+selecting nothing prints `ok`, and as the sweep that answered zero because its predicate was
+never in the data.
+
+⚠ **And the exit code of that control cannot be read through a pipe on this machine.**
+`... | tail -4; echo "exit=${PIPESTATUS[0]}"` printed `exit=` --- an empty string, because in
+zsh the array is `$pipestatus`, indexed from 1, and an unset variable expands to nothing rather
+than erroring. An empty exit code and a zero exit code look identical in a transcript. Redirect
+to a file and read `$?`.

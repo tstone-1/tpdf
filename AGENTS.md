@@ -918,7 +918,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An emptiness control written as a threshold is a measurement of the platform it was written on
 - The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
 - Two nested `Result`s because the outer one is the pool
-
+- A cross-reference stream states the width of its own fields, and `lopdf` believes it
+- The bound is on what the loader expands, not on what a caller asks for afterwards
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
@@ -958,7 +959,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A stale binary answered for a source file that was never written
 - A guard whose neighbour refuses the same input cannot be tested by it
 - Putting a guard in front of a parser disarms the parser's own guard, and the test still passes
-
+- macOS has no `setsid`, so a detached restart never starts
 ### Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
 - The harness prints the count so nobody has to derive it, and it was derived anyway
@@ -994,7 +995,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Reading the code predicted four call sites, and there were eleven
 - The delta was the wrong term, because the mapping was already absent from both numbers
 - A multiplied mark's coverage is a reading about the page, not only about the mark
-
+- Interleaving controls for drift between the arms, not for a machine that is slow for both
+- Process RSS is a high-water mark, so two oversized seeds look exactly like a leak
 ### Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
 - There was no check on the overlay at all, and that is why a reader found the underline defect
@@ -1139,7 +1141,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - The status line showed the selection and the copy refused it, over a page with nothing on it
 - One refusal, three callers, one string --- and the string named one of them
 - A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
-
+- A gate that reads prose as code can pass for the wrong reason, and rewording a comment turns it red
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -1244,7 +1246,13 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A rule written for the job a review named stops at that job, and the job next door had the most to lose
 - A module split renames the harness's filter without moving one anchor
 - A security gate keyed on where a call is written decides where that call may move
-
+- A mutation that leaks a file poisons the absolute-count check written to catch that leak
+- A count over a directory the whole suite shares is not an observable while the suite runs in parallel
+- A filtered `cargo test --exact` that matches nothing prints `test result: ok`
+- A link flag that makes the build succeed and the binary unable to start
+- Without a sanitizer, libFuzzer blames whichever input was current when its sampler fired
+- Nine `cargo fuzz run` invocations queue on one build lock and print nothing
+- Repeating a flag argparse did not declare repeatable proves what the last one says
 ### Windows and portability
 - The gates had never run on the platform where they fail
 - A document meant to cover both platforms was generated from platform-specific inputs
@@ -1387,6 +1395,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - "The one copy" acquired a second copy the day after the sentence, and its comment cited an import as the definition
 - An allowlist for a tool that is not installed reads exactly like a control
 - The decision was right, its cost basis had doubled, and the share was the half that had not moved
+- A YAML comment binds to nothing, so an inserted step can steal the one below it
 
 ## Repository facts
 

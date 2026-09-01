@@ -193,6 +193,31 @@ jobs:
       - name: The OCR worker, measured against an in-process baseline
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example ocr-worker-probe -- testdata/text-wide.pdf
 
+      # The rewrite's output channel, on both platforms, on every push. It was a
+      # ⚠ in `BUILD.md` reading "run it on Windows before the next release" from
+      # 2026-08-28 until 2026-09-01, and `26.9.0` shipped without that run --- a
+      # requirement that lives outside the release checklist is a requirement
+      # nobody is holding. So it is here instead of only there: the probe needs
+      # no screen, it writes one document through a coordinator and again through
+      # a worker and compares them byte for byte, and it takes under a second
+      # against a fixture this job already generates.
+      #
+      # The two implementations are genuinely different code, which is why one
+      # platform's result says nothing about the other: macOS hands the staging
+      # file to the child with `dup2` before `exec`, Windows with
+      # `DuplicateHandle` into a suspended child. The last Windows run was 19/19
+      # on 2026-08-24, before the four verification-side checks and the five
+      # writing-side ones existed.
+      #
+      # The fixture is `text-wide.pdf` for the reason the two steps above name:
+      # `scripts/ci_fixtures.py` deliberately generates nothing from
+      # `make_text_pdf.py`, so `text-base14.pdf` --- which `BUILD.md`'s own
+      # invocation uses --- cannot exist here. Measured 28/28 against
+      # `text-wide.pdf` before this step was written, so the probe is not
+      # fixture-specific.
+      - name: The worker boundary, including the rewrite's output channel
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example worker-probe -- testdata/text-wide.pdf
+
       # NOT a gate: it measures rather than asserting, and its exit code says
       # whether it could measure, never whether the answer was convenient. It is
       # here because the artifact already exists -- `bins` above builds every

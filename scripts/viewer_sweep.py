@@ -140,7 +140,7 @@ NOT_WINDOW: list[tuple[str, str]] = [
         # until later the same day, by which point five others could --- a claim
         # of uniqueness with nothing asserting it, in the file that exists
         # because the list of corpora had no home. It stays out anyway: a new corpus
-        # has to satisfy the sample points all 109 checks hardcode (see the trap
+        # has to satisfy the sample points the checks hardcode (see the trap
         # of that name), and what a window run would add over
         # `properties.test.ts` is that the dialog prints rows it already prints
         # for every other section. Worth revisiting if the certificate rows ever
