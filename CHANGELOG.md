@@ -19,6 +19,30 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Changed: the redaction read-back was the last parse in the app process, and it moved
+
+`verify::scan` re-read the file a redaction had just written and parsed it with `lopdf` in the
+app process, to decide whether the words were really gone. It survived every round of this work
+because it is a **reader**: the threat model's own list, its section 3 and
+`scripts/check_writers.py` all enumerate the paths that *write* a document, and a verification
+writes nothing.
+
+It now runs in a sandboxed worker, on the seam the append's read-back already had.
+`save::Verifier` joins `Reread` and `Rewriter` in `save::Outside`; the coordinator opens the
+file it wrote and hands over the **handle**, and what comes back is a verdict with no bytes of
+the document in it. With that, on both shipped platforms, no `lopdf` parse of a document happens
+in the app process at all --- `save::Here` is the fallback a platform with no sandbox gets, and
+an uncontained run is still marked as one.
+
+Two things had to change with it, and neither follows from the move. The scan is sent the
+reader's password first: a redacted copy of an encrypted document is re-encrypted, so a worker
+without the key parses no objects and finds no words --- and finding nothing is what a clean
+file looks like. And a report is now a message rather than a value, read under a 32 MB reply
+limit, so the per-object reasons are bounded at a thousand with one further line counting the
+rest. Without that bound a file with a few hundred thousand undecodable objects would earn a
+report too large to send, and the reader would be told the verification failed rather than that
+the file is unaccountable. The verdict is unchanged by the shortening; only the enumeration is.
+
 ### Changed: five more paths stopped parsing the document in the app process
 
 Save a copy, Extract, Split, Redact to a copy and the print job over the working document now

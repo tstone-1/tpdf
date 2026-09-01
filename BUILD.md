@@ -1746,8 +1746,15 @@ the serialisation are hundreds of milliseconds it is noise, and this fixture is 
 worst case for it. Nothing else on the save path got slower --- the parse moved, it did not
 happen twice.
 
-**Six more on 2026-09-01, then six more the same day, then two more, so the number is 42.**
-The second six are the page-range print and the merge --- three checks each: the differential,
+**Six more on 2026-09-01, then six more the same day, then two, then three, so the number is
+45.** The last three are the redaction read-back --- the differential, the needs-a-worker
+control, and the one that says the compared reports are about a document that was actually
+read: the report must name a needle every PDF contains, not name one no document contains, and
+have reached objects. Without that last control "the two agree" is satisfied by two reports
+that looked at nothing, which is exactly what a worker answering from an unparsed document
+produces.
+
+The earlier ones. The second six are the page-range print and the merge --- three checks each: the differential,
 the needs-a-worker control, and the scratch or page-count reading. The last two are
 `xref-bomb.pdf`, the fixture whose `/W` widths abort whatever parses it: they assert the worker
 dies and the coordinator is told, and there is deliberately **no coordinator arm**, because

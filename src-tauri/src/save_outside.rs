@@ -29,7 +29,7 @@
 //! are the fully-qualified paths becoming imports --- which is the point.
 
 use crate::edits::Plan;
-use crate::save::{InWorker, Job, Outside, Refusal, Reread, Rewriter};
+use crate::save::{InWorker, Job, Outside, Refusal, Reread, Rewriter, Verifier};
 use crate::worker::Worker;
 use crate::worker_proto::{Reply, Request};
 use crate::worker_shm::Shm;
@@ -129,6 +129,80 @@ impl InWorker {
             // got rather than reporting a parse failure for a protocol one.
             other => Err(format!(
                 "the worker answered the re-read with {}",
+                match other {
+                    Some(reply) => format!("{reply:?}"),
+                    None => "no payload at all".to_string(),
+                }
+            )),
+        }
+    }
+}
+
+impl Verifier for InWorker {
+    fn scan(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+        needles: &[String],
+        password: Option<&str>,
+    ) -> Result<crate::verify::Report, String> {
+        // The handle, never the path. Same reason as `Reread::pages`: mapping by
+        // name would scan whichever file has that name now, and this one is the
+        // file the redaction just wrote.
+        let mapped = Shm::map_open_file(file, len)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+
+        let pid = worker.pid();
+        let key = password.map(str::to_string);
+        let asked = needles.to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut worker = worker;
+            let _ = tx.send(Self::ask_scan(&mut worker, &asked, key.as_deref()));
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
+}
+
+impl InWorker {
+    /// The two requests the scan makes, on the thread that owns the worker.
+    ///
+    /// **The unlock is not optional, and its absence is the reassuring failure.**
+    /// A redacted copy of an encrypted document is re-encrypted, so a worker that
+    /// was never given the key parses no objects at all --- and a walk over no
+    /// objects finds no needles. `crate::verify::scan` is built so that this
+    /// reports *not verified* rather than clean, which is what makes the failure
+    /// safe; asking first is what makes it answerable.
+    fn ask_scan(
+        worker: &mut Worker,
+        needles: &[String],
+        password: Option<&str>,
+    ) -> Result<crate::verify::Report, String> {
+        if let Some(password) = password {
+            let answered = worker.call(&Request::Unlock {
+                password: password.to_string(),
+            })?;
+            if !answered.ok {
+                return Err(format!(
+                    "the worker could not take the document's password: {}",
+                    answered.error
+                ));
+            }
+        }
+
+        let answered = worker.call(&Request::Verify {
+            needles: needles.to_vec(),
+        })?;
+        if !answered.ok {
+            return Err(answered.error);
+        }
+        match answered.reply {
+            Some(Reply::Verified(report)) => Ok(*report),
+            // A well-formed message answering a different question --- see
+            // `InWorker::ask`, which says why the caller checks this rather than
+            // the protocol.
+            other => Err(format!(
+                "the worker answered the verification with {}",
                 match other {
                     Some(reply) => format!("{reply:?}"),
                     None => "no payload at all".to_string(),

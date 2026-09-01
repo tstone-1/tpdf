@@ -20478,3 +20478,40 @@ never in the data.
 zsh the array is `$pipestatus`, indexed from 1, and an unset variable expands to nothing rather
 than erroring. An empty exit code and a zero exit code look identical in a transcript. Redirect
 to a file and read `$?`.
+
+
+### An unbounded report crossing a bounded pipe turns a bad file into a failed check
+
+`verify::scan` builds a `Report` whose `blind` list carries one sentence per object the scan
+could not account for. That was free for as long as the scan ran in the coordinator: the list
+was as long as it needed to be, a reader saw the reasons, and nobody thought about its size.
+Moving the scan into a worker on 2026-09-01 changed what the list *is* --- it became a reply,
+read under `worker_proto::MAX_REPLY_BYTES`, which is 32 MB.
+
+Each reason is about a hundred bytes and there is one per object. An object with a filter and
+an empty stream costs about forty bytes of PDF, so a 32 MB file can hold several hundred
+thousand of them, and the report it earns does not fit down the pipe it now has to travel. The
+worker answers, the coordinator refuses to read the reply, and the reader is told the
+verification **failed** --- which is a different sentence from *this file has a great deal wrong
+with it*, and a much worse one, because it points at tpdf rather than at the document.
+
+Two things make this easy to miss. The failure only appears on the input the check exists to
+handle: an ordinary document produces a report of a few lines, and every fixture and every
+corpus is an ordinary document. And the direction of failure looks safe --- nothing is
+certified, so `docs/PLAN.md` §6's rule is not broken --- which is exactly the reasoning that
+lets it ship. The rule it *does* break is the one about what a reader can act on.
+
+The fix is a bound with a summary rather than a truncation: `verify::MAX_OBJECT_REASONS` lists
+a thousand objects and adds one more reason saying how many were left out. The count is still a
+reason, so the verdict a bad file earns is the verdict it gets; only the enumeration is
+shortened. **The check for it has to assert both halves** --- that the list is bounded, and that
+the number in the summary accounts for every object not listed --- because a scan that simply
+stopped looking at the cap satisfies the first and fails the second. The fixture is built two
+hundred over the cap rather than a round number, so an off-by-one and a cap-and-stop both show
+up in the arithmetic.
+
+The general shape: **moving work across a process boundary changes the type of its answer from
+a value into a message, and a message has a size limit that a value does not.** Anything the
+moved function builds proportionally to its input --- a list of findings, a set of names, a map
+of offsets --- needs a bound it never needed before, and the input that reaches the bound is by
+construction the input nobody has a fixture for.

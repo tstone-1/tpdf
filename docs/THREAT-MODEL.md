@@ -286,27 +286,47 @@ on the same seam through `worker_proto::Request::Merge`, with the incoming files
 as a second read-only mapping (`worker::IN_FD`). What the coordinator does now is *read* those
 files: it copies their bytes into the mapping and never asks what they mean.
 
-⚠ **One `lopdf` parse remains in the coordinator, and it is a reader rather than a writer:
-`verify::scan`.** The redaction verification re-reads the file that was just written and
-parses it here, on the blocking pool. Its bytes derive from the reader's document, so this is
-the same exposure the writers had. **It was missed for exactly the reason `print::build` was**
---- this section, residual risk 18 and `scripts/check_writers.py` are all keyed on *writing*,
-and a verification writes nothing. `docs/TRAPS.md` has that under *A risk and a gate both
-keyed on writing cannot see the path that only reads*.
+⚠ **One `lopdf` parse remained in the coordinator after that, and it was a reader rather
+than a writer: `verify::scan`.** The redaction verification re-reads the file that was just
+written and parsed it here, on the blocking pool. Its bytes derive from the reader's document,
+so it was the same exposure the writers had. **It was missed for exactly the reason
+`print::build` was** --- this section, residual risk 18 and `scripts/check_writers.py` are all
+keyed on *writing*, and a verification writes nothing. `docs/TRAPS.md` has that under *A risk
+and a gate both keyed on writing cannot see the path that only reads*.
 
-It is the narrowest of the parses that have been here: the bytes are one tpdf wrote seconds
-ago rather than the file as it arrived, and its own load is bounded. It is not moved, and the
-route to moving it is the one the others took --- `verify::scan` is already a pure function of
-bytes and needles.
+**Closed 2026-09-01, on the seam the read-back already had.** `save::Verifier` is the third
+member of `save::Outside`, beside `Reread` and `Rewriter` and for the same reason; the
+coordinator opens the file it wrote, hands the **handle** and its length to `save::InWorker`,
+which maps it read-only, spawns a sandboxed child, asks `worker_proto::Request::Verify` and
+drops it. What crosses back is a `verify::Report` --- a set of needles found and two lists of
+reasons --- and never a byte of the document.
 
-That parse runs under `tauri::async_runtime::spawn_blocking`, and it is worth being exact
+**So on both shipped platforms no `lopdf` parse of a document happens in the coordinator at
+all.** That is a stronger statement than this section has been able to make before, and it is
+worth stating with its exception: `save::Here` still parses here, it is what a platform with
+no sandbox gets, and `render::UNSANDBOXED_MARK` is what keeps such a run distinguishable.
+
+Two properties of the move are not guessable from the feature. The scan needs the reader's
+**password**, because a redacted copy of an encrypted document is re-encrypted and a worker
+without the key parses no objects and finds nothing --- an absence that reads exactly like a
+clean file; `verify::scan` refuses to certify that, which makes the failure safe, and
+`Request::Unlock` before the ask is what makes it answerable. And a report is now a **reply**,
+read under `MAX_REPLY_BYTES`, so `verify::MAX_OBJECT_REASONS` bounds its per-object lists at a
+thousand and counts the rest in one further line --- otherwise a file with a few hundred
+thousand undecodable objects produces a report that will not fit down the pipe, and the reader
+meets a verification that *failed* rather than a file with a great deal wrong with it. The
+verdict is unchanged by the shortening; only the enumeration is.
+
+What follows describes the exposure those parses had while they were here, and is kept because
+`save::Here` still has it.
+
+That parse ran under `tauri::async_runtime::spawn_blocking`, and it is worth being exact
 about what that does and does not buy, because the name invites the wrong reading: it moves
 the work off the async runtime's threads. It does not move it out of the process holding the
 window, the edit journal and the user's filesystem authority. "Off the async thread" is not
 "out of the trusted process", and the two were being treated as the same thing.
 
-Four things bound how much that is worth, and they are why this is a `[NOT MOVED]` rather
-than a blocker:
+Four things bound how much that is worth:
 
 - **`lopdf` is safe Rust.** T1 is about memory corruption in a C++ parser; that threat does
   not transfer to this path. What does transfer is T3 — a document that makes the parser
@@ -2346,7 +2366,7 @@ which is what makes it evidence rather than a milestone.
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
 
-18. **The redaction verification parses inside the coordinator**
+18. **Every parse of a document is out of the coordinator; `save::Here` is what is left**
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
     day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).
@@ -2355,9 +2375,9 @@ which is what makes it evidence rather than a milestone.
     under `spawn_blocking`, which moves the work off the async runtime and not out of the
     process.
 
-    ⚠ **Every one of those writers is closed as of 2026-09-01, and what this entry is now
-    named for is a *reader* it never listed.** `verify::scan` re-reads the file a redaction
-    has just written and parses it here, on the blocking pool, to decide whether the removal
+    ⚠ **Every one of those writers closed on 2026-09-01, and what this entry was then named
+    for was a *reader* it never listed.** `verify::scan` re-reads the file a redaction
+    has just written and parsed it here, on the blocking pool, to decide whether the removal
     was genuine. Its bytes derive from the reader's document, so it is the same exposure the
     writers had --- and it was invisible to this entry, to §3 and to
     `scripts/check_writers.py` alike, because all three enumerate the operations that
@@ -2366,12 +2386,46 @@ which is what makes it evidence rather than a milestone.
     review a day earlier. `docs/TRAPS.md` has it under *A risk and a gate both keyed on
     writing cannot see the path that only reads*.
 
-    Two things bound it, and neither closes it. The bytes are ones tpdf wrote seconds earlier
+    Two things bounded it while it was here. The bytes are ones tpdf wrote seconds earlier
     rather than the file as it arrived, so a hostile construction has to survive our own
-    serialiser first; and the load is bounded like every other. What would close it is the
-    move the others took --- `verify::scan` is already a pure function of bytes and needles,
-    and the file it reads is one the coordinator has just created and could hand over as a
-    descriptor. Nothing here is built.
+    serialiser first; and the load is bounded like every other.
+
+    ⚠ **It closed the same day, and the last paragraph of this entry predicted how
+    correctly** --- `verify::scan` was already a pure function of bytes and needles, and the
+    file it reads is one the coordinator had just created and could hand over as a descriptor.
+    That is exactly the move: `save::Verifier` is the third member of `save::Outside`,
+    `save::InWorker::scan` maps the handle and asks `worker_proto::Request::Verify`, and
+    `Reply::Verified` carries the report back with no bytes in it. **With that, the title of
+    this entry is no longer a coordinator-side parse of any kind** --- what is left is
+    `save::Here`, the fallback a platform with no sandbox gets, marked by
+    `render::UNSANDBOXED_MARK` rather than silent.
+
+    Three consequences worth stating, because none of them follows from the feature. The
+    coordinator must send the **password** first: a redacted copy of an encrypted document is
+    re-encrypted, so a worker without the key parses no objects and finds no needles, and
+    finding nothing is what a clean file looks like --- `verify::scan` is built to refuse
+    certifying that, so the failure is safe rather than silent, and the ask is what makes it
+    answerable. A report is now read under `MAX_REPLY_BYTES`, so
+    `verify::MAX_OBJECT_REASONS` bounds the per-object lists at a thousand and adds one line
+    counting the rest; without it a file with a few hundred thousand undecodable objects
+    produces a report that will not fit, and the reader is told the verification *failed*
+    rather than that the file is unaccountable. And `lib::scan_written_file` takes
+    `&dyn save::Verifier` rather than the `&dyn save::Outside` its callers hold, so the
+    read-back cannot reach a writer --- a trait upcast, which costs nothing and is what lets
+    the test double be a verifier and no more.
+
+    **Evidence.** `worker-probe` scans one document through both halves of the seam and
+    compares the reports field by field, with two controls: the report must name a needle
+    that is in every PDF and not name one that is in none, and it must have reached objects
+    --- without which "they agree" is satisfied by two reports that looked at nothing. A third
+    check points the worker path at a directory with no PDFium, where it fails while the
+    coordinator path still answers, which is what says a child was involved at all. In the
+    unit suite `the_redaction_read_back_does_not_parse_the_file_it_wrote` hands the read-back
+    a file that is not a PDF and a verifier that says it is fine, and requires the verifier's
+    answer to come back unaltered --- red on the code this replaced --- with
+    `a_read_back_of_a_file_that_is_not_there_is_an_error` as the control that a missing file
+    is an error rather than an empty report, which would certify a file nobody looked at.
+    Four mutations, each killed by the test named for it.
 
     ⚠ **The append is not off this list, and this entry said it was until 2026-08-23.** Its
     *preparation* moved; its **verification** did not. `save::append_in_place` re-reads the
@@ -2521,7 +2575,7 @@ which is what makes it evidence rather than a milestone.
     with `save::print_range_bytes` owning the scratch file and doing no parse. It answers
     with `Reply::Rewrote` deliberately: the fact is the same one --- N bytes down the output
     channel --- and the coordinator compares it against the staged file's own size through
-    the same `save::landed_is` a rewrite uses. `worker-probe` is 37 checks now, the three new
+    the same `save::landed_is` a rewrite uses. `worker-probe` was 37 checks when this was written, the three new
     ones being the differential, the needs-a-worker control and the scratch cleanup.
 
     **No password crosses on this request**, and that is not an omission:
@@ -2534,7 +2588,7 @@ which is what makes it evidence rather than a milestone.
     in a worker (+8.0), the print job 0.2 -> 7.2 (+7.0), and the rewrite 0.2 -> 7.2 (+7.1).
     `text-wide.pdf` reads +7.2, +7.0 and +6.9. All three are the same fixed cost --- a
     process start plus PDFium's initialisation --- rather than anything proportional to the
-    document. `worker-probe` is 40/40 on macOS and prints all three numbers.
+    document. `worker-probe` was 40/40 on macOS when these were taken, and prints all three numbers.
 
     **The Windows half was measured on 2026-09-01, and it took no new probe.** The mechanism
     there is a `DuplicateHandle` of the staging file into the child's table, named in argv on
@@ -2546,6 +2600,11 @@ which is what makes it evidence rather than a milestone.
     33501693368 it reported **34/34 checks passed, 0 not applicable to this platform** on
     `windows-2025` --- so the copy, the split, the print job and the rewrite's output channel
     are each watched working there, not described.
+
+    **Every check count in this entry is a dated reading, not the current number.** Three of
+    them said *is N checks now* and all three went stale inside a fortnight, which is the trap
+    this project already records about a count written into prose. The authority is the probe's
+    own last line; `BUILD.md` carries the running account of what was added when.
 
     ⚠ **The read and socket ceiling of the Windows boundary is unchanged by that**, and is
     residual risk 4. A measured output channel says the descriptor handover works; it says
@@ -2584,7 +2643,7 @@ which is what makes it evidence rather than a milestone.
     The coordinator's remaining part is to **read** those files, and reading is not parsing:
     `save::concatenated` copies bytes into a buffer and never asks what they mean.
 
-    `worker-probe` is 40 checks now. Three of them are this: the coordinator and the worker
+    `worker-probe` was 40 checks when this was written. Three of them are this: the coordinator and the worker
     merge a document with itself and produce byte-identical output with the same page count,
     that count is the merged document's rather than any plan's, and the merge refuses when
     there is no worker to be had.
@@ -2672,10 +2731,11 @@ which is what makes it evidence rather than a milestone.
     with an unhelpful shape, rather than a compromise. Before those moves it would have taken
     the application down from `lib::print_job`. **The last route by which it still could ---
     `save::write_merged` --- closed later the same day**, so every `lopdf` load of the reader's
-    document now happens where an abort takes a worker rather than the window. The one
-    coordinator-side `lopdf` parse left is `verify::scan`, which reads a file tpdf wrote
-    seconds earlier rather than the document as it arrived; a construction reaching it has to
-    survive our own serialiser first.
+    document now happens where an abort takes a worker rather than the window. **The last one ---
+    `verify::scan`, the redaction read-back --- closed later the same day through
+    `worker_proto::Request::Verify`**, so on both shipped platforms there is no
+    coordinator-side `lopdf` parse of a document for this to reach. `save::Here` is the
+    exception and is what a platform with no sandbox gets.
 
     **`testdata/abort/xref-bomb.pdf` is the reproducer, generated like every other fixture**
     (`testdata/make_xref_bomb_pdf.py`) --- in a subdirectory of its own, because every sweep

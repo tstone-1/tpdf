@@ -22,6 +22,7 @@ use tpdf_lib::document::OpenDocument;
 use tpdf_lib::print;
 use tpdf_lib::progressive::{self};
 use tpdf_lib::save;
+use tpdf_lib::verify;
 use tpdf_lib::worker;
 use tpdf_lib::worker::{Reply, Request, Worker};
 
@@ -1224,6 +1225,91 @@ fn main() {
     let _ = std::fs::remove_dir_all(&nowhere);
     let _ = std::fs::remove_file(&merged_out);
 
+    // --- The verification, across the same boundary ------------------------
+    //
+    // **The last parse to leave the coordinator**, and the one that reads
+    // without writing --- which is why it outlived every writing path here.
+    // `docs/THREAT-MODEL.md` residual risk 18 and `scripts/check_writers.py`
+    // both enumerate what writes, so neither could see it.
+    //
+    // The subject is the source document rather than a redacted copy, and that
+    // is deliberate: what is being compared is the two scanners, and a file
+    // with content still in it gives them more to disagree about than one the
+    // words have just been taken out of.
+    let scan_here: &dyn save::Verifier = &save::Here;
+    let scan_with =
+        |who: &dyn save::Verifier, needles: &[String]| -> Result<verify::Report, String> {
+            let mut file = std::fs::File::open(&document).map_err(|e| e.to_string())?;
+            let len = usize::try_from(file.metadata().map_err(|e| e.to_string())?.len())
+                .map_err(|e| e.to_string())?;
+            who.scan(&mut file, len, needles, None)
+        };
+    // Two needles with opposite expected answers, because a scan that never ran
+    // agrees with one of them. The first is the five bytes every PDF begins
+    // with, so *present* is a fact about the format rather than about this
+    // fixture; the second cannot be in any document, and a report that "finds"
+    // it is a report about nothing.
+    let present = "%PDF-".to_string();
+    let absent = "tpdf-worker-probe-needle-that-is-not-there".to_string();
+    let needles = vec![present.clone(), absent.clone()];
+    let scanned_here = scan_with(scan_here, &needles);
+    let scanned_worker = scan_with(&rewrite_in_worker, &needles);
+    let agreed = match (&scanned_here, &scanned_worker) {
+        (Ok(a), Ok(b)) => {
+            a.found == b.found
+                && a.blind == b.blind
+                && a.deferred == b.deferred
+                && a.objects == b.objects
+                && a.eofs == b.eofs
+                && a.trailing == b.trailing
+                && a.bytes == b.bytes
+        }
+        _ => false,
+    };
+    check(
+        "the worker and the coordinator verify the same file",
+        agreed,
+        format!(
+            "coordinator {}, worker {}",
+            describe_report(&scanned_here),
+            describe_report(&scanned_worker)
+        ),
+    );
+    // The control, and without it "they agree" is satisfied by two reports that
+    // looked at nothing --- which is exactly what a worker answering from an
+    // unparsed document produces.
+    let looked = matches!(
+        &scanned_worker,
+        Ok(r) if r.found.contains(&present) && !r.found.contains(&absent) && r.objects > 0
+    );
+    check(
+        "and the worker's report is about a document it actually read",
+        looked,
+        match &scanned_worker {
+            Ok(r) => format!(
+                "{} object(s), found {:?}",
+                r.objects,
+                r.found.iter().collect::<Vec<_>>()
+            ),
+            Err(e) => e.clone(),
+        },
+    );
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-verify-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let engineless = save::InWorker::at(nowhere.clone());
+    let scan_without = scan_with(&engineless, &needles);
+    let scan_still = scan_with(scan_here, &needles);
+    check(
+        "and the verification path really needs a worker",
+        scan_without.is_err() && scan_still.is_ok(),
+        format!(
+            "worker {:?}, coordinator {}",
+            scan_without.as_ref().err(),
+            describe_report(&scan_still)
+        ),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
+
     // --- The document that ends the process which parses it ----------------
     //
     // **`docs/THREAT-MODEL.md` residual risk 21**, and the only check here whose
@@ -1284,6 +1370,21 @@ fn main() {
         checks - failures
     );
     std::process::exit(i32::from(failures > 0));
+}
+
+/// One report in a line, so a disagreement says which field disagreed.
+fn describe_report(report: &Result<verify::Report, String>) -> String {
+    match report {
+        Ok(r) => format!(
+            "{} bytes / {} objects / {} found / {} blind / {} deferred",
+            r.bytes,
+            r.objects,
+            r.found.len(),
+            r.blind.len(),
+            r.deferred.len()
+        ),
+        Err(e) => format!("error: {e}"),
+    }
 }
 
 /// Renders the same tile without a worker, as the comparison's other half.

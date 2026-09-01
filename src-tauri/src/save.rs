@@ -2066,6 +2066,46 @@ pub trait Reread: Send {
     ) -> Result<usize, String>;
 }
 
+/// Who scans a file this build just wrote for the words a redaction removed.
+///
+/// **The third seam, and the last parse to leave the coordinator.**
+/// [`Reread`] asks whether a save chained and [`Rewriter`] produces the new
+/// file; this asks whether the words are gone, which `docs/PLAN.md` §6 makes
+/// mandatory after a redaction. It is a parse of the same attacker-controlled
+/// bytes as the other two --- the file's previous revision is the reader's
+/// document verbatim --- and it was the one `docs/THREAT-MODEL.md` residual risk
+/// 18 kept naming, because that risk and `scripts/check_writers.py` both
+/// enumerate what *writes* and this only reads.
+///
+/// **A trait of its own rather than a method on [`Reread`]**, because the two
+/// answer different questions of the same file and a caller wants exactly one of
+/// them: `save_document` re-reads and never scans, and a redaction scans a file
+/// whose page count `write_copy` has already checked. Bundling them would give
+/// each caller a method it must not call.
+///
+/// **`Send`, for [`Reread`]'s reason** --- the scan runs on the blocking pool.
+pub trait Verifier: Send {
+    /// What the scan found, or why the file could not be read at all.
+    ///
+    /// `len` is how long the file should now be: a capacity hint for [`Here`]
+    /// and the length to map for a worker, which cannot ask a handle how long
+    /// its file is. `&mut`, because reading through a handle moves it --- both
+    /// of these are [`Reread::pages`]'s and mean the same.
+    ///
+    /// # Errors
+    ///
+    /// The file could not be read. A file that cannot be *parsed* is not an
+    /// error: it is a blind spot, reported inside the [`crate::verify::Report`],
+    /// which is the whole point of that type.
+    fn scan(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+        needles: &[String],
+        password: Option<&str>,
+    ) -> Result<crate::verify::Report, String>;
+}
+
 /// Re-reads in the coordinator, which is the process that just did the writing.
 ///
 /// **The fallback rather than the shipped path**, and named so it cannot be
@@ -2087,6 +2127,19 @@ impl Reread for Here {
     ) -> Result<usize, String> {
         let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
         reread_pages(&bytes, password)
+    }
+}
+
+impl Verifier for Here {
+    fn scan(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+        needles: &[String],
+        password: Option<&str>,
+    ) -> Result<crate::verify::Report, String> {
+        let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
+        Ok(crate::verify::scan(&bytes, needles, password))
     }
 }
 
@@ -2247,17 +2300,18 @@ pub trait Rewriter: Send {
 
 /// Where a parse of the reader's own document happens.
 ///
-/// **One choice, two seams.** [`Reread`] verifies the file an append wrote and
-/// [`Rewriter`] produces the file a rewrite writes; both are parses of
-/// attacker-controlled bytes, and both belong in a sandboxed child wherever
-/// there can be one. Naming the pair is what keeps the rule --- ask
+/// **One choice, three seams.** [`Reread`] checks the file an append wrote,
+/// [`Rewriter`] produces the file a rewrite writes, and [`Verifier`] scans the
+/// file a redaction wrote for the words it removed; all three are parses of
+/// attacker-controlled bytes, and all three belong in a sandboxed child wherever
+/// there can be one. Naming them together is what keeps the rule --- ask
 /// `render::Backend`, take a worker where there is one, mark the run where there
 /// is not --- stated once instead of at each seam, which is the second copy
 /// `docs/TRAPS.md` records drifting.
 ///
 /// It adds no method of its own, deliberately: the thing being named is the
-/// *choice*, and a member here would be a third seam nobody asked for.
-pub trait Outside: Reread + Rewriter {}
+/// *choice*, and a member here would be a fourth seam nobody asked for.
+pub trait Outside: Reread + Rewriter + Verifier {}
 
 impl Outside for Here {}
 

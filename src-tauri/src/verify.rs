@@ -71,6 +71,32 @@ use crate::encoding::MAX_DECODE;
 /// about the library.
 const DECODABLE: &[&[u8]] = &[b"FlateDecode", b"LZWDecode", b"ASCII85Decode"];
 
+/// How many per-object reasons one report carries before it summarises the rest.
+///
+/// **A bound that had no reason to exist while the scan ran here, and has one
+/// now that it runs in a worker.** A [`Report`] is the reply
+/// [`crate::worker_proto::Reply::Verified`] carries, and a reply is read under
+/// [`crate::worker_proto::MAX_REPLY_BYTES`], which is 32 MB. Each per-object
+/// reason is about a hundred bytes and there is one per object, so a file with a
+/// few hundred thousand undecodable objects --- reachable inside 32 MB of PDF,
+/// since an object with a filter and an empty stream costs about forty bytes ---
+/// produces a report that will not fit down the pipe. The reader would then be
+/// told the verification *failed*, which is a different and much worse sentence
+/// than the one the file has earned.
+///
+/// It bounds the worker's own memory for the same input, which the coordinator
+/// never bounded either.
+///
+/// **The suppressed reasons still withhold certification.** What replaces them
+/// is one more blind reason saying how many there were, so the verdict is
+/// unchanged and only the enumeration is shortened. That is the direction this
+/// module is built around: a report may be less specific than the file deserves,
+/// and it may never be more reassuring.
+///
+/// A thousand rather than a hundred because the list is a reader's evidence, and
+/// rather than a million because nobody reads the millionth line either.
+const MAX_OBJECT_REASONS: usize = 1_000;
+
 /// Filters whose content is a raster image rather than bytes worth scanning.
 ///
 /// Not a list of things we forgive. A needle cannot be *found* in a JPEG by
@@ -163,7 +189,12 @@ pub enum Verdict {
 }
 
 /// What a scan of one file found, and what it could not look at.
-#[derive(Debug, Clone, Default)]
+///
+/// **Serialised, because the scan runs in a worker.** This is the answer
+/// [`crate::worker_proto::Reply::Verified`] carries back, and it is the whole of
+/// what crosses: the bytes it was read from stay behind the boundary. That is
+/// also why the per-object lists are bounded --- see [`MAX_OBJECT_REASONS`].
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Report {
     /// Needles still present. For a redaction, any of these is a leak.
     pub found: BTreeSet<String>,
@@ -392,6 +423,12 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                         .to_string(),
                 );
             }
+            // Counted in full and listed in part: see `MAX_OBJECT_REASONS`.
+            // `blind` also carries reasons that are about the *file* rather than
+            // about an object, and those are never suppressed --- which is why
+            // this is a counter and not `report.blind.len()`.
+            let mut blind_objects = 0usize;
+            let mut deferred_objects = 0usize;
             for (id, object) in &doc.objects {
                 let strings = flatten_strings(object);
                 for needle in needles {
@@ -404,20 +441,36 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                 };
                 let filters = stream.filters().unwrap_or_default();
                 match classify(&filters) {
-                    Carrier::Image { filter } => report.deferred.push(format!(
-                        "object {} is a {filter} image, so its encoded bytes were scanned and \
-                         its picture was not read --- text visible only as pixels needs OCR",
-                        id.0
-                    )),
-                    Carrier::Undecodable { filter } => report.blind.push(format!(
-                        "object {} is {filter}, which this build cannot decode, so its contents \
-                         are unknown",
-                        id.0
-                    )),
-                    Carrier::Unrecognised { filter } => report.blind.push(format!(
-                        "object {} uses {filter}, which nothing here recognises",
-                        id.0
-                    )),
+                    Carrier::Image { filter } => {
+                        deferred_objects += 1;
+                        if deferred_objects <= MAX_OBJECT_REASONS {
+                            report.deferred.push(format!(
+                                "object {} is a {filter} image, so its encoded bytes were \
+                                 scanned and its picture was not read --- text visible only as \
+                                 pixels needs OCR",
+                                id.0
+                            ));
+                        }
+                    }
+                    Carrier::Undecodable { filter } => {
+                        blind_objects += 1;
+                        if blind_objects <= MAX_OBJECT_REASONS {
+                            report.blind.push(format!(
+                                "object {} is {filter}, which this build cannot decode, so its \
+                                 contents are unknown",
+                                id.0
+                            ));
+                        }
+                    }
+                    Carrier::Unrecognised { filter } => {
+                        blind_objects += 1;
+                        if blind_objects <= MAX_OBJECT_REASONS {
+                            report.blind.push(format!(
+                                "object {} uses {filter}, which nothing here recognises",
+                                id.0
+                            ));
+                        }
+                    }
                     Carrier::Scanned => match stream.decompressed_content_with_limit(MAX_DECODE) {
                         Ok(decoded) => {
                             for needle in needles {
@@ -430,12 +483,34 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                         // bomb over the bound, or damage. Blind either way, and
                         // it must not be mistaken for the filter cases above ---
                         // those are decided before any decoding is attempted.
-                        Err(why) => report.blind.push(format!(
-                            "object {} could not be decoded, so its contents are unknown: {why}",
-                            id.0
-                        )),
+                        Err(why) => {
+                            blind_objects += 1;
+                            if blind_objects <= MAX_OBJECT_REASONS {
+                                report.blind.push(format!(
+                                    "object {} could not be decoded, so its contents are \
+                                     unknown: {why}",
+                                    id.0
+                                ));
+                            }
+                        }
                     },
                 }
+            }
+            // The suppressed ones, said once. A count is still a reason, so the
+            // verdict a file with a million bad objects earns is the verdict it
+            // gets --- only the enumeration is shortened.
+            if deferred_objects > MAX_OBJECT_REASONS {
+                report.deferred.push(format!(
+                    "{} further images were not read, and are not listed individually",
+                    deferred_objects - MAX_OBJECT_REASONS
+                ));
+            }
+            if blind_objects > MAX_OBJECT_REASONS {
+                report.blind.push(format!(
+                    "{} further objects could not be accounted for, and are not listed \
+                     individually",
+                    blind_objects - MAX_OBJECT_REASONS
+                ));
             }
         }
     }
@@ -786,6 +861,91 @@ mod tests {
     /// build never read. Measured on the fixture below: one blind entry, which
     /// is the guard's own, so the verdict really was `Verified` before it.
     ///
+    /// A report lists at most [`MAX_OBJECT_REASONS`] objects, and counts the rest.
+    ///
+    /// **The bound exists because the report now crosses a pipe**, and a check
+    /// that only asserted the cap would be satisfied by a scan that stopped
+    /// looking. So the assertion is in two halves: the list is bounded, *and*
+    /// the count in the summary line accounts for every object that was not
+    /// listed. A scan that gave up at the cap would fail the second.
+    ///
+    /// Built rather than taken from `testdata/`: no fixture has a thousand
+    /// objects nothing can decode, and one written to have them would be a
+    /// fixture for this test alone.
+    #[test]
+    fn a_report_lists_a_bounded_number_of_objects_and_counts_the_rest() {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        // Two hundred over the cap, so the summary's number is a value only the
+        // full walk could produce --- an off-by-one or a cap-and-stop both miss
+        // it, and a rounder excess would not.
+        const EXTRA: usize = 200;
+
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        document.trailer.set("Root", catalog_id);
+        for _ in 0..super::MAX_OBJECT_REASONS + EXTRA {
+            let mut stream = Stream::new(
+                dictionary! { "Filter" => "AFilterNothingRecognises" },
+                b"..".to_vec(),
+            );
+            stream.allows_compression = false;
+            document.add_object(stream);
+        }
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("the fixture must save");
+
+        let report = super::scan(&bytes, &[], None);
+        let listed = report
+            .blind
+            .iter()
+            .filter(|reason| reason.starts_with("object "))
+            .count();
+        assert_eq!(
+            listed,
+            super::MAX_OBJECT_REASONS,
+            "the per-object list is bounded: {} reasons in all",
+            report.blind.len()
+        );
+        assert!(
+            report.blind.iter().any(|reason| reason
+                == &format!(
+                    "{EXTRA} further objects could not be accounted for, and are not listed \
+                     individually"
+                )),
+            "the summary must account for every object the list left out: {:?}",
+            report
+                .blind
+                .iter()
+                .filter(|reason| !reason.starts_with("object "))
+                .collect::<Vec<_>>()
+        );
+        // And the verdict is unchanged by the shortening, which is the whole
+        // point: a file with a thousand objects nothing can read is not
+        // certifiable, however few of them are named.
+        assert!(
+            matches!(report.verdict(), Verdict::NotVerified(_)),
+            "a shortened report is still a refusal"
+        );
+    }
+
     /// **Two subjects, because there are two rules.** The encrypted document
     /// parses to **one** object rather than none --- so an `objects.is_empty()`
     /// guard, which is the obvious one to write, would not fire here at all. It

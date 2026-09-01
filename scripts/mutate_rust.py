@@ -7912,6 +7912,68 @@ MUTATIONS += [
     ),
 ]
 
+# --- the redaction read-back, the last parse to leave the coordinator -----
+MUTATIONS += [
+    Mutation(
+        # Scan in the coordinator, which is what every redaction did until
+        # 2026-09-01. The report is identical for any file that parses, so no
+        # comparison of reports can see this -- only an assertion on WHO was
+        # asked, over bytes this process could not have produced that answer
+        # from.
+        "verify: scan the written file in the coordinator instead of the verifier",
+        "src/lib.rs",
+        "    scanning.scan(&mut file, len, needles, password)",
+        "    let _ = scanning;\n"
+        "    let mut bytes = Vec::new();\n"
+        "    std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|e| e.to_string())?;\n"
+        "    Ok(verify::scan(&bytes, needles, password))",
+        "the_redaction_read_back_does_not_parse_the_file_it_wrote",
+    ),
+    Mutation(
+        # Answer an empty report for a file that could not be opened. Every
+        # field is zero, `found` is empty, and `Verdict::Verified` follows --
+        # so a redaction whose output vanished between the rename and the read
+        # would be certified clean. This is the exact shape `docs/PLAN.md` 6
+        # forbids, and it is one `?` away at all times.
+        "verify: certify a file that could not be opened at all",
+        "src/lib.rs",
+        "    let mut file = std::fs::File::open(at)\n"
+        '        .map_err(|why| format!("the redacted file could not be read back: {why}"))?;',
+        "    let Ok(mut file) = std::fs::File::open(at) else {\n"
+        "        return Ok(verify::Report::default());\n"
+        "    };",
+        "a_read_back_of_a_file_that_is_not_there_is_an_error",
+    ),
+    Mutation(
+        # Take the cap off one arm. The report then carries a reason per object
+        # and the reply it travels in stops fitting -- which the reader meets as
+        # a verification that FAILED rather than as a file with a lot wrong with
+        # it. Only the arm the fixture reaches is mutated: the three are
+        # deliberately separate anchors, since a single one would be ambiguous.
+        "verify: list every unrecognised object rather than the bounded number",
+        "src/verify.rs",
+        "                    Carrier::Unrecognised { filter } => {\n"
+        "                        blind_objects += 1;\n"
+        "                        if blind_objects <= MAX_OBJECT_REASONS {",
+        "                    Carrier::Unrecognised { filter } => {\n"
+        "                        blind_objects += 1;\n"
+        "                        if blind_objects <= usize::MAX {",
+        "a_report_lists_a_bounded_number_of_objects_and_counts_the_rest",
+    ),
+    Mutation(
+        # Say nothing was left over. The list is still bounded and the verdict
+        # is still a refusal, so every check but the arithmetic passes -- and a
+        # reader is told a thousand objects are unaccounted for when the number
+        # is twelve hundred. A cap that does not report what it dropped is a cap
+        # that hides the worst files best.
+        "verify: report nothing left over when the object list is shortened",
+        "src/verify.rs",
+        "                    blind_objects - MAX_OBJECT_REASONS",
+        "                    0",
+        "a_report_lists_a_bounded_number_of_objects_and_counts_the_rest",
+    ),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())
