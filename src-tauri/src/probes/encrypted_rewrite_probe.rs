@@ -150,7 +150,7 @@ pub fn main() {
 
         let out = std::env::temp_dir().join(format!("tpdf-encrw-{}-{name}", std::process::id()));
         let key = (!password.is_empty()).then_some(password);
-        match save::write_copy(&source, &dropping_last(before), &out, key) {
+        match save::write_copy(&source, &dropping_last(before), &out, key, &save::Here) {
             Ok(_) => {}
             Err(why) => {
                 r.check(false, &format!("{name}: rewrite"), why.message);
@@ -218,6 +218,7 @@ pub fn main() {
             &dropping_last(2),
             &std::env::temp_dir().join("tpdf-encrw-locked.pdf"),
             None,
+            &save::Here,
         ) {
             Ok(_) => r.check(false, "a locked document is refused", "it was rewritten"),
             Err(why) => r.check(

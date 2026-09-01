@@ -1047,8 +1047,13 @@ async fn redact_copy(
     // `verify::scan` refuses to call that verified, and this is what lets it
     // answer the question instead of declining it.
     let key = password.clone();
+    // `save_copy`'s writer, and the same reason with one more: what this command
+    // parses is a document a reader is about to have words removed from, so the
+    // parse is the one that most wants to be somewhere that cannot reach their
+    // files.
+    let writing = outside_of(&app, service.backend());
     let copied = tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(&from, &plan, &out, password.as_deref())
+        save::write_copy(&from, &plan, &out, password.as_deref(), &*writing)
     })
     .await
     .map_err(|e| format!("the redaction did not run: {e}"))?
@@ -1890,6 +1895,7 @@ enum Prepared {
 /// that genuinely belong there.
 #[tauri::command]
 async fn save_copy(
+    app: tauri::AppHandle,
     edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
@@ -1915,12 +1921,20 @@ async fn save_copy(
     // argument, including what still refuses: a changed file that also changed
     // shape is caught by the page-count guard whichever path asks.
     let password = password_for(&service, doc, "save_copy").await;
+    // **Who parses the reader's document**, chosen the same way `save_document`
+    // chooses it and for the same reason: the bytes are the attacker's, so the
+    // parse belongs in a sandboxed child wherever there can be one. Built here
+    // rather than inside `save::write_copy` because choosing it needs the app
+    // handle, and that function is reachable from `cargo test`, where there is
+    // none.
+    let writing = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(
             Path::new(&source),
             &plan,
             Path::new(&path),
             password.as_deref(),
+            &*writing,
         )
     })
     .await
@@ -1947,6 +1961,7 @@ async fn save_copy(
 /// commands is which plan.
 #[tauri::command]
 async fn extract_pages(
+    app: tauri::AppHandle,
     edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
@@ -1959,12 +1974,16 @@ async fn extract_pages(
     // of some of the pages, so it is written from a changed source too, and the
     // reader is told the same way.
     let password = password_for(&service, doc, "extract_pages").await;
+    // `save_copy`'s, and the same object for the same reason: an extract is a
+    // copy of some of the pages, so it takes the same writer.
+    let writing = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
         save::write_copy(
             Path::new(&source),
             &plan,
             Path::new(&path),
             password.as_deref(),
+            &*writing,
         )
     })
     .await
@@ -1995,6 +2014,7 @@ async fn extract_pages(
 /// stranger request than it is a dangerous one.
 #[tauri::command]
 async fn split_document(
+    app: tauri::AppHandle,
     edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
@@ -2007,12 +2027,17 @@ async fn split_document(
         .map(|slots| edits.plan_subset(doc, slots))
         .collect::<Result<Vec<_>, String>>()?;
     let password = password_for(&service, doc, "split_document").await;
+    // One writer for every part, and it is asked once per file --- see
+    // `save::write_split`, which opens the source once and hands the same handle
+    // to each.
+    let writing = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
         save::write_split(
             Path::new(&source),
             &plans,
             Path::new(&path),
             password.as_deref(),
+            &*writing,
         )
     })
     .await
@@ -2492,7 +2517,21 @@ async fn print_document(
         Some(doc) => password_for(&service, doc, "print_document").await,
         None => None,
     };
-    let build = move || print_job(&source, &route, plan.as_ref(), turns, password.as_deref());
+    // **Who parses the reader's document**, chosen the same way every other
+    // writer is. Only the `Working` route reaches it --- the passthrough hands
+    // the file over byte for byte and parses nothing, and `print::build` still
+    // parses a range here (`docs/THREAT-MODEL.md` residual risk 18).
+    let writing = outside_of(&app, service.backend());
+    let build = move || {
+        print_job(
+            &source,
+            &route,
+            plan.as_ref(),
+            turns,
+            password.as_deref(),
+            &*writing,
+        )
+    };
     let bytes = tauri::async_runtime::spawn_blocking(build)
         .await
         .map_err(|e| save::Refusal::from(format!("the print job could not be built: {e}")))??;
@@ -2521,6 +2560,7 @@ fn print_job(
     plan: Option<&edits::Plan>,
     turns: u8,
     password: Option<&str>,
+    rewriter: &dyn save::Rewriter,
 ) -> Result<Vec<u8>, save::Refusal> {
     // **The two routes that do not go through `save::print_bytes`, which asks
     // this itself.** All three read `source` by name, so all three can be
@@ -2545,7 +2585,7 @@ fn print_job(
             .map_err(|e| save::Refusal::from(format!("could not read {source:?}: {e}"))),
         print::Route::Working => {
             let plan = plan.ok_or("the working document has no plan to print")?;
-            save::print_bytes(source, plan, turns, password)
+            save::print_bytes(source, plan, turns, password, rewriter)
         }
         print::Route::Range(job) => print::build(source, job).map_err(save::Refusal::from),
     }
@@ -3553,13 +3593,27 @@ mod tests {
         std::fs::write(&at, b"the document the reader opened").expect("plant it");
         let plan = plan_opened_as(&at);
 
-        let bytes = print_job(&at, &crate::print::Route::Passthrough, Some(&plan), 0, None)
-            .expect("an unchanged file is the whole point of the guard letting it through");
+        let bytes = print_job(
+            &at,
+            &crate::print::Route::Passthrough,
+            Some(&plan),
+            0,
+            None,
+            &crate::save::Here,
+        )
+        .expect("an unchanged file is the whole point of the guard letting it through");
         assert_eq!(bytes, b"the document the reader opened".as_slice());
 
         std::fs::write(&at, b"a newer copy landing over the open document").expect("replace it");
-        let why = print_job(&at, &crate::print::Route::Passthrough, Some(&plan), 0, None)
-            .expect_err("a print job over a file that is not the one opened must be refused");
+        let why = print_job(
+            &at,
+            &crate::print::Route::Passthrough,
+            Some(&plan),
+            0,
+            None,
+            &crate::save::Here,
+        )
+        .expect_err("a print job over a file that is not the one opened must be refused");
         assert!(
             why.changed,
             "the refusal is about the file, which is what the window branches on: {}",
@@ -3578,8 +3632,15 @@ mod tests {
         // before it reads anything, so what it produces is a plain refusal ---
         // and a plain refusal is `changed: false` because `From<&str>` says so
         // and not because anything here decided it.
-        let unplanned = print_job(&at, &crate::print::Route::Working, None, 0, None)
-            .expect_err("the working document cannot be printed without its plan");
+        let unplanned = print_job(
+            &at,
+            &crate::print::Route::Working,
+            None,
+            0,
+            None,
+            &crate::save::Here,
+        )
+        .expect_err("the working document cannot be printed without its plan");
         assert!(
             !unplanned.changed,
             "only the fingerprint sets the flag: {}",

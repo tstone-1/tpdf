@@ -410,8 +410,8 @@ MUTATIONS = [
         # the same guard one function down.
         "save: refuse a copy from a source that changed, stranding the reader",
         "src/save.rs",
-        "    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;",
-        "    let copy = planned_bytes(source, plan, OnChange::Refuse, NO_VIEW_TURN, password)?;",
+        "    let ready = rewrite_ready(source, plan, OnChange::Proceed)?;",
+        "    let ready = rewrite_ready(source, plan, OnChange::Refuse)?;",
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
@@ -1863,11 +1863,23 @@ MUTATIONS = [
         # calls `print_bytes` directly and never reaches `print::build`'s own
         # guard, so removing that refusal removed the only one on this route.
         # The whole suite stayed green.
+        # It moved into `rewrite_update` on 2026-09-01 with the parse it guards.
         "save: let a print job rewrite an encrypted document",
         "src/save.rs",
-        "    if checked.encryption.is_some() {",
+        "    if job.is_print() && checked.encryption.is_some() {",
         "    if false {",
         "a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do",
+    ),
+    Mutation(
+        # Refuse an encrypted *save* as well, which is the other operand of the
+        # conjunction above and the half a single mutation cannot reach. A save
+        # of an encrypted document keeps its encryption and must not be refused;
+        # the print refusal reads as if it were about encryption alone.
+        "save: refuse an encrypted save the way a print job is refused",
+        "src/save.rs",
+        "    if job.is_print() && checked.encryption.is_some() {",
+        "    if checked.encryption.is_some() {",
+        "a_rewrite_of_an_encrypted_document_stays_encrypted",
     ),
     Mutation(
         # Write a document `lopdf` decrypted on the way in back in the clear.
@@ -3823,11 +3835,78 @@ MUTATIONS = [
         # number a caller can see is identical on a good document -- the two
         # processes produce the same bytes -- so the only thing that can notice
         # is a test whose source does not parse here.
+        #
+        # It sits in `staged_rewrite` now rather than inline in
+        # `stage_in_place`, because the copy and the split take the same step;
+        # three tests can catch it and the one named below is the oldest.
         "save: rewrite in the coordinator instead of the worker",
         "src/save.rs",
-        "        let wrote = rewriter.write(&mut file, len, out, plan, password)?;",
-        "        let wrote = Here.write(&mut file, len, out, plan, password)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password)?;",
+        "    let wrote = Here.write(source, len, out, plan, job, password)?;",
         "the_coordinator_does_not_parse_the_document_it_rewrites",
+    ),
+    Mutation(
+        # Build the print job in the coordinator, which is what every print of
+        # an edited document did until 2026-09-01. The bytes are identical
+        # either way on a document that parses.
+        "save: build the print job in the coordinator instead of the worker",
+        "src/save.rs",
+        "    let built = staged_rewrite(\n        rewriter,",
+        "    let built = staged_rewrite(\n        &Here,",
+        "the_coordinator_does_not_parse_the_document_it_prints",
+    ),
+    Mutation(
+        # Tell the writer a print job is a save. The reader's own rotation is
+        # dropped, so the pages come out the way the file holds them rather than
+        # the way they are looking at them -- and every byte-level assertion
+        # about the job still passes, because the writer is asked for bytes and
+        # answers with them.
+        "save: build a print job as if it were a save",
+        "src/save.rs",
+        "        Job::Print { view },",
+        "        Job::Save,",
+        "the_coordinator_does_not_parse_the_document_it_prints",
+    ),
+    Mutation(
+        # Keep the scratch file the job was built in. It holds the reader's
+        # document decrypted and reordered, in a shared directory, under a name
+        # they never chose.
+        "save: leave the print job's scratch file in the temporary directory",
+        "src/save.rs",
+        "    let _ = std::fs::remove_file(&at);\n    built",
+        "    built",
+        "the_coordinator_does_not_parse_the_document_it_prints",
+    ),
+    Mutation(
+        # Parse a copy in the coordinator, which is what Save a copy, Extract
+        # and Redact to a copy did until 2026-09-01. The bytes are identical
+        # either way on a document that parses, so the only thing that can
+        # notice is a source this process cannot read.
+        "save: copy in the coordinator instead of the worker",
+        "src/save.rs",
+        "    let staged = stage(out, |writing| {\n        staged_rewrite(\n            rewriter,",
+        "    let staged = stage(out, |writing| {\n        staged_rewrite(\n            &Here,",
+        "the_coordinator_does_not_parse_the_document_it_copies",
+    ),
+    Mutation(
+        # The same edit on the split, which is a separate call site and needs a
+        # separate mutation: one worker per part, and nothing about the copy's
+        # call site says anything about this one.
+        "save: split in the coordinator instead of the worker",
+        "src/save.rs",
+        "            staged_rewrite(rewriter, &mut opened, len, into, plan, Job::Save, password)",
+        "            staged_rewrite(&Here, &mut opened, len, into, plan, Job::Save, password)",
+        "the_coordinator_does_not_parse_the_document_it_splits",
+    ),
+    Mutation(
+        # Write every part of a split through one plan. The count of parts is
+        # right, the files all exist, and each of them is the first part -- so a
+        # check that only counts files cannot see it.
+        "save: write every part of a split from the first plan",
+        "src/save.rs",
+        "    for (plan, target) in plans.iter().zip(&targets) {",
+        "    for (plan, target) in std::iter::repeat(&plans[0]).zip(&targets) {",
+        "a_split_writes_each_page_once_and_in_order",
     ),
     Mutation(
         # Trust the length the writer reported. The bytes never reach this
@@ -3836,8 +3915,8 @@ MUTATIONS = [
         # copy.
         "save: trust the rewrite's own byte count",
         "src/save.rs",
-        "        if landed != wrote as u64 {",
-        "        if false {",
+        "    if landed != wrote as u64 {",
+        "    if false {",
         "a_rewriter_that_overstates_what_it_wrote_is_refused",
     ),
     Mutation(
@@ -3846,8 +3925,8 @@ MUTATIONS = [
         # maps exactly this many bytes of the document it is rewriting.
         "save: ask the rewrite about the wrong file's length",
         "src/save.rs",
-        "        let wrote = rewriter.write(&mut file, len, out, plan, password)?;",
-        "        let wrote = rewriter.write(&mut file, 0, out, plan, password)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password)?;",
+        "    let wrote = rewriter.write(source, 0, out, plan, job, password)?;",
         "the_rewrite_is_asked_for_the_length_and_the_password",
     ),
     Mutation(
@@ -3856,8 +3935,8 @@ MUTATIONS = [
         # would rewrite to an empty document rather than refusing.
         "save: rewrite without the reader's password",
         "src/save.rs",
-        "        let wrote = rewriter.write(&mut file, len, out, plan, password)?;",
-        "        let wrote = rewriter.write(&mut file, len, out, plan, None)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, None)?;",
         "the_rewrite_is_asked_for_the_length_and_the_password",
     ),
     Mutation(
@@ -6904,8 +6983,8 @@ MUTATIONS += [
         # with the password it is already open with.
         "save: check a print job without the password that opened the document",
         "src/save.rs",
-        "    let checked = checked(&original, plan, view, password)?;",
-        "    let checked = checked(&original, plan, view, None)?;",
+        "    let checked = checked(original, plan, job.view(), password)?;",
+        "    let checked = checked(original, plan, job.view(), None)?;",
         "a_print_job_from_a_locked_document_names_the_escape_that_exists",
     ),
     Mutation(

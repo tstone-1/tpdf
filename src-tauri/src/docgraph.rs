@@ -302,12 +302,12 @@ impl DocumentGraph {
     pub fn rewrite(
         &self,
         plan: &crate::edits::Plan,
-        view: u8,
+        job: crate::save::Job,
     ) -> Result<Vec<u8>, crate::save::Refusal> {
         let bytes = self
             .bytes()
             .ok_or_else(|| crate::save::Refusal::from("the document's bytes could not be read"))?;
-        crate::save::rewrite_update(&bytes, plan, view, self.password())
+        crate::save::rewrite_update(&bytes, plan, job, self.password())
     }
 
     /// How many pages `lopdf` finds in these bytes.

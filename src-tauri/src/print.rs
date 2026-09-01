@@ -681,7 +681,9 @@ mod tests {
 
         let plan = edits.plan(1).expect("plan");
         assert_eq!(route(Some(&plan), None, 1), Route::Working, "the route");
-        let bytes = crate::save::print_bytes(path, &plan, 1, None).expect("print bytes");
+        let _serial = crate::save::print_lock();
+        let bytes = crate::save::print_bytes(path, &plan, 1, None, &crate::save::Here)
+            .expect("print bytes");
         let after = os_pdf::read(&bytes).expect("the OS parser reads the job");
 
         assert_eq!(after.pages.len(), before.pages.len(), "every page is kept");
@@ -738,7 +740,9 @@ mod tests {
 
         let plan = edits.plan(1).expect("plan");
         assert_eq!(route(Some(&plan), None, 0), Route::Working, "the route");
-        let bytes = crate::save::print_bytes(path, &plan, 0, None).expect("print bytes");
+        let _serial = crate::save::print_lock();
+        let bytes = crate::save::print_bytes(path, &plan, 0, None, &crate::save::Here)
+            .expect("print bytes");
 
         let out = Document::load_mem(&bytes).expect("reload");
         let table = out.get_pages();
