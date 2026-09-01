@@ -23,7 +23,7 @@
  *   there, which is precisely what the cold routes above produce.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
@@ -72,7 +72,7 @@ const report = new Report();
  * because what is being checked is whether it did.
  */
 export async function runOpenCheckIfRequested(host: OpenCheckHost): Promise<boolean> {
-  const mode = await invoke<string | null>("opencheck_mode");
+  const mode = await call("opencheck_mode");
   if (!mode) return false;
 
   const separator = mode.indexOf(":");

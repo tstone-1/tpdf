@@ -20,9 +20,8 @@
  *    screen, and the user's 300 ms ends at the glass.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { calibrateProcessClock } from "./clock";
-import type { DocumentInfo } from "./ipc";
+import { call } from "./ipc";
 import { fetchRequiredTile } from "./tiles";
 
 /** Largest tile dimension to ask for, per the spike 0.1 tile-size finding. */
@@ -109,7 +108,7 @@ export function navigationMarks(): [string, number][] {
  * Returns false when no run was requested, so the normal spike UI carries on.
  */
 export async function runStartupTimelineIfRequested(): Promise<boolean> {
-  const path = await invoke<string | null>("startup_path");
+  const path = await call("startup_path");
   // Stamped rather than marked: the mapping that turns it into a process
   // timestamp does not exist yet. The first IPC of a launch is much dearer than
   // the rest, and it is charged to whichever variant happens to make it first,
@@ -127,7 +126,7 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
 
     /** Records a webview-observed milestone, converted onto the process timeline. */
     const mark = (name: string, perfNow: number) =>
-      invoke("startup_mark", { name, atMs: clock.toProcessMs(perfNow) });
+      call("startup_mark", { name, atMs: clock.toProcessMs(perfNow) });
 
     const scriptStart = globals.__tpdfWebviewScriptStart;
     if (scriptStart !== undefined) await mark("webview script start", scriptStart);
@@ -142,7 +141,7 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
     await mark("clock calibrated", calibrated);
 
     await mark("document open requested", performance.now());
-    const info = await invoke<DocumentInfo>("open_document", { path });
+    const info = await call("open_document", { path });
 
     const page = info.pages[0];
     if (!page) throw new Error("document has no pages");
@@ -185,8 +184,8 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
 
     for (const [name, at] of navigationMarks()) await mark(name, at);
 
-    const preMain = await invoke<number | null>("startup_pre_main_ms");
-    const marks = await invoke<[string, number][]>("startup_timeline");
+    const preMain = await call("startup_pre_main_ms");
+    const marks = await call("startup_timeline");
 
     log(`file            ${path}`);
     log(`variant         ${info.lazy_geometry ? "lazy geometry" : "full geometry"}`);
@@ -220,13 +219,13 @@ export async function runStartupTimelineIfRequested(): Promise<boolean> {
     log();
     log(`TIMELINE-JSON ${JSON.stringify({ preMainMs: preMain, marks })}`);
 
-    await invoke("spike_print", { text: lines.join("\n") });
-    await invoke("spike_exit", { code: 0 });
+    await call("spike_print", { text: lines.join("\n") });
+    await call("spike_exit", { code: 0 });
   } catch (error) {
-    await invoke("spike_print", {
+    await call("spike_print", {
       text: `[ERROR] startup: ${error instanceof Error ? error.message : String(error)}`,
     });
-    await invoke("spike_exit", { code: 1 });
+    await call("spike_exit", { code: 1 });
   }
 
   return true;

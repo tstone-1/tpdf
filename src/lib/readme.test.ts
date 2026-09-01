@@ -168,6 +168,23 @@ function claims(text: string, pattern: RegExp): string[] {
   return found;
 }
 
+/**
+ * The README's absence section --- from its heading to the next `##` --- and
+ * where it begins.
+ *
+ * **One spelling of the slicing rule, read by both describe blocks.** It was two,
+ * and the duplication is worse here than duplication usually is: the second
+ * block's whole purpose is to compare its own list against the README's, so two
+ * slices that had drifted apart would disagree silently *inside* the check
+ * written to catch a disagreement. `at` is `-1` when the heading is gone, which
+ * is a refusal each caller states rather than a section that quietly reads
+ * empty.
+ */
+function absentSection(text: string, heading: string): { at: number; body: string } {
+  const at = text.indexOf(heading);
+  return { at, body: at === -1 ? "" : (text.slice(at).split("\n## ")[0] ?? "") };
+}
+
 /** The ids appearing more than once in `names`. */
 function repeated(names: readonly string[]): string[] {
   return [...new Set(names.filter((name) => names.indexOf(name) !== names.lastIndexOf(name)))];
@@ -175,11 +192,10 @@ function repeated(names: readonly string[]): string[] {
 
 describe("the README against the command registry", () => {
   const registered = registeredIds();
-  const at = readme.indexOf(ABSENT_SECTION);
-  const absentSection = at === -1 ? "" : readme.slice(at).split("\n## ")[0] ?? "";
+  const { at, body: absent } = absentSection(readme, ABSENT_SECTION);
   const elsewhere = at === -1 ? readme : readme.slice(0, at);
   const builtClaims = claims(elsewhere, BUILT);
-  const absentClaims = claims(absentSection, ABSENT);
+  const absentClaims = claims(absent, ABSENT);
 
   // The four refusals. Each of these reads exactly like a clean run if it is
   // allowed to pass quietly: an empty registry, a missing section and a scan
@@ -190,7 +206,7 @@ describe("the README against the command registry", () => {
 
   it("finds the section that carries the absence claims", () => {
     expect(at, `README.md has no '${ABSENT_SECTION}' heading`).not.toBe(-1);
-    expect(absentSection.length).toBeGreaterThan(0);
+    expect(absent.length).toBeGreaterThan(0);
   });
 
   it("finds absence claims to check", () => {
@@ -231,7 +247,7 @@ describe("the README against the command registry", () => {
   it("keeps the absence claims out of the prose and the built claims out of the list", () => {
     // The two markers mean opposite things, so a `built:` under "Not built yet"
     // is a contradiction the section split would otherwise swallow.
-    expect(claims(absentSection, BUILT), "'built:' under 'Not built yet'").toEqual([]);
+    expect(claims(absent, BUILT), "'built:' under 'Not built yet'").toEqual([]);
     expect(claims(elsewhere, ABSENT), "'not-built:' outside 'Not built yet'").toEqual([]);
   });
 
@@ -335,11 +351,7 @@ describe("the release notes against the command registry", () => {
     // answers. The README's list is the one with a classification behind it ---
     // every registered command is claimed there or excluded with a reason --- so
     // it is the one this defers to.
-    const readmeAt = readme.indexOf(ABSENT_SECTION);
-    const readmeAbsent = claims(
-      readmeAt === -1 ? "" : readme.slice(readmeAt).split("\n## ")[0] ?? "",
-      ABSENT,
-    );
+    const readmeAbsent = claims(absentSection(readme, ABSENT_SECTION).body, ABSENT);
     expect(readmeAbsent.length, "the README's own list is empty, so there is nothing to agree with").toBeGreaterThan(0);
     const only = absentClaims.filter((id) => !readmeAbsent.includes(id));
     expect(only, "called unbuilt in the release notes and not in the README").toEqual([]);

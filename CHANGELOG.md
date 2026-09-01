@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.8.13] - Unreleased
+## [26.9.0] - 2026-09-01
 
 ### Fixed: Acrobat draws a box we told it would draw nothing
 
@@ -160,6 +160,110 @@ DeviceRGB, four DeviceCMYK, and any other length is not a colour with a componen
 but not a colour at all. Nothing draws it yet; PDFium synthesises a `/Text` icon in its own
 yellow and ignores `/C`, which `docs/PLAN.md` §10 question 8 records as a defect in the
 view rather than in the file.
+
+### Fixed: printing was the one operation that did not notice the file had changed
+
+Every other consumer of an edit plan either refuses a document whose file changed on disk
+since it was opened or writes it and says so. All three print routes read the file by name
+and asked nothing, so a newer copy landing over the path --- a sync client, a colleague
+re-exporting the report --- printed *that* file with your marks placed at coordinates
+measured on the one still on your screen, and paper does not say so. The mapping serving
+the window keeps the old inode, so nothing on screen differed; a save of the identical
+state was refused one keystroke away with "reopen it before saving".
+
+Printing now refuses with the fact and the escape, on all three routes, passthrough
+included. It is the deep comparison rather than the cheap one, because it is asked against
+what you opened rather than against a moment milliseconds ago --- a `touch` an hour later
+must not refuse a byte-identical file whose only escape spends your edits. Proved in both
+directions: deleting the guard reddens the new test with the wrongly-built job in hand, and
+an unconditional refusal reddens its control plus the two existing print tests.
+
+### Fixed: the release job's checkout was the one that still persisted credentials
+
+`release.yml`'s `release` job inherits the workflow's `contents: write`, holds the six
+`APPLE_*` secrets and the updater signing key, and runs `npm ci` --- so a locked
+dependency's install script executed beside a token that can push to this repository. It
+sets `persist-credentials: false` now; nothing in the job needed the credential, since
+`tauri-action` and `gh release upload` both take `GITHUB_TOKEN` from `env:` and no step
+runs `git` at all. The rule that closes it stopped at the job it was written for:
+`check_workflow_parity.py` asserted the setting for the two `gates` jobs only, so this
+checkout could not go red. It is asserted file-wide now, over every `actions/checkout` in
+both workflows, as a YAML key rather than a substring (the comment *discussing* the setting
+must not satisfy it), with an emptiness control --- six mutations, all killed.
+
+### Changed: the frontend reaches the backend through one typed seam
+
+`src/lib/ipc.ts` declares every registered command's arguments and reply in a `Commands`
+map and a `call()` wrapper over Tauri's `invoke`; 76 call sites across 14 modules go
+through it. The command name, its argument keys and its reply shape were restated at each
+site and agreed with Rust by nobody. `src/lib/ipc.test.ts` diffs the map against
+`generate_handler!` in `lib.rs`, both directions and in order, by reading the two source
+texts --- a command registered and not mapped, or mapped and not registered, is a red test.
+`viewercheck.ts` stays on raw `invoke` deliberately: one site takes the command name from a
+variable, and the harness narrows replies on purpose.
+
+### Changed: the save-over-the-source sequence is a testable function
+
+`save_document`'s Append/Rewrite split, its stage-close-verify-commit ordering and its
+`SaveFailure` composition were the body of a Tauri command, which nothing in `cargo test`
+could call: coverage was a hand-run, screen-needing check plus mutations aimed one layer
+down. It is now `save_order.rs`, taking the render service and the model behind a seam,
+with eleven tests --- a seam-call recorder for the order, both arms of the mode split
+against each other, one test per failure classification --- and six mutations, each proved
+to redden exactly the test it names. Nothing about the sequence changed, including the one
+asymmetry that reads like an oversight (a blocking-pool failure carries no close note),
+which is now pinned rather than tidied. The landing stays in the command deliberately:
+`check_writers.py` derives which commands can write a file from the terminal writers named
+in each command's own body, so moving `save::commit_in_place` out of `save_document` would
+have dropped it from the set `docs/THREAT-MODEL.md` §3 is checked against.
+
+### Changed: the writer module no longer reaches the process boundary
+
+The `InWorker` implementations of `Reread`, `Rewriter` and `Outside`, the `awaited`
+deadline helper and its two tests moved to a new `save_outside.rs`. `save.rs`'s production
+code named `crate::worker`, `crate::worker_proto`, `crate::worker_shm` and `crate::workers`
+in five function bodies, fully qualified, while its import header named only document-side
+modules --- the whole of its coupling to the sandbox stack was invisible from the top of
+the file. It names none of them now. The seam itself did not move: `Reread`, `Rewriter`,
+`Outside`, `Here` and `InWorker`'s declaration stay in `save.rs`, because which of the two
+a save picks is part of what a save is. `mutate_rust.py`'s `FILTERS` gained the new
+modules' prefixes --- libtest filters on substring, and `save::` is not a prefix of
+`save_outside::`, so the moved mutations would otherwise have reported SURVIVED for a
+working deadline.
+
+### Added: a gate on what the in-bundle harness costs
+
+`AGENTS.md` and `docs/RATIONALE.md` defended shipping the unattended harness inside the
+frontend bundle with "77.1 kB of a 221.2 kB bundle" for a month while the bundle doubled;
+the share held at ~34% and the absolute did not, which is the pair one number cannot
+carry. `scripts/check_bundle_share.py` decodes the built bundle's sourcemap, attributes
+the minified output per module, and bounds the harness family by share (40%) and by
+absolute size (200,000 units) --- measured 2026-08-31: 151,362 of 447,082 units, of which
+`viewercheck.ts` is 128,210. It refuses loudly on a missing or duplicated bundle, a family
+member with no bytes in the output, an entry point `App.svelte` imports that it does not
+count, and a production module importing `checkreport.ts` --- all planted before it was
+trusted. Both documents now state the claim and name the script as the authority. Beside
+it, a standing rule: state shaped like a walk, set, cache or map is born in a `src/lib`
+module rather than extracted from `App.svelte` after a defect --- no test imports
+`App.svelte`, and three trap entries locate shipped defects at its joins.
+
+### Fixed: documents and small guards that had drifted from the code
+
+Three documents said `verify_before_commit` "hashes every byte"; it has compared only
+length and mtime since before the sentence was written, deliberately --- the digest runs at
+staging, in `rewrite_ready`. All three now say what the code says. `SECURITY.md` said
+"Nothing has shipped yet" thirteen releases after the first tag; it now states the
+supported version without naming one, so shipping cannot re-stale it, and `BUILD.md`'s
+release checklist re-reads it beside the release body. The decode bound has one copy
+again: `verify.rs` had restated `MAX_DECODE` with a comment citing an import as the
+definition, one day after `encoding.rs` documented "the one copy". `package.json`'s
+`allowScripts` key is gone --- npm ignores it, lavamoat was never installed, and an
+allowlist no tool reads looks like the strictest possible policy. The tile mapping's
+backing file is created 0600 instead of umask-default. `isPlaced`'s doc comment stated the
+negation of what it returns. `readme.test.ts` spelled its section-slicing rule twice and
+now spells it once --- with a shadowing hazard found and closed on the way, recorded as a
+trap. And the threat model gained the sentence naming the `fmt=png` tile route as a second
+hop into the webview's platform decoder.
 
 ## [26.8.12] - 2026-08-30
 

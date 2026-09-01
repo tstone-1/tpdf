@@ -1100,8 +1100,8 @@ MUTATIONS = [
         # reason ids cross the boundary at all.
         "edits: name a page by its slot rather than by its id",
         "src/lib/edits.ts",
-        "    const id = this.current.pages[page]?.id;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_rotate\"",
-        "    const id = page;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_rotate\"",
+        "    const id = this.current.pages[page]?.id;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await call(\"page_rotate\"",
+        "    const id = page;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await call(\"page_rotate\"",
         "sends the page's identity, not its position",
     ),
     Mutation(
@@ -1110,8 +1110,8 @@ MUTATIONS = [
         # a deletion aimed at the wrong page cannot.
         "edits: delete a page by its slot rather than by its id",
         "src/lib/edits.ts",
-        "    const id = this.current.pages[page]?.id;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_delete\"",
-        "    const id = page;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await invoke<EditState>(\"page_delete\"",
+        "    const id = this.current.pages[page]?.id;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await call(\"page_delete\"",
+        "    const id = page;\n    if (id === undefined) return this.current;\n    return this.adopt(\n      await call(\"page_delete\"",
         "deletes by identity, not by position",
     ),
     Mutation(
@@ -1508,8 +1508,8 @@ MUTATIONS = [
         # is told their document changed under them.
         "edits: send a save in place to the copy command",
         "src/lib/edits.ts",
-        '    await invoke<void>("save_document", { doc: this.doc, source });',
-        '    await invoke<void>("save_copy", { doc: this.doc, source });',
+        '    await call("save_document", { doc: this.doc, source });',
+        '    await call("save_copy", { doc: this.doc, source });',
         "names the open document and no destination when it saves in place",
     ),
     Mutation(
@@ -2493,8 +2493,8 @@ MUTATIONS = [
         # exactly what the *other* button does.
         "marks: send a typed note to the removal command",
         "src/lib/edits.ts",
-        '      await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),',
-        '      await invoke<EditState>("annot_remove", { doc: this.doc, mark, note }),',
+        '      await call("annot_note", { doc: this.doc, mark, note }),',
+        '      await call("annot_remove", { doc: this.doc, mark, note }),',
         "sends the mark's own id and the whole note when one is typed",
     ),
     # --- markpopup.ts -------------------------------------------------------
@@ -2943,12 +2943,12 @@ MUTATIONS = [
         "src/lib/edits.ts",
         "    if (!this.current.pages.some((view) => view.id === page)) return this.current;\n"
         "    return this.adopt(\n"
-        '      await invoke<EditState>("annot_mark", {',
+        '      await call("annot_mark", {',
         "    const at = this.current.pages[page as number];\n"
         "    if (!at) return this.current;\n"
         "    page = at.id;\n"
         "    return this.adopt(\n"
-        '      await invoke<EditState>("annot_mark", {',
+        '      await call("annot_mark", {',
         "sends the page's id rather than its slot when a mark is made",
     ),
     Mutation(
@@ -2961,9 +2961,9 @@ MUTATIONS = [
         "src/lib/edits.ts",
         "    if (!this.current.pages.some((view) => view.id === page)) return this.current;\n"
         "    return this.adopt(\n"
-        '      await invoke<EditState>("redact_mark", { doc: this.doc, page, area }),',
+        '      await call("redact_mark", { doc: this.doc, page, area }),',
         "    return this.adopt(\n"
-        '      await invoke<EditState>("redact_mark", { doc: this.doc, page, area }),',
+        '      await call("redact_mark", { doc: this.doc, page, area }),',
         "does not send a redaction for a page the model has never mentioned",
     ),
     Mutation(
@@ -3050,8 +3050,8 @@ MUTATIONS = [
         # for.
         "edits: address a redaction by its position rather than its id",
         "src/lib/edits.ts",
-        '      await invoke<EditState>("redact_remove", { doc: this.doc, redaction }),',
-        '      await invoke<EditState>("redact_remove", {\n'
+        '      await call("redact_remove", { doc: this.doc, redaction }),',
+        '      await call("redact_remove", {\n'
         "        doc: this.doc,\n"
         "        redaction: this.current.redactions.findIndex((r) => r.id === redaction),\n"
         "      }),",
@@ -5175,6 +5175,16 @@ UNMUTATED = {
     # panel's suite, widening its discriminator until the palette matched, and
     # narrowing it until nothing did.
     "src/lib/rovinglists.test.ts": "asserts the shape of the test tree, which no source mutation changes",
+    # `rovinglists.test.ts`'s shape rather than the ten above it: no mutation
+    # aims at `ipc.ts`, and none could redden this suite anyway, because what it
+    # reads is the *source text* of `generate_handler!` in `lib.rs` against the
+    # keys of `ipc.ts`'s command map. A mutation of a `.ts` module's behaviour
+    # changes neither string. Every one of its checks was proved able to go red
+    # by hand instead: an entry removed from the map, a fabricated entry added,
+    # two entries swapped, a duplicate entry, each of the two regexes broken so
+    # that the side it reads comes back empty, and the registry regex widened
+    # past the macro's own name so that what it captures is not identifiers.
+    "src/lib/ipc.test.ts": "reads two source texts, which no source mutation of a module changes",
 }
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)

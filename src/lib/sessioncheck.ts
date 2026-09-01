@@ -28,7 +28,7 @@
  * perfectly.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 
 import { pause, Report, settle as settleFor } from "./checkreport";
 import { basename } from "./paths";
@@ -259,7 +259,7 @@ function checkNotAlreadyThere(host: SessionCheckHost): void {
  * is being checked is what that restore did.
  */
 export async function runSessionCheckIfRequested(host: SessionCheckHost): Promise<boolean> {
-  const mode = await invoke<string | null>("sessioncheck_mode");
+  const mode = await call("sessioncheck_mode");
   if (!mode) return false;
 
   const [phase, ...rest] = mode.split(":");

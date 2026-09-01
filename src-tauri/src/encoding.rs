@@ -100,6 +100,16 @@ use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 /// every one of those scans reaches a stream through. 64 MB is far past any
 /// real content stream and far under what a decompression bomb wants --- spike
 /// 0.4 measured a 2,879-byte input inflating to 1 GiB.
+///
+/// ⚠ **"The one copy" was false for five days**, and nothing could go red about
+/// it: `verify.rs` declared a second literal on 2026-08-26, one day after this
+/// paragraph was written, with a comment arguing that a module's own bound
+/// should be visible where it is enforced. It was removed on 2026-08-31 and
+/// that module imports this. A sentence in a doc comment is a claim about the
+/// whole crate made in one file, and the only thing keeping this one true is
+/// that a bound written here is imported rather than restated --- which is
+/// exactly the shape `docs/TRAPS.md` records as a rule written down and not
+/// enforced.
 pub(crate) const MAX_DECODE: usize = 64 * 1024 * 1024;
 
 /// Deepest the `/Resources` inheritance walk will follow `/Parent`.

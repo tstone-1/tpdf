@@ -26,8 +26,7 @@
  * prevent.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { call } from "./ipc";
 import { filePage, type FilePage } from "./pages";
 
 /**
@@ -148,7 +147,7 @@ export type SearchScope = ScopeRange[];
  * walk's only job is to know *when* two requests are about adjacent pages, which
  * is a fact about the walk and not about the characters.
  */
-interface Carry {
+export interface Carry {
   page: number;
   from: number;
   codes: number[];
@@ -161,14 +160,14 @@ interface Carry {
  * declares no character mapping, so PDFium reads glyph ids as character codes
  * and returns text of the right length that means nothing --- see `encoding.rs`.
  */
-interface PageMapping {
+export interface PageMapping {
   composite: number;
   guessing: number;
   truncated: boolean;
 }
 
 /** What one page contributed. */
-interface PageMatches {
+export interface PageMatches {
   page: number;
   matches: Match[];
   /** Characters the page has at all --- see {@link Search.textless}. */
@@ -506,7 +505,7 @@ export class Search {
       const source = this.sourceOf(page);
       if (source === undefined) return true;
       try {
-        result = await invoke<PageMatches>("search_page", {
+        result = await call("search_page", {
           doc: this.doc,
           page: source,
           query,
@@ -614,7 +613,7 @@ export class Search {
     if (this.mappingAsked) return;
     this.mappingAsked = true;
     try {
-      this.mapping = await invoke<PageMapping[]>("document_mapping", {
+      this.mapping = await call("document_mapping", {
         doc: this.doc,
       });
     } catch {

@@ -1303,9 +1303,9 @@ rather than the shape.** A rewrite used to refuse every encrypted document, so `
 asked only for the arm that appends. A rewrite now re-encrypts what it wrote with the state
 the load recorded, which needs the key twice: `lopdf` parses no objects at all without it, and
 `Document::encrypt` puts the encryption back. So `save_copy`, `extract_pages`,
-`split_document`, `merge_documents`, `redact_copy`, `redact_document` and `save_document` each
-call `password_for`, which is one ask on `Job::Password` and a local that goes when the
-command returns.
+`split_document`, `merge_documents`, `redact_copy`, `redact_document`, `save_document` and
+`print_document` each call `password_for`, which is one ask on `Job::Password` and a local
+that goes when the command returns.
 
 **This adds no hop and no lifetime.** Every one of those is the same read, from the same
 `Held::password`, into the same process that already holds it, for the length of one command
@@ -1313,12 +1313,17 @@ command returns.
 zeroing paragraph above becoming a little more true: there are more of them, none is zeroed,
 and a partial job would read as a guarantee.
 
-**One deliberate non-extension: printing.** `save::print_bytes` passes `None`, so an encrypted
-document is still refused there rather than rasterised from a plaintext buffer. The bytes a
+**One deliberate non-extension: printing an edited encrypted document.** `save::print_bytes`
+takes the reader's password since 2026-08-30 --- for a refusal, not for a job. With the key it
+can tell an encrypted document apart from one it cannot read, so the refusal a reader meets
+names the escape that exists (*print the whole document instead*, which routes the encrypted
+bytes through untouched) instead of claiming the document could not be unlocked while it is
+open on their screen. The job over an edited encrypted document is still refused: the bytes a
 print job produces go to `NSPrintOperation` or `Windows.Data.Pdf`, which would need the key
-themselves, so making printing work means handing the platform a decrypted copy of a document
-whose author encrypted it. That is a different decision from *let the rewrite work*, it has
-not been measured, and the refusal names the lock so a reader is not left guessing.
+themselves, so making it work means handing the platform a decrypted copy of a document whose
+author encrypted it. That is a different decision from *let the rewrite work*, and it has not
+been measured. (This paragraph said "`print_bytes` passes `None`" until 2026-08-31, two days
+after it stopped being the mechanism; the outcome it described never changed.)
 
 #### T6.11 — Redacting, added 2026-08-26
 
@@ -1673,6 +1678,20 @@ the mitigation rather than a footnote — see below.
 arrive over a custom URI protocol as raw pixels rather than as anything parsed as markup.
 Document text that must be displayed — outline entries, search results, form field labels —
 is attacker-controlled and must be treated as data at every point.
+
+**"Raw pixels rather than anything parsed" is true of the format the viewer asks for and not
+of every format the protocol serves.** `tile://` takes `?fmt=raw|png` (`protocol.rs`), and on
+`png` the app process encodes the worker's pixels with the `png` crate and the webview decodes
+them with `createImageBitmap` (`tiles.ts`) — the platform's own image decoder, in the process
+that holds the `invoke` surface. So there is a second hop where bytes that began in the worker
+reach a parser on this side of the boundary, and it is not the one this section is about.
+Three things bound it, and they are the reason this is a sentence rather than a residual risk.
+**Nothing in the viewer asks for `png`**: `autobench.ts` is the only caller that sets it, so a
+reader never takes this route. The bytes are **not the document's** — they are a re-encode of
+a rendered RGBA buffer, so reaching the decoder with anything chosen requires a PDFium exploit
+first, which is T1. And the encode is ours (`render::encode_png`), not a passthrough of
+anything the worker framed. What would change the answer is the viewer ever asking for `png`
+in earnest, which is a decision to re-take here rather than in `tiles.ts`.
 
 **This section said "today none of it reaches the UI at all — the frontend renders tiles and
 nothing else" until 2026-08-02, and that stopped being true when the sidebar and search
@@ -2283,8 +2302,19 @@ which is what makes it evidence rather than a milestone.
     blocking pool.
 
     **That half is fixed the same day.** The whole `landed` match is on the blocking pool
-    now, which moves the rewrite's own work with it: `verify_before_commit` hashes every
-    byte of the file, and it was on the runtime too.
+    now, which moves the rewrite's own work with it: `verify_before_commit` reads the
+    source's metadata and renames, and it was on the runtime too.
+
+    ⚠ **This said `verify_before_commit` "hashes every byte of the file" until 2026-08-31,
+    and it never has.** That function has compared **length and modification time only**
+    since 2026-08-19 --- `Fingerprint::agrees_shallowly`, deliberately, and `save.rs` says
+    so where it is defined. The digest runs earlier: `rewrite_ready` compares length and a
+    SHA-256 of every byte against `Plan::opened_as`, before anything is staged. Both are on
+    the blocking pool, which is the claim this paragraph is about and the one part of it
+    that was true. The distinction is not cosmetic for a reader of this document: the last
+    look before the rename cannot see a replacement that preserved both fields, and the
+    reason it is the cheap check --- the window between staging and the rename is measured
+    in milliseconds --- is on `verify_before_commit` itself.
 
     ⚠ **And the process half closed 2026-08-26, so the append is off this list entirely.**
     The read-back is `save::Reread`, a seam taking the written file's **handle**, a length

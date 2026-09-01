@@ -13,7 +13,7 @@
  * machines drifts several percent over minutes.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 import { fetchRequiredTile, type TileFormat } from "./tiles";
 
 interface Variant {
@@ -63,18 +63,14 @@ function pad(text: string, width: number, right = false): string {
  * carry on.
  */
 export async function runAutobenchIfRequested(): Promise<boolean> {
-  const path = await invoke<string | null>("autobench_path");
+  const path = await call("autobench_path");
   if (!path) return false;
 
   const lines: string[] = [];
   const log = (line = "") => lines.push(line);
 
   try {
-    const info = await invoke<{
-      id: number;
-      pages: { width_pt: number; height_pt: number }[];
-      page_count: number;
-    }>("open_document", { path });
+    const info = await call("open_document", { path });
 
     const page = info.pages[0];
     if (!page) throw new Error("document has no pages");
@@ -166,13 +162,13 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
       log(`  ${pad(variant.label, 11)} ${series}`);
     }
 
-    await invoke("spike_print", { text: lines.join("\n") });
-    await invoke("spike_exit", { code: 0 });
+    await call("spike_print", { text: lines.join("\n") });
+    await call("spike_exit", { code: 0 });
   } catch (error) {
-    await invoke("spike_print", {
+    await call("spike_print", {
       text: `[ERROR] autobench: ${error instanceof Error ? error.message : String(error)}`,
     });
-    await invoke("spike_exit", { code: 1 });
+    await call("spike_exit", { code: 1 });
   }
 
   return true;

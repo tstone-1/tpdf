@@ -19,8 +19,7 @@
  * replaced or truncated since. See {@link clampPlace}.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { call } from "./ipc";
 import type { FitMode } from "./zoom";
 
 /** Where one document was left. Field names match the Rust struct. */
@@ -103,7 +102,7 @@ export function samePlace(a: Place, b: Place): boolean {
 /** Reads the remembered places, most recently read first. */
 export async function loadSession(): Promise<Session> {
   try {
-    return await invoke<Session>("session_load");
+    return await call("session_load");
   } catch {
     // The backend already treats every failure as an empty session, so this
     // catches only the IPC itself failing --- in which case there is nothing to
@@ -127,7 +126,7 @@ export class SessionWriter {
    */
   constructor(
     private readonly send: (place: Place) => Promise<unknown> = (place) =>
-      invoke("session_remember", { place }),
+      call("session_remember", { place }),
     private readonly interval: number = SAVE_INTERVAL_MS,
   ) {}
 

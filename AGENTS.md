@@ -208,10 +208,15 @@ proved so rather than assumed** --- without `--examples` the `bins` gate covers 
 an undefined extern called from one example's `main` is what turns it red with `LNK2019`.
 
 **The JavaScript harness does ship, and that is a decision.** `App.svelte` statically
-imports all six webview entry points, so the functional check and its five siblings sit in the
-bundle `frontendDist` embeds whole into the binary --- 77.1 kB of a 221.2 kB bundle. They stay
+imports every webview entry point, so the functional checks and the benchmarks sit in the
+bundle `frontendDist` embeds whole into the binary --- about a third of it. They stay
 because the checks observe the artifact that ships, and because the payload is not what decides
-cold start. The honest cost is `spike_print` and `spike_exit`, registered commands callable by
+cold start. No share is written here, for the reason no trap count is: the one that was
+(`77.1 kB of a 221.2 kB bundle`, 2026-08-02) sat in two documents for a month while the bundle
+doubled, and nobody could compute the current one from either. The authority is
+`scripts/check_bundle_share.py`, which attributes the built sourcemap per module and fails on
+two ceilings, and it is the `bundleshare` gate. The honest cost is `spike_print` and
+`spike_exit`, registered commands callable by
 any script the webview runs; the CSP (`default-src 'self'`, no `'unsafe-inline'`) is what bounds
 that, and residual risk 7 in `docs/THREAT-MODEL.md` carries the seam.
 
@@ -498,15 +503,16 @@ scripts/gates.py --list
 
 Currently, in the order `--list` prints them: a toolchain-pin check, a PDFium pin check, a trap-index check, a
 future-date check, a
-workflow-parity check, a mutation-anchor check, a mutation-suite check, a
+workflow-parity check, a workflow-fixture check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
 doc-comment check, a command-classification check, a file-writer check, `npm run check`,
-`npm run test`, `npm run build`, and a third-party-notices check. Two of them are
+`npm run test`, `npm run build`, a bundle-share check, and a third-party-notices check. Three of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
-reads the build's own sourcemaps to see which npm packages shipped.
+reads the build's own sourcemaps to see which npm packages shipped --- with `bundleshare`
+between `build` and it, reading the same sourcemaps for a different question.
 
 **Every one of them can be green on a Mac while the Windows tree does not compile**, and that is not
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
@@ -572,8 +578,23 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   every one written by a commit dated 2026-08-28. A stamp in the future does not merely
   mislead about one measurement; it makes every stamp written in the same sitting unreliable,
   and nothing else notices.
+- `bundleshare` --- the unattended harness ships inside the bundle on purpose, and the argument
+  for it was written against a number half the current size, in two documents, unread for a
+  month. It attributes the built sourcemap per module and bounds the harness family by share
+  *and* by absolute, because the share alone missed a month in which both halves grew together.
 - `notices` --- runs last, because it reads the build's own sourcemaps to see which npm packages
   shipped.
+
+**`App.svelte` is the layer no gate reaches, so state is born outside it rather than extracted
+from it later.** Anything shaped like a walk, a set, a cache or a map --- anything holding state
+past the wiring and the markup --- starts life as a `src/lib` module with its own unit tests; the
+component keeps the object literals that join things and the markup. This is a rule and not a
+taste, because three trap entries locate shipped defects at exactly this join and every
+extraction so far happened after one: *An id and a slot are both `number`, so a mark drawn on the
+last page vanished*, *An "already asked" set keyed by a slot is renumbered by the next deletion*,
+and *A feature can be inert in the application while three layers of tests pass*, which is the
+`wiring` gate's own founding defect. No test imports `App.svelte`; its net is that gate plus
+harnesses that need a screen.
 
 The README is checked against the command registry by `src/lib/readme.test.ts` rather than by a
 gate of its own, in both directions: a `<!-- not-built: id -->` bullet may name no registered
@@ -895,6 +916,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A guard checked after the surgery is a true sentence about the wrong document
 - A workflow step is the one source no local gate reads, and mine named a file that cannot exist
 - An emptiness control written as a threshold is a measurement of the platform it was written on
+- The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
+- Two nested `Result`s because the outer one is the pool
 
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -1115,6 +1138,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A record of what has been asked for, kept where it cannot see the answer being thrown away
 - The status line showed the selection and the copy refused it, over a page with nothing on it
 - One refusal, three callers, one string --- and the string named one of them
+- A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
 
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -1217,6 +1241,9 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A capability nobody could use is invisible to every check, including the mutation harness
 - An option whose value is optional swallows the next argument, and `vitest list --json` overwrote a test file
 - A wrapper that exits zero on a run that ran nothing, while both its callers guard themselves
+- A rule written for the job a review named stops at that job, and the job next door had the most to lose
+- A module split renames the harness's filter without moving one anchor
+- A security gate keyed on where a call is written decides where that call may move
 
 ### Windows and portability
 - The gates had never run on the platform where they fail
@@ -1286,6 +1313,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A capability absent through a struct default has no defect to find
 - A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary
 - A platform gate widened in one of three copies, and the two left behind blamed the engine
+- A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
 
 ### Fixtures
 - The test fixtures are generated, not committed
@@ -1356,6 +1384,9 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - The checker tolerated the thing the rule forbade, and the index grew until nothing loaded it
 - A claim about somebody else's program has no gate here, and this one was false for months
 - A handover telling a person what to expect is a second implementation, and mine was wrong
+- "The one copy" acquired a second copy the day after the sentence, and its comment cited an import as the definition
+- An allowlist for a tool that is not installed reads exactly like a control
+- The decision was right, its cost basis had doubled, and the share was the half that had not moved
 
 ## Repository facts
 

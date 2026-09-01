@@ -11,6 +11,8 @@
 //! open a file. How either reaches the child is `worker.rs`'s spawn path and
 //! `worker_handover.rs`.
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -89,10 +91,22 @@ impl Shm {
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
 
+        // **`create_new` and an explicit mode, and neither is the other's
+        // spelling.** `create_new` refuses to open anything that is already
+        // there, which is what stops a planted file or a symlink under this
+        // name being what gets mapped --- the name is `pid` plus a counter, so
+        // it is guessable. The mode is the other half: without it the file is
+        // created at `0o666 & !umask`, and a umask is inherited from whatever
+        // launched tpdf rather than chosen here. The window is short --- the
+        // unlink is the next statement --- and on macOS `$TMPDIR` is a per-user
+        // directory at `0700` besides, so this is not the guard the mapping
+        // rests on. It is one syscall argument, and it is what the mapping's
+        // contents deserve on a platform whose temp directory is shared.
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
+            .mode(0o600)
             .open(&path)
             .map_err(|e| format!("shm create failed: {e}"))?;
         std::fs::remove_file(&path).map_err(|e| format!("shm unlink failed: {e}"))?;
@@ -664,6 +678,38 @@ mod tests {
 
     #[cfg(unix)]
     use crate::testutil::TempDir;
+
+    /// A new mapping's backing file is created private to this user.
+    ///
+    /// Asked through the descriptor rather than the pathname, which is the only
+    /// way to ask it at all: `create` unlinks the file on the statement after it
+    /// opens it, so there is no name left to stat.
+    ///
+    /// **What this can and cannot fail on.** Without the explicit mode the file
+    /// is created at `0o666 & !umask`, and a umask is inherited from whatever
+    /// launched tpdf --- so on a machine whose umask is already `0o077` this
+    /// test would pass with the mode argument deleted. That is not a reason to
+    /// leave the argument out; it is the reason it is an argument rather than an
+    /// assumption about the environment. Proved red on this one, whose umask is
+    /// `0o022`: without it the file is created `0o644`.
+    #[cfg(unix)]
+    #[test]
+    fn the_backing_file_of_a_new_mapping_is_not_readable_by_anyone_else() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let shm = Shm::create(4096).expect("create a mapping");
+        let mode = shm
+            .file
+            .metadata()
+            .expect("stat the mapping's own descriptor")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the backing file was created 0o{mode:o}, so its permissions came from the umask"
+        );
+    }
 
     /// Truncation is visible through the mapping's own descriptor.
     ///

@@ -18,7 +18,7 @@
  * placed to 1 ms or to 20.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 
 export interface ProcessClock {
   /** Converts a `performance.now()` reading to ms since process exec. */
@@ -42,7 +42,7 @@ export async function calibrateProcessClock(samples = 9): Promise<ProcessClock> 
 
   for (let i = 0; i < samples; i++) {
     const before = performance.now();
-    const elapsed = await invoke<number>("process_elapsed_ms");
+    const elapsed = await call("process_elapsed_ms");
     const after = performance.now();
 
     const roundTrip = after - before;

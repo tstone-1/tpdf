@@ -5329,6 +5329,15 @@ starts at 0 and increments within the month.
     nobody reading it, and on 2026-08-23 it listed *stamps* under "what it is not, yet" one
     release after they shipped.
 
+    **Read `SECURITY.md` in the same pass**, for the same reason and with no mechanical half
+    at all: no gate reads it, and it is the file a stranger is sent to from `README.md` when
+    they have something to report. It said *"Nothing has shipped yet — there are no tags and
+    no released binaries"* for thirteen releases, corrected on 2026-08-31. The supported-version
+    statement is written so that it does not name a version and therefore cannot go stale by
+    shipping — what can go stale is the **scope** list, so read that against what this release
+    added: a new parser, a new format read, or a new place a document's bytes reach is a line
+    in *In scope* or a disclosure that it is not.
+
     **Half of that is mechanical since 2026-08-28, and the half that is not is named.** The
     *"What it is not, yet"* sentence carries a `<!-- not-built: -->` marker, and
     `src/lib/readme.test.ts` --- which already imports the registry for the README's own
