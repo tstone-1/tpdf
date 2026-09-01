@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Drives an edit and a Save through the real menu, and reads the file back.
 
+It also drives a Print, once, after a second writer has changed the file --- see
+phase 7, which is about a refusal rather than about printing.
+
 WHY THIS EXISTS
 ===============
 
@@ -40,14 +43,30 @@ WHAT IT CHECKS
    it saves too --- it adds an annotation where a rotation changes an attribute.
 6. Nothing is left beside the file. Staging writes a sibling and renames it, so a
    leftover is a failed commit that reported success.
+7. A print of a file that changed underneath is refused before any panel opens.
+   The one refusal this harness can reach, because the condition for it -- a
+   second writer -- is one line of Python and the rest need a document it cannot
+   make.
 
 WHAT IT DOES NOT CHECK
 ======================
 
 Save a copy and Extract pages, both of which open a panel this cannot answer, and
-every refusal `save.rs` states --- an encrypted document, a file changed under
-the open one, a missing fingerprint. Those have tests that reach them directly;
-what this adds is the join.
+every refusal `save.rs` states except the one phase 7 provokes --- an encrypted
+document, a missing fingerprint, a job that will not read back. Those have tests
+that reach them directly; what this adds is the join.
+
+**And it does not read the prompt phase 7 produces.** A refusal that names Save a
+copy has to arrive with Save a copy beside it, and those buttons are in the web
+view. This harness's whole instrument is the menu bar, the process's own windows
+and the file on disk --- System Events reads all three and reaches none of the
+document's own chrome, which is also why `docs/TRAPS.md` records that a synthetic
+click never gets there. So phase 7 asserts the half that is observable from
+outside the process: the job was refused rather than handed to a printer. The
+blind direction is stated rather than papered over --- a print broken some other
+way opens no panel either, and the control that would separate them means opening
+the panel, which `NSPrintOperation.runOperation` makes application-modal and
+nothing here can dismiss.
 
 **It needs an unlocked screen and it says so rather than passing.** A locked
 session suspends the web view, so the document never opens and every menu item
@@ -79,9 +98,9 @@ EDIT_MENU = 4
 PAGE_MENU = 5
 
 
-def osa(script: str) -> str:
+def osa(script: str, timeout: float = 120) -> str:
     done = subprocess.run(
-        ["osascript", "-e", script], capture_output=True, text=True, timeout=120
+        ["osascript", "-e", script], capture_output=True, text=True, timeout=timeout
     )
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip())
@@ -113,6 +132,41 @@ def enabled(menu: int, item: str) -> bool:
     if answer not in ("true", "false"):
         raise MenuGone(f'"{item}" in menu {menu} answered {answer!r}, not true or false')
     return answer == "true"
+
+
+def window_count(timeout: float = 20) -> int:
+    """How many windows the process is showing, panels included.
+
+    The cheapest thing that distinguishes a print that was refused from one that
+    reached the platform: a refusal leaves the document window alone, and
+    `NSPrintOperation` adds a window of its own. Deliberately a count rather than
+    a walk of the window's contents --- `entire contents` of a window holding a
+    web view enumerates the page's own text, which is minutes on a text-heavy
+    document and is how a check of this shape turns into a hang.
+
+    Its own timeout, well under `osa`'s default, because the state this is asked
+    about is the one where the answer may not come: a modal panel is what phase 7
+    is looking for, and waiting two minutes to be told so is the same outcome as
+    not asking.
+    """
+    return int(
+        osa(
+            'tell application "System Events" to tell process "tpdf" to return count of windows',
+            timeout=timeout,
+        )
+    )
+
+
+def kill_app() -> None:
+    """Ends tpdf without an Apple Event, for the one case that cannot answer one.
+
+    A print panel is application-modal, so `tell application "tpdf" to quit`
+    joins the queue behind a dialog nobody is going to dismiss --- and the caller
+    quits in a `finally`, which would make one failed assertion the end of the
+    run rather than a line in it. Only phase 7's failure path reaches this: every
+    other outcome leaves an application that answers.
+    """
+    subprocess.run(["pkill", "-x", "tpdf"], capture_output=True)
 
 
 class MenuGone(Exception):
@@ -267,6 +321,56 @@ def main() -> int:
             problems += 1
         else:
             print("[OK]   nothing was left beside the document")
+
+        # 7. A second writer changes the file under the open document, and the
+        #    print built from it is refused before anything reaches a printer.
+        #    `save::print_bytes` states that refusal and the window turns it into
+        #    a message carrying Save a copy and Reload -- those buttons are in
+        #    the web view and are not read here, for the reason the docstring
+        #    gives. What is read is whether a panel appeared.
+        #
+        #    Last, and that is not ordering for its own sake: this is the only
+        #    phase that can leave a modal panel on screen, so everything above
+        #    has already reported by the time it runs, and its failure path ends
+        #    the process rather than the run.
+        #
+        #    The rotation is the precondition rather than decoration. A print of
+        #    an unedited document goes through `print::route`'s passthrough,
+        #    which `print_ready` guards; an edited one goes through the writer a
+        #    save uses. Both refuse a changed file, and driving the second is
+        #    what makes this the same path phases 2 to 5 exercise.
+        click(PAGE_MENU, "Rotate page clockwise")
+        if not enabled(FILE_MENU, "Save"):
+            print("[FAIL] Save is withheld after the rotation phase 7 edits with, so")
+            print("[FAIL] nothing was proved about printing a file that changed")
+            problems += 1
+        elif not enabled(FILE_MENU, "Print"):
+            print("[FAIL] Print is withheld on an open document, so nothing was printed")
+            problems += 1
+        else:
+            target.write_bytes(target.read_bytes() + b"\n% a second writer\n")
+            try:
+                windows = window_count()
+                click(FILE_MENU, "Print", settle=5.0)
+                opened = window_count()
+            except (RuntimeError, subprocess.TimeoutExpired) as why:
+                # Not counted as an inconclusive read. A window list that stops
+                # answering is what an application-modal panel looks like from
+                # here, and a panel is exactly the outcome this phase forbids.
+                print(f"[FAIL] the window list stopped answering after Print ({why});")
+                print("[FAIL] a modal print panel is what that looks like, so the job")
+                print("[FAIL] was not refused")
+                problems += 1
+                kill_app()
+            else:
+                if opened > windows:
+                    print(f"[FAIL] Print opened {opened - windows} window(s) although the file")
+                    print("[FAIL] had changed on disk -- the job reached a panel instead of")
+                    print("[FAIL] the refusal that keeps the reader's edits off the paper")
+                    problems += 1
+                    kill_app()
+                else:
+                    print("[OK]   a print of a file that changed underneath opened no panel")
     except MenuGone as why:
         # Deliberately not counted as a save problem. The check could not ask
         # its question, which is a third outcome and has to read as one.
@@ -279,9 +383,10 @@ def main() -> int:
                        capture_output=True)
 
     if problems:
-        print(f"[FAIL] {problems} problem(s) saving over the open document")
+        print(f"[FAIL] {problems} problem(s) writing or printing the open document")
         return 2
-    print(f"[OK] the document saved over itself from the menu, twice, and reads back")
+    print("[OK] the document saved over itself from the menu, twice, and reads back;")
+    print("[OK] a print of it after a second writer was refused before any panel")
     return 0
 
 

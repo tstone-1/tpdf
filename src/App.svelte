@@ -35,7 +35,8 @@
     afterRedaction,
     afterSplit,
     afterMerge,
-    afterFailedSave,
+    afterRefusal,
+    refusalOf,
     beforeReload,
     beforeRedactingInPlace,
     type Offer,
@@ -1213,21 +1214,16 @@
     try {
       await edits.save(path);
     } catch (e) {
-      const failure = e as {
-        message?: string;
-        reopen?: boolean;
-        changed?: boolean;
-      };
+      // Read through the seam rather than cast here, so that what a rejection
+      // is understood to carry has one definition. Three catches wrote this by
+      // hand and the fourth -- printing -- wrote none of it.
+      const failure = refusalOf(e);
       // The message and the buttons come from one call, so they cannot disagree
       // about what happened. A refusal that names Save a copy now arrives with
       // Save a copy beside it -- which it did not until 2026-08-19, and worse,
       // Save a copy was refused by the same guard, so the advice named a door
       // that was locked.
-      const prompt = afterFailedSave({
-        message: failure.message ?? String(e),
-        reopen: failure.reopen,
-        changed: failure.changed,
-      });
+      const prompt = afterRefusal(failure);
       if (!failure.reopen) {
         say(prompt.message, prompt.offers);
         return;
@@ -1372,12 +1368,8 @@
     try {
       said = afterRedaction(await edits.redactDocument(path));
     } catch (e) {
-      const failure = e as { message?: string; reopen?: boolean; changed?: boolean };
-      const prompt = afterFailedSave({
-        message: failure.message ?? String(e),
-        reopen: failure.reopen,
-        changed: failure.changed,
-      });
+      const failure = refusalOf(e);
+      const prompt = afterRefusal(failure);
       // Nothing happened: the file is the file and the reader still has their
       // document and their marks. A message is all there is to do.
       if (!failure.reopen) {
@@ -1749,8 +1741,21 @@
     } catch (e) {
       // Shown, unlike a failed place write. This one the reader is standing
       // there waiting for: a print command that silently does nothing reads as
-      // a broken application, and on Windows it *will* fail, by design.
-      say(String(e));
+      // a broken application, and there are several ways for this one to
+      // refuse -- an encrypted document, a job PDFKit will not read back, a
+      // page count that does not match what was asked for, and a file that has
+      // changed on disk since it was opened.
+      //
+      // The last of those is the reason this goes through the rules rather than
+      // straight to `say`. It said `String(e)` until the refusal grew fields,
+      // and a sentence naming a fallback has to arrive with the fallback beside
+      // it: the reader's unsaved edits are what the job would have been built
+      // from, so Save a copy keeps them and Reload starts again from the file
+      // underneath. A print closes nothing, so `reopen` never arrives here and
+      // the window has nothing to reopen; `afterRefusal` reads that from the
+      // flags rather than from which command it was called by.
+      const prompt = afterRefusal(refusalOf(e));
+      say(prompt.message, prompt.offers);
     }
   }
 

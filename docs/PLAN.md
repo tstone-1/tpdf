@@ -1261,7 +1261,10 @@ Five checks, and they are deliberately not the same check:
   the cheap one, because it is asked against what the reader **opened** and an hour can pass
   in between; a missing fingerprint prints rather than being refused, which is where it
   parts company with `stage_in_place` and for the reason that entry gives --- what is at
-  stake is a sheet of paper.
+  stake is a sheet of paper. Since 2026-09-01 the refusal also crosses to the window whole:
+  `print_document` rejects with the `Refusal` rather than its message, so the prompt carries
+  the same Save a copy and Reload a refused save's does, instead of a sentence naming a
+  fallback the window could not draw.
 - **Before an append, the same length and mtime, through the open handle.** The append has
   no rename to sit behind, so its equivalent of the check above happens inside
   `append_in_place`, against `Appended { was, verified }`. Two differences from the rewrite,

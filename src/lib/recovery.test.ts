@@ -2,27 +2,80 @@ import { describe, expect, it } from "vitest";
 
 import {
   afterCopy,
-  afterFailedSave,
   afterMerge,
   afterRedaction,
+  afterRefusal,
   beforeRedactingInPlace,
   beforeReload,
+  refusalOf,
   type Offer,
 } from "./recovery";
 
-describe("afterFailedSave", () => {
+describe("refusalOf", () => {
+  it("reads the message off a refusal object", () => {
+    // The whole reason this exists. A command that rejects with an object gets
+    // stringified to `[object Object]` by the obvious `String(e)`, and that is
+    // what a reader saw the day printing's refusal stopped being a string.
+    expect(refusalOf({ message: "report.pdf changed on disk", changed: true }).message).toBe(
+      "report.pdf changed on disk",
+    );
+  });
+
+  it("carries the flag the rules decide from", () => {
+    // The message alone is the failure this seam was written for: a refusal
+    // that reads correctly and arrives with no buttons is the one a reader
+    // cannot act on.
+    const failure = refusalOf({ message: "x", changed: true });
+    expect(failure.changed).toBe(true);
+    expect(afterRefusal(failure).offers).toEqual(["saveCopy", "reload"]);
+  });
+
+  it("falls back to the stringified value for a throw that is not a refusal", () => {
+    // A panic, a transport failure, a `throw "boom"` in a plugin. There is no
+    // object to read and the reader still has to be told something.
+    expect(refusalOf("boom").message).toBe("boom");
+    expect(refusalOf(new Error("boom")).message).toBe("boom");
+    expect(refusalOf(null).message).toBe("null");
+  });
+
+  it("offers nothing for a throw that carries no flags", () => {
+    // The control for the case above: a message with no flags behind it must
+    // not acquire buttons on the way through.
+    expect(afterRefusal(refusalOf("boom")).offers).toEqual([]);
+  });
+
+  it("takes a flag only where it is a boolean", () => {
+    // `undefined` rather than truthy, and the direction is what matters: a
+    // `reopen` of `"false"` read as true withholds both offers, leaving a
+    // reader with edits, a changed file and nothing to press.
+    const failure = refusalOf({ message: "x", changed: true, reopen: "false" });
+    expect(failure.reopen).toBeUndefined();
+    expect(afterRefusal(failure).offers).toEqual(["saveCopy", "reload"]);
+  });
+
+  it("reports an absent flag as absent rather than as false", () => {
+    // `RefusalShape` draws that distinction deliberately -- the rules treat
+    // the two alike and assert that they do -- so collapsing it here would move
+    // a decision out of the place that is tested for it.
+    const failure = refusalOf({ message: "x" });
+    expect(failure.changed).toBeUndefined();
+    expect(failure.reopen).toBeUndefined();
+  });
+});
+
+describe("afterRefusal", () => {
   it("offers a copy and a reload when the file changed and the document survived", () => {
     // The case the whole thing exists for. The reader's edits are in the
     // journal, the file underneath is a different file, and both moves are
     // real: write the work somewhere, or start again from what is on disk.
-    const prompt = afterFailedSave({ message: "x changed on disk", changed: true });
+    const prompt = afterRefusal({ message: "x changed on disk", changed: true });
     expect(prompt.offers).toEqual(["saveCopy", "reload"]);
   });
 
   it("puts the copy first, because reload is the one that spends the journal", () => {
     // Order is not cosmetic here: the two buttons sit side by side and one of
     // them destroys work. A test on the set alone would pass with them swapped.
-    const prompt = afterFailedSave({ message: "x", changed: true });
+    const prompt = afterRefusal({ message: "x", changed: true });
     expect(prompt.offers[0]).toBe("saveCopy");
   });
 
@@ -32,7 +85,7 @@ describe("afterFailedSave", () => {
     // would copy a freshly-opened, unedited document. A button that looks like
     // help and does nothing is worse than no button: a reader presses it and
     // concludes the application is broken.
-    const prompt = afterFailedSave({ message: "x", changed: true, reopen: true });
+    const prompt = afterRefusal({ message: "x", changed: true, reopen: true });
     expect(prompt.offers).toEqual([]);
   });
 
@@ -40,7 +93,7 @@ describe("afterFailedSave", () => {
     // The control, and the one that matters most. "A document must keep at
     // least one page" is fixed by putting a page back; a Reload button beside
     // it offers to discard the reader's work in exchange for nothing.
-    const prompt = afterFailedSave({
+    const prompt = afterRefusal({
       message: "a document must keep at least one page",
     });
     expect(prompt.offers).toEqual([]);
@@ -49,15 +102,34 @@ describe("afterFailedSave", () => {
   it("offers nothing when the flag is absent rather than false", () => {
     // A backend that stops sending the field must not silently start offering
     // reloads. `undefined` and `false` have to mean the same thing here.
-    const prompt = afterFailedSave({ message: "x", reopen: true });
+    const prompt = afterRefusal({ message: "x", reopen: true });
     expect(prompt.offers).toEqual([]);
+  });
+
+  it("offers both to a refusal that carries no reopen at all", () => {
+    // The shape a print refusal arrives in: a message and `changed`, and no
+    // `reopen` field of any kind, because nothing on that path closes the
+    // document. The rule reads the flags rather than which command called it,
+    // so this is the same case as a save's -- pinned because the alternative
+    // reading, that a missing `reopen` is an unknown state worth withholding
+    // buttons for, is the one that strands the reader.
+    const prompt = afterRefusal({ message: "report.pdf changed on disk", changed: true });
+    expect(prompt.offers).toEqual(["saveCopy", "reload"]);
+  });
+
+  it("offers nothing to a refusal that is not about the file, reopen or not", () => {
+    // A print refused because the job would not read back, or because the
+    // document is encrypted. Nothing about the file on disk has changed, so
+    // Reload would discard the reader's work to fetch the same document again.
+    expect(afterRefusal({ message: "the print job could not be read back", changed: false }).offers)
+      .toEqual([]);
   });
 
   it("passes the message through untouched", () => {
     // The window shows what the backend said. Rewording it here would put a
     // second author on a sentence `save.rs` is careful about.
     const message = "report.pdf changed on disk since you opened it --- its length went from 4 to 5";
-    expect(afterFailedSave({ message, changed: true }).message).toBe(message);
+    expect(afterRefusal({ message, changed: true }).message).toBe(message);
   });
 });
 
@@ -129,9 +201,9 @@ describe("the offers these rules can return", () => {
     // the point.
     const drawn = new Set<Offer>(["saveCopy", "reload", "redact"]);
     const everything: Offer[] = [
-      ...afterFailedSave({ message: "x", changed: true }).offers,
-      ...afterFailedSave({ message: "x", changed: true, reopen: true }).offers,
-      ...afterFailedSave({ message: "x" }).offers,
+      ...afterRefusal({ message: "x", changed: true }).offers,
+      ...afterRefusal({ message: "x", changed: true, reopen: true }).offers,
+      ...afterRefusal({ message: "x" }).offers,
       ...(beforeReload(true)?.offers ?? []),
       ...beforeRedactingInPlace("report.pdf").offers,
     ];

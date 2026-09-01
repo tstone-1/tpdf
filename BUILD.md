@@ -4376,6 +4376,11 @@ It copies the fixture to a temporary directory, opens it, and drives the real
 menu --- `Page > Rotate page clockwise`, then `File > Save`, then a highlight over
 the page's own text and a second Save --- reading the *file* back each time by
 digest and through `qpdf --check`, which shares no code with anything here.
+Since 2026-09-01 it also drives one Print, last, after appending to the file
+underneath the open document: the job must be refused before any panel opens.
+That phase reads the process's window count, not the prompt --- the Save a copy
+and Reload buttons the refusal carries are in the web view, which this harness
+cannot reach.
 
 **It exists because nothing else in the repository writes a file.**
 `viewer_check.py` lists `file.save` as undriven with the reason (it would write
@@ -4400,8 +4405,8 @@ suspended while the session is locked, so the document never opens and every men
 item stays greyed, which reads exactly like an application ignoring its own menu.
 The check reads `CGSSessionScreenIsLocked` first and exits 2 saying so.
 
-First full run 2026-08-21, on 26.8.6 plus that day's commits: **10 checks, all green,
-25 s** --- Save withheld at rest, a rotation offering it, the file changing (10731 -> 10400
+First full run 2026-08-21, on 26.8.6 plus that day's commits, before phase 7 was
+added on 2026-09-01: **10 checks, all green, 25 s** --- Save withheld at rest, a rotation offering it, the file changing (10731 -> 10400
 bytes), `qpdf` reading it back, Save withheld again after the reopen, a highlight saving too
 (-> 14542 bytes), and nothing left beside the document. Its failure path was proved
 separately by pointing a phase at a menu item that does not exist: `[FAIL] this check drives
@@ -4412,7 +4417,9 @@ menu, twice in a row, for two different kinds of edit, in a scratch directory an
 TCC-protected one (`~/Downloads`), on this machine. That is a statement about this route and
 this fixture. Every refusal `save.rs` states needs a condition a clean local file does not
 have --- an encrypted document, a file changed under the open one, a missing baseline --- and
-each of those has tests of its own; what none of them can tell you is whether the refusal
+each of those has tests of its own; since 2026-09-01 the changed-file one is also provoked
+from the menu, by phase 7's second writer, though against a Print rather than a Save. What
+none of them can tell you is whether the refusal
 fires when it should not, which is what a real report of a spurious message would be for.
 
 ### Checking the menu bar

@@ -7540,6 +7540,19 @@ the two cannot disagree about which refusals carry it, and
 round trip: a flag that is always true offers Reload for a refusal reloading cannot fix, which
 is the direction that costs the reader their work.
 
+**The same shape appeared twice more within a day of each other, one boundary further out
+each time.** `print_document` returned `Result<(), String>` from 2026-08-31 to 2026-09-01, so
+the changed-file refusal `save::print_ready` had just been taught to make crossed the worker
+boundary whole and was flattened at the IPC one --- `.map_err(|refused| refused.message)`,
+inside a closure in a `#[tauri::command]`, where no test can reach it; the closure had to
+become `lib::print_job` before the mutation that re-flattens it had a subject. And in the
+window, `printDocument`'s catch did `say(String(e))`, which is the flattening one layer
+further in still --- correct while the rejection *was* a string, and `[object Object]` the
+moment it grew fields. Three other catches read the fields off by hand, three chances to be
+one field behind the backend, so the reading is now one function, `recovery.refusalOf`. The
+durable form of the lesson: every boundary a refusal crosses is a separate chance to lose the
+bit, and fixing one proves nothing about the next one out.
+
 ### A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
 
 The viewer maps the document with `MAP_SHARED` and hands the worker a descriptor, which is
@@ -18556,6 +18569,19 @@ question asked of a compiler: *is it working, or is it merely running?*
 only on failure, which is right for a green run and is exactly wrong while diagnosing one
 that never ends. Streaming is what turned the second attempt from a guess into `Checking
 tpdf` followed by `Finished in 21.83s`.
+
+**The signature can also belong to a build that is genuinely working, and on 2026-09-01 it
+did --- twice, ten-plus minutes each, ~0.25 s of CPU on the observed `cargo`, and both runs
+finished green on their own.** Two things separated that day from 2026-08-27, and both are
+worth checking before the kill-and-re-run. The CPU was elsewhere: **killing a `cargo` does
+not kill its `rustc`/`clippy-driver` children** --- they reparent to init and keep compiling
+and competing for cores, so two earlier cancelled `cargo check` runs had left orphans doing
+the burning while the watched parent idled at the lock. And the target tree was cold: a first
+`check --target x86_64-pc-windows-msvc` in a checkout builds the whole dependency graph for
+that target, so the documented ~8 s was a warm number being read as a bound. So widen the
+`ps` beyond the parent --- `ps -eo pid,ppid,time,args | grep -E "[r]ustc|[c]lippy-driver"` ---
+and if orphans from your own kills are burning, the run is starved, not wedged: killing it
+repeats the mistake that caused it.
 
 ### Two `///` runs with no blank line are one comment, and it documents the wrong item
 

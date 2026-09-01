@@ -7656,6 +7656,40 @@ MUTATIONS += [
     ),
 ]
 
+# --- the print refusal, as the window receives it ------------------------
+MUTATIONS += [
+    Mutation(
+        # Flatten the changed-file refusal back to its sentence, which is what
+        # `print_document` did until 2026-09-01. It compiles, it refuses the
+        # print, and the message the reader sees is word for word the right one
+        # -- only the flag that lets the window put Save a copy and Reload
+        # beside it is gone. Nothing but an assertion on the flag can see this:
+        # `docs/TRAPS.md`, "A refusal flattened to a string across a process
+        # boundary loses the action that answers it".
+        "lib: flatten the print refusal to its message again",
+        "src/lib.rs",
+        "            save::print_ready(source, plan)?;",
+        "            save::print_ready(source, plan)\n"
+        "                .map_err(|refused| save::Refusal::from(refused.message))?;",
+        "a_print_of_a_replaced_file_rejects_with_the_flag_that_offers_reload",
+    ),
+    Mutation(
+        # Rename the wire field the window branches on. The rejection is still
+        # a two-field object carrying the right sentence and the right value,
+        # and the frontend reads a name that is not there as absent -- so the
+        # reader is told their file moved and offered nothing to do about it.
+        # A rename is what a refactor of this struct looks like, which is why
+        # the assertion is against a literal rather than a round trip.
+        "save: rename the refusal field the window reads",
+        "src/save.rs",
+        "    /// The source changed on disk since the reader opened it.\n    pub changed: bool,",
+        "    /// The source changed on disk since the reader opened it.\n"
+        '    #[serde(rename = "fileChanged")]\n'
+        "    pub changed: bool,",
+        "the_wire_shape_of_a_refusal_is_a_message_and_a_changed_flag",
+    ),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())

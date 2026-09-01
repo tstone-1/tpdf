@@ -1,5 +1,9 @@
 /**
- * What to offer a reader whose save was refused, or who is about to lose work.
+ * What to offer a reader whose command was refused, or who is about to lose work.
+ *
+ * A save, a redaction and a print all reach these rules, and the rules do not
+ * know which: what they read is the refusal's own flags. See {@link afterRefusal}
+ * for why that is the naming as well as the mechanism.
  *
  * ## Why this is a module rather than three `if`s in `App.svelte`
  *
@@ -38,8 +42,16 @@
  */
 export type Offer = "reload" | "saveCopy" | "redact";
 
-/** The half of `SaveFailure` these rules read. */
-export interface SaveFailureShape {
+/**
+ * The half of a refusal these rules read.
+ *
+ * Named for the two flags rather than for `lib.rs`'s `SaveFailure`, which is
+ * only one of the things that arrives in this shape: a print refusal is a
+ * `save::Refusal` and carries `changed` alone, and a save's is a `SaveFailure`
+ * and carries both. What the rules below need is the same either way, and a
+ * name that says *save* is a name the next producer makes wrong.
+ */
+export interface RefusalShape {
   message: string;
   /**
    * The document is closed, whatever became of the file.
@@ -63,7 +75,59 @@ export interface Prompt {
 }
 
 /**
- * What to offer after a save was refused.
+ * Reads a caught value as a {@link RefusalShape}, whatever was thrown.
+ *
+ * **One reading of an `unknown`, rather than one per catch.** Every command
+ * rejects with whatever its error serialised to: an object for a refusal the
+ * backend worded, a string for a panic or a transport failure, and nothing at
+ * all is guaranteed. Three catches in `App.svelte` wrote the same cast and the
+ * same `?? String(e)` by hand and a fourth --- printing --- wrote neither, so
+ * the day printing's refusal grew fields the reader was shown `[object
+ * Object]`. A shape with three hand-written readings has three chances to be
+ * one field behind the backend.
+ *
+ * The message falls back to the stringified value because a throw that is not a
+ * refusal still has to say something, and something is what a reader standing
+ * in front of a command that did nothing needs.
+ *
+ * **A flag is taken only where it is genuinely a boolean.** A field that
+ * arrives as a string or a number is `undefined` here rather than truthy, which
+ * matters in one direction only and that direction is expensive: a truthy
+ * `reopen` withholds both offers, so a backend sending `"false"` would leave a
+ * reader with their edits, a changed file underneath and nothing to press.
+ * `undefined` rather than `false`, because {@link RefusalShape} draws that
+ * distinction deliberately and it is not this function's to collapse.
+ */
+export function refusalOf(thrown: unknown): RefusalShape {
+  const fields = (thrown ?? {}) as {
+    message?: unknown;
+    reopen?: unknown;
+    changed?: unknown;
+  };
+  return {
+    message: typeof fields.message === "string" ? fields.message : String(thrown),
+    reopen: flagOf(fields.reopen),
+    changed: flagOf(fields.changed),
+  };
+}
+
+/** A field is an answer only where it is a boolean; anything else is silence. */
+function flagOf(field: unknown): boolean | undefined {
+  return typeof field === "boolean" ? field : undefined;
+}
+
+/**
+ * What to offer after an operation was refused.
+ *
+ * **Named for the refusal rather than for the operation**, which is deliberate
+ * and was a rename: this was `afterFailedSave` while a save was the only thing
+ * that could produce one, and it decided nothing about saving even then. It
+ * reads two flags. A print refused because the file changed underneath wants
+ * exactly the answer a save refused for the same reason wants --- the reader's
+ * unsaved edits are the print job's input, so writing them somewhere loses
+ * nothing and reloading spends them --- and `docs/TRAPS.md` records what a name
+ * that describes the population it happens to cover costs the day the
+ * population grows.
  *
  * Three cases, and the flags separate them completely:
  *
@@ -77,11 +141,16 @@ export interface Prompt {
  *    button reloads what is already on screen and Save a copy copies a
  *    freshly-opened, unedited document. Two buttons that look like help and do
  *    nothing are worse than none, because a reader presses them.
+ *
+ *    A print cannot reach this case, and that is a property of printing rather
+ *    than an assumption made here: nothing on that path closes the document, so
+ *    its refusals carry no `reopen` at all. The arm is read by saves and
+ *    redactions, and it stays a flag rather than a caller's promise.
  *  - **Anything else.** Nothing. "A document must keep at least one page" is
  *    fixed by putting a page back, and a Reload button beside it would offer to
  *    discard the reader's work in exchange for nothing at all.
  */
-export function afterFailedSave(failure: SaveFailureShape): Prompt {
+export function afterRefusal(failure: RefusalShape): Prompt {
   if (!failure.changed || failure.reopen) {
     return { message: failure.message, offers: [] };
   }
