@@ -24,6 +24,31 @@ the mirror, and is what a rename leaves behind. The control is that every
 terminal name still exists in `save.rs`: a renamed helper would otherwise make
 the scan select nothing, and an empty set agreeing with an empty set is the
 `docs/TRAPS.md` entry about a query whose predicate the data does not use.
+
+**Two corrections, both made 2026-09-01, and the first is why this file's own
+verdict could not be trusted.** A substring scan over a function body reads
+prose as code, and it was doing so: `print_document` was classified as a writer
+because its body contains the words `save::print_bytes` in a **comment**
+explaining that it does not call it for a print job. Strip the comments and the
+count was zero --- so the one command whose classification the gate most needed
+to get right was held there by a sentence, and rewording that sentence would
+have dropped it out of the set and turned *every name in the list reaches a
+writer* red, for a command that had not changed. A gate passing for the wrong
+reason is worse than a gate that is absent, because it is trusted.
+
+So comments are stripped, with a scanner that tracks string literals rather than
+a regex --- `//` occurs inside `https://` and a blind strip would delete whatever
+followed it on that line, which is a false *negative* in a security gate.
+
+**And the call chain is followed one level, because the property is about the
+code and not about where a line is written.** Stripping the comments alone leaves
+`print_document` reaching no writer, which is false: it calls `print_job`, a free
+function in the same file, which calls `save::print_bytes`. Keying on where a
+call is *written* rather than on what a command *reaches* means a refactor that
+moves a call into a helper silently declassifies the command --- and this
+repository already has that entry, from a review of this very gate. One level is
+what the file's own shape needs and is where it stops: deeper needs a call graph,
+and a bound stated is better than a bound discovered.
 """
 
 import re
@@ -54,18 +79,103 @@ def say(ok: bool, text: str) -> bool:
     return ok
 
 
+def without_comments(source: str) -> str:
+    """`source` with `//` comments removed and string literals left alone.
+
+    A regex cannot do this. `//` appears inside `https://` in half the doc
+    comments in `lib.rs`, and deleting from there to end of line would remove any
+    real call written after it --- a false negative, which in this gate means a
+    writing command reported as writing nothing.
+
+    Block comments are not handled, deliberately: `lib.rs` has none, and a
+    stripper for a construct that does not occur is a branch with no test.
+    """
+    out = []
+    in_string = False
+    escaped = False
+    i = 0
+    while i < len(source):
+        char = source[i]
+        if in_string:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            i += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            i += 1
+            continue
+        if char == "/" and source.startswith("//", i):
+            while i < len(source) and source[i] != "\n":
+                i += 1
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
+def body_of(source: str, start: int) -> str:
+    """The function body beginning at `start`, to the first bare closing brace.
+
+    Which is how every function in `lib.rs` ends, and is the same rule this file
+    has always used --- kept as one helper now that two callers need it.
+    """
+    rest = source[start:]
+    end = re.search(r"^\}", rest, re.M)
+    return rest[: end.start()] if end else rest
+
+
+def free_functions(source: str) -> dict[str, str]:
+    """Every non-command `fn` in the file, by name, with its body.
+
+    The one level of indirection this gate follows. Commands are excluded: a
+    command is not a helper, and including them would let one command's writing
+    classify another that merely names it.
+    """
+    commands = {
+        m.group(1)
+        for m in re.finditer(
+            r"#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", source
+        )
+    }
+    bodies = {}
+    for match in re.finditer(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)", source, re.M):
+        name = match.group(1)
+        if name not in commands:
+            bodies[name] = body_of(source, match.end())
+    return bodies
+
+
 def commands_that_write(source: str) -> set[str]:
-    """Every `#[tauri::command]` function whose body reaches a terminal writer."""
+    """Every `#[tauri::command]` function that reaches a terminal writer.
+
+    *Reaches*, not *contains*: comments are stripped first, and a call to a free
+    function in the same file is followed one level. Both are corrections made
+    2026-09-01 --- see the module docstring for what each one was hiding.
+    """
+    source = without_comments(source)
+    helpers = free_functions(source)
+
+    def writes(body: str, depth: int) -> bool:
+        if any(f"save::{terminal}" in body for terminal in TERMINAL):
+            return True
+        if depth == 0:
+            return False
+        return any(
+            re.search(rf"\b{re.escape(name)}\s*\(", body) and writes(helper, depth - 1)
+            for name, helper in helpers.items()
+        )
+
     found = set()
     for match in re.finditer(r"#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", source):
-        name = match.group(1)
-        # The body runs to the first line that is a bare closing brace, which is
-        # how every function in this file ends.
-        rest = source[match.end():]
-        end = re.search(r"^\}", rest, re.M)
-        body = rest[: end.start()] if end else rest
-        if any(f"save::{terminal}" in body for terminal in TERMINAL):
-            found.add(name)
+        if writes(body_of(source, match.end()), 1):
+            found.add(match.group(1))
     return found
 
 

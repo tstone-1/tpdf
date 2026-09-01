@@ -1,0 +1,24 @@
+# libFuzzer's own build tree. Separate from `src-tauri/target` on purpose: a
+# fuzz build is instrumented and a sanitizer build of the same crate is not
+# interchangeable with an ordinary one, so sharing a directory would make every
+# `cargo build` and every fuzz run invalidate the other's artifacts.
+target/
+
+# The working corpus. libFuzzer *writes* into this directory as it runs -- every
+# input that reaches new coverage is saved -- so a tracked corpus would grow by
+# thousands of unreviewable files per run. The seeds are generated instead, by
+# `seed.py`, out of `testdata/`, which is itself generated and gitignored. Same
+# rule as the fixtures: nothing derived is committed.
+corpus/
+
+# Where libFuzzer drops a crashing, timing-out or leaking input. A tracked one
+# would be a defect record that outlives the defect; a finding belongs in a test.
+artifacts/
+
+# `cargo fuzz coverage` output.
+coverage/
+
+# Where `run.py --background` puts each target's transcript. The exec count at
+# the bottom of one of these is the only evidence a run happened, which is
+# exactly why it belongs in a report rather than in the repository.
+logs/
