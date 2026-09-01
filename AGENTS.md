@@ -284,9 +284,26 @@ against the staged file's own size.
 
 That the channel survives the sandbox was measured rather than assumed: the profile says
 `(deny file-write*)`, which denies *opening* a path and not a descriptor handed over before
-it. `worker-probe` writes one document both ways and compares byte for byte. The copy paths,
-the split, the merge and the print job are unchanged and are the rest of residual risk 18, and
-Windows is wired the same way and unmeasured.
+it. `worker-probe` writes one document both ways and compares byte for byte.
+
+**The copy paths, the split and the print job followed on 2026-09-01**, on the same seam ---
+`Job` carries what a print does not share with a save, so `staged_rewrite` is one function.
+**The page-range print and the merge followed on 2026-09-01**, through
+`Request::PrintRange` and `Request::Merge`. The merge is the widest of them --- it parses files
+the reader picked in a dialog that tpdf never opened --- and the obstacle recorded for it was
+wrong in a way worth keeping: the threat model said each incoming file's object graph would
+have to come *back*, when nothing comes back per file. They go **in**, as one read-only
+mapping on `worker::IN_FD` with `save::Incoming` naming each, and the merged document goes out
+down the channel a rewrite already had.
+
+⚠ **What residual risk 18 now names is a *reader* it never listed: `verify::scan`.** The
+redaction verification parses the file it just wrote, in the coordinator. It was invisible to
+that risk, to `docs/THREAT-MODEL.md` §3 and to `scripts/check_writers.py` alike, because all
+three enumerate what **writes** --- the same blind spot that hid `print::build`, twice in two
+days. The index has the trap. **Windows is
+wired the same way and is measured**: `worker-probe` is a step of both CI legs, and it reported
+34/34 with nothing skipped on run 33501693368 --- the count at that run; six checks added
+later the same day have not been through a Windows leg yet.
 
 **Since 2026-08-23 a reader can open a document behind a password.** Until then an encrypted
 PDF could be chosen from the file dialog and then not opened by any route --- `open_failure`
@@ -1070,6 +1087,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A test whose failure is a hang reports a pass and a timeout in one breath
 - A check that cannot run is not a check, and a locked screen is enough to stop one
 - An unreachable guard is worth keeping if the type can carry it instead
+- A fixture that aborts its parser cannot live in a directory something sweeps
+- A risk and a gate both keyed on writing cannot see the path that only reads
 - A guard the type system already makes unexpressible has no mutation to write
 - A guard whose only reachable input is one the model forbids
 - An Escape ordering that no reachable input can distinguish
@@ -1161,6 +1180,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A mutation aimed at deleted code is refused far too late to matter
 - A refactor orphans mutations nobody can see, and the gate is what finds them
 - A cross-check that counts names against a count of tests is wrong wherever two tests share a name
+- A refactor moved three callers away, and the mutation kept its anchor and lost its meaning
 - A mutation harness knows only the tests it was told to run
 - A verification chained after a failed edit reports success for work that is not there
 - A restored file with its original timestamp leaves the build serving the mutation
@@ -1179,6 +1199,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - An unguarded `invoke` for a command that is not registered ends the run, and the harness calls it SURVIVED
 - A guard that also guarantees termination fails as a hang, not as a red test
 - A comment claimed an ordering mattered, and the mutation that should have hurt did not
+- Three ways to be wrong about whether your own build is still running
 - `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 - Repeating a race inside one process re-runs the first round, not the race
 - A precondition that names the cause still lets the symptom print

@@ -1746,9 +1746,12 @@ the serialisation are hundreds of milliseconds it is noise, and this fixture is 
 worst case for it. Nothing else on the save path got slower --- the parse moved, it did not
 happen twice.
 
-**Six more on 2026-09-01, so the number is now 34** --- measured **34/34 with none not
-applicable on macOS**, against `text-base14.pdf` and `text-wide.pdf` alike; the Windows figure
-was 19/19 before any of the last fifteen existed and has not been re-run. Three of them put a
+**Six more on 2026-09-01, then six more the same day, then two more, so the number is 42.**
+The second six are the page-range print and the merge --- three checks each: the differential,
+the needs-a-worker control, and the scratch or page-count reading. The last two are
+`xref-bomb.pdf`, the fixture whose `/W` widths abort whatever parses it: they assert the worker
+dies and the coordinator is told, and there is deliberately **no coordinator arm**, because
+running one would end the probe. Three of them put a
 worker on **Save a copy** and three on the **print job**, which are the last two writing paths
 `docs/THREAT-MODEL.md` residual risk 18 was disclosing.
 
@@ -1789,10 +1792,17 @@ when the box is quiet, and say so when it was not.
 
 ⚠ **`26.9.0` shipped without a Windows run, and this paragraph is why.** The rewrite's output
 channel there is a `DuplicateHandle` into the child rather than a `dup2` before `exec`, so the
-five checks above are macOS evidence for a mechanism that has two implementations, and nothing
-has exercised the Windows one --- last measured **19/19 on 2026-08-24**, before these five, the
+five checks above were macOS evidence for a mechanism that has two implementations, and nothing
+had exercised the Windows one --- last measured **19/19 on 2026-08-24**, before these five, the
 four verification-side checks and the six writing-path ones above existed. `AGENTS.md` records what a single sentence about
 two platforms costs.
+
+**The first Windows run was 2026-09-01, and it is the CI step below rather than a run somebody
+made**: `34/34 checks passed, 0 not applicable to this platform` on `windows-2025`, run
+33501693368. Nothing was skipped, so the copy, the split, the print job and the output channel
+are each watched working there. **34 was the count at that run**; the six checks added later
+the same day for the page-range print and the merge have not been through a Windows leg yet,
+and the next push is what takes them there.
 
 **The requirement was real and the placement was the defect.** This said *"Run it on Windows
 before the next release"* until 2026-09-01, and a release then went out without it. An
@@ -1805,7 +1815,7 @@ than by anything here.
 (`.github/workflows/ci.yml` and the `gates` job of `release.yml`, which the `workflows` gate
 holds equal). It costs under a second, needs no screen, and runs against
 `testdata/text-wide.pdf`, since `scripts/ci_fixtures.py` cannot produce the `text-base14.pdf`
-above --- the macOS reading is the same against both fixtures (34/34 as of 2026-09-01, and
+above --- the macOS reading is the same against both fixtures (42/42 as of 2026-09-01, and
 28/28 when it was 28), and was taken in **both profiles** (0.36 s release, and the debug one CI
 actually builds), so neither the fixture nor the profile is load-bearing. The debt is paid continuously rather than once, and the reading below
 stays as the last thing measured by hand.
@@ -5109,7 +5119,7 @@ starts at 0 and increments within the month.
    **`worker-probe` used to be listed here and is a CI step instead, since 2026-09-01.** The
    rewrite's output channel is `dup2` before `exec` on macOS and `DuplicateHandle` into a
    suspended child on Windows, so one platform's result says nothing about the other; macOS
-   was at 34/34 and the last Windows run was **19/19 on 2026-08-24**, before the four
+   was at 42/42 and the last Windows run was **19/19 on 2026-08-24**, before the four
    verification-side checks, the five writing-side ones and the six copy-and-print ones
    existed --- and `26.9.0` shipped without a Windows run. The probe needs no screen and takes under a second, so both
    workflows' `gates` job now runs it on both legs against `testdata/text-wide.pdf`, and every

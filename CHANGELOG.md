@@ -145,6 +145,81 @@ cannot carry it, because a name that stops being printed and a name that starts 
 identical in one. 109 is a reading taken on 2026-07-30 that `BUILD.md` still records, correctly,
 as dated.
 
+### Changed: the last two writing paths stopped parsing in the app process
+
+A print of a page range and a merge now parse in a sandboxed worker. With them, **every
+operation that writes a document is out of the process holding the window** --- the thing
+`docs/THREAT-MODEL.md` residual risk 18 has been about since August.
+
+The page range went through `Request::PrintRange` and `print::build_update`, the pure half of
+what `print::build` was. It had never been listed in that risk at all: the risk enumerates the
+operations that *write* a document, and a print writes nothing --- it hands bytes to a printer.
+An outside review found it by reading the code.
+
+The merge is the wider one, because it parses files tpdf never opened: a reader picks them in a
+dialog and each is loaded whole. The obstacle recorded against it was wrong in a way worth
+stating, since it had stood for a week --- the threat model said each incoming file's object
+graph would have to come *back*, "which is the whole file, so it has the rewrite's problem
+after all". Nothing comes back per file. The files go **in**, as one read-only mapping on a
+new descriptor with `save::Incoming` naming where each begins, and the merged document goes out
+down the channel a rewrite already had. What crosses back is a length and a page count.
+
+`worker-probe` is 40 checks, up from 34.
+
+### Added: the fuzzing campaign's crash reproducer is a fixture
+
+`testdata/make_xref_bomb_pdf.py` writes the 333-byte document whose cross-reference `/W`
+widths make `lopdf` reach `handle_alloc_error` --- an abort, so no guard catches it. It is
+generated rather than committed, like every other fixture here, and the generator says why the
+width is the value it is: `2**45` completes and `2**46` aborts, so it sits far enough past the
+threshold not to be a measurement of the machine's allocator.
+
+`worker-probe` hands it to a rewrite through a real worker and asserts the containment the
+threat model claims: the worker dies, the coordinator is told in words, and the probe carries
+on. **The coordinator arm is deliberately not run** --- it would end the probe, and that it
+would is the finding rather than a test. `worker-probe` is 42 checks.
+
+**It lives in `testdata/abort/`, and that is structural.** Generated beside the other
+fixtures, it aborted the whole `cargo test` binary the first time the suite ran --- a sweep in
+`save.rs` loads every `testdata/*.pdf`, and 1,150 passing tests then reported nothing.
+`read_dir` is not recursive, so a subdirectory takes it out of all three existing sweeps and out
+of whichever is written next, which an exemption list in each of them would not.
+
+### Fixed: a mutation had been unable to fail since the morning's commit
+
+`save::write_atomically` had three callers until the copy and the split moved to the worker
+seam; after that only the merge called it, and the test the mutation aimed at goes through the
+**copy**. So the mutation that certified *the destination is renamed into place, not written
+through* could redden nothing, while `check_mutation_anchors.py` went on reporting its anchor
+present exactly once --- which was true, and is a fact about the file rather than about
+coverage.
+
+It surfaced when the merge moved too and `cargo` reported the function unused. The mutation is
+aimed at `commit` now, which is where the rename actually is and which four writing paths end
+at, so it covers more than it did before the refactor.
+
+### Fixed: a coordinator-side parse nobody had listed, in the redaction verification
+
+`verify::scan` re-reads the file a redaction has just written and parses it with `lopdf` in the
+app process. It is disclosed now rather than closed. It had been missed for exactly the reason
+`print::build` was, one day apart: `docs/THREAT-MODEL.md` §3, residual risk 18 and
+`scripts/check_writers.py` all enumerate the operations that **write**, and a verification
+writes nothing.
+
+### Fixed: four documents still said the five moved paths had not moved
+
+The commit that corrected the README's containment wording left the *next sentence of the same
+bullet* saying Save a copy, Redact to a copy, Extract, Split, Merge and Print all read the file
+in the app process --- three hours after five of those six stopped doing so. `AGENTS.md` and
+`docs/THREAT-MODEL.md` still called the rewrite's Windows output channel unmeasured, and
+`BUILD.md` still said nothing had exercised it, all three written before CI ran it 34/34 on
+`windows-2025` with nothing skipped.
+
+An outside reader found every one of them, which is the second time that has happened to the
+same README bullet. The trap entry it belongs to gained the recurrence and the general form:
+an edit that touches a paragraph is not a reading of the paragraph, and a release checklist
+cannot catch a claim falsified between releases.
+
 ### Fixed: a refused print now arrives with the actions that answer it
 
 26.9.0 taught printing to refuse a file that changed on disk under the open document, and

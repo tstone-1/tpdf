@@ -28,9 +28,11 @@ project conventions.
   filesystem or network authority on macOS, and none to *write* on Windows, where the
   boundary stops neither reading what the user can read nor opening a socket --- a pool per
   document, and a worker that dies is replaced and its request retried. Saving over a document is prepared and written
-  there too, and so is a redaction applied to it. Save a copy, Redact to a copy,
-  Extract, Split, Merge and Print still read the file in the app process; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in one place
-  rather than leaving the first sentence to be read as covering them.
+  there too, and so is a redaction applied to it --- and since 2026-09-01 so are Save a copy,
+  Redact to a copy, Extract, Split, Merge, and printing --- whether you print the document you
+  are looking at or a page range you type. **One `lopdf` parse is left in the app process, and
+  it is the redaction verification**; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so
+  in one place rather than leaving the first sentence to be read as covering it.
 - Tiled rendering behind a virtual scroller; zoom --- in, out, actual size, fit-width,
   fit-page, or a figure you type; view rotation; and page inversion for reading on a dark
   screen. **Hold the middle mouse button and the pages follow the pointer**, sideways as
