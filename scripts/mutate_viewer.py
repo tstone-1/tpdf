@@ -167,7 +167,7 @@ MUTATIONS = [
         # measures the overlay against its own and passes, and the reader's mark
         # changes colour the moment they save.
         "save: write every mark's appearance in one fixed colour",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "        r = mark.color[0],\n        g = mark.color[1],\n        b = mark.color[2],",
         "        r = 0.9_f32,\n        g = 0.6_f32,\n        b = 0.1_f32,",
         "each mark is the same colour in the file as on screen",
@@ -180,7 +180,7 @@ MUTATIONS = [
         # is that the comparison reads the saved file --- a mutation of the
         # overlay alone could be caught by a check that never opens one.
         "save: give every kind the highlight's wash in the file",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,",
         "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Wash,",
         "each mark covers as much of its rectangle in the file as on screen",
@@ -208,7 +208,7 @@ MUTATIONS = [
         # written for is proved by `save: drop every mark's lower edge to the
         # page origin`, which mutates the quads and therefore moves ink.
         "save: pad every mark's rectangle down the page",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "                acc[1].min(q[1]),",
         "                acc[1].min(q[1]) - 120.0,",
         "each mark covers as much of its rectangle in the file as on screen",
@@ -233,7 +233,7 @@ MUTATIONS = [
         # points lands two bands down on A4 and somewhere else on anything else.
         # Reaching the page origin is true at every size.
         "save: drop every mark's lower edge to the page origin",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "            [page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy]",
         "            [page[0] + ox, 0.0, page[2] + ox, page[3] + oy]",
         "control: paper no mark was placed on renders identically",
@@ -1037,7 +1037,7 @@ MUTATIONS = [
         # read and no line count that moves --- what changes is where the ink is,
         # which is a picture.
         "turned: a squiggle waves along the page's axis",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "        let point = |across: f64, up: f64| seen.at(across, seen.height - up);",
         "        let point = |across: f64, up: f64| (quad[0] + across, quad[1] + up);",
         "Squiggly: page 1 reads as page 0 does",
@@ -1048,7 +1048,7 @@ MUTATIONS = [
         # reads the `re` rectangle; this reads what a reader would see, and the
         # two failing together is what says the operand and the picture agree.
         "turned: a rule sits on the page's bottom edge",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "        let (base, band) = line_rect(kind, 0.0, seen.height);\n        let [x, y, width, height] = seen.rect(",
         "        let (base, band) = line_rect(kind, 0.0, quad[3] - quad[1]);\n        let [x, y, width, height] = seen.rect(",
         "Underline: page 1 reads as page 0 does",
@@ -1059,7 +1059,7 @@ MUTATIONS = [
         # picture it produced: a column of type two glyphs wide down the side of
         # the box.
         "turned: a text box wraps to the page's width",
-        "src-tauri/src/save.rs",
+        "src-tauri/src/save/marks.rs",
         "        let width = seen.width - textbox::INSET * 2.0;",
         "        let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
         "TextBox: page 1 reads as page 0 does",

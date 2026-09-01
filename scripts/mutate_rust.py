@@ -450,7 +450,7 @@ MUTATIONS = [
         # measures the same thing in pixels by asserting the band between two
         # strokes is empty.
         "save: draw every stroke as one path rather than one each",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    for stroke in strokes {",
         "    for stroke in strokes.iter().take(1) {",
         "each_stroke_is_its_own_path_in_the_appearance_stream",
@@ -460,7 +460,7 @@ MUTATIONS = [
         # whatever angle the hand made, and a mitre on a sharp one spikes out to
         # a point that reads as a rendering fault.
         "save: leave a drawing's joins mitred, as a box's are",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        Paint::Path => (mark.width, "1 J 1 j "),',
         '        Paint::Path => (mark.width, ""),',
         "each_stroke_is_its_own_path_in_the_appearance_stream",
@@ -470,7 +470,7 @@ MUTATIONS = [
         # every pixel check still passes and every reader still draws the right
         # thing --- what breaks is the file's own account of what it holds.
         "save: write an /InkList on kinds that have no strokes",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    if paint(mark.kind) == Paint::Path {\n        dictionary.set(\n            \"InkList\",",
         "    if true {\n        dictionary.set(\n            \"InkList\",",
         "the_ink_list_is_written_for_ink_and_for_nothing_else",
@@ -606,7 +606,7 @@ MUTATIONS = [
         # roundtrip` still reads the kind back, and only the one check that asks
         # for both halves can tell.
         "save: draw a stamp's word without its border",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        out.push_str(&format!("{x} {y} {width} {height} re S\\n"));\n        if inner_w <= 0.0 || inner_h <= 0.0 {',
         "        if inner_w <= 0.0 || inner_h <= 0.0 {",
         "a_stamp_is_a_border_and_a_word_rather_than_either_alone",
@@ -628,7 +628,7 @@ MUTATIONS = [
         # made to say the wrong word. The trap index has the rule under a guard
         # the type system makes unexpressible.
         "save: draw a word other than the name a stamp was made with",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        out.push_str(&format!("<{}> Tj\\n", winansi_hex(word)));',
         '        out.push_str(&format!("<{}> Tj\\n", winansi_hex("stamped")));',
         "a_stamp_is_a_border_and_a_word_rather_than_either_alone",
@@ -638,7 +638,7 @@ MUTATIONS = [
         # a stamp dragged out large should get. `textbox::SIZE` is the value the
         # obvious implementation would reach for.
         "save: set every stamp at the text box's fixed size",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let size = (inner_w / unit).min(inner_h / STAMP_CAP).max(1.0);",
         "        let size = textbox::SIZE;",
         "a_stamp_fills_the_rectangle_it_was_dragged_out_at",
@@ -3267,7 +3267,7 @@ MUTATIONS = [
         # written by hand -- and a page that had one loses it the moment a reader
         # highlights anything.
         "save: replace a page's /Annots instead of extending it",
-        "src/save.rs",
+        "src/save/marks.rs",
         "            array.push(Object::Reference(annotation));\n            doc.get_object_mut(page)",
         "            array.clear();\n            array.push(Object::Reference(annotation));\n            doc.get_object_mut(page)",
         "a_mark_is_written_whatever_shape_the_page_s_annots_is_in",
@@ -3278,7 +3278,7 @@ MUTATIONS = [
         # reader reports as a document with no comments -- and which any check
         # counting objects passes.
         "save: write the mark object without listing it on the page",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let annotation = doc.add_object(dictionary);\n        attach(doc, page, annots, annotation)?;",
         "        let _annotation = doc.add_object(dictionary);",
         "a_marked_page_lists_the_mark_in_its_own_annots",
@@ -3288,7 +3288,7 @@ MUTATIONS = [
         # It appears on both, which is not what the reader asked for and not
         # something the file records as a mistake.
         "save: allow a mark on a page two numbers share",
-        "src/save.rs",
+        "src/save/marks.rs",
         # Re-aimed 2026-08-30: a mark is addressed by its position in the plan
         # now, so the count is over the plan's own page objects rather than over
         # the kept baseline numbers.
@@ -3301,7 +3301,7 @@ MUTATIONS = [
         # mark's page. Every refusal test still passes; what breaks is the
         # ordinary case, where one malformed page makes the rest unmarkable.
         "save: refuse a mark anywhere in a file that has a shared page",
-        "src/save.rs",
+        "src/save/marks.rs",
         # Re-aimed 2026-08-30 with its sibling above, onto the same line and for
         # the same reason. The over-scoping is spelled differently and means
         # exactly what it did: refuse if *anything* in this document is shared.
@@ -3314,7 +3314,7 @@ MUTATIONS = [
         # one some readers draw as nothing at all and others draw as a hairline,
         # so the mark's appearance stops being the document's.
         "save: keep quads that cover no area",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        .filter(|quad| quad.covers_area())",
         "        .filter(|_| true)",
         "a_mark_whose_quads_all_collapse_is_refused_rather_than_written_empty",
@@ -3527,7 +3527,7 @@ MUTATIONS = [
         # and this application's own sidebar all report it as a highlight. The
         # failure that looks like nothing is wrong.
         "save: write an underline under the highlight's subtype",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        MarkKind::Underline => b"Underline",',
         '        MarkKind::Underline => b"Highlight",',
         "each_kind_writes_its_own_subtype",
@@ -3539,7 +3539,7 @@ MUTATIONS = [
         # Re-aimed when `is_wash` and `is_note` were replaced by one `ink`
         # question: the arm it named said `=> false` and now says `=> Ink::Line`.
         "save: draw the two line kinds as washes",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Line,",
         "        MarkKind::Underline | MarkKind::StrikeOut => Paint::Wash,",
         "a_line_is_opaque_and_a_wash_is_not",
@@ -3551,7 +3551,7 @@ MUTATIONS = [
         # like a defect -- which is why the assertion is about the bound and not
         # about how it looks.
         "save: centre an underline on the edge it should sit on",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::Underline => (bottom, thickness),",
         "        MarkKind::Underline => (bottom - thickness / 2.0, thickness),",
         "a_line_stays_inside_the_quad_it_marks",
@@ -3561,7 +3561,7 @@ MUTATIONS = [
         # wrong subtype. Every check keyed on the subtype passes; only where the
         # rule sits tells them apart.
         "save: draw a strikeout where an underline goes",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::StrikeOut => (bottom + full / 2.0 - thickness / 2.0, thickness),",
         "        MarkKind::StrikeOut => (bottom, thickness),",
         "a_strikeout_crosses_the_text_and_an_underline_sits_under_it",
@@ -3788,7 +3788,7 @@ MUTATIONS = [
         # itself, one level up from where it shipped: `wrap` is then handed the
         # box's height, which is what broke four words into eighteen lines.
         "turned marks: the reader's box keeps the page's own sides",
-        "src/save.rs",
+        "src/save/marks.rs",
         "            1 => Self {\n                width: h,\n                height: w,\n                origin: (quad[0], quad[1]),",
         "            1 => Self {\n                width: w,\n                height: h,\n                origin: (quad[0], quad[1]),",
         "an_upright_box_is_the_rectangle_the_reader_dragged",
@@ -3799,7 +3799,7 @@ MUTATIONS = [
         # which no size assertion can see -- the reason that test reads the
         # corners as well.
         "turned marks: the reader's corner is the page's",
-        "src/save.rs",
+        "src/save/marks.rs",
         "                origin: (quad[0], quad[1]),\n                right: (0.0, 1.0),",
         "                origin: (quad[0], quad[3]),\n                right: (0.0, 1.0),",
         "an_upright_box_is_the_rectangle_the_reader_dragged",
@@ -3807,7 +3807,7 @@ MUTATIONS = [
     Mutation(
         # Wrap to the page's width again, which is what shipped.
         "turned marks: a text box wraps to the page's width",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let width = seen.width - textbox::INSET * 2.0;",
         "        let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
         "a_text_box_wraps_to_the_width_the_reader_dragged_however_the_page_is_turned",
@@ -3816,7 +3816,7 @@ MUTATIONS = [
         # Keep the right lines and set them along the page's axis. The other
         # half of the same defect, and the half a line count cannot reach.
         "turned marks: type is set on the identity whatever the turn",
-        "src/save.rs",
+        "src/save/marks.rs",
         '            "{} {} {} {} {x} {y} Tm",\n            flat(self.right.0),\n            flat(self.right.1),\n            flat(-self.down.0),\n            flat(-self.down.1)',
         '            "{} {} {} {} {x} {y} Tm",\n            flat(1.0),\n            flat(0.0),\n            flat(0.0),\n            flat(1.0)',
         "type_runs_the_readers_way_on_a_turned_page",
@@ -3828,7 +3828,7 @@ MUTATIONS = [
         # than by the turned assertion, which is why that control reads the
         # coefficients rather than merely counting them.
         "turned marks: a negated zero reaches the content stream",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let flat = |value: f64| if value == 0.0 { 0.0 } else { value };",
         "        let flat = |value: f64| value;",
         "type_runs_the_readers_way_on_a_turned_page",
@@ -3837,7 +3837,7 @@ MUTATIONS = [
         # Put the rule back on the page's bottom edge. On a turned page that is
         # the left edge of the words.
         "turned marks: a rule sits on the page's bottom edge",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let (base, band) = line_rect(kind, 0.0, seen.height);\n        let [x, y, width, height] = seen.rect(",
         "        let (base, band) = line_rect(kind, 0.0, quad[3] - quad[1]);\n        let [x, y, width, height] = seen.rect(",
         "a_rule_sits_under_the_words_however_the_page_is_turned",
@@ -3847,7 +3847,7 @@ MUTATIONS = [
         # rectangle of the other shape, which is a size error rather than a
         # placement one.
         "turned marks: a stamp is sized by the page's box",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let inner_w = seen.width - STAMP_INSET * 2.0;\n        let inner_h = seen.height - STAMP_INSET * 2.0;",
         "        let inner_w = (quad[2] - quad[0]) - STAMP_INSET * 2.0;\n        let inner_h = (quad[3] - quad[1]) - STAMP_INSET * 2.0;",
         "a_stamps_word_is_sized_by_the_box_the_reader_dragged",
@@ -4303,7 +4303,7 @@ MUTATIONS += [
         # equally by a solid block of colour, and a solid block hides the figure
         # the box was drawn around.
         "save: fill a box rather than stroking its edge",
-        "src/save.rs",
+        "src/save/marks.rs",
         # **The trailing `}` is what makes this unambiguous, and it was not
         # needed until the stamp arrived**: a stamp is bordered by the same
         # `re S` line, so the bare string now matches twice. The box's is the one
@@ -4319,7 +4319,7 @@ MUTATIONS += [
         # the anchor gate requires exactly one occurrence, and a mutation that
         # could land in either of two places is one nobody can reason about.
         "save: stroke a wash rather than filling it",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        let (x, y) = (quad[0], quad[1]);\n        let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n        out.push_str(&format!("{x} {y} {width} {height} re f',
         '        let (x, y) = (quad[0], quad[1]);\n        let (width, height) = (quad[2] - quad[0], quad[3] - quad[1]);\n        out.push_str(&format!("{x} {y} {width} {height} re S',
         "the_wash_and_the_rules_fill_rather_than_stroke",
@@ -4330,7 +4330,7 @@ MUTATIONS += [
         # the encoding defect this would have shipped with, and the reason the
         # writer uses hex at all.
         "save: write a text box's words as UTF-8 rather than WinAnsi",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        let byte = if code <= 0xff { code as u8 } else { b\' \' };\n'
         '        out.push_str(&format!("{byte:02X}"));',
         '        for byte in ch.to_string().into_bytes() {\n'
@@ -4343,7 +4343,7 @@ MUTATIONS += [
         # becomes uneditable in every reader but this one -- which no rendering
         # check can see, because nothing about the picture changes.
         "save: leave /DA off a text box",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    if mark.kind == MarkKind::TextBox {",
         "    if false {",
         "a_text_box_carries_the_da_the_specification_requires_and_nothing_else_does",
@@ -4353,7 +4353,7 @@ MUTATIONS += [
         # and it is the control for the `/Font` assertion: a check that only ever
         # says "the text box has one" passes equally if everything does.
         "save: put a font in every mark's appearance resources",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    if style == Paint::Text {",
         "    if true {",
         "a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal",
@@ -4396,7 +4396,7 @@ MUTATIONS += [
         # every reader files it as a squiggle and draws an underline -- and the
         # subtype test passes it. The mirror of the mutation below it.
         "save: draw a squiggle as a flat rule",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::Squiggly => Paint::Wave,",
         "        MarkKind::Squiggly => Paint::Line,",
         "a_squiggle_is_a_stroked_zigzag_in_a_band_taller_than_a_rule",
@@ -4406,7 +4406,7 @@ MUTATIONS += [
         # right wave, so the mark looks correct in tpdf and is an underline to
         # everything else.
         "save: write /Underline for a squiggle",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        MarkKind::Squiggly => b"Squiggly",',
         '        MarkKind::Squiggly => b"Underline",',
         "each_kind_writes_its_own_subtype",
@@ -4417,7 +4417,7 @@ MUTATIONS += [
         # and reads as bad antialiasing rather than as the wrong mark. It also
         # closes the strip every discriminating check reads.
         "save: fit a squiggle into an underline's band",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::Squiggly => (bottom, full * SQUIGGLE_HEIGHT),",
         "        MarkKind::Squiggly => (bottom, thickness),",
         "a_squiggle_is_a_stroked_zigzag_in_a_band_taller_than_a_rule",
@@ -4428,7 +4428,7 @@ MUTATIONS += [
         # positions from quads finds none and falls back to /Rect -- which is the
         # union of the run and is wrong the moment a mark spans two lines.
         "save: stop writing quads for a squiggle",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::Highlight | MarkKind::Underline | MarkKind::Squiggly | MarkKind::StrikeOut",
         "        MarkKind::Highlight | MarkKind::Underline | MarkKind::StrikeOut",
         "a_comment_carries_no_text_markup_keys_and_the_others_do",
@@ -4440,7 +4440,7 @@ MUTATIONS += [
         # thing neither the subtype test nor a pixel count of the whole quad can
         # see on its own.
         "save: draw an ellipse with the box's rectangle",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        MarkKind::Ellipse => Paint::Ellipse,",
         "        MarkKind::Ellipse => Paint::Outline,",
         "an_ellipse_is_drawn_as_four_curves_and_not_as_a_rectangle",
@@ -4451,7 +4451,7 @@ MUTATIONS += [
         # everything else -- the mirror of the mutation above, and the reason
         # the two tests are separate.
         "save: write /Square for an ellipse",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        MarkKind::Ellipse => b"Circle",',
         '        MarkKind::Ellipse => b"Square",',
         "each_kind_writes_its_own_subtype",
@@ -4461,7 +4461,7 @@ MUTATIONS += [
         # began, so the shape is right and the join at three o'clock is a cap
         # instead -- a nick in a thick stroke rather than a missing curve.
         "save: leave an ellipse's path open rather than closing it",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        out.push_str("h S',
         '        out.push_str("S',
         "an_ellipse_is_drawn_as_four_curves_and_not_as_a_rectangle",
@@ -4471,7 +4471,7 @@ MUTATIONS += [
         # appearance stream's /BBox, which clips it -- so the box comes out with
         # hairline edges, which looks like a thin border and not like a bug.
         "save: stroke a box on its edge rather than inset by half the stroke",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    let inset = OUTLINE_WIDTH / 2.0;",
         "    let inset = 0.0;",
         "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
@@ -4481,7 +4481,7 @@ MUTATIONS += [
         # `RG`, so the box comes out black -- which reads as a colour that was
         # ignored rather than one that was never set.
         "save: set only the fill colour, so the stroke comes out black",
-        "src/save.rs",
+        "src/save/marks.rs",
         "{r} {g} {b} rg {r} {g} {b} RG {width} w {joins}",
         "{r} {g} {b} rg {width} w {joins}",
         "a_box_is_stroked_on_a_path_inset_by_half_its_own_width",
@@ -4491,7 +4491,7 @@ MUTATIONS += [
         # existed that must not carry them. Most readers ignore an unlisted key
         # and one day something does not.
         "save: write text-markup quads on a box and a comment too",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    if is_text_markup(mark.kind) {",
         "    if true {",
         "a_comment_carries_no_text_markup_keys_and_the_others_do",
@@ -4501,7 +4501,7 @@ MUTATIONS += [
         # Nothing synthesises a rectangle, so the annotation is in the file,
         # findable, removable -- and invisible.
         "save: leave a box's appearance to the reader, as a comment's is",
-        "src/save.rs",
+        "src/save/marks.rs",
         "        let appearance = if paint(mark.kind) == Paint::None {",
         "        let appearance = if !is_text_markup(mark.kind) {",
         "a_comment_carries_no_text_markup_keys_and_the_others_do",
@@ -6155,7 +6155,7 @@ MUTATIONS += [
         # shape of failure a reader reports as "my edit did not save" and no
         # length or fingerprint check can see.
         "notes: build the append without writing the new body",
-        "src/save.rs",
+        "src/save/marks.rs",
         '    dictionary.set("Contents", text_string(&note.body));',
         '    let _ = &note.body;',
         "a_comment_out_of_the_file_is_overridden_by_its_object",
@@ -6164,7 +6164,7 @@ MUTATIONS += [
         # `/M` left as the file had it. Every viewer shows that date, so the
         # reader's own words appear over somebody else's timestamp.
         "notes: leave the modification date the file had",
-        "src/save.rs",
+        "src/save/marks.rs",
         '    dictionary.set("M", text_string(&note.made));',
         '    let _ = &note.made;',
         "a_comment_out_of_the_file_is_overridden_by_its_object",
@@ -6198,7 +6198,7 @@ MUTATIONS += [
         # destroyed. Shared between the two writers precisely so that adding a
         # caller could not lose it.
         "notes: let a note edit name something that is not an annotation",
-        "src/save.rs",
+        "src/save/marks.rs",
         MUT_SUBTYPE_GUARD,
         "    if false {",
         "a_rewrite_refuses_a_note_edit_that_names_a_page",
@@ -6316,7 +6316,7 @@ MUTATIONS += [
         # another author, which is exactly what `pdfium-render` not exposing
         # the key means nobody would notice through that reader.
         "reply: write a reply that names nothing",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        dictionary.set("IRT", Object::Reference((number, generation)));',
         "",
         "a_reply_is_written_as_one_and_reads_back_as_one",
@@ -6327,7 +6327,7 @@ MUTATIONS += [
         # as a thread, and `annots.rs` -- which never reads the key -- agrees
         # with itself either way.
         "reply: call the relationship a group",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        dictionary.set("RT", Object::Name(b"R".to_vec()));',
         '        dictionary.set("RT", Object::Name(b"Group".to_vec()));',
         "a_reply_is_written_as_one_and_reads_back_as_one",
@@ -6337,7 +6337,7 @@ MUTATIONS += [
         # model cannot: a plan naming a page, a font or the catalog would thread
         # a reply onto it.
         "reply: let a reply name something that is not an annotation",
-        "src/save.rs",
+        "src/save/marks.rs",
         '            return Err("that comment is not an annotation".into());\n'
         "        }\n"
         "    }\n"
@@ -7607,7 +7607,7 @@ MUTATIONS += [
         # then draws the default, whatever the reader picked and whatever the
         # overlay showed them while they drew it.
         "save: write the default nib rather than the mark's",
-        "src/save.rs",
+        "src/save/marks.rs",
         '        Paint::Path => (mark.width, "1 J 1 j "),',
         '        Paint::Path => (crate::docmodel::INK_WIDTH, "1 J 1 j "),',
         "the_stroke_width_is_the_nib_the_reader_chose",
@@ -7650,7 +7650,7 @@ MUTATIONS += [
         # `/Fields` names the annotation too, so pruning the one list a caller
         # has in mind leaves it alive.
         "save: prune the page's list instead of forgetting the object",
-        "src/save.rs",
+        "src/save/marks.rs",
         "    let taken = doomed.len();\n    crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;",
         "    let taken = doomed.len();\n    for id in &doomed {\n        doc.objects.remove(id);\n    }",
         "a_deleted_comment_leaves_the_page_and_leaves_no_bytes_behind",
@@ -7659,7 +7659,7 @@ MUTATIONS += [
         # Accept a plan naming an object that is not an annotation, which would
         # let a caller delete a font, a page or the catalog out of the file.
         "save: delete whatever object a plan names",
-        "src/save.rs",
+        "src/save/marks.rs",
         "            return Err(\"that comment is not an annotation\".into());\n        }\n        doomed.insert(id);",
         "        }\n        doomed.insert(id);",
         "a_deletion_naming_something_that_is_not_an_annotation_is_refused",

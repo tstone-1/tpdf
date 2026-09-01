@@ -14,7 +14,8 @@ calls a rule you wrote down and do not enforce. This is the enforcement.
 
 **The set is derived from the terminal writers, not from the command names.** A
 command writes a file exactly when it reaches one of the six functions in
-`save.rs` that create or replace one. Keying on the callers would be a list
+`save.rs` --- and, since the 2026-09-01 split, its submodules --- that create or
+replace one. Keying on the callers would be a list
 maintained by hand beside a list maintained by hand; keying on the callee is a
 property of the code.
 
@@ -189,7 +190,15 @@ def commands_that_write(source: str) -> set[str]:
 
 def main() -> int:
     lib = (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
-    save = (ROOT / "src-tauri" / "src" / "save.rs").read_text(encoding="utf-8")
+    # `save.rs` and every submodule under `src/save/`, concatenated. It was one
+    # file until 2026-09-01, and reading only that one would have quietly stopped
+    # covering a terminal writer the moment a split moved it -- the control below
+    # would still pass, on a smaller file, which is the shape this gate exists to
+    # refuse. `sorted` so a failure names the same file twice in a row.
+    save_files = [ROOT / "src-tauri" / "src" / "save.rs"] + sorted(
+        (ROOT / "src-tauri" / "src" / "save").rglob("*.rs")
+    )
+    save = "\n".join(f.read_text(encoding="utf-8") for f in save_files)
     model = (ROOT / "docs" / "THREAT-MODEL.md").read_text(encoding="utf-8")
 
     ok = True
@@ -199,7 +208,8 @@ def main() -> int:
     missing = [t for t in TERMINAL if f"fn {t}" not in save]
     ok &= say(
         not missing,
-        f"all {len(TERMINAL)} terminal writers still exist in save.rs"
+        f"all {len(TERMINAL)} terminal writers still exist across {len(save_files)}"
+        " file(s) of save"
         + (f" -- missing {missing}" if missing else ""),
     )
     if missing:
