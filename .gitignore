@@ -41,6 +41,10 @@ scratch/
 
 # Generated test corpus (regenerate with the testdata/make_*.py scripts)
 testdata/*.pdf
+# `testdata/*.pdf` is not recursive, and `testdata/abort/` holds a document that
+# aborts whatever parses it --- generated like every other fixture, and the one
+# least suitable for committing into a public repository.
+testdata/abort/
 testdata/*.txt
 testdata/hostile-manifest.json
 testdata/incr-manifest.json

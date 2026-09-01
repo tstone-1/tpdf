@@ -103,6 +103,17 @@ FIXTURES: list[tuple[str, list[str]]] = [
     # supplies its size --- which is what `merge-probe` measures and what a
     # mutation of `pagetree::detached_page` could not fail against before it.
     ("testdata/inherited.pdf", ["testdata/make_inherited_pdf.py", "testdata"]),
+    # The cross-reference `/W` that aborts whatever parses it --- residual risk
+    # 21, found by fuzzing on 2026-09-01. Pure Python and 333 bytes, so a runner
+    # can build it, and `worker-probe` skips its two containment checks without
+    # it. ⚠ Nothing may open this with a parser it minds losing: the abort is
+    # `handle_alloc_error` and no guard catches it --- which is why it lives in
+    # `testdata/abort/` rather than beside the others, out of reach of every
+    # `testdata/*.pdf` sweep, since `read_dir` is not recursive.
+    (
+        "testdata/abort/xref-bomb.pdf",
+        ["testdata/make_xref_bomb_pdf.py", "testdata/abort/xref-bomb.pdf"],
+    ),
     # Written by the same run as the line above; listed so a check for its
     # presence is a check for the file rather than for its sibling.
     ("testdata/links-rotated.pdf", ["testdata/make_links_pdf.py", "testdata"]),
