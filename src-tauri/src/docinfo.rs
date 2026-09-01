@@ -841,11 +841,30 @@ fn permissions(revision: i64, p: i64) -> Vec<Permission> {
 fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp> {
     let object = catalog.get(b"Metadata").ok()?;
     let stream = resolve(document, object).as_stream().ok()?;
-    // `decompressed_content` fails on a stream with no filter, which is the
-    // common case here, so falling back to the raw content is the normal path
-    // rather than an error path.
+    // `decompressed_content_with_limit` fails on a stream with no filter, which
+    // is the common case here --- the specification wants a packet readable by a
+    // tool that does not parse PDF --- so falling back to the raw content is the
+    // normal path rather than an error path.
+    //
+    // **The bound is [`crate::xmp::MAX_PACKET`], not [`MAX_DECODE`], and the
+    // difference is 64x.** This was the unbounded `decompressed_content()` until
+    // 2026-09-01, and it was the last production call of it in the tree: a
+    // 2,289-byte document declaring a 1 GiB `/Metadata` packet made this worker
+    // allocate 1,081 MB, against a Windows job object that caps commit at 1 GiB
+    // and against nothing at all on macOS (`docs/THREAT-MODEL.md` residual risk
+    // 2). `LoadOptions::max_decompressed_size`, which [`scan`] does set, bounds
+    // what the *loader* expands for itself and not what a caller asks a `Stream`
+    // for afterwards.
+    //
+    // **What this does not change is the answer**, and saying so is the point.
+    // `xmp::scan` discards any packet over `MAX_PACKET` and reports it unread,
+    // so an inflated packet was thrown away one line later however large it got.
+    // The defect was cost, not correctness --- which is why the bound is the
+    // largest packet that can be *used* rather than the general decode ceiling,
+    // and why the test below asserts on `bytes` rather than on `unread`: `unread`
+    // is set here by two mechanisms and cannot tell them apart.
     let packet = stream
-        .decompressed_content()
+        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)
         .unwrap_or_else(|_| stream.content.clone());
     if packet.is_empty() {
         return Some(crate::xmp::Xmp {
@@ -4665,6 +4684,60 @@ mod tests {
             squeezed.xmp.as_ref().map(|x| x.conformance.clone()),
             Some(vec!["PDF/A-3B".to_string()]),
             "a filtered stream states the same thing as an unfiltered one"
+        );
+    }
+
+    /// A packet declaring more than [`crate::xmp::MAX_PACKET`] is never inflated.
+    ///
+    /// **The assertion is on `bytes`, and the first draft of this test asserted
+    /// on `unread` and could not fail.** `xmp::scan` sets `unread` for any
+    /// packet over `MAX_PACKET` whether it was decoded or not, so two mutations
+    /// --- restoring the unbounded `decompressed_content()`, and dropping the
+    /// refusal so it falls through to the raw bytes --- both survived it. That is
+    /// an outcome two mechanisms produce, and it tests neither.
+    ///
+    /// `bytes` separates them because `xmp::scan` fills it from the length of
+    /// what it is *handed*: the decoded packet if this function inflated one,
+    /// and the stored stream if it refused to. So the mutation that restores the
+    /// unbounded decode reports 64 MiB here, which is the allocation this bound
+    /// exists to prevent, expressed as a number a test can read.
+    #[test]
+    fn a_metadata_packet_over_the_packet_bound_is_never_inflated() {
+        // Spaces deflate to almost nothing, so the *file* is small and the
+        // decode it asks for is far past the bound --- which is the whole shape
+        // of a decompression bomb, and why a size check on the stream as stored
+        // cannot catch one.
+        // One byte past `MAX_PACKET`, deliberately, rather than comfortably past
+        // it: a bomb sized past `MAX_DECODE` instead would be refused by a
+        // 64 MiB bound too, so the test would pass against the wrong constant
+        // and could not tell the two apart.
+        let bomb = vec![b' '; crate::xmp::MAX_PACKET + 1];
+        let bytes = with_metadata(&bomb, true);
+        assert!(
+            bytes.len() < 100_000,
+            "the fixture must be small or it is not testing what a bomb is: {} bytes",
+            bytes.len()
+        );
+
+        let properties = scan(&bytes, 0, None).expect("must parse");
+        let xmp = properties
+            .xmp
+            .as_ref()
+            .expect("the catalog names a packet, so this is not None");
+        assert!(
+            xmp.bytes <= bytes.len(),
+            "the packet was inflated to {} bytes from a {}-byte file, so the \
+             bound did not hold",
+            xmp.bytes,
+            bytes.len()
+        );
+        assert!(
+            xmp.unread,
+            "and a packet nobody could read is reported unread"
+        );
+        assert!(
+            xmp.conformance.is_empty(),
+            "nothing may be claimed on behalf of a packet nobody decoded"
         );
     }
 

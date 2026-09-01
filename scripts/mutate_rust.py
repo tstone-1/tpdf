@@ -5134,10 +5134,34 @@ MUTATIONS += [
         "docinfo: read a metadata stream only when it carries no filter",
         "src/docinfo.rs",
         """    let packet = stream
-        .decompressed_content()
+        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)
         .unwrap_or_else(|_| stream.content.clone());""",
         "    let packet = stream.content.clone();",
         "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
+    ),
+    Mutation(
+        # Ask for the packet unbounded, which is what this was until 2026-09-01:
+        # a 2,289-byte document declaring a 1 GiB /Metadata packet then costs the
+        # worker 1,081 MB. The answer does not change -- xmp::scan discards
+        # anything over MAX_PACKET either way -- so only a reading about COST can
+        # catch this, which is why the test named here asserts on the packet
+        # length reported and not on `unread`.
+        "docinfo: ask for a metadata packet with no bound on its size",
+        "src/docinfo.rs",
+        "        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)",
+        "        .decompressed_content()",
+        "a_metadata_packet_over_the_packet_bound_is_never_inflated",
+    ),
+    Mutation(
+        # Bound at MAX_DECODE, the constant already in scope and the obvious
+        # repair -- and 64x larger than any packet xmp::scan will look at. The
+        # fixture is sized one byte past MAX_PACKET precisely so that this is
+        # distinguishable from the bound above it.
+        "docinfo: bound the metadata packet at the general decode ceiling",
+        "src/docinfo.rs",
+        "        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)",
+        "        .decompressed_content_with_limit(MAX_DECODE)",
+        "a_metadata_packet_over_the_packet_bound_is_never_inflated",
     ),
     Mutation(
         # Read any CMS's encapsulated content as a TSTInfo. Every ordinary
@@ -5715,8 +5739,20 @@ def main() -> int:
     # whole table is what runs before a push, and re-proving ninety-odd
     # mutations that could not have moved is an hour of somebody waiting.
     # The control run and the name cross-check below still run in full.
+    # **Repeatable, and every value must match something.** It was a plain
+    # string option until 2026-09-01, so argparse kept the LAST of several and
+    # silently discarded the rest --- three `--only` flags selected one mutation
+    # and the run ended `[OK] all 1 mutations caught by the test named for
+    # them`, which is a confident pass for two mutations that never executed.
+    # The existing empty-selection guard could not see it, because the selection
+    # was not empty. So the guard is per filter: a value matching nothing is
+    # refused by name, whether or not the others matched.
     parser.add_argument(
-        "--only", default="", help="run mutations whose name contains this"
+        "--only",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="run mutations whose name contains this; repeatable",
     )
     # For the loop while a change is being made, where `--only` needs you to
     # know the mutation names and this needs you to know nothing. It selects the
@@ -5746,7 +5782,24 @@ def main() -> int:
         help="reuse verdicts from an earlier run, if the tracked tree has not moved",
     )
     args = parser.parse_args()
-    chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
+    unmatched = [
+        f
+        for f in args.only
+        if not any(f.lower() in m.name.lower() for m in MUTATIONS)
+    ]
+    if unmatched:
+        for f in unmatched:
+            print(f"[FAIL] no mutation matches {f!r}")
+        print(
+            "[FAIL] a filter that selects nothing is a filter that proved nothing, "
+            "and the mutations the other filters did select do not make up for it"
+        )
+        return 1
+    chosen = [
+        m
+        for m in MUTATIONS
+        if not args.only or any(f.lower() in m.name.lower() for f in args.only)
+    ]
     if args.since:
         # The prefix is a string, not `Path("src-tauri") / m.path`, and that is
         # the whole of what was wrong with this for as long as it existed: git

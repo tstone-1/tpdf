@@ -1,0 +1,136 @@
+# Coverage-guided fuzzing of the parsers tpdf wrote itself.
+#
+# PDFium is deliberately absent from every target here. It is Chrome's parser,
+# Google fuzzes it continuously, and this repository pins it by digest --- so a
+# crash found in it would be a finding about a build we do not control and
+# cannot fix. What is fuzzed instead is the hand-written code in front of it and
+# beside it: the BER walk in `ber.rs`, and the `lopdf` walkers that answer the
+# comments, links, properties and character-mapping questions.
+#
+# **Its own workspace, and that is load-bearing rather than convention.** With
+# `[workspace]` here, `cargo metadata` run against `src-tauri/Cargo.toml` --- which
+# is what `scripts/third_party_notices.py` runs, and what the licensing constraint
+# in AGENTS.md is checked with --- does not see this package or anything it pulls
+# in. So `libfuzzer-sys` and `arbitrary` are not in the shipped tree and not in
+# `THIRD-PARTY-NOTICES.md`, which is correct: no fuzz target is ever linked into a
+# distributable. Both are `MIT OR Apache-2.0` regardless.
+[workspace]
+
+[package]
+name = "tpdf-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# MIT OR Apache-2.0.
+libfuzzer-sys = "0.4"
+# MIT OR Apache-2.0. Turns a fuzzer's byte string into a typed value, which is
+# what the `save_rewrite_update` target needs: its subject takes a `Plan`, not
+# bytes, and a plan built by deserialising JSON would spend nearly every input
+# failing at the JSON layer instead of in the code under test.
+arbitrary = { version = "1", features = ["derive"] }
+# The same version the application resolves, so a target that calls
+# `Document::load_mem_with_options` calls the code that ships. MIT.
+lopdf = "0.44"
+
+# The application's own library. Every walker target goes through this rather
+# than through a copy, so what is fuzzed is what runs -- `annots::scan`,
+# `links::scan`, `docinfo::scan`, `encoding::scan` and `save::rewrite_update`
+# are all `pub` already and need no seam opened for this.
+#
+# `ber` is the exception and does **not** come from here: see the head of
+# `fuzz_targets/ber_definite.rs` for why, and what it costs.
+tpdf = { path = ".." }
+
+# **Host and target must agree about `debug_assertions`, or `tauri` does not
+# compile here at all.** `cargo fuzz` puts `-Cdebug-assertions` in `RUSTFLAGS`
+# and builds with an explicit `--target`, and cargo applies `RUSTFLAGS` only to
+# target artifacts --- never to build scripts, proc macros, or the crates those
+# depend on. `tauri-utils` is both: the target build of it defines
+# `ResolvedCommand::referenced_by` under `#[cfg(debug_assertions)]`, while the
+# host build of it, reached through the `tauri-codegen` proc macro, decides under
+# its *own* `cfg` whether to emit that field. With the two disagreeing,
+# `tauri::generate_context!()` expands to a struct literal missing a field and
+# the error lands on `lib.rs` --- a file that is correct, in a crate that builds
+# everywhere else.
+#
+# This is the cheapest of the three available answers. Dropping
+# `-Cdebug-assertions` instead would fix the build and cost the `ber_definite`
+# target its main oracle: `ber::to_definite_length` carries a `debug_assert_eq!`
+# comparing the measuring walk against the writing one, which is exactly the
+# defect class that target exists to find.
+[profile.release.build-override]
+debug-assertions = true
+
+# libFuzzer needs frames to report, and a release build with no debug info gives
+# a crash whose stack is a list of addresses. `1` is line tables, which is what a
+# minimised finding has to be read with.
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "ber_definite"
+path = "fuzz_targets/ber_definite.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ber_certificate"
+path = "fuzz_targets/ber_certificate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lopdf_load"
+path = "fuzz_targets/lopdf_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "annots_scan"
+path = "fuzz_targets/annots_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "links_scan"
+path = "fuzz_targets/links_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docinfo_scan"
+path = "fuzz_targets/docinfo_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "encoding_scan"
+path = "fuzz_targets/encoding_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "annots_text"
+path = "fuzz_targets/annots_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "save_rewrite_update"
+path = "fuzz_targets/save_rewrite_update.rs"
+test = false
+doc = false
+bench = false
