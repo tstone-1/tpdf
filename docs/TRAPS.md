@@ -20115,6 +20115,14 @@ been re-aimed: `save::` does not occur in `save_outside::tests::a_read_back_...`
 underscore breaks the substring. Both would have named tests the run could not see and
 reported SURVIVED for a deadline that works.
 
+⚠ **The rule was applied on purpose the next time, and it decided the shape of the change.**
+Splitting `save.rs` on 2026-09-01 --- 14,844 lines into a 3,988-line module plus `save/tests.rs`
+and `save/marks.rs` --- put both new files under `save` rather than beside it, precisely so the
+test paths stay `save::tests::*` and `save::marks::*` and the existing `save::` filter reaches
+them. That reasoning was not left standing: three of the 54 re-aimed mutations were run end to
+end and each went red on the test named for it. **Reasoning about a filter and running one
+mutation cost about the same**, which is the argument for doing the second.
+
 The anchors gate cannot see this, because it asks whether a string is in a file and `FILTERS`
 is not a string in any file it reads. The harness's own name guard *would* have refused the
 run --- loud, but only at the next sweep, which may be weeks away. Previous `FILTERS`

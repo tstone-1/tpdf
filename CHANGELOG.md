@@ -19,6 +19,30 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Changed: `save.rs` is three files
+
+An outside review named the one maintainability finding against the crate: `save.rs` at 14,090
+lines. It was 14,844 by the time this was done, and the first measurement decided the shape of
+the answer --- **61% of it was its own test module**. So the tests moved to `save/tests.rs`, one
+concern moved to `save/marks.rs` (turning a mark into an annotation dictionary and an appearance
+stream), and `save.rs` is 3,988 lines.
+
+Nothing was rewritten. The test move is a verified dedent: the transform was asserted to be
+exactly invertible against the block it came from, and `git diff --stat` reported one insertion
+and 9,114 deletions, which is the mechanical statement that no production line was touched.
+
+Both new files are **submodules of `save`** rather than siblings, and that is not tidiness. The
+mutation harness selects which tests may run through a list of module prefixes matched as
+substrings, and this project has an entry about a move that left every anchor valid while
+silently taking two mutations out of every sweep. The test paths stay `save::tests::*` and
+`save::marks::*`; 54 anchors were re-aimed at the new file, and three of them were run end to end
+rather than reasoned about.
+
+One gate was quietly weakened by the split and is fixed with it: `check_writers.py`'s control
+read `save.rs` alone, so after the split it went on passing on a smaller file and would have
+missed a terminal writer that moved into a submodule. It reads the whole `save` tree now, proved
+both ways with a planted function.
+
 ### Changed: the redaction read-back was the last parse in the app process, and it moved
 
 `verify::scan` re-read the file a redaction had just written and parsed it with `lopdf` in the

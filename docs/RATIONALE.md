@@ -705,3 +705,80 @@ about a third. **So does the reason to have a pool** --- `pool-bench` on the sam
 with the ceiling doing its job. The intermediate sizes are not stable enough to read. `BUILD.md`
 has both tables, the caveats, the independent cross-check that says the numbers are the
 document's rather than the harness's, and which figures are conclusions.
+
+
+## Splitting `save.rs`, and what made it safe to do mechanically
+
+An outside review of `main` on 2026-09-01 gave the crate ~7.5/10 and named one maintainability
+finding: `save.rs` at 14,090 lines. It had grown to **14,844** by the time the split was made.
+
+**The first measurement decided the shape of the answer, and it was not the obvious one.** The
+file was 61% tests --- 5,730 lines of production code under a 9,112-line `mod tests`. So the
+question *how should the save be split by concern* was the second question, not the first: two
+thirds of the length was a test module that had no business being in the same file, and moving
+it is a file operation rather than a design decision.
+
+Three things were measured before anything moved, because all three would have made the move
+silently wrong:
+
+- **Where the mutation anchors are.** 156 mutations in `scripts/mutate_rust.py` name
+  `src/save.rs`, and every one of them turned out to be anchored in production code --- not one
+  inside `mod tests`. So moving the tests could not unaim a single mutation, which is the whole
+  reason it went first.
+- **Whether `FILTERS` still reaches the new module.** `mutate_rust.py` selects which tests may
+  run at all through a list of module prefixes matched as **substrings**, and `docs/TRAPS.md`
+  records a move that left every anchor valid while taking two mutations out of every sweep,
+  because `save::` does not occur in `save_outside::tests::...`. That is why both new modules
+  are **submodules of `save`** rather than siblings: the test paths stay `save::tests::*` and
+  `save::marks::*`, so the existing `save::` filter reaches them. Reasoning was not left to
+  stand --- three of the re-aimed mutations were run end to end and each went red on the test
+  named for it.
+- **Whether the dedent is a no-op.** Moving a `mod tests { ... }` body out of its braces means
+  removing one level of indentation from 9,112 lines, and a line inside a multi-line string
+  literal must not be touched. A scanner over the block found 31 continuation lines of
+  multi-line literals; 25 of them are indented, and every one is a **backslash continuation**,
+  where Rust already strips the leading whitespace, so dedenting them changes no string. The
+  other six carry no indentation. The transform was then asserted to be exactly invertible ---
+  re-indent the result, compare byte for byte with the block it came from --- because reading a
+  9,000-line diff proves nothing. `git diff --stat` on `save.rs` for that step reported
+  **1 insertion, 9,114 deletions**, which is the mechanical statement that no production line
+  moved.
+
+**Then one concern moved: the marks.** `save/marks.rs` is the 1,754 contiguous lines that turn a
+`PlannedMark` into an annotation dictionary and an appearance stream --- `Paint`, `Upright`, the
+squiggle period, the stamp inset, the nine `draw_*` functions. It is the largest thing in the
+file a reader of the *save* never has to open, and it carries a vocabulary meaningful nowhere
+else. `turn_pages` and `crop_pages` went with it although a rotation is not a mark, because both
+take a `MarksWritten` token and exist to state the one ordering that module owns: a crop moves
+the origin a mark's quads were measured from.
+
+That move was verified the same way the tests' was, and it needed a different instrument
+because rustfmt legitimately reflows a signature that has grown by eleven characters: strip
+`pub(super) ` and all whitespace from both sides and compare. **61,193 characters against
+61,194, differing by one trailing comma** --- rustfmt's, from breaking `check_replies`'s
+signature across lines. That is the whole of what the move changed.
+
+Which items had to widen to `pub(super)` was computed rather than guessed --- strip the comments
+from what stays behind and from the tests, and intersect the identifiers with the moved block's
+top-level names. That gave nine for `save.rs` and eight for the tests, and the compiler found
+the four it could not: two struct field sets, an import that had come from `crate::edits` rather
+than `crate::docmodel`, and `IncrementalDocument`.
+
+`save::tests` is `save::marks`'s **sibling**, not its child, so `use super::*` cannot reach the
+moved module's items; the test file imports `super::marks::*` explicitly and says why. Two
+constants stayed `pub` and are re-exported from `save.rs`, because `save::OUTLINE_WIDTH` and
+`save::is_wash` are read from `docmodel.rs` and two probes --- a module boundary drawn inside
+this crate is not a reason to rename anything outside it.
+
+**One gate was silently weakened by the split, and closing it is the part worth keeping.**
+`scripts/check_writers.py` read `src/save.rs` and asserted that all seven terminal writers still
+exist there --- the control that stops a rename making every set in that gate empty and two empty
+sets agree. After the split it still passed, on a **smaller file**, and would have gone on
+passing the day a terminal writer moved into a submodule. It reads `save.rs` plus everything
+under `src/save/` now, proved both directions with a planted `fn` in `save/marks.rs`: widened,
+the gate finds it; narrowed back to the one file, it reports it missing.
+
+The result is `save.rs` at 3,988 lines from 14,844. What did **not** happen is the rest of the
+split by concern --- the append path, the staging and rename, the worker seam and the rewrite
+engine are all still in that one file. They are a design question rather than a file operation,
+and the first two moves are what the review's finding was about.

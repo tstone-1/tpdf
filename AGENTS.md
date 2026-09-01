@@ -594,12 +594,14 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   `undriven` table. That harness asserts it already; it needs a screen and is run by hand,
   so two commands shipped unclassified on 2026-08-29 and the check was red for a day with
   every gate green. This one reads the source text and buys the day, not the certainty.
-- `writers` --- every registered command that reaches one of `save.rs`'s six terminal writers
-  is named in `docs/THREAT-MODEL.md` §3's list, and the row's count agrees. That row is the one
-  place answering *how many ways can the webview cause a write*, and it was wrong three times in
-  two weeks, always under-claiming: it said six against a list of five when the answer was eight.
-  The section's own rule --- *the list is the claim and the number follows it* --- had nobody
-  applying it.
+- `writers` --- every registered command that reaches one of the `save` module's terminal
+  writers is named in `docs/THREAT-MODEL.md` §3's list, and the row's count agrees. That row is
+  the one place answering *how many ways can the webview cause a write*, and it was wrong three
+  times in two weeks, always under-claiming: it said six against a list of five when the answer
+  was eight. The section's own rule --- *the list is the claim and the number follows it* --- had
+  nobody applying it. Its control reads `save.rs` **and everything under `src/save/`**: it read
+  the one file until 2026-09-01, when a split moved code out of it, and a control that keeps
+  passing on a smaller file is the failure this gate exists to refuse.
 - `dates` --- no date in a tracked file may be later than today. Provenance here is written as
   dated measurements, and on 2026-08-28 there were **70** stamps reading a day or two ahead,
   every one written by a commit dated 2026-08-28. A stamp in the future does not merely
@@ -611,6 +613,15 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   *and* by absolute, because the share alone missed a month in which both halves grew together.
 - `notices` --- runs last, because it reads the build's own sourcemaps to see which npm packages
   shipped.
+
+**`save.rs` is a directory module since 2026-09-01**, and the reason to know that before
+editing it is `scripts/mutate_rust.py`: 54 mutation anchors name `src/save/marks.rs` rather than
+`src/save.rs`, and both new files are submodules of `save` on purpose, so the harness's
+`save::` filter still reaches their tests. The file went from 14,844 lines to 3,988 --- 61% of it
+was its own test module --- with `save/tests.rs` and `save/marks.rs` beside it.
+`docs/RATIONALE.md` *Splitting `save.rs`* has what was measured before anything moved; the rest
+of the split by concern (the append path, the staging, the worker seam, the rewrite engine) is
+not done and is a design question rather than a file operation.
 
 **`App.svelte` is the layer no gate reaches, so state is born outside it rather than extracted
 from it later.** Anything shaped like a walk, a set, a cache or a map --- anything holding state
