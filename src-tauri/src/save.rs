@@ -117,7 +117,16 @@ const STAGING_ATTEMPTS: u32 = 16;
 /// Every other refusal reaches this through `From<String>`, which is what keeps
 /// the `?` in the middle of `planned_bytes` unchanged: the flag is set at the
 /// one call site that knows, and defaults to false everywhere else.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **The serialised form is the contract `print_document` rejects with**, and
+/// the two field names are the whole of it: `message` and `changed`, lowercase,
+/// with nothing else beside them. The window reads them exactly as it reads
+/// `SaveFailure`'s, so a rename here is a change to what the frontend parses and
+/// not a refactor --- which is why
+/// `the_wire_shape_of_a_refusal_is_a_message_and_a_changed_flag` asserts the
+/// names against literals rather than round-tripping through this same derive,
+/// where a writer and its own reader would agree about anything.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Refusal {
     /// What to tell the reader.
     pub message: String,
@@ -282,14 +291,15 @@ pub(crate) const NO_VIEW_TURN: u8 = 0;
 /// answers differ because the stakes do, and this is the one place that is
 /// written down.
 ///
-/// **The refusal carries `changed`, and `print_document` currently throws it
-/// away.** That command returns `Result<(), String>`, so what reaches the window
-/// is the sentence and not the flag a save's refusal uses to decide whether
-/// Reload may be offered --- `docs/TRAPS.md`, *A refusal flattened to a string
-/// across a process boundary loses the action that answers it*. The flag is set
-/// anyway, because it is the fact and the reader of it is the caller's to gain;
-/// what closes the gap for a reader today is the message naming the escape,
-/// which is why it does.
+/// **The refusal carries `changed`, and since 2026-09-01 `print_document`
+/// carries it out.** That command rejects with a serialised [`Refusal`] rather
+/// than with its message, so the window branches on the same flag a save's
+/// refusal gives it and can put the actions that answer this one beside the
+/// sentence --- `docs/TRAPS.md`, *A refusal flattened to a string across a
+/// process boundary loses the action that answers it*, whose shape this was for
+/// the day between the guard landing and the wire carrying it. The message
+/// still names the escape, because a reader who can act on the sentence unaided
+/// is not depending on a button being drawn.
 ///
 /// # Errors
 ///
@@ -5440,11 +5450,11 @@ mod tests {
 
         let why = print_bytes(&at, &plan, NO_VIEW_TURN, None)
             .expect_err("a print job over a file that is not the one opened must be refused");
-        // The flag, not the wording, is what a caller branches on --- and it is
-        // set here even though `print_document` currently flattens a refusal to
-        // its message, so the window gets the sentence and not the Reload
-        // button a save's refusal earns. The message names the escape for that
-        // reason; the flag is what a print command able to carry one would read.
+        // The flag, not the wording, is what a caller branches on, and since
+        // 2026-09-01 `print_document` rejects with the whole `Refusal` --- so
+        // this is the value the window branches on rather than a fact set for a
+        // reader that did not exist. The message names the escape as well,
+        // which is what serves a reader whose window drew no button.
         assert!(
             why.changed,
             "the refusal is about the file, which is the fact a caller branches on: {}",
@@ -5468,6 +5478,57 @@ mod tests {
                 .contains("A print job is built from the file on disk"),
             "and names the operation it is about: {}",
             why.message
+        );
+
+        // **What crosses the IPC boundary, asserted against literals.** The
+        // window parses these two names out of a rejection and nothing on this
+        // side is compiled against its parser, so a rename here is silent in
+        // both directions: `changed` under any other spelling is a flag the
+        // frontend reads as absent, which is the reassuring branch --- no
+        // Reload offered, no error, and a reader told a sentence with nothing
+        // beside it. Asserted on the refusal this test already produced rather
+        // than on a synthetic one, so what is checked is the value that
+        // actually reaches the wire.
+        let wire = serde_json::to_value(&why).expect("a refusal is what the command rejects with");
+        assert_eq!(
+            wire,
+            serde_json::json!({ "message": why.message, "changed": true }),
+            "the wire shape is two fields and their names are the contract: {wire}"
+        );
+    }
+
+    /// The rejection shape `print_document` and the window agree on.
+    ///
+    /// Separate from the test above because that one needs a fixture and this
+    /// one is about the derive: a `[SKIP]` on a missing `testdata/` must not
+    /// take the contract with it.
+    #[test]
+    fn the_wire_shape_of_a_refusal_is_a_message_and_a_changed_flag() {
+        let wire = serde_json::to_value(Refusal::changed("the file changed"))
+            .expect("a refusal serialises");
+        assert_eq!(
+            wire,
+            serde_json::json!({ "message": "the file changed", "changed": true })
+        );
+        // The other direction, and it is the one that matters for a caller
+        // deciding whether to offer Reload: everything that is not the file
+        // having moved has to say so rather than say nothing.
+        assert_eq!(
+            serde_json::to_value(Refusal::from("could not be read")).expect("a refusal serialises"),
+            serde_json::json!({ "message": "could not be read", "changed": false })
+        );
+        // A third field would be legal JSON, parse without complaint at the far
+        // end, and be exactly how this contract grows past what the window was
+        // written for. `json!` above compares whole objects, so it already
+        // refuses one; this says so where a reader is looking.
+        let object = serde_json::to_value(Refusal::from("x")).expect("a refusal serialises");
+        assert_eq!(
+            object
+                .as_object()
+                .expect("an object, not a bare string")
+                .len(),
+            2,
+            "two fields and no more: {object}"
         );
     }
 

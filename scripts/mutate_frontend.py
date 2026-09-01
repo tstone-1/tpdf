@@ -375,6 +375,38 @@ MUTATIONS = [
         "says the copy came from a newer file, and does not call it an error",
     ),
     Mutation(
+        # Stringify the whole rejection, which is what every catch did before
+        # there was a seam and what printing's did until the refusal grew
+        # fields. `[object Object]` where a sentence belongs, and the buttons
+        # still appear beside it, so the window looks like it is working.
+        "recovery: stringify a refusal instead of reading its message",
+        "src/lib/recovery.ts",
+        '    message: typeof fields.message === "string" ? fields.message : String(thrown),',
+        "    message: String(thrown),",
+        "reads the message off a refusal object",
+    ),
+    Mutation(
+        # Drop the flag on the way through. The sentence is right, the file has
+        # changed underneath, and the reader is told so with nothing to press --
+        # which is the refusal-flattened-to-a-string failure arriving one layer
+        # further in, where no backend test can see it.
+        "recovery: read a refusal's message and lose the flag beneath it",
+        "src/lib/recovery.ts",
+        "    changed: flagOf(fields.changed),",
+        "    changed: undefined,",
+        "carries the flag the rules decide from",
+    ),
+    Mutation(
+        # Take a flag from whatever arrives in the field. A `reopen` of
+        # `"false"` is then true, and the one refusal a reader most needs the
+        # buttons for is the one that withholds them.
+        "recovery: believe a flag that is not a boolean",
+        "src/lib/recovery.ts",
+        '  return typeof field === "boolean" ? field : undefined;',
+        "  return field as boolean | undefined;",
+        "takes a flag only where it is a boolean",
+    ),
+    Mutation(
         # Answer "am I up to date" without saying which version that is. The
         # reader presses the command *because* they want the number, and an
         # answer that omits it is the silence this replaced wearing a sentence.

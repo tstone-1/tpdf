@@ -17,7 +17,30 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.0] - 2026-09-01
+## [26.9.1] - Unreleased
+
+### Fixed: a refused print now arrives with the actions that answer it
+
+26.9.0 taught printing to refuse a file that changed on disk under the open document, and
+the refusal reached the window as a sentence: `print_document` rejected with a `String`, so
+the one bit that lets the window offer anything --- `changed` --- was set on the backend and
+thrown away at the IPC boundary. The reader was told their file had moved and given nothing
+to press.
+
+The command now rejects with the serialised `save::Refusal` itself, two fields and no more,
+and the window routes it through the same rules a refused save uses: the prompt carries
+**Save a copy** and **Reload**, copy first, because the unsaved edits are exactly what the
+print job would have been built from. Every other print failure --- an encrypted document, a
+job the platform will not read back --- carries `changed: false` and correctly offers
+nothing.
+
+Three catches in the window hand-built the same reading of a rejection, and printing's built
+none; the reading is now one function, `recovery.refusalOf`, and `afterFailedSave` is
+`afterRefusal` --- it never decided anything about saving, and a print refusal is now the
+second population the name would have misdescribed. `save_check.py` gained a phase that
+provokes the refusal from the real menu with a second writer and asserts no print panel
+opens; the offer buttons themselves are in the web view, which that harness cannot reach,
+and its docstring says so rather than rounding up.
 
 ### Fixed: Acrobat draws a box we told it would draw nothing
 

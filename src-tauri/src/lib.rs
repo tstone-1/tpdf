@@ -2422,6 +2422,15 @@ async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Result
 /// outcome is deliberately not reported: `runOperation` answers one boolean for
 /// both "printed" and "cancelled" (see `print_macos::present`), so a caller
 /// waiting for it could only turn a Cancel into an error message.
+///
+/// **Rejects with a serialised [`save::Refusal`], not with a sentence**, since
+/// 2026-09-01. One of the refusals here is about the *file* having been replaced
+/// under the reader, and Save a copy and Reload are the two things that answer
+/// it --- neither of which a window can offer for a refusal it can only read as
+/// prose, and neither of which it may offer for the refusals where reloading
+/// would spend the reader's edits for nothing. Every other error path carries
+/// `changed: false` through `From<String>`, so the flag is set at the one call
+/// site that knows it and nowhere else.
 #[tauri::command]
 async fn print_document(
     app: tauri::AppHandle,
@@ -2431,7 +2440,7 @@ async fn print_document(
     doc: Option<u32>,
     pages: Option<Vec<u32>>,
     turns: u8,
-) -> Result<(), String> {
+) -> Result<(), save::Refusal> {
     let source = PathBuf::from(&path);
     // Read here rather than inside the chooser, so that what decides the shape of
     // the job is a pure function of the plan and the range --- and lives in the
@@ -2483,41 +2492,63 @@ async fn print_document(
         Some(doc) => password_for(&service, doc, "print_document").await,
         None => None,
     };
-    let build = move || -> Result<Vec<u8>, String> {
-        // **The two routes that do not go through `save::print_bytes`, which asks
-        // this itself.** All three read `source` by name, so all three can be
-        // handed a file that is no longer the one the reader is looking at ---
-        // `Passthrough` prints the whole of it, `Range` prints the page numbers
-        // the reader typed against a document that no longer has those pages.
-        // Asked once here rather than in each arm, because a second call would
-        // hash the file twice for the arm that already did it.
-        //
-        // `plan` is what carries the fingerprint, and a print with no document
-        // open has none to compare: `print::route` sends a plan-less job to
-        // `Range`, and nothing about it was made against a file. See
-        // `save::print_ready` for why a missing fingerprint prints rather than
-        // being refused.
-        if !matches!(route, print::Route::Working) {
-            if let Some(plan) = plan.as_ref() {
-                save::print_ready(&source, plan).map_err(|refused| refused.message)?;
-            }
-        }
-        match route {
-            print::Route::Passthrough => {
-                std::fs::read(&source).map_err(|e| format!("could not read {source:?}: {e}"))
-            }
-            print::Route::Working => {
-                let plan = plan.ok_or("the working document has no plan to print")?;
-                save::print_bytes(&source, &plan, turns, password.as_deref())
-                    .map_err(|refused| refused.message)
-            }
-            print::Route::Range(job) => print::build(&source, &job),
-        }
-    };
+    let build = move || print_job(&source, &route, plan.as_ref(), turns, password.as_deref());
     let bytes = tauri::async_runtime::spawn_blocking(build)
         .await
-        .map_err(|e| format!("the print job could not be built: {e}"))??;
-    present_job(&app, bytes, title, expected)
+        .map_err(|e| save::Refusal::from(format!("the print job could not be built: {e}")))??;
+    present_job(&app, bytes, title, expected).map_err(save::Refusal::from)
+}
+
+/// The bytes of a print job, whichever route the reader's document takes.
+///
+/// A function rather than the closure it was until 2026-09-01, and the reason is
+/// the error type beside it. Every refusal here now reaches the window whole,
+/// including the one bit that decides what the window may offer to do about it,
+/// and the way that stops being true is a `map_err` reaching for the message ---
+/// which compiles, reads correctly, and delivers a correct sentence with the
+/// action missing. That is exactly the shape `docs/TRAPS.md` records under *A
+/// refusal flattened to a string across a process boundary loses the action that
+/// answers it*, and it was invisible to every test while this was a closure
+/// inside a `#[tauri::command]`: nothing can call one.
+///
+/// # Errors
+///
+/// The source is not the file the plan was made against, or anything the route's
+/// own writer refuses.
+fn print_job(
+    source: &Path,
+    route: &print::Route,
+    plan: Option<&edits::Plan>,
+    turns: u8,
+    password: Option<&str>,
+) -> Result<Vec<u8>, save::Refusal> {
+    // **The two routes that do not go through `save::print_bytes`, which asks
+    // this itself.** All three read `source` by name, so all three can be
+    // handed a file that is no longer the one the reader is looking at ---
+    // `Passthrough` prints the whole of it, `Range` prints the page numbers
+    // the reader typed against a document that no longer has those pages.
+    // Asked once here rather than in each arm, because a second call would
+    // hash the file twice for the arm that already did it.
+    //
+    // `plan` is what carries the fingerprint, and a print with no document
+    // open has none to compare: `print::route` sends a plan-less job to
+    // `Range`, and nothing about it was made against a file. See
+    // `save::print_ready` for why a missing fingerprint prints rather than
+    // being refused.
+    if !matches!(route, print::Route::Working) {
+        if let Some(plan) = plan {
+            save::print_ready(source, plan)?;
+        }
+    }
+    match route {
+        print::Route::Passthrough => std::fs::read(source)
+            .map_err(|e| save::Refusal::from(format!("could not read {source:?}: {e}"))),
+        print::Route::Working => {
+            let plan = plan.ok_or("the working document has no plan to print")?;
+            save::print_bytes(source, plan, turns, password)
+        }
+        print::Route::Range(job) => print::build(source, job).map_err(save::Refusal::from),
+    }
 }
 
 /// Hands built bytes to the platform, having first read them back.
@@ -3469,9 +3500,94 @@ mod tests {
         );
     }
     use super::{
-        app_version, await_reply, env_list, env_or, parse_setting, reply_channel, spike_env,
-        with_close_note, with_session, SaveFailure, WEBVIEW_ALIVE,
+        app_version, await_reply, env_list, env_or, parse_setting, print_job, reply_channel,
+        spike_env, with_close_note, with_session, SaveFailure, WEBVIEW_ALIVE,
     };
+
+    /// A plan made against a file, as a print of an unedited document carries one.
+    ///
+    /// One page and a fingerprint, which is everything `print_job` reads on the
+    /// route below --- the passthrough hands the file over without parsing it,
+    /// so a plan describing a document this scratch file is not would be checked
+    /// by nothing here and is not worth pretending otherwise.
+    fn plan_opened_as(source: &std::path::Path) -> crate::edits::Plan {
+        crate::edits::Plan {
+            baseline: 1,
+            opened_as: Some(
+                crate::fingerprint::Fingerprint::of(source).expect("fingerprint the scratch file"),
+            ),
+            pages: vec![crate::edits::PageView {
+                id: 1,
+                source: crate::docmodel::PageSource::Baseline(0),
+                turns: 0,
+                crop: None,
+            }],
+            marks: Vec::new(),
+            redactions: Vec::new(),
+            notes: Vec::new(),
+            discards: Vec::new(),
+        }
+    }
+
+    /// A print of a file that was replaced reaches the command carrying `changed`.
+    ///
+    /// **This is what [`print_job`] being a function buys**, and the assertion
+    /// is on the flag rather than on the sentence for the reason `save::Refusal`
+    /// carries one at all: the window offers Reload for this refusal and must
+    /// not offer it for the others, and a `map_err` reaching for `.message`
+    /// anywhere between here and the rejection takes that decision away while
+    /// leaving a correct sentence behind. Nothing else in the tree can see that
+    /// happen --- `print_document` is a `#[tauri::command]` and no test calls
+    /// one.
+    ///
+    /// The control runs first, so what follows is a difference and not a
+    /// reading: the same call on the same path before anything lands over it.
+    /// Bytes rather than a PDF, because the passthrough reads and does not
+    /// parse, and the guard under test is a hash of the file.
+    #[test]
+    fn a_print_of_a_replaced_file_rejects_with_the_flag_that_offers_reload() {
+        let scratch =
+            std::env::temp_dir().join(format!("tpdf-print-refusal-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).expect("a scratch directory of this test's own");
+        let at = scratch.join("open.pdf");
+        std::fs::write(&at, b"the document the reader opened").expect("plant it");
+        let plan = plan_opened_as(&at);
+
+        let bytes = print_job(&at, &crate::print::Route::Passthrough, Some(&plan), 0, None)
+            .expect("an unchanged file is the whole point of the guard letting it through");
+        assert_eq!(bytes, b"the document the reader opened".as_slice());
+
+        std::fs::write(&at, b"a newer copy landing over the open document").expect("replace it");
+        let why = print_job(&at, &crate::print::Route::Passthrough, Some(&plan), 0, None)
+            .expect_err("a print job over a file that is not the one opened must be refused");
+        assert!(
+            why.changed,
+            "the refusal is about the file, which is what the window branches on: {}",
+            why.message
+        );
+        assert_eq!(
+            serde_json::to_value(&why).expect("the command rejects with this value"),
+            serde_json::json!({ "message": why.message, "changed": true }),
+            "and it crosses the boundary whole"
+        );
+
+        // **The other direction, which is the one that costs the reader their
+        // work.** A flag that is set for every refusal offers Reload for one
+        // reloading cannot answer, and the assertion above cannot tell that
+        // apart from a flag that is carried correctly. This route refuses
+        // before it reads anything, so what it produces is a plain refusal ---
+        // and a plain refusal is `changed: false` because `From<&str>` says so
+        // and not because anything here decided it.
+        let unplanned = print_job(&at, &crate::print::Route::Working, None, 0, None)
+            .expect_err("the working document cannot be printed without its plan");
+        assert!(
+            !unplanned.changed,
+            "only the fingerprint sets the flag: {}",
+            unplanned.message
+        );
+
+        std::fs::remove_dir_all(&scratch).expect("leave nothing behind");
+    }
 
     /// A save that failed after the close, with the document closing cleanly.
     ///
