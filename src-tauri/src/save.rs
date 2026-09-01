@@ -193,21 +193,6 @@ enum OnChange {
     Proceed,
 }
 
-/// The bytes of a working document, and whether its source had changed.
-///
-/// **It carried the staging fingerprint too until 2026-08-28**, and that field
-/// is gone rather than merely unread: [`stage_in_place`] was its only consumer,
-/// and it no longer goes through here at all --- its bytes are written by a
-/// worker rather than returned to this process. What is left is the three copy
-/// paths, none of which ever read it.
-struct Planned {
-    bytes: Vec<u8>,
-    /// The source had changed since it was opened, and `OnChange::Proceed` let
-    /// it through. Always false under `OnChange::Refuse`, which returns an error
-    /// instead of setting this.
-    changed: bool,
-}
-
 /// A copy that was written, and whether its source had changed underneath.
 ///
 /// `changed` is a fact the reader has to be told rather than a failure: the file
@@ -431,23 +416,79 @@ pub fn print_bytes(
     // sentence about the wrong document. Asked here rather than by the caller
     // because `print::route`'s `Working` arm calls this function *directly*.
     print_ready(source, plan)?;
+    into_scratch(source, |reading, len, into| {
+        staged_rewrite(
+            rewriter,
+            reading,
+            len,
+            into,
+            plan,
+            Job::Print { view },
+            password,
+        )
+    })
+}
+
+/// The bytes of a print job for the page range a reader typed.
+///
+/// **[`print_bytes`]'s counterpart for the route that carries no plan, and the
+/// last parse of the reader's document this process did.** `print::build` took a
+/// path and ran here; `docs/THREAT-MODEL.md` residual risk 18 never listed it,
+/// because that risk names the paths that *write* a document and a page range
+/// writes nothing --- it builds bytes and hands them to a printer. It is reached
+/// by opening a file and typing two numbers.
+///
+/// Everything else about it is [`print_bytes`]: the source goes in as a handle,
+/// the answer is written into a scratch file this process created, and this
+/// process reads that file back through the handle it created it with.
+///
+/// **No [`print_ready`] here, and the caller is why.** All three print routes
+/// ask it, and the two that do not go through [`print_bytes`] are asked together
+/// in `lib.rs`'s `print_job` --- a second call would hash the file twice.
+///
+/// **No password either**, and that is not an omission. A range job carries no
+/// plan, so there is nothing to decrypt *for*: `print::build_update` refuses an
+/// encrypted document outright, because its writer emits every object in the
+/// clear and a selection cannot be appended. See `print::build_update`.
+///
+/// # Errors
+///
+/// The source cannot be opened, the scratch file cannot be created or read back,
+/// or anything [`crate::print::build_update`] refuses.
+pub fn print_range_bytes(
+    source: &Path,
+    job: &crate::print::Job,
+    rewriter: &dyn Rewriter,
+) -> Result<Vec<u8>, Refusal> {
+    into_scratch(source, |reading, len, into| {
+        staged_range(rewriter, reading, len, into, job)
+    })
+}
+
+/// Runs a builder against a scratch file and hands back what it wrote.
+///
+/// **The dance both print routes do**, in one place because it is the same file
+/// with the same lifetime and the same reason for existing: `NSPrintOperation`
+/// and `Windows.Data.Pdf` are handed bytes rather than a pathname, so a print
+/// job --- unlike a save --- has to come *back*.
+///
+/// Read back through the same handle the writer wrote down, never by re-opening
+/// the name: the file is unlinked below and the name is this process's own, but
+/// reading a handle rather than a name is what the whole boundary is written in
+/// and there is no reason for this one call to be the exception.
+///
+/// # Errors
+///
+/// The source cannot be opened, the scratch file cannot be created, `build`
+/// refuses, or the bytes cannot be read back.
+fn into_scratch(
+    source: &Path,
+    build: impl FnOnce(&mut std::fs::File, usize, &mut std::fs::File) -> Result<usize, Refusal>,
+) -> Result<Vec<u8>, Refusal> {
     // The handle, never the pathname handed on --- see `opened_to_rewrite`.
     let (mut reading, len) = opened_to_rewrite(source)?;
     let (at, mut into) = job_scratch()?;
-    // Read back through the same handle the worker wrote down, never by
-    // re-opening `at`: the file is unlinked below and the name is this process's
-    // own, but reading a handle rather than a name is what the whole boundary is
-    // written in and there is no reason for this one call to be the exception.
-    let built = staged_rewrite(
-        rewriter,
-        &mut reading,
-        len,
-        &mut into,
-        plan,
-        Job::Print { view },
-        password,
-    )
-    .and_then(|wrote| {
+    let built = build(&mut reading, len, &mut into).and_then(|wrote| {
         read_whole(&mut into, wrote)
             .map_err(|e| Refusal::from(format!("the print job could not be read back: {e}")))
     });
@@ -806,6 +847,7 @@ pub fn write_merged(
     others: &[PathBuf],
     out: &Path,
     password: Option<&str>,
+    merger: &dyn Rewriter,
 ) -> Result<Merged, Refusal> {
     if others.is_empty() {
         return Err("choose at least one document to merge in".into());
@@ -851,86 +893,77 @@ pub fn write_merged(
     // incoming file is refused a few lines below because there is no way to
     // write one file that preserves *two* documents' encryption --- and tpdf
     // holds no key for those anyway, having never opened them.
-    let base = planned_bytes(source, plan, OnChange::Proceed, Job::Save, password)?;
-    let mut merged = Document::load_mem_with_options(
-        &base.bytes,
-        lopdf::LoadOptions {
-            max_decompressed_size: Some(MAX_DECODE),
-            // **The same password, because `rewrite` has just put the
-            // encryption back.** These are bytes this module wrote a line ago,
-            // and if the source was encrypted so are they. Omitting it does not
-            // fail the load: `lopdf` parses *no objects at all* for a document
-            // it cannot authenticate and still answers `Ok`, so what arrives is
-            // an empty document and the merge below fails at `into.catalog()`
-            // with a message blaming this module's own writer. An absence and a
-            // lock are the same reading, and the reassuring one is wrong.
-            password: password.map(str::to_string),
-            ..Default::default()
-        },
-    )
-    // Not a refusal a reader can act on, and it should be unreachable: these
-    // are bytes this module wrote a line ago. Said plainly rather than dressed
-    // up, because a message suggesting the reader do something about it would
-    // be a wrong diagnosis.
-    .map_err(|e| format!("tpdf could not read back the document it just built: {e}"))?;
+    // **Read, not parsed**, and that distinction is the whole of what moved on
+    // 2026-09-01. Filling a buffer with a file's bytes asks nothing about what
+    // they mean; every `lopdf` load that used to happen here now happens in a
+    // sandboxed worker. See `crate::worker_proto::Request::Merge`.
+    let (whole, incoming) = concatenated(others)?;
 
-    // **Off the document before the merge, and back on after it.** That is
-    // `rewrite`'s constraint for `rewrite`'s reason: `Document::encrypt` walks
-    // the object map and encrypts what it finds, so an object added after it
-    // would be written in the clear beside objects that are not, and no reader
-    // could open the result. `take` is also required rather than tidy --- a
-    // document that was decrypted refuses to be re-encrypted while the state is
-    // still on it.
+    // The fingerprint, which is a question about the *file* and needs filesystem
+    // authority no worker has. `OnChange::Proceed`, because a merge writes
+    // somewhere new: a source that changed under the reader is recorded and
+    // reported rather than refused.
     //
-    // The load above authenticated, so this is the base's own state: the
-    // algorithm, the permission bits and both passwords, parsed from its
-    // `/Encrypt` and never rebuilt.
-    let encryption = merged.encryption_state.take();
-
-    for other in others {
-        let incoming = Document::load_with_options(
-            other,
-            lopdf::LoadOptions {
-                max_decompressed_size: Some(MAX_DECODE),
-                ..Default::default()
+    // **Bound as `base` rather than `ready`, which is `write_copy`'s word.** Two
+    // identical lines make one anchor ambiguous, an ambiguous anchor is refused,
+    // and the mutation aimed at it then stops being able to fail --- the trap
+    // this function's own comment above cites, arriving here the moment the
+    // merge started staging the way the copy does. Distinct bindings are the
+    // fix; a longer anchor is only the workaround.
+    let base = rewrite_ready(source, plan, OnChange::Proceed)?;
+    // The handle, never the pathname handed on --- see `opened_to_rewrite`.
+    let (mut reading, len) = opened_to_rewrite(source)?;
+    let mut pages = 0;
+    let staged = stage(out, |writing| {
+        staged_merge(
+            merger,
+            &mut reading,
+            len,
+            writing,
+            plan,
+            Inputs {
+                whole: &whole,
+                each: &incoming,
             },
+            password,
         )
-        .map_err(|e| format!("could not read {}: {e}", name_of(other)))?;
-        // Both shapes, for `planned_bytes`' reason: `lopdf` removes the trailer
-        // entry the moment it authenticates -- and it tries the empty password
-        // unprompted -- so asking whether the trailer says `/Encrypt` reports a
-        // permission-restricted document as plain.
-        if incoming.was_encrypted() || incoming.is_encrypted() {
-            return Err(format!(
-                "{} is encrypted, and merging rewrites it --- which would silently remove \
-                 that. Leave it out, or save an unencrypted copy of it first.",
-                name_of(other)
-            )
-            .into());
-        }
-        crate::merge::append(&mut merged, &incoming)
-            .map_err(|why| format!("could not merge {}: {why}", name_of(other)))?;
-    }
-
-    // Last, after every incoming file has been appended --- see the `take`
-    // above. Without this the merge of an encrypted base would be written in
-    // the clear, which is exactly the silent removal the incoming-file refusal
-    // a few lines up exists to prevent, arriving through the base instead.
-    if let Some(state) = &encryption {
-        merged.encrypt(state).map_err(|e| {
-            // Not a sentence about the reader's document: the state came out of
-            // this same file a moment ago, so a failure here is tpdf's.
-            format!("tpdf could not restore this document's encryption: {e}")
-        })?;
-    }
-
-    let bytes = serialise(&mut merged, "the merged document")?;
-    write_atomically(out, &bytes)?;
+        .map(|counted| pages = counted)
+    })?;
+    commit(&staged, out)?;
     Ok(Merged {
         changed: base.changed,
-        pages: merged.get_pages().len() as u32,
+        pages,
         files: others.len() as u32,
     })
+}
+
+/// Reads every incoming document into one buffer, and says where each begins.
+///
+/// **The coordinator's whole part in a merge's inputs.** It opens the files the
+/// reader chose and copies their bytes; it does not parse them, and after
+/// 2026-09-01 nothing in this process does. The buffer and the spans are what
+/// cross to the worker --- one mapping rather than one per file, for the reason
+/// [`crate::worker::IN_FD`] gives.
+///
+/// # Errors
+///
+/// A file that cannot be read, named by the name the reader saw.
+fn concatenated(others: &[PathBuf]) -> Result<(Vec<u8>, Vec<Incoming>), Refusal> {
+    let mut inputs = Vec::new();
+    let mut incoming = Vec::with_capacity(others.len());
+    for other in others {
+        let bytes = std::fs::read(other)
+            .map_err(|e| Refusal::from(format!("could not read {}: {e}", name_of(other))))?;
+        incoming.push(Incoming {
+            at: inputs.len(),
+            len: bytes.len(),
+            // The name the reader saw in the dialog, resolved here because this
+            // is where the path is. See `Incoming::label`.
+            label: name_of(other),
+        });
+        inputs.extend_from_slice(&bytes);
+    }
+    Ok((inputs, incoming))
 }
 
 /// A path as it should appear in a message to the reader.
@@ -1068,6 +1101,25 @@ fn staged_rewrite(
     password: Option<&str>,
 ) -> Result<usize, Refusal> {
     let wrote = rewriter.write(source, len, out, plan, job, password)?;
+    landed_is(out, wrote)
+}
+
+/// Checks a writer's reported length against the file's own size.
+///
+/// **The whole of what stands between a lying or truncated write and a
+/// destination**, on both routes that hand a document to a writer this process
+/// does not contain: [`staged_rewrite`] and [`staged_range`]. The bytes never
+/// reach this process, so its own size is the only reading available.
+///
+/// One function rather than one per caller, because two copies of it would be
+/// two statements of what a completed write looks like --- and a mutation of one
+/// would survive, which `docs/TRAPS.md` records under *Two copies of a
+/// distinction drift*.
+///
+/// # Errors
+///
+/// The file cannot be measured, or its size is not the length reported.
+fn landed_is(out: &std::fs::File, wrote: usize) -> Result<usize, Refusal> {
     let landed = out
         .metadata()
         .map_err(|e| format!("could not measure the staged file: {e}"))?
@@ -1080,6 +1132,52 @@ fn staged_rewrite(
         .into());
     }
     Ok(wrote)
+}
+
+/// Builds a print job for the page range `job` names, into `out`.
+///
+/// [`staged_rewrite`]'s counterpart for the one route that carries no plan. The
+/// cross-check below is the same one and is the same function, because what it
+/// asserts --- that the writer's reported length is the file's size --- is a
+/// property of the channel rather than of the instruction sent down it.
+///
+/// # Errors
+///
+/// Anything [`crate::print::build_update`] refuses, the write failing, or a
+/// length that disagrees with the file.
+fn staged_range(
+    rewriter: &dyn Rewriter,
+    source: &mut std::fs::File,
+    len: usize,
+    out: &mut std::fs::File,
+    job: &crate::print::Job,
+) -> Result<usize, Refusal> {
+    let wrote = rewriter.write_range(source, len, out, job)?;
+    landed_is(out, wrote)
+}
+
+/// Merges `source` and `inputs` into `out`, and checks what landed.
+///
+/// [`staged_rewrite`]'s counterpart for the widest instruction. The same
+/// cross-check for the same reason: the bytes never reach this process, so the
+/// staged file's own size is the only reading of what was written.
+///
+/// # Errors
+///
+/// Anything [`merge_update`] refuses, the write failing, or a length that
+/// disagrees with the file.
+fn staged_merge(
+    rewriter: &dyn Rewriter,
+    source: &mut std::fs::File,
+    len: usize,
+    out: &mut std::fs::File,
+    plan: &Plan,
+    inputs: Inputs<'_>,
+    password: Option<&str>,
+) -> Result<u32, Refusal> {
+    let (wrote, pages) = rewriter.merge(source, len, out, plan, inputs, password)?;
+    landed_is(out, wrote)?;
+    Ok(pages)
 }
 
 /// Opens a document to be rewritten, and measures it.
@@ -2084,6 +2182,67 @@ pub trait Rewriter: Send {
         job: Job,
         password: Option<&str>,
     ) -> Result<usize, Refusal>;
+
+    /// Writes the pages `job` names, each turned by the reader's view, into
+    /// `out`, and says how many bytes.
+    ///
+    /// **A second method rather than a second trait, because it is the same
+    /// act.** What crosses this seam either way is *produce a document from
+    /// these bytes and write it down this channel*; only the instruction
+    /// differs, and it differs because a page range a reader typed is not an
+    /// edit --- it carries no marks, no crops and no plan, which
+    /// `crate::print::select` has documented since it was written. Expressing
+    /// that as a [`Plan`] would mean the coordinator resolving page numbers
+    /// against a page table, which is the parse this exists to move.
+    ///
+    /// **No password**, for the reason `crate::print::build_update` refuses an
+    /// encrypted document rather than unlocking one: its writer emits every
+    /// object in the clear, so a key would produce a decrypted copy rather than
+    /// a printable one.
+    ///
+    /// `len`, `&mut` and the handles are [`Rewriter::write`]'s and mean the
+    /// same.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`crate::print::build_update`] refuses, and the write failing.
+    fn write_range(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        job: &crate::print::Job,
+    ) -> Result<usize, Refusal>;
+
+    /// Writes `source` under `plan`, with `inputs` appended, into `out`.
+    ///
+    /// **The third instruction across this seam, and the widest.** The other two
+    /// are about the document the reader opened; this one appends documents tpdf
+    /// has never seen --- a reader picked them in a dialog, and every one of them
+    /// is parsed whole. `inputs` is their bytes concatenated and `spans` names
+    /// where each begins, which is [`crate::worker_proto::Request::Merge`]'s
+    /// shape and is explained there.
+    ///
+    /// **The coordinator reads those files and does not parse them.** Filling a
+    /// buffer with bytes asks nothing about what they mean; handing them to
+    /// `lopdf` is what this takes away.
+    ///
+    /// It answers with two numbers because a merge does: the length, for the
+    /// same check every other write gets, and the page count, which can only be
+    /// taken where the merged document is.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`merge_update`] refuses, and the write failing.
+    fn merge(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        plan: &Plan,
+        inputs: Inputs<'_>,
+        password: Option<&str>,
+    ) -> Result<(usize, u32), Refusal>;
 }
 
 /// Where a parse of the reader's own document happens.
@@ -2120,6 +2279,42 @@ impl Rewriter for Here {
             .and_then(|()| out.flush())
             .map_err(|e| format!("the rewritten document could not be written: {e}"))?;
         Ok(bytes.len())
+    }
+
+    fn write_range(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        job: &crate::print::Job,
+    ) -> Result<usize, Refusal> {
+        use std::io::Write as _;
+
+        let original = read_whole(source, len).map_err(|e| e.to_string())?;
+        let bytes = crate::print::build_update(&original, job)?;
+        out.write_all(&bytes)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("the print job could not be written: {e}"))?;
+        Ok(bytes.len())
+    }
+
+    fn merge(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        plan: &Plan,
+        inputs: Inputs<'_>,
+        password: Option<&str>,
+    ) -> Result<(usize, u32), Refusal> {
+        use std::io::Write as _;
+
+        let original = read_whole(source, len).map_err(|e| e.to_string())?;
+        let (bytes, pages) = merge_update(&original, plan, inputs, password)?;
+        out.write_all(&bytes)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("the merged document could not be written: {e}"))?;
+        Ok((bytes.len(), pages))
     }
 }
 
@@ -2315,35 +2510,6 @@ struct Checked {
 #[must_use]
 struct MarksWritten;
 
-/// The bytes of the working document, ready to be written somewhere.
-///
-/// Everything both save paths share: the parse, the three refusals, the page
-/// tree, the marks, the turns and the crops. Neither path names a destination
-/// here --- a copy and a save in place differ in where the bytes go and in what
-/// has to happen around the write, never in what is written.
-///
-/// Two phases, and the split is the one that matters rather than a tidy one ---
-/// see [`Checked`].
-///
-/// # Errors
-///
-/// The plan is empty; `source` cannot be read or parsed; it is encrypted; it has
-/// a different number of pages than the plan's baseline; the plan names a page
-/// the file does not have; two of its pages are one object and disagree about
-/// the turn or the crop, or one of them is dropped without the other; or a mark
-/// maps to nothing.
-fn planned_bytes(
-    source: &Path,
-    plan: &Plan,
-    on_change: OnChange,
-    job: Job,
-    password: Option<&str>,
-) -> Result<Planned, Refusal> {
-    let ready = rewrite_ready(source, plan, on_change)?;
-    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
-    Ok(ready.with(rewrite_update(&original, plan, job, password)?))
-}
-
 /// What the caller established about the file before anything parsed it.
 ///
 /// **The coordinator's half of a rewrite**, and the split is the same boundary
@@ -2364,20 +2530,6 @@ fn planned_bytes(
 pub struct RewriteReady {
     verified: Option<Fingerprint>,
     changed: bool,
-}
-
-impl RewriteReady {
-    /// Puts a builder's bytes together with what the caller checked itself.
-    ///
-    /// The fingerprint is deliberately not carried through: the only path that
-    /// needs it is [`stage_in_place`], which reads it from here directly and
-    /// never asks for the bytes. See [`Planned`].
-    fn with(self, bytes: Vec<u8>) -> Planned {
-        Planned {
-            bytes,
-            changed: self.changed,
-        }
-    }
 }
 
 /// Asks whether the file is still the one the plan was made against.
@@ -2472,6 +2624,184 @@ pub fn rewrite_update(
         );
     }
     rewrite(plan, checked)
+}
+
+/// One document going into a merge: where its bytes are, and what to call it.
+///
+/// **A struct rather than a tuple beside a list of names**, because two parallel
+/// lists are two things to keep in step and `docs/TRAPS.md` records what happens
+/// when they drift. Everything a refusal has to say about one incoming file is
+/// here.
+///
+/// **`label` is a display name, never a path**, and that is the whole of why a
+/// request may carry it: `crate::worker_proto::Request`'s standing property is
+/// that it names nothing the worker could act on, and a bare file name with no
+/// directory is not something a sandboxed child can open --- it is the string a
+/// refusal puts in front of the reader. Without it the worker can only say
+/// *"document 2 of the merge"* about a file the reader chose by name, which is
+/// the message they would have to work backwards from.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Incoming {
+    /// Where this document begins in the handed-over bytes.
+    pub at: usize,
+    /// How long it is.
+    pub len: usize,
+    /// What to call it in a message to the reader.
+    pub label: String,
+}
+
+/// The documents going into a merge: their bytes, and where each one is.
+///
+/// **One type rather than two parameters**, and clippy's argument count is the
+/// smaller half of the reason. The bytes and the spans into them are one fact
+/// --- a span is meaningless beside a different buffer --- and passing them
+/// separately is what makes a mismatch expressible at every call site. Here the
+/// only way to read one document is [`Inputs::bytes_of`], which checks the span
+/// against the buffer it actually belongs to.
+#[derive(Clone, Copy)]
+pub struct Inputs<'a> {
+    /// Every incoming document's bytes, concatenated.
+    pub whole: &'a [u8],
+    /// Where each of them begins, how long it is, and what to call it.
+    pub each: &'a [Incoming],
+}
+
+impl<'a> Inputs<'a> {
+    /// One incoming document's bytes.
+    ///
+    /// **Checked, not trusted.** The spans come from the coordinator, so a wrong
+    /// one is a defect on this side of the pipe rather than an attack --- and a
+    /// slice past the end of a mapping is a fault rather than a message.
+    /// `checked_add` because `at + len` can wrap.
+    ///
+    /// # Errors
+    ///
+    /// A span that does not lie inside [`Inputs::whole`].
+    pub fn bytes_of(&self, one: &Incoming) -> Result<&'a [u8], Refusal> {
+        let end = one
+            .at
+            .checked_add(one.len)
+            .filter(|end| *end <= self.whole.len())
+            .ok_or_else(|| {
+                Refusal::from(format!(
+                    "{} is named as {} bytes at {} in the merge, and only {} were handed over",
+                    one.label,
+                    one.len,
+                    one.at,
+                    self.whole.len()
+                ))
+            })?;
+        Ok(&self.whole[one.at..end])
+    }
+}
+
+/// Applies a plan to a document's bytes and appends the documents in `inputs`.
+///
+/// **Pure, and the last of the three to become so.** [`rewrite_update`] and
+/// `crate::print::build_update` moved their parses into a worker on 2026-08-28
+/// and 2026-09-01; this one is wider than either, because the incoming files are
+/// documents tpdf never opened --- a reader picked them in a dialog. Nothing here
+/// opens a file, names a path, or knows one exists.
+///
+/// `base` is the document on screen, `plan` is the reader's edits to it, and
+/// `inputs` is every incoming file concatenated, with `spans` naming where each
+/// begins and how long it is. See
+/// [`crate::worker_proto::Request::Merge`] for why they arrive that way.
+///
+/// **The base takes the password and the incoming files do not.** `base` is the
+/// document the reader unlocked, so a rewrite of it can keep its own encryption;
+/// an incoming file is refused below, because one file cannot preserve two
+/// documents' encryption, and tpdf holds no key for those anyway.
+///
+/// # Errors
+///
+/// Anything [`rewrite_update`] refuses; a span outside `inputs`; an incoming file
+/// `lopdf` will not read or that is encrypted; or the merge itself.
+pub fn merge_update(
+    base: &[u8],
+    plan: &Plan,
+    inputs: Inputs<'_>,
+    password: Option<&str>,
+) -> Result<(Vec<u8>, u32), Refusal> {
+    // **Not the reader's message, and deliberately not the same string.**
+    // `write_merged` refuses an empty selection first, in the words a reader
+    // needs --- *"choose at least one document to merge in"*. Reaching here with
+    // nothing to merge means the coordinator sent a request it should not have,
+    // and saying so in the reader's words would put a defect on this side of the
+    // pipe into a sentence that reads as their mistake. Two copies of one string
+    // would also be two things to drift.
+    if inputs.each.is_empty() {
+        return Err("a merge was asked for with no documents to merge in".into());
+    }
+    let base = rewrite_update(base, plan, Job::Save, password)?;
+    let mut merged = Document::load_mem_with_options(
+        &base,
+        lopdf::LoadOptions {
+            max_decompressed_size: Some(MAX_DECODE),
+            // **The same password, because `rewrite` has just put the encryption
+            // back.** These are bytes this module wrote a line ago, and if the
+            // source was encrypted so are they. Omitting it does not fail the
+            // load: `lopdf` parses *no objects at all* for a document it cannot
+            // authenticate and still answers `Ok`, so what arrives is an empty
+            // document and the merge below fails at `into.catalog()` with a
+            // message blaming this module's own writer. An absence and a lock
+            // are the same reading, and the reassuring one is wrong.
+            password: password.map(str::to_string),
+            ..Default::default()
+        },
+    )
+    // Not a refusal a reader can act on, and it should be unreachable: these are
+    // bytes this module wrote a line ago.
+    .map_err(|e| format!("tpdf could not read back the document it just built: {e}"))?;
+
+    // **Off the document before the merge, and back on after it.** That is
+    // `rewrite`'s constraint for `rewrite`'s reason: `Document::encrypt` walks
+    // the object map and encrypts what it finds, so an object added after it
+    // would be written in the clear beside objects that are not, and no reader
+    // could open the result. `take` is also required rather than tidy --- a
+    // document that was decrypted refuses to be re-encrypted while the state is
+    // still on it.
+    let encryption = merged.encryption_state.take();
+
+    for one in inputs.each {
+        let label = &one.label;
+        let incoming = Document::load_mem_with_options(
+            inputs.bytes_of(one)?,
+            lopdf::LoadOptions {
+                max_decompressed_size: Some(MAX_DECODE),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("could not read {label}: {e}"))?;
+        // Both shapes, for `checked`'s reason: `lopdf` removes the trailer entry
+        // the moment it authenticates -- and it tries the empty password
+        // unprompted -- so asking whether the trailer says `/Encrypt` reports a
+        // permission-restricted document as plain.
+        if incoming.was_encrypted() || incoming.is_encrypted() {
+            return Err(format!(
+                "{label} is encrypted, and merging rewrites it --- which would silently \
+                 remove that. Leave it out, or save an unencrypted copy of it first."
+            )
+            .into());
+        }
+        crate::merge::append(&mut merged, &incoming)
+            .map_err(|why| format!("could not merge {label}: {why}"))?;
+    }
+
+    // Last, after every incoming file has been appended --- see the `take` above.
+    // Without this the merge of an encrypted base would be written in the clear,
+    // which is exactly the silent removal the incoming-file refusal a few lines
+    // up exists to prevent, arriving through the base instead.
+    if let Some(state) = &encryption {
+        merged.encrypt(state).map_err(|e| {
+            // Not a sentence about the reader's document: the state came out of
+            // this same file a moment ago, so a failure here is tpdf's.
+            format!("tpdf could not restore this document's encryption: {e}")
+        })?;
+    }
+
+    let pages = merged.get_pages().len() as u32;
+    Ok((serialise(&mut merged, "the merged document")?, pages))
 }
 
 /// Checks a plan against a document's bytes, writing nothing.
@@ -5149,18 +5479,6 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
     Ok(order.into_iter().map(|s| (s, chosen[&s].0)).collect())
 }
 
-/// Writes `bytes` to `out` via a sibling temporary file and a rename.
-fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
-    let staged = stage(out, |file| {
-        use std::io::Write as _;
-        file.write_all(bytes)
-            .and_then(|()| file.flush())
-            .map_err(|e| Refusal::from(format!("could not write {out:?}: {e}")))
-    })
-    .map_err(|why| why.message)?;
-    commit(&staged, out)
-}
-
 /// Writes `bytes` to a fresh sibling temporary file for `out`, and names it.
 ///
 /// One definition of where the partial file goes, read by both save paths ---
@@ -5375,6 +5693,39 @@ mod tests {
         password: Option<&str>,
     ) -> Result<Copied, Refusal> {
         write_copy(source, plan, out, password, &Here)
+    }
+
+    /// The file's bytes, rewritten under a plan, in this process.
+    ///
+    /// **What `planned_bytes` was.** That function went with the merge on
+    /// 2026-09-01 --- it was the last caller, and every writing path now hands
+    /// the parse to a [`Rewriter`] instead. Two benchmarks below measure exactly
+    /// this composition, and they are measurements of the *rewrite* rather than
+    /// of any path a reader takes, so a helper here is the honest home for it:
+    /// production has no function of this shape any more, and reintroducing one
+    /// would be a second way to write a document.
+    fn rewritten_here(source: &Path, plan: &Plan, on_change: OnChange) -> Vec<u8> {
+        rewrite_ready(source, plan, on_change).expect("the file is the one the plan was made on");
+        let original = std::fs::read(source).expect("read the source");
+        rewrite_update(&original, plan, Job::Save, None).expect("rewrite the document")
+    }
+
+    /// Bytes put in place through a staged file and a rename.
+    ///
+    /// **What `write_atomically` was**, and it went the same day and for the
+    /// same reason: every writing path stages a file and hands its *handle* to a
+    /// writer, so nothing in production has bytes of a document to write. The
+    /// atomicity itself is unchanged --- this is `stage` and `commit`, which is
+    /// what those paths do.
+    fn written_atomically(out: &Path, bytes: &[u8]) {
+        let staged = stage(out, |file| {
+            use std::io::Write as _;
+            file.write_all(bytes)
+                .and_then(|()| file.flush())
+                .map_err(|e| Refusal::from(format!("could not write {out:?}: {e}")))
+        })
+        .expect("stage");
+        commit(&staged, out).expect("commit");
     }
 
     /// [`write_split`] with the in-process writer. [`copy_here`]'s counterpart,
@@ -5845,6 +6196,7 @@ mod tests {
             std::slice::from_ref(&other),
             &out,
             Some("swordfish"),
+            &Here,
         )
         .expect("a merge whose base is unlocked must go through");
 
@@ -5982,8 +6334,15 @@ mod tests {
         let out = scratch.join("merged.pdf");
         let mine = page_count(&source);
         let theirs = page_count(&other);
-        let merged =
-            write_merged(&source, &plan_of(&vec![0u8; mine]), &[other], &out, None).expect("merge");
+        let merged = write_merged(
+            &source,
+            &plan_of(&vec![0u8; mine]),
+            &[other],
+            &out,
+            None,
+            &Here,
+        )
+        .expect("merge");
         // **The independent reader answers first, and the order is the point.**
         // Every other assertion here is `lopdf` reading back what `lopdf` wrote,
         // which agrees with itself about a page tree no shipping reader would
@@ -6042,7 +6401,15 @@ mod tests {
         // so a merge that dropped the plan and read the file would come out
         // `whole` pages rather than two.
         let plan = keeping(whole as u32, &[(0, 0), (1, 1)]);
-        write_merged(&source, &plan, std::slice::from_ref(&other), &out, None).expect("merge");
+        write_merged(
+            &source,
+            &plan,
+            std::slice::from_ref(&other),
+            &out,
+            None,
+            &Here,
+        )
+        .expect("merge");
         assert_eq!(
             page_count(&out),
             2 + page_count(&other),
@@ -6076,7 +6443,7 @@ mod tests {
         };
         let scratch = Scratch::new("merge-empty");
         let out = scratch.join("merged.pdf");
-        let why = write_merged(&source, &plan_of(&[0, 0, 0, 0]), &[], &out, None)
+        let why = write_merged(&source, &plan_of(&[0, 0, 0, 0]), &[], &out, None, &Here)
             .expect_err("nothing to merge");
         assert!(why.message.contains("at least one"), "{why}");
         assert!(!out.exists(), "and nothing was written");
@@ -6116,11 +6483,25 @@ mod tests {
             copy
         };
         let plan = plan_of(&vec![0u8; page_count(&source)]);
-        let over_source = write_merged(&source, &plan, std::slice::from_ref(&other), &source, None)
-            .expect_err("over the open document");
+        let over_source = write_merged(
+            &source,
+            &plan,
+            std::slice::from_ref(&other),
+            &source,
+            None,
+            &Here,
+        )
+        .expect_err("over the open document");
         assert!(over_source.message.contains("reading"), "{over_source}");
-        let over_input = write_merged(&source, &plan, std::slice::from_ref(&other), &other, None)
-            .expect_err("over a document going in");
+        let over_input = write_merged(
+            &source,
+            &plan,
+            std::slice::from_ref(&other),
+            &other,
+            None,
+            &Here,
+        )
+        .expect_err("over a document going in");
         assert!(over_input.message.contains("going into it"), "{over_input}");
         // Neither file moved. Without this the two refusals above are the only
         // evidence, and a guard that reported a refusal *after* writing would
@@ -6139,7 +6520,7 @@ mod tests {
         // written. Without it both assertions above are satisfied by a function
         // that refuses everything.
         let out = scratch.join("merged.pdf");
-        write_merged(&source, &plan, &[other], &out, None).expect("somewhere else is fine");
+        write_merged(&source, &plan, &[other], &out, None, &Here).expect("somewhere else is fine");
     }
 
     /// An encrypted document cannot be merged in, and is named.
@@ -6309,8 +6690,15 @@ mod tests {
         let scratch = Scratch::new("merge-encrypted");
         let out = scratch.join("merged.pdf");
         let plan = plan_of(&vec![0u8; page_count(&source)]);
-        let why = write_merged(&source, &plan, std::slice::from_ref(&locked), &out, None)
-            .expect_err("encrypted");
+        let why = write_merged(
+            &source,
+            &plan,
+            std::slice::from_ref(&locked),
+            &out,
+            None,
+            &Here,
+        )
+        .expect_err("encrypted");
         assert!(why.message.contains("encrypted"), "{why}");
         assert!(
             why.message.contains("incr-encrypted-open.pdf"),
@@ -10353,6 +10741,20 @@ mod tests {
         /// because the tests that read `asked` are about the length and the
         /// password and would all have to be rewritten to say nothing new.
         jobs: std::cell::RefCell<Vec<Job>>,
+        /// Every page-range job this writer was asked to build.
+        ///
+        /// A list of its own rather than a third `jobs` variant, because it
+        /// answers a different question: `jobs` says what a *plan* was for, and
+        /// this says that a plan was never involved. A test asserting the
+        /// coordinator delegated the range parse has to see the range.
+        ranges: std::cell::RefCell<Vec<crate::print::Job>>,
+        /// Every merge this writer was asked for: the bytes handed over, and the
+        /// spans naming the documents inside them.
+        ///
+        /// The bytes are kept whole rather than counted, because the question a
+        /// test asks here is whether the *files the reader chose* crossed --- and
+        /// a length is equally satisfied by the same file twice.
+        merges: std::cell::RefCell<Vec<(Vec<u8>, Vec<Incoming>)>>,
     }
 
     impl FakeWriter {
@@ -10362,6 +10764,8 @@ mod tests {
                 overstate_by: 0,
                 asked: std::cell::RefCell::new(Vec::new()),
                 jobs: std::cell::RefCell::new(Vec::new()),
+                ranges: std::cell::RefCell::new(Vec::new()),
+                merges: std::cell::RefCell::new(Vec::new()),
             }
         }
     }
@@ -10382,6 +10786,47 @@ mod tests {
                 .borrow_mut()
                 .push((len, password.map(str::to_string)));
             self.jobs.borrow_mut().push(job);
+            let bytes = self.answer.clone()?;
+            out.write_all(&bytes).map_err(|e| e.to_string())?;
+            Ok(bytes.len() + self.overstate_by)
+        }
+
+        fn merge(
+            &self,
+            _source: &mut std::fs::File,
+            len: usize,
+            out: &mut std::fs::File,
+            _plan: &Plan,
+            inputs: Inputs<'_>,
+            password: Option<&str>,
+        ) -> Result<(usize, u32), Refusal> {
+            use std::io::Write as _;
+
+            self.asked
+                .borrow_mut()
+                .push((len, password.map(str::to_string)));
+            self.merges
+                .borrow_mut()
+                .push((inputs.whole.to_vec(), inputs.each.to_vec()));
+            let bytes = self.answer.clone()?;
+            out.write_all(&bytes).map_err(|e| e.to_string())?;
+            // A page count this writer invents. The coordinator has no way to
+            // check it and must not: counting the pages here would mean parsing
+            // the merged document, which is the parse that moved.
+            Ok((bytes.len() + self.overstate_by, 7))
+        }
+
+        fn write_range(
+            &self,
+            _source: &mut std::fs::File,
+            len: usize,
+            out: &mut std::fs::File,
+            job: &crate::print::Job,
+        ) -> Result<usize, Refusal> {
+            use std::io::Write as _;
+
+            self.asked.borrow_mut().push((len, None));
+            self.ranges.borrow_mut().push(job.clone());
             let bytes = self.answer.clone()?;
             out.write_all(&bytes).map_err(|e| e.to_string())?;
             Ok(bytes.len() + self.overstate_by)
@@ -10639,6 +11084,263 @@ mod tests {
             print_scratch_files(),
             before,
             "and nothing was left in the temporary directory"
+        );
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_document_it_prints_a_range_of() {
+        // **The keystone of the last print route's move**, and the same shape as
+        // the test above it: the source planted here is not a PDF, so a
+        // coordinator that parsed it would refuse before building anything ---
+        // which is what `print::build` did until 2026-09-01, on every print of a
+        // page range a reader typed.
+        //
+        // `docs/THREAT-MODEL.md` residual risk 18 never named this path, because
+        // that risk lists the operations that *write* a document and a range
+        // print writes nothing. It parses the reader's document all the same,
+        // and the way to reach it is to open a file and type two numbers.
+        let _serial = crate::save::print_lock();
+        let scratch = Scratch::new("range-delegates");
+        let (at, _plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let job = crate::print::Job {
+            pages: crate::print::Pages::Only(vec![crate::print::PagePlan {
+                number: 2,
+                turns: 1,
+            }]),
+            turns: 3,
+        };
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 the range the worker built".to_vec()));
+        let before = print_scratch_files();
+
+        let bytes = print_range_bytes(&at, &job, &writer).expect("the writer's bytes are it");
+
+        assert_eq!(
+            bytes, b"%PDF-1.7 the range the worker built",
+            "the job is what the writer wrote and nothing this process made"
+        );
+        // **The range reaches the writer intact**, which is the half a
+        // byte-level assertion cannot see: a writer handed `Pages::All` would
+        // produce a perfectly good job of the wrong pages, and every assertion
+        // above would still pass.
+        assert_eq!(
+            writer.ranges.borrow().as_slice(),
+            &[job],
+            "the pages and the reader's own rotation are what crossed"
+        );
+        assert!(
+            writer.jobs.borrow().is_empty(),
+            "and no plan was involved --- a range says nothing about edits"
+        );
+        assert_eq!(
+            print_scratch_files(),
+            before,
+            "and the scratch file the job was built in is gone"
+        );
+    }
+
+    #[test]
+    fn a_range_print_whose_writer_refuses_leaves_no_scratch_file_behind() {
+        // The cleanup, on the route that has no plan. **The removal itself is
+        // shared** --- both routes go through `into_scratch`, so it happens by
+        // construction and no mutation can tell the two apart, which is the
+        // outcome-two-mechanisms-can-produce shape. What this pins is the other
+        // half: that a range builder's *refusal* reaches the reader as its own
+        // sentence and takes the same path out.
+        let _serial = crate::save::print_lock();
+        let scratch = Scratch::new("range-refused");
+        let (at, _plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let job = crate::print::Job {
+            pages: crate::print::Pages::Only(vec![crate::print::PagePlan {
+                number: 1,
+                turns: 0,
+            }]),
+            turns: 0,
+        };
+        let writer = FakeWriter::writing(Err("page 9 is not in this document".into()));
+        let before = print_scratch_files();
+
+        let why = print_range_bytes(&at, &job, &writer).expect_err("must refuse");
+
+        assert!(
+            why.message.contains("page 9"),
+            "the writer's own refusal reaches the reader: {}",
+            why.message
+        );
+        assert_eq!(
+            print_scratch_files(),
+            before,
+            "and nothing was left in the temporary directory"
+        );
+    }
+
+    #[test]
+    fn a_range_print_that_overstates_what_it_wrote_is_refused() {
+        // `landed_is` is one function serving two builders, and a guard proved
+        // on one caller is proved on one caller. What it stands between here is
+        // a short write in another process and a document reaching paper with
+        // pages missing off the end of it --- which no page count can see,
+        // because a truncated job parses as however many pages survived.
+        let _serial = crate::save::print_lock();
+        let scratch = Scratch::new("range-overstated");
+        let (at, _plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let job = crate::print::Job {
+            pages: crate::print::Pages::Only(vec![crate::print::PagePlan {
+                number: 1,
+                turns: 0,
+            }]),
+            turns: 0,
+        };
+        let mut writer = FakeWriter::writing(Ok(b"%PDF-1.7 short".to_vec()));
+        writer.overstate_by = 4_096;
+        let before = print_scratch_files();
+
+        let why = print_range_bytes(&at, &job, &writer).expect_err("must refuse");
+
+        assert!(
+            why.message.contains("was not completed"),
+            "the length the writer claimed is checked against the file: {}",
+            why.message
+        );
+        assert_eq!(
+            print_scratch_files(),
+            before,
+            "and the partial job is not left behind"
+        );
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_documents_it_merges() {
+        // **The keystone of the widest move.** Neither the source nor either
+        // incoming file is a PDF, so a coordinator that parsed any of them would
+        // refuse before building anything --- which is what `write_merged` did
+        // until 2026-09-01, on every merge, for every file the reader picked in
+        // a dialog.
+        //
+        // What this process still does is *read* those files, which is the whole
+        // of its remaining part: it copies their bytes into one buffer and never
+        // asks what they mean.
+        let scratch = Scratch::new("merge-delegates");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let first = scratch.join("first.pdf");
+        let second = scratch.join("second.pdf");
+        std::fs::write(&first, b"not a PDF either").expect("plant the first");
+        std::fs::write(&second, b"nor is this one, and it is longer").expect("plant the second");
+        let out = scratch.join("merged.pdf");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 the merge the worker built".to_vec()));
+
+        let merged = write_merged(
+            &at,
+            &plan,
+            &[first.clone(), second.clone()],
+            &out,
+            None,
+            &writer,
+        )
+        .expect("the writer's answer is it");
+
+        assert_eq!(
+            std::fs::read(&out).expect("the merge landed"),
+            b"%PDF-1.7 the merge the worker built",
+            "the file is what the writer wrote and nothing this process made"
+        );
+        // **The page count is the writer's, not a recount here.** Counting it in
+        // this process would mean parsing the merged document, which is the
+        // parse that moved; the fake answers 7 for any merge, so a coordinator
+        // that recounted would report 0 or refuse.
+        assert_eq!(
+            merged.pages, 7,
+            "the page count crossed back from the writer"
+        );
+        assert_eq!(merged.files, 2, "and the reader chose two files");
+
+        // **The files the reader chose crossed, in order and whole.** A length
+        // alone is equally satisfied by the same file twice, and a merge that
+        // appended one file twice would produce a document with the right number
+        // of pages in it.
+        let asked = writer.merges.borrow();
+        let (bytes, incoming) = asked.first().expect("asked exactly once");
+        assert_eq!(asked.len(), 1, "and asked once, not once per file");
+        assert_eq!(
+            incoming,
+            &vec![
+                Incoming {
+                    at: 0,
+                    len: 16,
+                    label: "first.pdf".to_string(),
+                },
+                Incoming {
+                    at: 16,
+                    len: 33,
+                    label: "second.pdf".to_string(),
+                },
+            ],
+            "each document is named by where it begins, how long it is and what to call it"
+        );
+        assert_eq!(
+            &bytes[incoming[0].at..incoming[0].at + incoming[0].len],
+            b"not a PDF either",
+            "the first file's own bytes"
+        );
+        assert_eq!(
+            &bytes[incoming[1].at..incoming[1].at + incoming[1].len],
+            b"nor is this one, and it is longer",
+            "and the second's, which is a different length"
+        );
+    }
+
+    #[test]
+    fn a_merge_of_nothing_is_refused_in_the_worker_too() {
+        // **The guard on the far side of the pipe**, which `write_merged`'s own
+        // refusal makes unreachable from the application --- so it is reached
+        // here directly, which is the only way it can be. It exists because the
+        // worker must not trust the coordinator's request, and it says so in
+        // words about the request rather than in the reader's.
+        let scratch = Scratch::new("merge-nothing");
+        let (at, plan) = staging_subject(&scratch, "one-page.pdf").expect("a subject");
+        let base = std::fs::read(&at).expect("read the base");
+
+        let why = merge_update(
+            &base,
+            &plan,
+            Inputs {
+                whole: &[],
+                each: &[],
+            },
+            None,
+        )
+        .expect_err("a merge of nothing must be refused");
+
+        assert!(
+            why.message.contains("no documents to merge in"),
+            "and the refusal is about the request, not about the reader: {}",
+            why.message
+        );
+    }
+
+    #[test]
+    fn a_merge_that_overstates_what_it_wrote_is_refused() {
+        // `landed_is` on the third caller. What it stands between here is a
+        // short write in another process and a merged document that is missing
+        // whatever came last --- which the page count cannot see, because the
+        // count comes from the same writer that reported the length.
+        let scratch = Scratch::new("merge-overstated");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let first = scratch.join("first.pdf");
+        std::fs::write(&first, b"not a PDF either").expect("plant it");
+        let out = scratch.join("merged.pdf");
+        let mut writer = FakeWriter::writing(Ok(b"%PDF-1.7 short".to_vec()));
+        writer.overstate_by = 4_096;
+
+        let why = write_merged(&at, &plan, &[first], &out, None, &writer).expect_err("must refuse");
+
+        assert!(
+            why.message.contains("was not completed"),
+            "the length the writer claimed is checked against the file: {}",
+            why.message
+        );
+        assert!(
+            !out.exists(),
+            "and the destination is untouched --- the staged file is what was written"
         );
     }
 
@@ -11036,8 +11738,7 @@ mod tests {
 
             let plan = plan_opened_as(&vec![0u8; count], &path);
             let started = std::time::Instant::now();
-            let built = planned_bytes(&path, &plan, OnChange::Refuse, Job::Save, None)
-                .expect("rewrite the document");
+            let built = rewritten_here(&path, &plan, OnChange::Refuse);
             let took = started.elapsed();
             let peak = crate::worker::phys_footprint(me).unwrap_or(0);
 
@@ -11054,7 +11755,7 @@ mod tests {
             println!(
                 "[bench] {name:<20} file {bytes:>10} B | out {:>10} B | footprint \
                  idle {:>7.1} -> parsed {:>7.1} -> rewritten {:>7.1} MB | {:>7.1} ms",
-                built.bytes.len(),
+                built.len(),
                 before as f64 / 1e6,
                 graph as f64 / 1e6,
                 peak as f64 / 1e6,
@@ -11147,10 +11848,9 @@ mod tests {
                 appends.push((clock.elapsed().as_secs_f64() * 1000.0, added));
 
                 let clock = std::time::Instant::now();
-                let whole =
-                    planned_bytes(&at, &plan, OnChange::Proceed, Job::Save, None).expect("rewrite");
-                let wrote = whole.bytes.len();
-                write_atomically(&out, &whole.bytes).expect("write");
+                let whole = rewritten_here(&at, &plan, OnChange::Proceed);
+                let wrote = whole.len();
+                written_atomically(&out, &whole);
                 rewrites.push((clock.elapsed().as_secs_f64() * 1000.0, wrote));
 
                 let _ = std::fs::remove_file(&fresh);

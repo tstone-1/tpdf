@@ -90,8 +90,8 @@ use crate::worker_shm::duplicate_into;
 // every example name them through `worker::`, and a split that renamed a path
 // would be a split that had to edit its consumers to prove it changed nothing.
 #[cfg(windows)]
-pub use crate::worker_argv::{doc_handle_arg, out_handle_arg, tile_handle_arg};
-pub use crate::worker_argv::{doc_len_arg, library_dir_arg};
+pub use crate::worker_argv::{doc_handle_arg, in_handle_arg, out_handle_arg, tile_handle_arg};
+pub use crate::worker_argv::{doc_len_arg, in_len_arg, library_dir_arg};
 #[cfg(target_os = "macos")]
 pub use crate::worker_handover::recv_document;
 #[cfg(windows)]
@@ -154,6 +154,40 @@ pub const SOCK_FD: i32 = 5;
 /// without one and answers [`crate::worker_proto::Request::Rewrite`] by saying
 /// so.
 pub const OUT_FD: i32 = 6;
+
+/// Descriptor a worker reads the documents going *into* a merge on.
+///
+/// **The second read-only input, and the only request that needs one.** A merge
+/// is the one operation over documents tpdf never opened: the reader picks files
+/// in a dialog and every one of them is parsed. [`DOC_FD`] carries the document
+/// on screen; this carries the rest, concatenated into one mapping with their
+/// boundaries named in `crate::worker_proto::Request::Merge`.
+///
+/// **One mapping rather than one per file**, because the descriptor shuffle
+/// before `exec` may not allocate --- only async-signal-safe calls run between
+/// `fork` and `exec`, and a `Vec` of descriptors is neither. A fixed array of
+/// four installs takes any number of incoming documents; a descriptor per file
+/// would need a cap, and a cap on how many files a reader may merge is a product
+/// limit invented to suit a shuffle.
+///
+/// **A descriptor, never a path**, for [`OUT_FD`]'s reason: the worker gets the
+/// bytes of the files the reader chose and no name it could be made to open.
+/// The coordinator reads them, which is not a parse --- it copies bytes into a
+/// mapping and never asks what they mean.
+pub const IN_FD: i32 = 7;
+
+/// The argv flag carrying how long the merge input mapping is.
+///
+/// Present or absent says whether there is one at all, which is [`OUT_ARGV`]'s
+/// reason: a child cannot tell a descriptor it was handed from whatever happens
+/// to be open at that number. Unlike the output file this one needs a length as
+/// well, since a mapping has to be given its size.
+pub const IN_LEN_ARGV: &str = "--in-len";
+
+/// The flag the merge input section's handle arrives on, on Windows. See
+/// [`IN_FD`] and [`DOC_HANDLE_ARGV`].
+#[cfg(windows)]
+pub const IN_HANDLE_ARGV: &str = "--in-handle";
 
 /// The argv marker saying a worker was handed an output file on [`OUT_FD`].
 ///
@@ -763,7 +797,7 @@ impl Worker {
     /// sandbox, always --- see the module note.
     pub fn spawn_shared(doc: Arc<Shm>, library_dir: &Path) -> Result<Self, String> {
         let tile = Shm::create(TILE_CAPACITY)?;
-        Self::spawn_mapped(doc, tile, library_dir, None)
+        Self::spawn_mapped(doc, tile, library_dir, None, None)
     }
 
     /// Spawns a worker that can write one file: the one `out` is open on.
@@ -786,7 +820,27 @@ impl Worker {
         library_dir: &Path,
     ) -> Result<Self, String> {
         let tile = Shm::create(TILE_CAPACITY)?;
-        Self::spawn_mapped(doc, tile, library_dir, Some(out))
+        Self::spawn_mapped(doc, tile, library_dir, Some(out), None)
+    }
+
+    /// Spawns a worker that can write one file and read the documents going into
+    /// a merge.
+    ///
+    /// [`Worker::spawn_writing`] plus one read-only mapping --- see [`IN_FD`] for
+    /// why the incoming files travel concatenated in a single one, and
+    /// `crate::worker_proto::Request::Merge` for how their boundaries are named.
+    ///
+    /// # Errors
+    ///
+    /// As [`Worker::spawn_shared`].
+    pub fn spawn_merging(
+        doc: Arc<Shm>,
+        inputs: &Shm,
+        out: &std::fs::File,
+        library_dir: &Path,
+    ) -> Result<Self, String> {
+        let tile = Shm::create(TILE_CAPACITY)?;
+        Self::spawn_mapped(doc, tile, library_dir, Some(out), Some(inputs))
     }
 
     /// Spawns a worker over mappings the caller already made.
@@ -800,6 +854,7 @@ impl Worker {
         _tile: Shm,
         _library_dir: &Path,
         _out: Option<&std::fs::File>,
+        _inputs: Option<&Shm>,
     ) -> Result<Self, String> {
         // Not a silent fallback to running unsandboxed. Every containment claim
         // in docs/THREAT-MODEL.md is a named boundary --- `sandbox_init` SBPL on
@@ -837,9 +892,20 @@ impl Worker {
         tile: Shm,
         library_dir: &Path,
         out: Option<&std::fs::File>,
+        inputs: Option<&Shm>,
     ) -> Result<Self, String> {
         use std::os::windows::io::AsRawHandle;
 
+        // The same refusal the macOS arm makes, for a different failure. There
+        // the descriptor shuffle would `dup2` a -1; here the child would map the
+        // inputs and have nowhere to put the answer, and `worker_child::merge`
+        // would refuse in words. Both are safe and neither is the same, which is
+        // exactly why it is stated on both arms rather than on the one where the
+        // consequence is worse --- `docs/TRAPS.md` records a platform gate
+        // widened in one of three copies.
+        if inputs.is_some() && out.is_none() {
+            return Err("a worker given merge inputs must also be given somewhere to write".into());
+        }
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
         // Bound rather than written inline, because the argv slice borrows them
         // and the output pair is conditional --- a temporary inside a `push`
@@ -851,6 +917,10 @@ impl Worker {
         let tile_handle = tile.raw_handle().to_string();
         let out_handle = out.map(|file| file.as_raw_handle() as usize);
         let out_text = out_handle.map(|handle| handle.to_string());
+        // Bound here for the reason the output pair is: the argv slice borrows
+        // them and both are conditional.
+        let in_len = inputs.map(|shm| shm.len().to_string());
+        let in_handle = inputs.map(|shm| shm.raw_handle().to_string());
 
         let mut handles: Vec<windows_sys::Win32::Foundation::HANDLE> = vec![
             doc.raw_handle() as windows_sys::Win32::Foundation::HANDLE,
@@ -877,6 +947,18 @@ impl Worker {
             handles.push(file.as_raw_handle().cast());
             args.push(OUT_HANDLE_ARGV);
             args.push(text);
+        }
+        // The merge inputs, the same way and for the same reason --- inherited so
+        // the value means something in the child, named in argv so the child
+        // knows it was given one at all. Read-only there: `Shm::from_handle` is
+        // asked for a read-only view, and the section itself was created from a
+        // copy the coordinator owns.
+        if let (Some(len), Some(handle), Some(shm)) = (&in_len, &in_handle, inputs) {
+            handles.push(shm.raw_handle() as windows_sys::Win32::Foundation::HANDLE);
+            args.push(IN_LEN_ARGV);
+            args.push(len);
+            args.push(IN_HANDLE_ARGV);
+            args.push(handle);
         }
         Self::spawn_contained_worker(&args, &handles, tile, Some(doc))
     }
@@ -962,10 +1044,21 @@ impl Worker {
         tile: Shm,
         library_dir: &Path,
         out: Option<&std::fs::File>,
+        inputs: Option<&Shm>,
     ) -> Result<Self, String> {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
 
+        // **Refused rather than shuffled**, because the descriptor installs below
+        // fill their two optional slots in order: an inputs mapping with no
+        // output file would leave `OUT_FD`'s slot holding -1 and `dup2` it,
+        // which fails inside `pre_exec` where the diagnosis is worst. Nothing
+        // asks for that combination --- the only request that reads the inputs
+        // also writes --- so this is a guard on a caller, said here where it can
+        // be read.
+        if inputs.is_some() && out.is_none() {
+            return Err("a worker given merge inputs must also be given somewhere to write".into());
+        }
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
         let mut command = Command::new(exe);
         command
@@ -985,10 +1078,17 @@ impl Worker {
         if out.is_some() {
             command.arg(OUT_ARGV);
         }
+        // Carries a length as well as its own presence, unlike the output file:
+        // a mapping has to be given its size, and the child has no other way to
+        // learn this one's. See [`IN_LEN_ARGV`].
+        if let Some(shm) = inputs {
+            command.arg(IN_LEN_ARGV).arg(shm.len().to_string());
+        }
 
         let doc_fd = doc.raw_fd();
         let tile_fd = tile.raw_fd();
         let out_fd = out.map(AsRawFd::as_raw_fd);
+        let in_fd = inputs.map(Shm::raw_fd);
         // SAFETY: only dup/dup2/close run between fork and exec, all of which
         // are async-signal-safe. Both sources are dup'd to fresh descriptors
         // first, because either may already occupy the target number --- the
@@ -1012,18 +1112,31 @@ impl Worker {
                 // and allocating is not one of them --- a `push` here would be a
                 // deadlock on the allocator's lock in whatever state the fork
                 // froze it, which reproduces about never.
-                let mut installs = [(d, DOC_FD), (t, TILE_FD), (-1, OUT_FD)];
-                let installs: &mut [(i32, i32)] = match out_fd {
-                    Some(fd) => {
-                        let o = libc::dup(fd);
-                        if o < 0 {
-                            return Err(std::io::Error::last_os_error());
-                        }
-                        installs[2].0 = o;
-                        &mut installs[..3]
+                let mut installs = [(d, DOC_FD), (t, TILE_FD), (-1, OUT_FD), (-1, IN_FD)];
+                // Grown to four on 2026-09-01 for the merge's input mapping, and
+                // still a fixed array sliced to length for the reason above: no
+                // allocation may happen here. The two optional slots are filled
+                // in order, so an inputs mapping without an output file is not
+                // expressible --- which is correct, since the only request that
+                // reads one also writes.
+                let mut installed = 2;
+                if let Some(fd) = out_fd {
+                    let o = libc::dup(fd);
+                    if o < 0 {
+                        return Err(std::io::Error::last_os_error());
                     }
-                    None => &mut installs[..2],
-                };
+                    installs[2].0 = o;
+                    installed = 3;
+                }
+                if let Some(fd) = in_fd {
+                    let i = libc::dup(fd);
+                    if i < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    installs[3].0 = i;
+                    installed = 4;
+                }
+                let installs: &mut [(i32, i32)] = &mut installs[..installed];
                 let shuffle = &*installs;
                 for &(temp, target) in shuffle {
                     if libc::dup2(temp, target) < 0 {

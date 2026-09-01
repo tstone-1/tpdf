@@ -174,7 +174,14 @@ mod imp {
             ),
             turns: 1,
         };
-        let bytes = print::build(source, &job).map_err(|e| format!("building the job: {e}"))?;
+        // `print::build_update` rather than `print::build`, which is test-only
+        // since 2026-09-01: it takes a *path*, and nothing outside a test may
+        // parse the reader's document in this process. Reading the file here is
+        // not that --- the bytes go straight to the same pure function a worker
+        // runs, and what this probe measures is the spooler downstream of it.
+        let original = std::fs::read(source).map_err(|e| format!("reading {source:?}: {e}"))?;
+        let bytes =
+            print::build_update(&original, &job).map_err(|e| format!("building the job: {e}"))?;
 
         let reading = print_win::read(&bytes)
             .ok_or("the OS parser refused the job we built, before any printing")?;
