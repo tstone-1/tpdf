@@ -14,8 +14,7 @@
  * is to have skipped a reply.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { call } from "./ipc";
 import {
   PageMap,
   unedited,
@@ -246,7 +245,7 @@ export class Edits {
    * unedited today, and will not be once a session can carry edits.
    */
   async refresh(): Promise<EditState> {
-    return this.adopt(await invoke<EditState>("edit_state", { doc: this.doc }));
+    return this.adopt(await call("edit_state", { doc: this.doc }));
   }
 
   /**
@@ -262,7 +261,7 @@ export class Edits {
     const id = this.current.pages[page]?.id;
     if (id === undefined) return this.current;
     return this.adopt(
-      await invoke<EditState>("page_rotate", { doc: this.doc, page: id, turns }),
+      await call("page_rotate", { doc: this.doc, page: id, turns }),
     );
   }
 
@@ -283,7 +282,7 @@ export class Edits {
     const id = this.current.pages[page]?.id;
     if (id === undefined) return this.current;
     return this.adopt(
-      await invoke<EditState>("page_crop", { doc: this.doc, page: id, to }),
+      await call("page_crop", { doc: this.doc, page: id, to }),
     );
   }
 
@@ -311,7 +310,7 @@ export class Edits {
     // put a page at the front whenever a press arrived late.
     if (anchor === undefined) return this.current;
     return this.adopt(
-      await invoke<EditState>("page_insert", {
+      await call("page_insert", {
         doc: this.doc,
         after: anchor,
         size: [...size],
@@ -332,7 +331,7 @@ export class Edits {
     const id = this.current.pages[page]?.id;
     if (id === undefined) return this.current;
     return this.adopt(
-      await invoke<EditState>("page_delete", { doc: this.doc, page: id }),
+      await call("page_delete", { doc: this.doc, page: id }),
     );
   }
 
@@ -364,7 +363,7 @@ export class Edits {
     if (landing === from) return this.current;
     const after = landing === 0 ? null : (rest[landing - 1]?.id ?? null);
     return this.adopt(
-      await invoke<EditState>("page_move", { doc: this.doc, page, after }),
+      await call("page_move", { doc: this.doc, page, after }),
     );
   }
 
@@ -419,7 +418,7 @@ export class Edits {
     // give for free and has to be said now that no lookup happens.
     if (!this.current.pages.some((view) => view.id === page)) return this.current;
     return this.adopt(
-      await invoke<EditState>("annot_mark", {
+      await call("annot_mark", {
         doc: this.doc,
         mark: {
           kind,
@@ -490,7 +489,7 @@ export class Edits {
    */
   async renote(mark: number, note: string): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_note", { doc: this.doc, mark, note }),
+      await call("annot_note", { doc: this.doc, mark, note }),
     );
   }
 
@@ -517,7 +516,7 @@ export class Edits {
     body: string,
   ): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_rewrite", {
+      await call("annot_rewrite", {
         doc: this.doc,
         object,
         page,
@@ -549,7 +548,7 @@ export class Edits {
     page: PageId,
   ): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_discard", { doc: this.doc, object, page }),
+      await call("annot_discard", { doc: this.doc, object, page }),
     );
   }
 
@@ -578,7 +577,7 @@ export class Edits {
    */
   async displace(mark: number, dx: number, dy: number): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_move", { doc: this.doc, mark, dx, dy }),
+      await call("annot_move", { doc: this.doc, mark, dx, dy }),
     );
   }
 
@@ -592,7 +591,7 @@ export class Edits {
    */
   async recolor(mark: number, color: MarkColor): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_recolor", { doc: this.doc, mark, color }),
+      await call("annot_recolor", { doc: this.doc, mark, color }),
     );
   }
 
@@ -610,7 +609,7 @@ export class Edits {
    */
   async erase(mark: number, remove: number[], sweep = 0): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_erase", {
+      await call("annot_erase", {
         doc: this.doc,
         mark,
         remove,
@@ -627,7 +626,7 @@ export class Edits {
    */
   async unmark(mark: number, sweep = 0): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("annot_remove", { doc: this.doc, mark, sweep }),
+      await call("annot_remove", { doc: this.doc, mark, sweep }),
     );
   }
 
@@ -653,7 +652,7 @@ export class Edits {
   ): Promise<EditState> {
     if (!this.current.pages.some((view) => view.id === page)) return this.current;
     return this.adopt(
-      await invoke<EditState>("redact_mark", { doc: this.doc, page, area }),
+      await call("redact_mark", { doc: this.doc, page, area }),
     );
   }
 
@@ -663,18 +662,18 @@ export class Edits {
    */
   async unredact(redaction: number): Promise<EditState> {
     return this.adopt(
-      await invoke<EditState>("redact_remove", { doc: this.doc, redaction }),
+      await call("redact_remove", { doc: this.doc, redaction }),
     );
   }
 
   /** Steps the journal back one command. */
   async undo(): Promise<EditState> {
-    return this.adopt(await invoke<EditState>("edit_undo", { doc: this.doc }));
+    return this.adopt(await call("edit_undo", { doc: this.doc }));
   }
 
   /** Steps the journal forward one command. */
   async redo(): Promise<EditState> {
-    return this.adopt(await invoke<EditState>("edit_redo", { doc: this.doc }));
+    return this.adopt(await call("edit_redo", { doc: this.doc }));
   }
 
   /**
@@ -692,7 +691,7 @@ export class Edits {
    * closed whatever became of the file. See `lib.rs`'s `SaveFailure`.
    */
   async save(source: string): Promise<void> {
-    await invoke<void>("save_document", { doc: this.doc, source });
+    await call("save_document", { doc: this.doc, source });
   }
 
   /**
@@ -704,7 +703,7 @@ export class Edits {
    * on disk, which it does not.
    */
   async saveCopy(source: string, path: string): Promise<Copied> {
-    return await invoke<Copied>("save_copy", { doc: this.doc, source, path });
+    return await call("save_copy", { doc: this.doc, source, path });
   }
 
   /**
@@ -720,7 +719,7 @@ export class Edits {
    * `verified` cannot be false without a reason beside it.
    */
   async redactCopy(source: string, path: string): Promise<Applied> {
-    return await invoke<Applied>("redact_copy", { doc: this.doc, source, path });
+    return await call("redact_copy", { doc: this.doc, source, path });
   }
 
   /**
@@ -741,7 +740,7 @@ export class Edits {
    * The answer is never a bare success, for {@link redactCopy}'s reason.
    */
   async redactDocument(source: string): Promise<Applied> {
-    return await invoke<Applied>("redact_document", { doc: this.doc, source });
+    return await call("redact_document", { doc: this.doc, source });
   }
 
   /**
@@ -761,7 +760,7 @@ export class Edits {
     path: string,
     slots: number[],
   ): Promise<Copied> {
-    return await invoke<Copied>("extract_pages", {
+    return await call("extract_pages", {
       doc: this.doc,
       source,
       path,
@@ -791,7 +790,7 @@ export class Edits {
     path: string,
     groups: number[][],
   ): Promise<Split> {
-    return await invoke<Split>("split_document", {
+    return await call("split_document", {
       doc: this.doc,
       source,
       path,
@@ -816,7 +815,7 @@ export class Edits {
     path: string,
     others: string[],
   ): Promise<Merged> {
-    return await invoke<Merged>("merge_documents", {
+    return await call("merge_documents", {
       doc: this.doc,
       source,
       path,

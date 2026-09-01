@@ -58,6 +58,14 @@
 //!
 //! The page-tree surgery itself is `pagetree.rs`, shared with the print path,
 //! which needs every one of the same operations for the same reasons.
+//!
+//! **Where the parse happens is a seam here and an implementation elsewhere.**
+//! [`Reread`], [`Rewriter`] and [`Outside`] are declared below, with [`Here`] ---
+//! the in-process fallback --- beside them, because which of the two a save picks
+//! is part of what a save is. What [`InWorker`] does about that choice is
+//! `save_outside.rs`: spawning a process, mapping a shared segment and speaking
+//! the worker protocol is four modules of the process boundary, and this file's
+//! import block below is meant to be read as the whole of what it depends on.
 
 use std::path::{Path, PathBuf};
 
@@ -236,7 +244,72 @@ pub struct Staged {
 /// all" --- which is wrong: the plan's own per-page turns still apply. This says
 /// *the view adds nothing*, which is the fact. Saving stores the document, and
 /// how the reader happens to be holding it is not part of the document.
-const NO_VIEW_TURN: u8 = 0;
+pub(crate) const NO_VIEW_TURN: u8 = 0;
+
+/// Asks whether the file a print job is about to be built from is the one the
+/// reader opened.
+///
+/// **All three print routes read the source by name, and until 2026-08-31 none
+/// of them asked.** `Passthrough` hands the file over byte for byte, `Working`
+/// goes through [`print_bytes`], `Range` through `print::build`; every one of
+/// them resolves the pathname afresh, so a sync client landing a newer copy over
+/// it is printed with the reader's plan applied to content the plan was never
+/// made against. The identical file state one keystroke earlier is refused by
+/// `stage_in_place`, and `docs/PLAN.md`'s external-modification section counted
+/// the print path as paying for the fingerprint already --- it did, in
+/// `Edits::plan`, and then never read the answer.
+///
+/// **The deep comparison, and that is the same one every other reader of
+/// [`Plan::opened_as`] makes.** [`Fingerprint::agrees_shallowly`] is used at
+/// exactly one moment --- between staging and the rename, against the *staging*
+/// fingerprint, over a window measured in milliseconds --- because a modification
+/// time is a hint that is wrong in both directions. An hour can pass between
+/// opening a document and printing it, and a `touch` in that hour would refuse a
+/// print of a file that is byte for byte what the reader opened. The escape from
+/// that false refusal is reopening, which spends their edits, so it is not a
+/// cheap mistake to make.
+///
+/// What it costs is one SHA-256 of the file, on a path that already reads the
+/// whole of it and then hands it to PDFKit or `Windows.Data.Pdf` to be parsed a
+/// second time before a panel opens. The passthrough is the one route where this
+/// is the larger share of the work, and it is still a fraction of a print.
+///
+/// **A plan with no fingerprint prints.** [`stage_in_place`] refuses one, because
+/// what is at stake there is the reader's only copy and a check that cannot
+/// answer must fail closed. Here the worst case of proceeding is a sheet of
+/// paper, and refusing every print of a document tpdf could not fingerprint at
+/// open would take away an operation that costs nothing to repeat. The two
+/// answers differ because the stakes do, and this is the one place that is
+/// written down.
+///
+/// **The refusal carries `changed`, and `print_document` currently throws it
+/// away.** That command returns `Result<(), String>`, so what reaches the window
+/// is the sentence and not the flag a save's refusal uses to decide whether
+/// Reload may be offered --- `docs/TRAPS.md`, *A refusal flattened to a string
+/// across a process boundary loses the action that answers it*. The flag is set
+/// anyway, because it is the fact and the reader of it is the caller's to gain;
+/// what closes the gap for a reader today is the message naming the escape,
+/// which is why it does.
+///
+/// # Errors
+///
+/// The file changed since it was opened.
+pub fn print_ready(source: &Path, plan: &Plan) -> Result<(), Refusal> {
+    rewrite_ready(source, plan, OnChange::Refuse)
+        .map(|_ready| ())
+        // `agrees_with`'s own sentence names the fact and two escapes that are
+        // both real here --- save the edits elsewhere, or reopen --- and neither
+        // of them is what a reader pressing Print expects to be told, so the
+        // clause that says why a print is the operation being refused is added
+        // where it is known.
+        .map_err(|why| {
+            Refusal::changed(format!(
+                "{} A print job is built from the file on disk, so the paper would carry \
+                 that document with your edits placed on the pages of the one you opened.",
+                why.message
+            ))
+        })
+}
 
 /// The bytes of a print job built from the working document.
 ///
@@ -254,15 +327,21 @@ const NO_VIEW_TURN: u8 = 0;
 /// `view` is the reader's own rotation, in quarter turns clockwise, which is the
 /// one input a print job has and a save does not.
 ///
-/// **`OnChange::Proceed`, like a copy and unlike a save in place.** What is at
-/// stake is a sheet of paper: a document that changed on disk since it was
-/// opened is worth printing from what the reader is looking at, with the file
-/// left untouched either way. Refusing would take away the one operation that
-/// cannot lose anything.
+/// **A changed file is refused, through [`print_ready`], before anything is
+/// read.** This paragraph argued the opposite until 2026-08-31 --- *printing is
+/// worth doing from what the reader is looking at, and refusing would take away
+/// the one operation that cannot lose anything* --- and both halves were wrong
+/// about this function. The line below reads `source` by name, so what would go
+/// on paper is the file that is on disk *now*, not the one the reader is looking
+/// at; the mapping serving their screen is of the inode that was there at open.
+/// And what cannot be lost is the *file*. The artifact can be: the reader's
+/// marks land at coordinates measured on the document they opened, over content
+/// that is no longer it, and paper does not say so.
 ///
 /// # Errors
 ///
-/// Everything [`planned_bytes`] refuses --- including an encrypted source, which
+/// The source is not the file the plan was made against ([`print_ready`]), or
+/// anything [`planned_bytes`] refuses --- including an encrypted source, which
 /// printing reaches only when the reader has edited it, since an untouched one
 /// is handed over byte for byte and never parsed here. `password` is the
 /// reader's, and it is what makes that refusal the encryption one rather than
@@ -273,6 +352,12 @@ pub fn print_bytes(
     view: u8,
     password: Option<&str>,
 ) -> Result<Vec<u8>, Refusal> {
+    // Before the read, for the reason `rewrite_ready` sits before the parse in
+    // `stage_in_place`: a guard asked after the surgery is a true sentence about
+    // the wrong document. Asked here rather than by the caller because
+    // `print::route`'s `Working` arm calls this function *directly* --- the same
+    // shape that left the encryption refusal below uncovered.
+    print_ready(source, plan)?;
     // **Its own refusal, between the two phases, and it is not a second copy of
     // `print::build`'s.** Until 2026-08-28 `checked` refused every document
     // `lopdf` had decrypted, and that refusal was what stopped this function
@@ -1688,9 +1773,23 @@ impl Reread for Here {
 /// initialisation for a job that only needs `lopdf`, which is a real cost and
 /// not a large one against a save that has already written the file and waited
 /// for the platter twice.
+///
+/// **Declared here and implemented in [`crate::save_outside`]**, which is the
+/// one thing about this type a reader of this file has to be told. Doing what
+/// the paragraphs above describe means spawning a process, mapping a shared
+/// segment, speaking the worker protocol and ending a pid on a deadline --- four
+/// modules of the process boundary, none of which this module's header names,
+/// and all four of which used to be reached from function bodies down the page.
+/// The declaration stays beside [`Here`] so that the pair a save picks between
+/// is named in one place; the behaviour lives with the dependency it carries.
 pub struct InWorker {
     /// Where `libpdfium` lives, which is all a worker needs to be started.
-    library_dir: std::path::PathBuf,
+    ///
+    /// `pub(crate)` for the module that implements this type rather than for
+    /// anyone else: the field is what [`crate::save_outside`] hands to
+    /// `Worker::spawn_shared`, and [`InWorker::at`] is still the only way to
+    /// set it.
+    pub(crate) library_dir: std::path::PathBuf,
 }
 
 impl InWorker {
@@ -1698,112 +1797,6 @@ impl InWorker {
     #[must_use]
     pub fn at(library_dir: std::path::PathBuf) -> Self {
         Self { library_dir }
-    }
-}
-
-/// Waits for a worker's answer, and ends the worker if it does not come.
-///
-/// **The bound this path did not have.** `InWorker::pages` spawns its worker
-/// outside the pool, so the pool's supervisor --- the thing that owns
-/// [`crate::workers::DEFAULT_DEADLINE`] --- never sees it, and `Worker::call`
-/// is a blocking read bounded only by how *long* a reply may be. A document
-/// whose cross-reference sends `lopdf` round in circles would hold the
-/// `spawn_blocking` thread for ever, with the reader's document already closed
-/// and the appended bytes on disk unconfirmed.
-///
-/// `within` is a parameter for `overdue`'s reason: a check whose failure mode is
-/// a wait cannot be exercised, so the decision has to be reachable without
-/// hanging anything.
-///
-/// The pid is killed rather than the thread being asked to stop, because the
-/// thread is blocked inside a pipe read and nothing can interrupt it. Ending the
-/// process closes the pipe, the read fails, the thread drops its `Worker` and
-/// exits --- so the timeout leaks neither a process nor a thread.
-fn awaited<T>(
-    rx: &std::sync::mpsc::Receiver<T>,
-    within: std::time::Duration,
-    pid: u32,
-) -> Result<T, String> {
-    match rx.recv_timeout(within) {
-        Ok(answer) => Ok(answer),
-        Err(_) => {
-            crate::workers::kill_pid(pid);
-            Err(format!(
-                "the worker checking the saved file did not answer within {:.0} s, so the \
-                 save could not be confirmed",
-                within.as_secs_f64()
-            ))
-        }
-    }
-}
-
-impl Reread for InWorker {
-    fn pages(
-        &self,
-        file: &mut std::fs::File,
-        len: usize,
-        password: Option<&str>,
-    ) -> Result<usize, String> {
-        // The handle, never `source`. See [`Reread`]: mapping by name would
-        // verify whichever file has that name now.
-        let mapped = crate::worker_shm::Shm::map_open_file(file, len)?;
-        let worker =
-            crate::worker::Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
-
-        // **Asked on a thread so the answer can be waited for with a bound.**
-        // See `awaited`. The pid is read before the move, because afterwards
-        // this thread no longer owns the worker.
-        let pid = worker.pid();
-        let key = password.map(str::to_string);
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask(&mut worker, key.as_deref()));
-        });
-        awaited(&rx, crate::workers::DEFAULT_DEADLINE, pid)?
-    }
-}
-
-impl InWorker {
-    /// The two requests the read-back makes, on the thread that owns the worker.
-    fn ask(worker: &mut crate::worker::Worker, password: Option<&str>) -> Result<usize, String> {
-        use crate::worker_proto::{Reply, Request};
-
-        // **Before the question, and only when there is one.** A locked document
-        // that is not unlocked first parses to zero objects, so the count would
-        // come back as 0 against the pages the save expects and roll back a file
-        // that is correct --- the same failure `reread_pages` names, arriving one
-        // process further out.
-        if let Some(password) = password {
-            let answered = worker.call(&Request::Unlock {
-                password: password.to_string(),
-            })?;
-            if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
-                ));
-            }
-        }
-
-        let answered = worker.call(&Request::Reread)?;
-        if !answered.ok {
-            return Err(answered.error);
-        }
-        match answered.reply {
-            Some(Reply::Reread(pages)) => Ok(pages),
-            // A well-formed message answering a different question. Nothing in
-            // the protocol checks that a reply matches its request --- `Reply`'s
-            // own documentation says so --- so the caller does, and says which it
-            // got rather than reporting a parse failure for a protocol one.
-            other => Err(format!(
-                "the worker answered the re-read with {}",
-                match other {
-                    Some(reply) => format!("{reply:?}"),
-                    None => "no payload at all".to_string(),
-                }
-            )),
-        }
     }
 }
 
@@ -1870,7 +1863,6 @@ pub trait Rewriter: Send {
 pub trait Outside: Reread + Rewriter {}
 
 impl Outside for Here {}
-impl Outside for InWorker {}
 
 impl Rewriter for Here {
     fn write(
@@ -1889,97 +1881,6 @@ impl Rewriter for Here {
             .and_then(|()| out.flush())
             .map_err(|e| format!("the rewritten document could not be written: {e}"))?;
         Ok(bytes.len())
-    }
-}
-
-impl Rewriter for InWorker {
-    fn write(
-        &self,
-        source: &mut std::fs::File,
-        len: usize,
-        out: &mut std::fs::File,
-        plan: &Plan,
-        password: Option<&str>,
-    ) -> Result<usize, Refusal> {
-        // The handles, never the pathnames. See [`Rewriter`].
-        let mapped = crate::worker_shm::Shm::map_open_file(source, len)?;
-        let worker = crate::worker::Worker::spawn_writing(
-            std::sync::Arc::new(mapped),
-            out,
-            &self.library_dir,
-        )?;
-
-        // **Asked on a thread so the answer can be waited for with a bound**, as
-        // in [`InWorker::pages`]: this worker is outside the pool, so nothing
-        // else owns a deadline for it, and a document that sends `lopdf` round
-        // in circles would otherwise hold the blocking thread for ever. The pid
-        // is read before the move, because afterwards this thread no longer owns
-        // the worker.
-        let pid = worker.pid();
-        let key = password.map(str::to_string);
-        let plan = plan.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask_rewrite(&mut worker, &plan, key.as_deref()));
-        });
-        awaited(&rx, crate::workers::DEFAULT_DEADLINE, pid)?
-    }
-}
-
-impl InWorker {
-    /// The two requests a rewrite makes, on the thread that owns the worker.
-    ///
-    /// [`InWorker::ask`]'s counterpart, and the unlock in front of it is there
-    /// for the same reason: `lopdf` parses no objects at all for a document it
-    /// cannot authenticate, so a locked document would rewrite to an empty one
-    /// rather than refusing.
-    fn ask_rewrite(
-        worker: &mut crate::worker::Worker,
-        plan: &Plan,
-        password: Option<&str>,
-    ) -> Result<usize, Refusal> {
-        use crate::worker_proto::{Reply, Request};
-
-        if let Some(password) = password {
-            let answered = worker.call(&Request::Unlock {
-                password: password.to_string(),
-            })?;
-            if !answered.ok {
-                return Err(format!(
-                    "the worker could not take the document's password: {}",
-                    answered.error
-                )
-                .into());
-            }
-        }
-
-        let answered = worker.call(&Request::Rewrite {
-            plan: plan.clone(),
-            view: NO_VIEW_TURN,
-        })?;
-        if !answered.ok {
-            // The one bit that has to survive the pipe: whether Reload is the
-            // answer. See `Response::changed`.
-            return Err(Refusal {
-                message: answered.error,
-                changed: answered.changed,
-            });
-        }
-        match answered.reply {
-            Some(Reply::Rewrote(bytes)) => Ok(bytes),
-            // A well-formed message answering a different question --- see
-            // [`InWorker::ask`], which says why the caller checks this rather
-            // than the protocol.
-            other => Err(format!(
-                "the worker answered the rewrite with {}",
-                match other {
-                    Some(reply) => format!("{reply:?}"),
-                    None => "no payload at all".to_string(),
-                }
-            )
-            .into()),
-        }
     }
 }
 
@@ -5502,6 +5403,75 @@ mod tests {
     }
 
     #[test]
+    fn a_print_job_over_a_changed_file_is_refused_or_says_so() {
+        // **The state that gets a save refused and a print served.** The file
+        // planted over the document here is a *valid* PDF of the same page
+        // count, which is what makes this a test of the fingerprint rather than
+        // of anything already in the path: `checked`'s page-count refusal cannot
+        // fire on it, and the parse succeeds. The control runs first and is the
+        // same call on the same file before anything lands over it.
+        let Some(source) = fixture("rotated.pdf") else {
+            println!(
+                "[SKIP] a_print_job_over_a_changed_file_is_refused_or_says_so: generate testdata/ (BUILD.md)"
+            );
+            return;
+        };
+        let scratch = Scratch::new("print-changed");
+        let at = scratch.0.join("open.pdf");
+        std::fs::copy(&source, &at).expect("plant the document the reader opened");
+        let plan = plan_opened_as(&[0, 0, 0, 0], &at);
+
+        // The control, first, so that what follows is a difference and not a
+        // reading. A file nobody touched prints.
+        print_bytes(&at, &plan, NO_VIEW_TURN, None)
+            .expect("an unchanged file is the whole point of the guard letting it through");
+
+        // A newer copy of the same report landing over the open document: same
+        // four pages, different bytes.
+        let newer = scratch.0.join("newer.pdf");
+        write_copy(
+            &source,
+            &keeping(4, &[(0, 1), (1, 0), (2, 0), (3, 0)]),
+            &newer,
+            None,
+        )
+        .expect("a sibling of the same shape");
+        std::fs::copy(&newer, &at).expect("land it over the open document");
+
+        let why = print_bytes(&at, &plan, NO_VIEW_TURN, None)
+            .expect_err("a print job over a file that is not the one opened must be refused");
+        // The flag, not the wording, is what a caller branches on --- and it is
+        // set here even though `print_document` currently flattens a refusal to
+        // its message, so the window gets the sentence and not the Reload
+        // button a save's refusal earns. The message names the escape for that
+        // reason; the flag is what a print command able to carry one would read.
+        assert!(
+            why.changed,
+            "the refusal is about the file, which is the fact a caller branches on: {}",
+            why.message
+        );
+        assert!(
+            why.message.contains("changed on disk since you opened it"),
+            "the refusal names the fact: {}",
+            why.message
+        );
+        // Not the page-count refusal wearing the same `changed` flag. That one
+        // says how many pages each side has and is reached through the parse;
+        // this one has to be reached before it.
+        assert!(
+            !why.message.contains("page(s)"),
+            "the fingerprint refused it, not the page count: {}",
+            why.message
+        );
+        assert!(
+            why.message
+                .contains("A print job is built from the file on disk"),
+            "and names the operation it is about: {}",
+            why.message
+        );
+    }
+
+    #[test]
     fn a_merge_whose_base_is_password_protected_keeps_its_encryption() {
         // **Written because the reader would have been told tpdf broke.**
         // `write_merged` builds the base through `planned_bytes`, which since
@@ -7650,99 +7620,6 @@ mod tests {
             std::fs::metadata(&open).expect("stat").permissions().mode() & 0o777,
             0o640,
             "the save replaced the document with one anyone can read (ambient mode is {ambient:o})"
-        );
-    }
-
-    /// A read-back that never answers must end its worker, not wait for ever.
-    ///
-    /// `InWorker::pages` spawns its worker outside the pool, so the supervisor
-    /// that owns the deadline never sees it and `Worker::call` blocks on a pipe
-    /// with no bound. The document is already closed by then and the appended
-    /// bytes are already on disk, so "for ever" means a save that can never be
-    /// confirmed or rolled back.
-    ///
-    /// Exercised through `awaited` with a real process standing in for the
-    /// worker, because the decision takes its duration as an argument --- a check
-    /// whose only failure mode is a wait cannot fail.
-    #[test]
-    #[cfg(unix)]
-    fn a_read_back_that_never_answers_ends_the_worker() {
-        let mut victim = std::process::Command::new("/bin/sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn a stand-in worker");
-        let pid = victim.id();
-        // Nobody ever sends. `_tx` is held so the channel is not simply closed,
-        // which would be a different outcome from silence.
-        let (_tx, rx) = std::sync::mpsc::channel::<usize>();
-
-        let began = std::time::Instant::now();
-        let within = std::time::Duration::from_millis(150);
-        let why = awaited(&rx, within, pid)
-            .expect_err("a wait that gets no answer must not report success");
-        let waited = began.elapsed();
-        assert!(
-            waited >= within,
-            "it has to have waited for the deadline it was given, and waited {waited:?}"
-        );
-        // **The upper bound is the half that has teeth.** A lower bound alone is
-        // satisfied by *any* longer wait, so a deadline a thousand times too long
-        // passes it --- measured: the same assertion stayed green while the test
-        // took 150 seconds instead of 0.17. A bound whose failure mode is a
-        // longer wait is not a bound. Twenty times the deadline is loose enough
-        // for a loaded runner and nowhere near a mistake worth catching.
-        assert!(
-            waited < within * 20,
-            "the wait has to be about the deadline it was given, and took {waited:?}"
-        );
-        assert!(
-            why.contains("did not answer"),
-            "the refusal has to say what happened: {why}"
-        );
-
-        let mut gone = false;
-        for _ in 0..200 {
-            if victim.try_wait().expect("wait").is_some() {
-                gone = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let _ = victim.kill();
-        let _ = victim.wait();
-        assert!(
-            gone,
-            "the worker must be ended --- otherwise the timeout leaks the process and the \
-             thread blocked reading its pipe"
-        );
-    }
-
-    /// The control: an answer that arrives leaves the worker alone.
-    ///
-    /// Without it, an `awaited` that killed unconditionally would pass the test
-    /// above, and every ordinary save would be ending a healthy worker.
-    #[test]
-    #[cfg(unix)]
-    fn a_read_back_that_answers_in_time_leaves_the_worker_alone() {
-        let mut victim = std::process::Command::new("/bin/sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn a stand-in worker");
-        let pid = victim.id();
-        let (tx, rx) = std::sync::mpsc::channel::<usize>();
-        tx.send(7).expect("send the answer");
-
-        assert_eq!(
-            awaited(&rx, std::time::Duration::from_secs(5), pid).expect("the answer arrives"),
-            7
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let still_there = victim.try_wait().expect("wait").is_none();
-        let _ = victim.kill();
-        let _ = victim.wait();
-        assert!(
-            still_there,
-            "a call that was answered must not have its worker killed"
         );
     }
 

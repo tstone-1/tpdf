@@ -46,7 +46,7 @@
  * last hop of the chain, which a model assertion cannot see.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 
 import { pause, Report, settle as settleFor } from "./checkreport";
 import type { MarkView, PageView } from "./pages";
@@ -113,7 +113,7 @@ export interface MarkCheckHost {
  * and a harness that replaced it would be testing something else.
  */
 export async function runMarkCheckIfRequested(host: MarkCheckHost): Promise<boolean> {
-  const mode = await invoke<string | null>("markcheck_mode");
+  const mode = await call("markcheck_mode");
   if (!mode) return false;
 
   try {

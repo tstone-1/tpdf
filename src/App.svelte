@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -43,7 +42,7 @@
   } from "./lib/recovery";
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
-  import { isOpenRefusal } from "./lib/ipc";
+  import { call, isOpenRefusal } from "./lib/ipc";
   import { openWithPassword } from "./lib/unlock";
   import { label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
@@ -61,7 +60,7 @@
     type Comments,
   } from "./lib/comments";
   import { touchedText } from "./lib/reading";
-  import { noticeFor as linkNotice, type Link, type Links } from "./lib/links";
+  import { noticeFor as linkNotice, type Link } from "./lib/links";
   import type { Outline } from "./lib/outline";
   import {
     commentsIn,
@@ -1157,7 +1156,7 @@
         const source = slot === undefined ? undefined : model.map.sourceOf(slot);
         if (source !== undefined) {
           try {
-            const plans = await invoke<RegionPlan[]>("redaction_plans", {
+            const plans = await call("redaction_plans", {
               doc: model.doc,
               page: source,
               regions: asked.map((region) => region.area),
@@ -1530,7 +1529,7 @@
     const wanted = openDoc;
     propertiesDialog.show(null, "");
     try {
-      const answer = await invoke<Properties>("document_properties", { doc: wanted });
+      const answer = await call("document_properties", { doc: wanted });
       if (openDoc !== wanted || !propertiesDialog.isOpen) return;
       properties = answer;
       propertiesDialog.show(answer, "");
@@ -1650,7 +1649,7 @@
       // The event name comes back with the answer rather than being written
       // here as well as in Rust --- see `set_menu`. A menu that is built,
       // enabled and inert is what a drifted constant would look like.
-      const event = await invoke<string | null>("set_menu", {
+      const event = await call("set_menu", {
         sections: buildMenu(commands),
       });
       if (!event) return;
@@ -1695,7 +1694,7 @@
     const key = JSON.stringify(state);
     if (key === menuPushed) return;
     menuPushed = key;
-    void invoke("set_menu_enabled", { state }).catch(() => {
+    void call("set_menu_enabled", { state }).catch(() => {
       // Quiet, unlike the install. This runs after every edit, and a menu
       // whose greying is one step behind is not worth putting a red line in
       // front of a reader for.
@@ -1715,7 +1714,7 @@
     // place identical to the last one it sent, and inverting the page moves
     // nothing --- so routed that way, a reader who inverts and quits without
     // scrolling would find the preference forgotten.
-    void invoke("session_set_invert_pages", { invert: invertPages }).catch(() => {
+    void call("session_set_invert_pages", { invert: invertPages }).catch(() => {
       // Same posture as a failed place write: losing the preference is worth
       // less than a dialog saying so.
     });
@@ -1737,7 +1736,7 @@
   async function printDocument() {
     if (!openPathName || !viewer) return;
     try {
-      await invoke("print_document", {
+      await call("print_document", {
         path: openPathName,
         // The edits go with it: which pages are left, and how each is turned.
         // Read from the model rather than sent from here --- the frontend's copy
@@ -2132,7 +2131,7 @@
       // Not awaited. A reader who has just started the application is waiting for
       // a page, not for housekeeping, and `releaseOrphans` never rejects.
       void releaseOrphans(
-        () => invoke<number>("release_documents"),
+        () => call("release_documents"),
         (line) => console.info(`[open] ${line}`),
       );
 
@@ -2221,7 +2220,7 @@
       // the palette showed before any of this existed.
       try {
         setPrintedKeys(
-          await invoke<Record<string, string>>("keyboard_positions"),
+          await call("keyboard_positions"),
         );
         relabelCommands(commands);
       } catch {
@@ -2269,11 +2268,11 @@
       // Read once, and nothing waits on it: every reader tolerates the empty
       // string it starts as. It is baked into the binary at compile time from
       // `CARGO_PKG_VERSION`, so this call can fail in no interesting way.
-      appVersion = await invoke<string>("app_version");
+      appVersion = await call("app_version");
 
-      const openEvent = await invoke<string>("launch_open_event");
+      const openEvent = await call("launch_open_event");
       await listen<string>(openEvent, (event) => void openPath(event.payload));
-      const handed = await invoke<string[]>("take_launch_paths");
+      const handed = await call("take_launch_paths");
 
       session = await loadSession();
       // From the session already in hand, so opening the palette on the first
@@ -2418,7 +2417,7 @@
     // check and the call --- and so the type-checker can see that too.
     const dialog = passwordDialog;
     return openWithPassword(
-      (password) => invoke<DocumentInfo>("open_document", { path, password }),
+      (password) => call("open_document", { path, password }),
       dialog ? (problem) => dialog.ask(basename(path), problem) : null,
     );
   }
@@ -2473,7 +2472,7 @@
       const outgoing = openDoc;
       openDoc = doc.id;
       if (outgoing >= 0 && outgoing !== doc.id) {
-        void invoke("close_document", { doc: outgoing }).catch((e) => {
+        void call("close_document", { doc: outgoing }).catch((e) => {
           // Not raised to the reader: the file they asked for is open and fine,
           // and this is a leak rather than anything they can act on.
           console.warn(`could not release document ${outgoing}: ${e}`);
@@ -2883,7 +2882,7 @@
           // not merely wasted, it is a third of a second of the FIFO render
           // thread in front of the tiles for the file they *are* looking at.
           if (openDoc !== wanted) return null;
-          return invoke<Outline>("document_outline", { doc: wanted });
+          return call("document_outline", { doc: wanted });
         })
         .then((result) => {
           // And again, because another document may have been opened while the
@@ -2906,7 +2905,7 @@
       void firstPaint()
         .then(() => {
           if (openDoc !== wanted) return null;
-          return invoke<Comments>("document_comments", { doc: wanted });
+          return call("document_comments", { doc: wanted });
         })
         .then((result) => {
           if (!result || openDoc !== wanted) return;
@@ -2936,7 +2935,7 @@
       void firstPaint()
         .then(() => {
           if (openDoc !== wanted) return null;
-          return invoke<Links>("document_links", { doc: wanted });
+          return call("document_links", { doc: wanted });
         })
         .then((result) => {
           if (!result || openDoc !== wanted) return;

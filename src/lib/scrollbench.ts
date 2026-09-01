@@ -28,11 +28,10 @@
  * rounds --- a second pass over cached tiles is a different, easier question.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-import type { DocumentInfo, PageSize } from "./ipc";
+import { call, type DocumentInfo, type PageSize } from "./ipc";
 import { Scroller, type Layout } from "./scroller";
 
-interface ScrollBenchConfig {
+export interface ScrollBenchConfig {
   path: string;
   rounds: number;
   frames: number;
@@ -529,7 +528,7 @@ function report(
  * Returns false when none was requested, so the spike UI carries on.
  */
 export async function runScrollBenchIfRequested(): Promise<boolean> {
-  const config = await invoke<ScrollBenchConfig | null>("scrollbench_config");
+  const config = await call("scrollbench_config");
   if (!config) return false;
 
   const lines: string[] = [];
@@ -538,7 +537,7 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
   try {
     const resolutionMs = clockResolutionMs();
 
-    const doc = await invoke<DocumentInfo>("open_document", {
+    const doc = await call("open_document", {
       path: config.path,
     });
     const page = doc.pages[0];
@@ -583,13 +582,13 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
       log,
     );
 
-    await invoke("spike_print", { text: lines.join("\n") });
-    await invoke("spike_exit", { code: 0 });
+    await call("spike_print", { text: lines.join("\n") });
+    await call("spike_exit", { code: 0 });
   } catch (error) {
-    await invoke("spike_print", {
+    await call("spike_print", {
       text: `[ERROR] scrollbench: ${error instanceof Error ? error.message : String(error)}`,
     });
-    await invoke("spike_exit", { code: 1 });
+    await call("spike_exit", { code: 1 });
   }
 
   return true;

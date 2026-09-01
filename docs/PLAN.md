@@ -1234,7 +1234,7 @@ path **settles the cell immediately** rather than leaving it unset, because a ce
 sets makes every later `plan` wait for ever; that control is a test, and it is the one whose
 failure mode would have been a hang rather than a red line.
 
-Four checks, and they are deliberately not the same check:
+Five checks, and they are deliberately not the same check:
 
 - **`planned_bytes`, before the parse.** Full comparison, digest included. Shared by
   `write_copy` and `stage_in_place`, so a copy is refused for the same reason a save is:
@@ -1251,6 +1251,17 @@ Four checks, and they are deliberately not the same check:
   to narrow a window measured in milliseconds is the wrong trade. It compares against what
   **staging** read, handed back in `Staged { path, verified }`, not against what the reader
   opened --- see below.
+- **Before a print job is built, the full comparison again**, in `save::print_ready`. Added
+  2026-08-31, and the paragraph above was the finding: the print waits for the fingerprint
+  and, until then, never read the answer. All three routes resolve the pathname afresh, so
+  a newer copy landing over it is printed with the reader's marks placed at coordinates
+  measured on the document they are still looking at --- the mapping serving their screen is
+  of the inode that was there at open, so nothing on screen says the paper will differ. The
+  state that gets a save refused printed silently. It is the *deep* comparison rather than
+  the cheap one, because it is asked against what the reader **opened** and an hour can pass
+  in between; a missing fingerprint prints rather than being refused, which is where it
+  parts company with `stage_in_place` and for the reason that entry gives --- what is at
+  stake is a sheet of paper.
 - **Before an append, the same length and mtime, through the open handle.** The append has
   no rename to sit behind, so its equivalent of the check above happens inside
   `append_in_place`, against `Appended { was, verified }`. Two differences from the rewrite,
@@ -12465,8 +12476,12 @@ Two things to do, and they are separable:
 1. ~~**Put it under `spawn_blocking`**, which every other coordinator-side parse
    in `lib.rs` already is.~~ **Done 2026-08-23**, and it turned out to be wider
    than the finding: the whole `landed` match was on the async runtime, so the
-   *rewrite* arm's `verify_before_commit` --- which hashes every byte of the
-   file --- was too. Both are on the blocking pool now. `prepared` is consumed
+   *rewrite* arm's `verify_before_commit` was too. Both are on the blocking pool
+   now. (That clause read "which hashes every byte of the file" until
+   2026-08-31, in three documents at once, and it was never true of this
+   function: it compares length and modification time, and the digest of every
+   byte runs earlier in `save::rewrite_ready`. What put the arm on the pool is
+   the rename, not a hash.) `prepared` is consumed
    rather than borrowed, which is what lets it cross into the closure, and the
    two error shapes are kept by having the closure return
    `Result<(), SaveFailure>` rather than a bare message.

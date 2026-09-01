@@ -46,10 +46,27 @@ whole point of the parity script is that these two jobs are one job:
 
   1. the `gates` job declares `permissions: contents: read` of its own, or the
      whole workflow does;
-  2. its checkout sets `persist-credentials: false`;
+  2. its checkout sets `persist-credentials: false` --- asserted for EVERY
+     checkout in both files, see below;
   3. its Python install names a pinned requirements file rather than package
      names, so what runs is decided by a committed file rather than by PyPI at
      the moment the job starts.
+
+THE THIRD INVARIANT, added 2026-08-31: property 2 above, over every
+`actions/checkout` step in both files rather than only the `gates` jobs'. It was
+written for the job an outside review had just found, and it stopped at that job
+--- so the rule covered the two `gates` jobs and no other checkout in either
+file. `release.yml`'s `release` job holds the six APPLE_* secrets and the updater
+signing key, inherits the workflow's `contents: write`, and runs `npm ci` --- so
+a locked dependency's install script ran beside a pushable token, and nothing
+here could go red about it. The job with the most to lose was the one the check
+did not reach.
+
+Property 2 is now asserted once, file-wide, and no longer a second time inside
+`authority()` for the `gates` job alone. Two mechanisms enforcing one rule make
+a mutation of either survive with a correct-looking excuse, and `docs/TRAPS.md`
+records what that costs; the file-wide rule contains the job-scoped one, so the
+job-scoped one is the copy that goes.
 
 Usage: scripts/check_workflow_parity.py
 """
@@ -133,6 +150,69 @@ def steps(block: list[str]) -> list[str]:
 #: The requirements file the fixture-tool install has to name.
 PINNED_TOOLS = "scripts/fixture-tools.txt"
 
+#: The start of a checkout step, and the line that has to sit inside it. The
+#: second is matched as a YAML key rather than as a substring, so a comment
+#: *discussing* the setting cannot satisfy the check -- the comments beside
+#: every one of these steps do exactly that discussing.
+CHECKOUT = re.compile(r"^(\s*)- uses:\s*actions/checkout@")
+NO_CREDENTIALS = re.compile(r"^\s*persist-credentials:\s*false\s*$")
+
+
+def checkouts(text: str) -> list[tuple[int, bool]]:
+    """Every `actions/checkout` step in one workflow, and whether it is safe.
+
+    Returns the step's line number and whether its own block sets
+    `persist-credentials: false`. A step runs from its `- uses:` line to the
+    next line indented no further, which is the next step, the next key, or the
+    next job --- hand-parsed for `job_block`'s reason.
+    """
+    lines = text.splitlines()
+    out: list[tuple[int, bool]] = []
+    for i, line in enumerate(lines):
+        opener = CHECKOUT.match(line)
+        if not opener:
+            continue
+        indent = len(opener.group(1))
+        safe = False
+        for j in range(i + 1, len(lines)):
+            following = lines[j]
+            if not following.strip():
+                continue
+            if len(following) - len(following.lstrip()) <= indent:
+                break
+            if NO_CREDENTIALS.match(following):
+                safe = True
+        out.append((i + 1, safe))
+    return out
+
+
+def credentials(workflow: str, whole: str) -> list[str]:
+    """Which checkouts in one workflow leave a pushable token behind.
+
+    Every one of them, not only the `gates` job's --- see the module docstring
+    for the job this rule did not used to reach and what it holds.
+    """
+    wrong: list[str] = []
+    steps_found = checkouts(whole)
+    for number, safe in steps_found:
+        if safe:
+            continue
+        wrong.append(
+            f"{workflow}:{number}: this checkout leaves the workflow's token in "
+            f"`.git/config`, where every later step -- including any dependency's "
+            f"install script -- can read it. Add 'persist-credentials: false'; "
+            f"nothing in either workflow does a git operation beyond the checkout"
+        )
+    if not steps_found:
+        # An empty scan reads exactly like a clean one. If the pattern above
+        # ever stops matching, this check has to say so rather than certify a
+        # file it never looked at.
+        wrong.append(
+            f"{workflow}: no actions/checkout step found at all -- this check "
+            f"scanned nothing"
+        )
+    return wrong
+
 
 def authority(workflow: str, block: list[str], whole: str) -> list[str]:
     """What is wrong with one `gates` job's authority, or nothing.
@@ -157,11 +237,9 @@ def authority(workflow: str, block: list[str], whole: str) -> list[str]:
         )
 
     # 2. The checkout must not leave a pushable credential in `.git/config`.
-    if "actions/checkout@" in body and "persist-credentials: false" not in body:
-        wrong.append(
-            f"{workflow}: the '{JOB}' job checks out with credentials persisted -- add "
-            f"'persist-credentials: false', since nothing here does a git operation"
-        )
+    #    Checked by `credentials()` over the whole file rather than here, so
+    #    that the rule reaches the `release` job as well. One mechanism, not
+    #    two; the docstring has why the job-scoped copy was removed.
 
     # 3. Whatever Python it installs comes from a committed file. Matched on the
     #    file name rather than on the absence of package names, so a second
@@ -187,11 +265,19 @@ def authority(workflow: str, block: list[str], whole: str) -> list[str]:
 def main() -> int:
     """Compares the two jobs and reports the first difference."""
     found: dict[str, list[str]] = {}
+    checked_out = 0
     for workflow in WORKFLOWS:
         path = ROOT / workflow
         if not path.exists():
             print(f"[FAIL] {workflow} does not exist")
             return 1
+        whole = path.read_text(encoding="utf-8")
+        leaks = credentials(workflow, whole)
+        if leaks:
+            for line in leaks:
+                print(f"[FAIL] {line}")
+            return 1
+        checked_out += len(checkouts(whole))
         block = job_block(path.read_text(encoding="utf-8"), JOB)
         if not block:
             # A job that cannot be located reads exactly like two jobs that
@@ -211,8 +297,8 @@ def main() -> int:
     left, right = (found[w] for w in WORKFLOWS)
     if left == right:
         print(f"[OK]   both '{JOB}' jobs run the same {len(left)} steps, in the same order")
-        print(f"[OK]   both read-only, both checked out without credentials, both installing "
-              f"{PINNED_TOOLS}")
+        print(f"[OK]   both read-only, both installing {PINNED_TOOLS}")
+        print(f"[OK]   all {checked_out} checkout(s) across both workflows persist no credential")
         return 0
 
     print(f"[FAIL] the '{JOB}' jobs have drifted")

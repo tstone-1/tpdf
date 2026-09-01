@@ -14,7 +14,7 @@
  * load.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc";
 
 export type Outcome = "ok" | "fail" | "skip";
 
@@ -41,7 +41,7 @@ export class Report {
 
   /** Prints a line that is not a result. */
   emit(line: string): void {
-    this.printing = this.printing.then(() => invoke("spike_print", { text: line }));
+    this.printing = this.printing.then(() => call("spike_print", { text: line }));
   }
 
   private record(name: string, outcome: Outcome, detail: string): void {
@@ -110,7 +110,7 @@ export class Report {
     // The lines went out one at a time; this is where the last is known to have
     // landed. `spike_exit` really does set the exit code --- see AGENTS.md.
     await this.printing;
-    await invoke("spike_exit", { code: failed === 0 ? 0 : 1 });
+    await call("spike_exit", { code: failed === 0 ? 0 : 1 });
   }
 }
 

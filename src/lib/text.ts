@@ -17,8 +17,7 @@
  * if the *wrong* convention would also pass.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { call } from "./ipc";
 import type { FilePage } from "./pages";
 
 /**
@@ -547,7 +546,7 @@ export class TextCache {
     const existing = this.pending.get(page);
     if (existing) return existing;
 
-    const request = invoke<PageText>("page_text", {
+    const request = call("page_text", {
       doc: this.doc,
       page,
       crop: this.crops.get(page) ?? null,
@@ -737,11 +736,16 @@ export function centreOfCharacter(
 /**
  * A character's box, or `null` where it has none.
  *
- * The one place the *placed* rule is written: four values present, and a box
- * with real extent in both directions. {@link centreOfCharacter} and
- * {@link touchedIndices} both need it, and they need the same answer --- a
- * character one of them called unplaced and the other measured would put a
- * redaction's covered words and a highlight's out of step over the same page.
+ * Both halves of the *placed* rule, for a caller holding the flat array: four
+ * values present, and a box with real extent in both directions.
+ * {@link centreOfCharacter} and {@link touchedIndices} both need it, and they
+ * need the same answer --- a character one of them called unplaced and the other
+ * measured would put a redaction's covered words and a highlight's out of step
+ * over the same page.
+ *
+ * The extent half is spelled once more, in {@link isPlaced}, for a caller that
+ * already holds a {@link Quad} and so has nothing left to check about presence.
+ * Those are the two spellings, and there may be no third.
  *
  * `charQuad` is not this. It answers with zeroes for a character that has no
  * box, which is what a caller drawing a run wants and exactly what a caller
@@ -797,7 +801,15 @@ export function coversPoint(
   return x >= left && x <= right && y >= top && y <= bottom;
 }
 
-/** Whether a character has no box, which PDFium reports as four zeroes. */
+/**
+ * Whether a character's box has real extent, rather than being the four zeroes
+ * PDFium reports for one it did not place.
+ *
+ * {@link placedBox}'s extent half, on a {@link Quad} that already holds four
+ * numbers --- so the presence half has nothing to check here and is absent
+ * deliberately. The two must not disagree about extent, for the reason stated
+ * there.
+ */
 function isPlaced(quad: Quad): boolean {
   return quad.right > quad.left && quad.bottom > quad.top;
 }

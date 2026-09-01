@@ -217,12 +217,23 @@ where it could not fire.
 > *`AGENTS.md` carries this decision in four lines; this is the argument.*
 
 **The JavaScript harness does ship, and as of 2026-08-02 that is a decision rather than the
-unexamined half of the same hygiene.** `App.svelte` statically imports all six webview entry
-points --- `viewercheck`, `scrollbench`, `sessioncheck`, `opencheck`, `autobench`, `startup` ---
-so the functional check and its five siblings sit in the bundle that `frontendDist` embeds whole
-into the binary, beside `dist/shell.html`, the framework-free page `ShellMode::Blank` loads. Read
-out of the shipped file rather than off the import list. The weight is **77.1 kB of a 221.2 kB
-bundle, 34.9%**, measured two ways that agree to 0.9%.
+unexamined half of the same hygiene.** `App.svelte` statically imports every webview entry
+point, so the functional checks and the benchmarks sit in the bundle that `frontendDist` embeds
+whole into the binary, beside `dist/shell.html`, the framework-free page `ShellMode::Blank`
+loads. Read out of the shipped file rather than off the import list. The weight when this was
+written was **77.1 kB of a 221.2 kB bundle, 34.9%**, measured two ways that agree to 0.9%.
+
+**That figure is history, and this paragraph is why it is now labelled as history.** It stayed
+here and in `AGENTS.md` as the plain present tense for a month, during which the bundle doubled
+and `viewercheck.ts` went from 3,337 lines to 10,898 --- so the current share was computable
+from neither document, on a project whose first stated property is cold start. The share held
+(33.86% on 2026-08-31) and the absolute did not, which is exactly the pair a single number
+cannot carry. The authority is `scripts/check_bundle_share.py`, the `bundleshare` gate: it
+attributes the built sourcemap per module, prints the per-file breakdown beside the verdict so
+the next reader derives nothing, and refuses on a share ceiling *and* an absolute one. The list
+of entry points is not written out here either --- the check diffs it against `App.svelte`'s own
+imports, both ways, which is what a hand-written list of six missed when `markcheck.ts` became
+the seventh.
 
 **It stays, for two reasons.** The checks are built on observing the artifact that ships --- the
 frame loop, the input handlers and the layout they assert against exist nowhere else, which is why
@@ -232,7 +243,9 @@ repository has already recorded twice from other directions. And the payload is 
 cold start: the `blank` variant deletes the *entire* payload --- no module graph, no Svelte, no
 `@tauri-apps/api` --- and moved warm start by -8.4, +9.9 and -0.2 ms across three interleaved runs
 (`docs/PLAN.md` §0), because the webview's first custom-protocol request costs ~45 ms and whichever
-request is first pays it. 77 kB inside that floor is not a lever.
+request is first pays it. A payload inside that floor is not a lever --- which is the claim the
+`bundleshare` ceilings exist to put a deadline on, since it was measured at half the current
+size and nothing re-measures it on its own.
 
 **The 2026-07-31 removal does not transfer, and the difference is authority rather than size.**
 The 17 that left were *executables*: independently launchable, each with its own hostile-input

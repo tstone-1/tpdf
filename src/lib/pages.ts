@@ -229,9 +229,14 @@ export interface RegionPlan {
    * there are. They cross the boundary because the **coordinator** applies
    * them, and it is one type for one answer rather than two shapes of it.
    *
-   * `redact::RegionPlan` also carries `text_objects`, which is deliberately
-   * absent here: it is a fact about the page that only the writer needs, and a
-   * field nothing reads is a field that goes stale without anything saying so.
+   * `redact::RegionPlan` carries five fields this does not --- `text_objects`,
+   * `image_objects`, `form_shows`, `form_text_objects` and `area` --- and their
+   * absence is deliberate and is one rule rather than five decisions: each is a
+   * fact the **writer** needs in order to refuse a plan that disagrees with what
+   * `lopdf` finds, and none of them is anything a panel can show. A field
+   * nothing reads is a field that goes stale without anything saying so, so the
+   * rule is stated as a class: a plan's writer-only half does not cross into
+   * this mirror, whatever it grows next.
    */
   shows: number[];
   /** What those operations draw, in the page's own object order. */

@@ -51,13 +51,16 @@ use std::collections::BTreeSet;
 
 use lopdf::{Document, Object};
 
-/// Ceiling on any single decoded stream.
+/// The ceiling on any single decoded stream, which every other scan uses too.
 ///
-/// The same bound `save::MAX_DECODE` uses, and for the same reason: a carrier
-/// that will not fit is a blind spot rather than a reason to allocate. Stated
-/// here rather than imported so that this module's own bound is visible in the
-/// module that enforces it.
-pub const MAX_DECODE: usize = 64 * 1024 * 1024;
+/// **This module declared its own literal from 2026-08-26 until 2026-08-31**,
+/// with a comment saying it was stated rather than imported so that the bound
+/// would be visible where it is enforced --- and citing `save::MAX_DECODE`,
+/// which is not a definition but `save.rs`'s import of this one. Two copies of a
+/// security bound with nothing asserting they agree, one day after
+/// `encoding.rs` recorded that having six of them was the defect. Visibility is
+/// what a `use` line is for; agreement is what one value is for.
+use crate::encoding::MAX_DECODE;
 
 /// The filters `lopdf` 0.44 can actually decode.
 ///

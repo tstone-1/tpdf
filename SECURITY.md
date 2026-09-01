@@ -56,7 +56,19 @@ to fix this and here is why" than leave a report unanswered.
 
 If you would like credit in the advisory, say so and how you would like to be named.
 
-## Releases
+## Supported versions
 
-Nothing has shipped yet — there are no tags and no released binaries, so there is no
-supported-version table to give. This section gets replaced with one at the first release.
+The latest release, and only the latest release. tpdf is CalVer `YY.M.MICRO` on a single
+line — there are no maintained older branches and nothing is backported, so a fix ships as
+the next release and the one it replaces stops being supported the moment it does. Whatever
+the [releases page](https://github.com/tstone-1/tpdf/releases) shows as *Latest* is the
+supported version, and the in-app updater offers that same release.
+
+That is the whole table. If you are running an older build, please update before reporting:
+the defect may already be gone, and if it is not, the fix goes into the next release either
+way.
+
+(This section said *"Nothing has shipped yet"* until 2026-08-31, thirteen releases after the
+first tag. It was written on 2026-08-02 with a closing sentence promising to replace itself
+at the first release, and a note that has to be triggered by somebody remembering is not a
+mechanism. The release checklist re-reads this file now.)

@@ -26,8 +26,7 @@
  * {@link pageGeometry}, which asks PDFium.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { call } from "./ipc";
 import type { FilePage } from "./pages";
 
 /** A crop box's size and where it sits inside the page the file describes. */
@@ -94,10 +93,7 @@ export async function contentBox(
   doc: number,
   page: number,
 ): Promise<[number, number, number, number] | null> {
-  return await invoke<[number, number, number, number] | null>(
-    "page_content_box",
-    { doc, page },
-  );
+  return await call("page_content_box", { doc, page });
 }
 
 /** Where a crop box lands inside the file's own page, and how big it is. */
@@ -106,7 +102,7 @@ export async function pageGeometry(
   page: FilePage,
   crop: readonly [number, number, number, number] | null,
 ): Promise<CropGeometry> {
-  return await invoke<CropGeometry>("page_geometry", { doc, page, crop });
+  return await call("page_geometry", { doc, page, crop });
 }
 
 /**
@@ -132,7 +128,7 @@ export async function cropBox(
   page: number,
   rect: readonly [number, number, number, number],
 ): Promise<[number, number, number, number]> {
-  return await invoke<[number, number, number, number]>("page_crop_box", {
+  return await call("page_crop_box", {
     doc,
     page,
     rect,

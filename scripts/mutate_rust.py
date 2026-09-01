@@ -178,6 +178,24 @@ FILTERS = [
     # entry, and the first time it was written without the guard having to say
     # so -- which is what the six notes above are for.
     "verify::",
+    # Added 2026-08-31 with `save_outside.rs`, in the same edit that moved the
+    # two read-back deadline mutations into it. Eighth time, and the first where
+    # the list had to change for a *move* rather than for new code: `save::` is
+    # not a prefix of `save_outside::` --- libtest filters on substring, and
+    # "save::" does not occur in "save_outside::tests::..." --- so the two
+    # mutations would have named tests the harness could no longer see, and
+    # reported SURVIVED for a deadline that works.
+    "save_outside::",
+    # Added 2026-08-31 with `save_order.rs`, in the same edit that took the save
+    # sequence out of `save_document`. Ninth time, and the second in a day where
+    # the substring rule is what makes the entry necessary rather than tidy:
+    # "save::" does not occur in "save_order::tests::...", and "save_outside::"
+    # does not either, so without this line the five mutations aimed at the
+    # ordering would name tests the harness cannot see and report SURVIVED for a
+    # sequence that works. `scripts/check_mutation_anchors.py` cannot say so --
+    # it reads anchors and test names out of the sources and knows nothing about
+    # this list -- which is why the note is here rather than trusted to a gate.
+    "save_order::",
 ]
 
 
@@ -763,6 +781,77 @@ MUTATIONS = [
         "fn with_close_note(why: SaveFailure, closed: Result<(), String>) -> SaveFailure {\n"
         "    let mut why = SaveFailure::after_close(why.message);",
         "a_close_note_changes_the_sentence_and_not_the_fields",
+    ),
+    # The save sequence itself, which nothing could aim at until 2026-08-31: it
+    # was the body of a Tauri command, so a mutation of it named no test that
+    # could run. `save_order.rs` is that sequence with the round trips behind a
+    # seam, and these six are the guards the extraction was for.
+    Mutation(
+        # Write a document nobody edited. The file that comes out is correct and
+        # every object id in it has moved, which for a signed document means the
+        # signature no longer covers anything -- in exchange for a save the
+        # reader did not ask for.
+        "save_order: save a document that has nothing to save",
+        "src/save_order.rs",
+        "    if !state.dirty {",
+        "    if false {",
+        "a_clean_document_is_refused_before_anything_is_touched",
+    ),
+    Mutation(
+        # Pick the writer from the plan alone. `Plan::is_appendable` and
+        # `mode_for_source` agree on every small file, so this is invisible until
+        # the document is one the append cannot be prepared for: past
+        # `APPEND_MAX_BYTES` the worker is refused the memory and aborts, and a
+        # file that cannot be measured at all takes the arm with no bound over it.
+        "save_order: choose the writer from the plan and not from the file",
+        "src/save_order.rs",
+        "    let mode = save::mode_for_source(&plan, source);",
+        "    let mode = if plan.is_appendable() {\n"
+        "        save::Mode::Append\n"
+        "    } else {\n"
+        "        save::Mode::Rewrite\n"
+        "    };",
+        "a_source_that_cannot_be_measured_takes_the_rewrite",
+    ),
+    Mutation(
+        # Leave the reader's journal open across the write. Document numbers are
+        # reused, so a journal still under a handle the service is free to hand
+        # to another file is one document's edits applied to another's pages.
+        "save_order: leave the model open while the file is written",
+        "src/save_order.rs",
+        "    saving.close_model();",
+        "    let _ = &saving;",
+        "the_document_is_closed_after_the_save_is_prepared_and_before_it_lands",
+    ),
+    Mutation(
+        # Land the write without the reader's key. `lopdf` parses no objects at
+        # all without one, so the append's read-back counts zero pages against
+        # the two it expects and rolls back a save that was correct.
+        "save_order: land the write without the reader's key",
+        "src/save_order.rs",
+        "    let landed = land(prepared, password).await?;",
+        "    let landed = land(prepared, None).await?;",
+        "the_password_is_asked_once_and_reaches_the_writer_and_the_landing",
+    ),
+    Mutation(
+        # Say nothing about a close that failed. The reader is told the save did
+        # not land and not that their document is also gone, which is the half
+        # that decides what they do next.
+        "save_order: drop the close from the failure the reader is handed",
+        "src/save_order.rs",
+        "    landed.map_err(|why| with_close_note(why, closed))",
+        "    let _ = closed;\n    landed",
+        "a_failed_close_is_named_in_a_failure_that_happened_after_it",
+    ),
+    Mutation(
+        # Restate a writer's refusal instead of carrying it, which drops
+        # `changed`. The message is perfect and the window withholds Reload --
+        # the one action that helps a reader whose file moved underneath them.
+        "save_order: restate a writer's refusal and lose the field Reload reads",
+        "src/save_order.rs",
+        "    .map_err(SaveFailure::refused_by)?;",
+        "    .map_err(|why| SaveFailure::refused(why.message))?;",
+        "a_save_refused_before_the_close_leaves_the_document_open",
     ),
     Mutation(
         # Ask the layout for an action it does not define. A status other than
@@ -6873,8 +6962,12 @@ MUTATIONS += [
         # Time the read-back out without ending the worker. The refusal is still
         # correct; the process and the thread blocked on its pipe are leaked.
         "save: let a timed-out read-back leave its worker running",
-        "src/save.rs",
-        "            crate::workers::kill_pid(pid);\n",
+        # `awaited` moved to `save_outside.rs` on 2026-08-31 with the rest of
+        # `InWorker`'s behaviour, and the call it names lost its `crate::workers::`
+        # prefix in the move, because naming that module in the import header is
+        # the whole point of the move. Both halves of the anchor had to follow.
+        "src/save_outside.rs",
+        "            kill_pid(pid);\n",
         "",
         "a_read_back_that_never_answers_ends_the_worker",
     ),
@@ -6884,7 +6977,9 @@ MUTATIONS += [
         # a lower bound is satisfied by any longer wait, and this survived until
         # that assertion existed.
         "save: bound the read-back at a thousand times the deadline",
-        "src/save.rs",
+        # Moved with `awaited`. The line itself is unchanged --- it names nothing
+        # outside the function --- so only the file it lives in moved.
+        "src/save_outside.rs",
         "    match rx.recv_timeout(within) {",
         "    match rx.recv_timeout(within * 1000) {",
         "a_read_back_that_never_answers_ends_the_worker",
@@ -7521,6 +7616,43 @@ MUTATIONS += [
         "        if false {",
         "an_indexed_bmp_is_refused_rather_than_compared_without_its_palette",
         only_on="windows",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        # Take the changed-file guard off the print path. The job is then built
+        # from whatever is on disk now, with the reader's marks placed at
+        # coordinates measured on the file still on their screen -- exactly the
+        # defect the guard was written for, and the paper does not say so.
+        "save: print a file that changed since it was opened",
+        "src/save.rs",
+        "    print_ready(source, plan)?;\n",
+        "    let _ = print_ready(source, plan);\n",
+        "a_print_job_over_a_changed_file_is_refused_or_says_so",
+    ),
+    Mutation(
+        # The over-refusal direction: make `print_ready` refuse every job,
+        # changed file or not. The guard letting an unchanged file through is
+        # the half of it a reader relies on every day, and only the control can
+        # see it go.
+        "save: refuse a print job whether or not the file changed",
+        "src/save.rs",
+        "        .map(|_ready| ())\n",
+        "        .and_then(|_ready| Err(Refusal::changed(\"changed on disk since you opened it\")))\n",
+        "a_print_job_over_a_changed_file_is_refused_or_says_so",
+    ),
+    Mutation(
+        # Let the umask choose the tile mapping's backing-file permissions
+        # again. On a machine with the default umask 022 the file is briefly
+        # 0644 in the shared temp directory; the test reads the mode through
+        # the descriptor, because the path is unlinked on the next statement.
+        "worker_shm: let the umask choose the backing file's permissions",
+        "src/worker_shm.rs",
+        "            .mode(0o600)\n",
+        "",
+        "the_backing_file_of_a_new_mapping_is_not_readable_by_anyone_else",
+        only_on="macos",
     ),
 ]
 

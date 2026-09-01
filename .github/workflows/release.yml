@@ -561,6 +561,20 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
+        with:
+          # The same line the `gates` job carries, and this is the job it was
+          # missing from: the one holding the six APPLE_* secrets and the
+          # updater signing key, which then runs `npm ci` -- so a locked
+          # dependency's install script executes here. Without this the checkout
+          # leaves the workflow's `contents: write` token in `.git/config` as
+          # well, where every step after it can read it.
+          #
+          # Nothing in this job does a git operation. Both things that talk to
+          # GitHub take a token through the environment rather than through
+          # git's configuration: `tauri-action` reads GITHUB_TOKEN from its
+          # `env:` block, and the `gh release upload` below reads the same
+          # variable and names its repository explicitly.
+          persist-credentials: false
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (v5.0.0)
         with:

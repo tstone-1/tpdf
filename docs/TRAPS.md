@@ -19771,3 +19771,217 @@ the file: the rectangle is in the PDF, the font is Base 14, and the arithmetic a
 lines of Python. What went into the document instead was a description written from memory of
 what the probe does. Where a description genuinely has to be prose --- "a red zigzag under
 line 1" --- keep it qualitative, and let the numbers come from the artifact.
+
+### The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
+
+`print_bytes` carried a paragraph headed **`OnChange::Proceed`, like a copy and unlike a save
+in place** --- *"a document that changed on disk since it was opened is worth printing from
+what the reader is looking at ... refusing would take away the one operation that cannot lose
+anything."* Both clauses were false about the function they sat on. It reads `source` by name,
+so it prints the file on disk *now*; what the reader is looking at is served from a mapping of
+the inode that was there at open, which is why nothing on screen says the paper will differ.
+And what cannot be lost is the *file* --- the artifact can be, and a wrong sheet of paper is
+indistinguishable from a right one.
+
+Worse, the paragraph named an existing mechanism whose contract is *write it, and say so* ---
+`write_copy`'s `Copied.changed` --- and the code implemented neither half: it never asked, so
+there was nothing to say. **A stated policy naming a mechanism is not a use of that mechanism
+--- grep for the mechanism at the call site, not for the policy in the comment.**
+
+The tell was free and sat one keystroke away: a save refused this exact file state with
+"reopen it before saving" while a print served it. When two sibling operations disagree about
+an input, one of them is wrong, and the comment explaining why is where the error will be.
+Fixed 2026-08-31: `print_ready` runs before the read on all three print routes, reusing
+`rewrite_ready(…, OnChange::Refuse)` --- the deep comparison rather than the shallow one,
+because it is asked against what the reader opened rather than against a moment milliseconds
+ago, and a `touch` an hour later must not refuse a byte-identical file whose only escape
+spends the reader's edits.
+
+### "The one copy" acquired a second copy the day after the sentence, and its comment cited an import as the definition
+
+`encoding.rs` documented `MAX_DECODE` as *the one copy*, recording that the same bound had
+previously been six private constants each documented as matching a different one of the other
+five. One day later, on 2026-08-26, `verify.rs` declared a second literal, arguing that a
+module's own bound should be visible where it is enforced, and cited `save::MAX_DECODE` ---
+which is not a definition but `save.rs`'s import of `encoding`'s, so the pointer sent the next
+editor to the wrong file. Nothing asserted the two values agreed: bumping either would have
+silently split a security bound, with the account in `encoding.rs` false and nothing able to
+go red about it.
+
+**Visibility is what a `use` line is for; agreement is what one value is for.** The argument
+for restating a constant is always about readability, and it is always answered by an import.
+And a claim about the whole crate made in one file has no gate behind it --- the sentence
+stayed exactly as written while it stopped being true. Fixed 2026-08-31 by deleting the
+literal for the import; a `const _: () = assert!(a == b)` tie was considered and rejected,
+because a second copy plus a guard is still two mechanisms for one rule.
+
+### A rule written for the job a review named stops at that job, and the job next door had the most to lose
+
+`check_workflow_parity.py` grew a second invariant on 2026-08-22 after an independent review
+found `release.yml`'s `gates` job checking out with the default credential-persisting
+`actions/checkout` under a workflow-level `contents: write`, then `pip install`ing unpinned
+packages before any gate ran. Three properties closed it, all asserted by the script, all
+failure modes proved by mutation. The entry above records it, correctly.
+
+It closed the composition **in the job where it was found**. `release.yml` has another
+checkout, in the `release` job --- which inherits the same `contents: write`, holds the six
+`APPLE_*` secrets and the updater signing key, and runs `npm ci`, so a locked dependency's
+install script executes there. That checkout had no `with:` block at all for the life of the
+workflow, and the checker's own docstring said its rules were about the `gates` job, so
+nothing in the repository could go red about it. The rule reached the job with the least
+authority and not the one with the most.
+
+Nothing in that job ever needed the credential, which is what makes the fix cheap rather than
+a trade: `tauri-action` and `gh release upload` both take `GITHUB_TOKEN` from an `env:` block,
+`gh` names its repository explicitly rather than inferring it from a remote, and no step in
+the job runs `git` at all. Fixed 2026-08-31: the setting is asserted file-wide over every
+`actions/checkout` in both workflows, the job-scoped copy of the rule is deleted rather than
+kept beside the file-wide one (two mechanisms for one rule make a mutation of either survive),
+and the match is a **YAML key**, never a substring --- every one of these steps carries a
+comment *discussing* the setting, and a substring scan is satisfied by the prose. Proved by
+planting the setting as a comment and watching the check stay red.
+
+The general form is the same shape as the parity script's own founding defect: **a check
+written from an incident inherits the incident's scope.** The review names a job, the fix
+names that job, and the property is about every job. When closing a finding, ask what else in
+the same file has the shape the finding had --- here, one `grep -c 'actions/checkout@'`
+against the number of steps the rule covered would have answered it: three against two.
+
+### An allowlist for a tool that is not installed reads exactly like a control
+
+`package.json` carried `"allowScripts": {}` from the repository's first commit. It is the
+`@lavamoat/allow-scripts` convention; lavamoat has never been a dependency, npm ignores
+unknown top-level keys, and no `.npmrc` sets `ignore-scripts` --- so nothing has ever read it.
+The CHANGELOG curated it as load-bearing ("`allowScripts` still named `esbuild@0.25.12` ...
+Emptied --- an allowlist naming something absent is how one rots into a blanket permission"),
+which is a correct sentence about an allowlist, written about a key with no consumer.
+
+An empty allowlist is the worst version of this: it looks like the strictest possible policy.
+The tell is cheap and general --- **for any file that names a policy, grep for the tool that
+reads it.** Deleted 2026-08-31, with the consequence stated rather than implied: enforcement
+of dependency lifecycle scripts is explicitly absent, and what bounds them is lockfile
+integrity, which decides *which* code runs and not *whether* it runs.
+
+### The decision was right, its cost basis had doubled, and the share was the half that had not moved
+
+`AGENTS.md` and `docs/RATIONALE.md` both defend shipping the unattended harness inside the
+frontend bundle. The argument is sound and was not re-litigated. What aged was the one
+measurement holding it up --- *77.1 kB of a 221.2 kB bundle*, written 2026-08-02 in the plain
+present tense, in two documents at once. By 2026-08-31 the bundle was 447,082 sourcemap units
+and `viewercheck.ts` had gone from 3,337 lines to 10,898, making it the largest single source
+input to the shipped output, larger than `viewer.ts` or anything under `node_modules`. Nobody
+could compute the current share from either document, on a project whose first stated property
+is cold start, in a repository whose own convention is that no measured count lives in prose.
+
+**The instructive part is which half moved.** The share was 33.86% --- about a point from
+where it was written. The absolute had doubled. So a ceiling on the share alone would have
+been green through the entire month the finding is about, and a ceiling on the absolute alone
+condemns a bundle that grew for reasons that are not the harness. A single number could not
+have carried this; `scripts/check_bundle_share.py` asserts both and prints both.
+
+**A number defending a decision is not the same kind of claim as a number reporting a
+measurement, and it rots differently.** A stale measurement is wrong. A stale cost basis still
+reads as an argument that was made carefully --- which is what stops anyone re-taking it. The
+tell is a bare figure inside a paragraph whose verb is "stays" or "is not a lever": the
+conclusion is a judgement about a magnitude, and the magnitude has no instrument.
+
+Two smaller things fell out of building the check, both this file's usual shapes. The prose
+said **six** entry points; `markcheck.ts` had made it seven, so the check diffs the family
+against `App.svelte`'s own `run*IfRequested` imports both ways rather than carrying a
+hand-written list. And a family list hard-coded by filename measures **zero** for a renamed
+module and passes with a smaller share --- the absent-input-reads-as-a-pass defect arriving
+inside the fix for a documentation defect --- so every named member must be attributed a
+non-zero span or the run is red.
+
+### A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
+
+`readme.test.ts` spelled the "Not built yet" section-slicing expression twice, in two describe
+blocks --- and the second block's whole job is to compare its list against the first's, so two
+slices that had drifted apart would have disagreed silently *inside* the check written to
+catch a disagreement. The extraction is right, and the obvious name for the helper is the name
+of the `const` it replaces: `absentSection`.
+
+That name is a trap. Two later lines still read `absentSection` as a value ---
+`expect(absentSection.length).toBeGreaterThan(0)` and `claims(absentSection, BUILT)` --- and
+after the extraction the identifier resolves to the **function**. `Function.prototype.length`
+is the arity, which is 2, so the refusal written to catch a section that had gone missing
+passed with `2 > 0`, on a function, forever. Nothing goes red: the type-checker is happy (a
+function has a numeric `length`), and `claims()` takes a `string` --- that half *would* have
+failed, which is the only reason the pair was caught before it shipped.
+
+Two things follow. **After extracting a helper, grep the old identifier rather than trusting
+the compiler**: an extraction that keeps the name converts every surviving reference from a
+value into a callable, and the ones that still type-check are the ones that stop testing
+anything. And **an emptiness refusal whose subject is a `.length` is worth re-reading whenever
+its subject changes shape at all** --- this file's own comment says a missing section "reads
+exactly like a clean run", and a check that has quietly started measuring an arity reads
+exactly like one too. The extraction was then proved by mutating the helper to return an empty
+body: three checks went red **across both describe blocks**, which is the evidence that one
+spelling is now read by both.
+
+### A module split renames the harness's filter without moving one anchor
+
+`mutate_rust.py` selects which tests may run at all through `FILTERS`, a list of module
+prefixes handed to libtest, which matches them as **substrings**. Moving `awaited` and its two
+tests from `save.rs` to `save_outside.rs` left every anchor valid --- the `before` strings
+still occur exactly once in the file each names, and `check_mutation_anchors.py` reported
+1302/1302 --- while the harness was structurally unable to run the two mutations that had just
+been re-aimed: `save::` does not occur in `save_outside::tests::a_read_back_...`; the
+underscore breaks the substring. Both would have named tests the run could not see and
+reported SURVIVED for a deadline that works.
+
+The anchors gate cannot see this, because it asks whether a string is in a file and `FILTERS`
+is not a string in any file it reads. The harness's own name guard *would* have refused the
+run --- loud, but only at the next sweep, which may be weeks away. Previous `FILTERS`
+omissions all came from **new code**, where the guard caught five of six; this is the first
+time the list had to change for a **move**, and a move is the case where nothing feels new
+enough to check. Ask, after any module split or rename: does the new module's path still start
+with an existing filter?
+
+### A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
+
+`#[cfg(test)] mod tests { use super::*; ... }` is the house idiom and is correct wherever at
+least one test compiles. Both tests moved into `save_outside.rs` are `#[cfg(unix)]` --- each
+needs a real process to stand in for a worker --- so on Windows the module is empty and the
+glob resolves to nothing used: `error: unused import: super::*`, fatal under the `clippy`
+gate's `-D warnings`. `cargo clippy --all-targets` on a Mac cannot see it, because a Mac
+compiler never parses the arm that removes the tests; `scripts/check_windows.py` caught it on
+its first run after the move, which is the run the reasoning "glob imports never warn" would
+have skipped.
+
+The fix is to gate the import the same way the tests are gated (`#[cfg(unix)] use
+super::awaited;`) rather than to widen it. The general form: **a `use super::*` is only as
+portable as the least portable test under it.**
+
+### A security gate keyed on where a call is written decides where that call may move
+
+`check_writers.py` answers *how many ways can the webview cause a write* by scanning each
+`#[tauri::command]`'s own body for the terminal writers in `save.rs`. That is the right key
+--- a property of the code rather than two hand-kept lists --- and it has a consequence
+nobody had met until the save orchestration was extracted from `lib.rs`: an extraction that
+moves the write out of the command body makes the command drop out of the set, so
+`docs/THREAT-MODEL.md` §3's list goes stale and its count falls, with every other gate green
+and the code strictly better organised.
+
+The fix is not to weaken the gate and not to satisfy it with a comment: it is to leave the
+call where the gate reads it, which for `save_document` meant the landing being a closure the
+extracted sequence is handed rather than a method on the seam. Worth knowing before any
+refactor of `lib.rs`'s writing commands, and worth stating out loud that a gate reading text
+constrains layout --- the alternative reading, that the shape was chosen for tidiness, is what
+makes the next person undo it.
+
+### Two nested `Result`s because the outer one is the pool
+
+`save_over`'s landing returns `Result<Result<(), SaveFailure>, SaveFailure>`, and collapsing
+the two would change what a reader is told: the outer is `spawn_blocking` itself failing and
+leaves through `?` **without** the close note, the inner is the write failing and gets it.
+That asymmetry was invisible in the original command --- one `?` and one `map_err`, twenty
+lines apart --- and had no test; it is pinned now
+(`the_pool_failing_is_reported_without_a_close_note`), which is what makes it a recorded
+decision rather than an accident the next tidy-up unifies.
+
+**When a refactor makes two error paths adjacent, ask which of them was carrying something
+extra before you unify them.** Whether the asymmetry is even *right* is a separate,
+reader-facing question --- the close has happened either way, and `with_close_note`'s own doc
+argues a reader should be told once on whichever refusal reaches them --- but changing it is a
+decision about what a reader sees, not a refactor, and it should be made as one.

@@ -54,6 +54,8 @@ pub mod render;
 #[cfg(windows)]
 pub mod sandbox_win;
 pub mod save;
+mod save_order;
+pub mod save_outside;
 pub mod search;
 pub mod session;
 pub mod startup;
@@ -1535,23 +1537,30 @@ async fn edit_state(
 /// boundary as a field the frontend can branch on. A message a human reads and
 /// a fact a program acts on are different things, and packing the second into
 /// the first is how a frontend comes to match on wording.
-#[derive(serde::Serialize)]
-struct SaveFailure {
-    message: String,
+///
+/// `pub(crate)`, with its fields and constructors, because `save_order.rs` is
+/// what composes one now and its tests are what assert on the fields. Nothing
+/// outside this crate sees it: the frontend gets the serialised form.
+/// `Debug` so a test that expected a save to land can print what it got
+/// instead. Nothing in the application formats one --- the frontend reads the
+/// serialised form --- so it costs a derive and buys a readable failure.
+#[derive(serde::Serialize, Debug)]
+pub(crate) struct SaveFailure {
+    pub(crate) message: String,
     /// Whether the caller must open the document again.
-    reopen: bool,
+    pub(crate) reopen: bool,
     /// Whether the file changed on disk since the reader opened it.
     ///
     /// A field for the reason `reopen` is one, and `save::Refusal` carries the
     /// argument in full: it is what lets the window offer Reload for this
     /// refusal and withhold it for the ones where reloading would discard the
     /// reader's work in exchange for nothing.
-    changed: bool,
+    pub(crate) changed: bool,
 }
 
 impl SaveFailure {
     /// Nothing was touched: no file written, no document closed.
-    fn refused(message: impl Into<String>) -> Self {
+    pub(crate) fn refused(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             reopen: false,
@@ -1560,7 +1569,7 @@ impl SaveFailure {
     }
 
     /// The document is closed, whatever became of the file.
-    fn after_close(message: impl Into<String>) -> Self {
+    pub(crate) fn after_close(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             reopen: true,
@@ -1574,7 +1583,7 @@ impl SaveFailure {
     /// itself. These two exist so that `changed` is *carried* rather than
     /// re-derived: deciding it again at this end would mean asking the same
     /// question twice and, worse, matching on the message to answer it.
-    fn refused_by(why: save::Refusal) -> Self {
+    pub(crate) fn refused_by(why: save::Refusal) -> Self {
         Self {
             message: why.message,
             reopen: false,
@@ -1583,7 +1592,7 @@ impl SaveFailure {
     }
 
     /// The same, for a refusal that arrives after the document is closed.
-    fn after_close_by(why: save::Refusal) -> Self {
+    pub(crate) fn after_close_by(why: save::Refusal) -> Self {
         Self {
             message: why.message,
             reopen: true,
@@ -1592,23 +1601,124 @@ impl SaveFailure {
     }
 }
 
+/// The render service and the working model, as a save over the source needs them.
+///
+/// Every method here is a round trip `save_order.rs` cannot make itself, and
+/// each one is the code that used to sit inline in [`save_document`]. What is
+/// gained by their living behind a trait is that the *order* they are called in
+/// is now a thing a test can assert: `save_order::save_over` is an ordinary
+/// function, and the seam it takes can be a recorder.
+///
+/// It holds borrows rather than clones because it lives no longer than the
+/// command that builds it.
+struct LiveSave<'a> {
+    app: &'a tauri::AppHandle,
+    service: &'a RenderService,
+    edits: &'a edits::Edits,
+    doc: u32,
+    source: String,
+}
+
+impl save_order::Saving for LiveSave<'_> {
+    /// Both writers' answers, which the landing below is the only reader of.
+    type Prepared = Prepared;
+
+    fn state(&self) -> Result<edits::EditState, String> {
+        self.edits.state(self.doc)
+    }
+
+    fn plan(&self) -> Result<edits::Plan, String> {
+        self.edits.plan(self.doc)
+    }
+
+    fn password(&self) -> impl std::future::Future<Output = Option<String>> + Send {
+        password_for(self.service, self.doc, "save_document")
+    }
+
+    /// **The append's parse happens in the worker**, which is the one difference
+    /// between the two writers and the reason they are not one `spawn_blocking`.
+    /// `save::append_update` is a pure function of the document's bytes and the
+    /// plan, and those bytes are the attacker's --- so it runs in the process
+    /// that already holds this document under a sandbox, a deadline and a
+    /// restart, and that has already parsed it with `lopdf` for its comments,
+    /// links and properties. What comes back is bytes and two numbers.
+    ///
+    /// Every decision about the file stays out here: `append_ready` measures and
+    /// fingerprints it before the request, and `save::appended` refuses an answer
+    /// built against a different length.
+    ///
+    /// The pool failing and the render thread stopping both arrive as a plain
+    /// `Refusal`, which carries `changed: false` --- the same `SaveFailure` the
+    /// two of them produced when they were spelled out separately, and one
+    /// classification rather than three ways of writing it.
+    fn prepare_append(
+        &self,
+        plan: edits::Plan,
+    ) -> impl std::future::Future<Output = Result<Prepared, save::Refusal>> + Send {
+        let checking = self.source.clone();
+        let asking = plan.clone();
+        async move {
+            let ready = tauri::async_runtime::spawn_blocking(move || {
+                save::append_ready(Path::new(&checking), &asking)
+            })
+            .await
+            .map_err(|e| save::Refusal::from(format!("the save did not run: {e}")))??;
+
+            let (reply, rx) = reply_channel();
+            self.service.append(self.doc, plan, reply);
+            let update = await_reply("save_document", rx)
+                .await
+                .map_err(save::Refusal::from)?;
+            save::appended(ready, update).map(Prepared::Append)
+        }
+    }
+
+    /// **The rewrite's parse happens in the worker too, since 2026-08-28**, and
+    /// it is the same argument [`LiveSave::prepare_append`] makes:
+    /// `save::rewrite_update` is a pure function of the document's bytes and the
+    /// plan, and those bytes are the attacker's. What took longer is where the
+    /// answer goes --- an append's is kilobytes and fits in a reply, a rewrite's
+    /// is the whole document --- so the worker is handed the staging file's own
+    /// descriptor and writes down it. `docs/THREAT-MODEL.md` residual risk 18.
+    fn prepare_rewrite(
+        &self,
+        plan: edits::Plan,
+        password: Option<String>,
+    ) -> impl std::future::Future<Output = Result<Prepared, save::Refusal>> + Send {
+        let staging = self.source.clone();
+        let writing = outside_of(self.app, self.service.backend());
+        async move {
+            tauri::async_runtime::spawn_blocking(move || {
+                save::stage_in_place(Path::new(&staging), &plan, password.as_deref(), &*writing)
+            })
+            .await
+            .map_err(|e| save::Refusal::from(format!("the save did not run: {e}")))?
+            .map(Prepared::Rewrite)
+        }
+    }
+
+    fn close_model(&self) {
+        self.edits.close(self.doc);
+    }
+
+    /// The send happens now and the wait is what is awaited, which is the order
+    /// the command had: nothing between the two, so a caller cannot leave the
+    /// service holding a document it was told to give back.
+    fn close_document(&self) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        let (reply, rx) = reply_channel();
+        self.service.close(self.doc, reply);
+        async move { await_reply("save_document", rx).await }
+    }
+}
+
 /// Writes the working document over the file the reader opened.
 ///
-/// **Three steps, in an order that is the whole of the design.** The bytes are
-/// staged beside the source; the document is closed; the staged file is renamed
-/// over the source. Staging first is what lets every refusal `save.rs` states
-/// arrive while the reader still has their document. Closing before the rename
-/// is not a tidiness: a `rename` over a memory-mapped file succeeds on macOS and
-/// leaves the mapping serving the inode that is no longer at that path, so the
-/// worker would go on rendering the document as it was before the save --- and
-/// Windows refuses the rename outright while a section is open. One order is
-/// right on both platforms, and neither platform's failure is loud.
-///
-/// **The caller reopens.** Nothing here rebuilds the document, because every
-/// object identity in the file has just changed --- `docs/PLAN.md` §5 --- so the
-/// baseline the journal replays against is gone and the model is closed with it.
-/// A reopen from the same path is the rebase, and it is the frontend's because
-/// the frontend is what knows where the reader was looking.
+/// **The sequence is in `save_order.rs`**, which is where its reasons are
+/// written and where its tests are. This is the adapter: it puts the render
+/// service and the model behind [`LiveSave`], and it holds the landing --- the
+/// one step that cannot move, because choosing where the read-back parses needs
+/// the app handle and because `scripts/check_writers.py` reads the terminal
+/// writers a command can reach out of the command's own body.
 ///
 /// On the blocking pool for the parse and the serialisation, for the reason
 /// [`save_copy`] gives. The close and the rename are not: one is a channel
@@ -1622,230 +1732,108 @@ async fn save_document(
     doc: u32,
     source: String,
 ) -> Result<(), SaveFailure> {
-    // Read rather than assumed from the command being offered at all. The
-    // palette withholds Save on a document with nothing to save, and that guard
-    // is a frontend that may be a reply behind; this one is the model's own
-    // answer. Writing a clean document would still produce a correct file, but
-    // it would rewrite every object id in a file the reader did not change.
-    let state = edits.state(doc).map_err(SaveFailure::refused)?;
-    if !state.dirty {
-        return Err(SaveFailure::refused(
-            "there is nothing to save --- this document has no unsaved changes",
-        ));
-    }
-    let plan = edits.plan(doc).map_err(SaveFailure::refused)?;
-
-    // The file has to still be the file. Everything below rewrites the object
-    // graph the plan was made against, and a `source` that something else has
-    // written to since is a different graph -- the reader's edits would be
-    // replayed onto pages they were never made on, and the write is atomic, so
-    // the result is a confidently wrong file rather than a visibly broken one.
-    //
-    // The check itself lives in `save.rs`, on the plan, where `write_copy` and
-    // `stage_in_place` both reach it and where a test can drive it -- a guard
-    // written inline in a command has no failing case, which `docs/TRAPS.md`
-    // records twice over. Nothing is read here: what the second look below needs
-    // comes back from the staging, which is the moment it should be comparing
-    // against rather than the moment the reader opened the file.
-    //
-    // **Two writers, and which one runs is the plan's answer.** A save that adds
-    // nothing but marks is written as an update section appended to the file,
-    // which leaves every existing byte where it is: on a 337 MB scan that is
-    // 29 ms and 723 bytes against 239 ms and a rewritten copy of the whole
-    // document. Anything else --- a deleted page, a move, a turn, a crop --- is
-    // reserialised, which is what every save did until 2026-08-22. See
-    // `save::mode_for`, and `docs/PLAN.md` §5 for the measurement.
-    //
-    // Both halves have the same shape and the same reason for it: prepare while
-    // the document is still open and nothing is at stake, then close, then
-    // apply. The document has to be closed in between either way --- a rename
-    // over a mapped file leaves the mapping serving the old inode on macOS, and
-    // an append to one is a file the worker's cached parse no longer describes.
-    // **Size decides too, since 2026-08-22.** An append is prepared inside a
-    // worker, and a worker is bounded -- by a job object on Windows and by the
-    // machine on macOS -- so past `save::APPEND_MAX_BYTES` the document is
-    // reserialised instead. That is slower and it loses the byte-for-byte
-    // previous revision; it is what makes a large document saveable at all,
-    // against a worker that would otherwise be refused the memory to prepare
-    // one and abort.
-    //
-    // **A file that cannot be measured takes the rewrite**, which is the arm
-    // with no memory bound over it and is correct for every plan. `AGENTS.md`
-    // records a migration whose `if (checked -and safe) {stop}` collapsed
-    // "checked, fine to proceed" with "could not check at all" and force-pushed
-    // on the second; the failure path here goes the safe way by construction
-    // rather than by ordering.
-    let mode = save::mode_for_source(&plan, Path::new(&source));
-
-    // **Before the match, because both arms need it now.** It used to be asked
-    // after, for the append alone --- the rewrite arm read `Prepared::Rewrite(_)
-    // => None` and did not need a key, because it refused every encrypted
-    // document outright. Since 2026-08-28 a rewrite re-encrypts what it writes,
-    // so the key is what makes it possible rather than what it would have
-    // leaked. The rewrite also needs it *earlier* than the append does: the
-    // append's parse happens in the worker below, while the rewrite parses on
-    // the pool inside this match.
-    let password = password_for(&service, doc, "save_document").await;
-
-    let prepared = match mode {
-        // **The append's parse happens in the worker**, which is the one
-        // difference between the two arms and the reason they are not one
-        // `spawn_blocking`. `save::append_update` is a pure function of the
-        // document's bytes and the plan, and those bytes are the attacker's ---
-        // so it runs in the process that already holds this document under a
-        // sandbox, a deadline and a restart, and that has already parsed it with
-        // `lopdf` for its comments, links and properties. What comes back is
-        // bytes and two numbers. Every decision about the file stays here:
-        // `append_ready` measures and fingerprints it before the request, and
-        // `save::appended` refuses an answer built against a different length.
-        //
-        // Asked before the close below, which the order already required for an
-        // unrelated reason --- there is no document to build from afterwards.
-        save::Mode::Append => {
-            let checking = source.clone();
-            let asking = plan.clone();
-            let ready = tauri::async_runtime::spawn_blocking(move || {
-                save::append_ready(Path::new(&checking), &asking)
-            })
-            .await
-            .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
-            .map_err(SaveFailure::refused_by)?;
-
-            let (reply, rx) = reply_channel();
-            service.append(doc, plan, reply);
-            let update = await_reply("save_document", rx)
-                .await
-                .map_err(SaveFailure::refused)?;
-            save::appended(ready, update)
-                .map(Prepared::Append)
-                .map_err(SaveFailure::refused_by)?
-        }
-        save::Mode::Rewrite => {
-            let staging = source.clone();
-            let key = password.clone();
-            // **The rewrite's parse happens in the worker too, since
-            // 2026-08-28**, and it is the same argument the append arm above
-            // makes: `save::rewrite_update` is a pure function of the document's
-            // bytes and the plan, and those bytes are the attacker's. What took
-            // longer is where the answer goes --- an append's is kilobytes and
-            // fits in a reply, a rewrite's is the whole document --- so the
-            // worker is handed the staging file's own descriptor and writes down
-            // it. `docs/THREAT-MODEL.md` residual risk 18.
-            let writing = outside_of(&app, service.backend());
-            tauri::async_runtime::spawn_blocking(move || {
-                save::stage_in_place(Path::new(&staging), &plan, key.as_deref(), &*writing)
-            })
-            .await
-            .map_err(|e| SaveFailure::refused(format!("the save did not run: {e}")))?
-            .map(Prepared::Rewrite)
-            .map_err(SaveFailure::refused_by)?
-        }
+    let live = LiveSave {
+        app: &app,
+        service: &service,
+        edits: &edits,
+        doc,
+        source: source.clone(),
     };
+    // The landing owns everything it needs, because it outlives the borrows
+    // above: it runs after the seam has been asked its last question. Reading
+    // `backend()` here rather than inside it changes nothing about the answer
+    // --- it is a field --- and it is what keeps the `service` borrow out of a
+    // closure that has to be `'static` to cross onto the blocking pool.
+    let backend = service.backend();
+    let landing_app = app.clone();
+    let landing_source = source.clone();
 
-    // **Before the close, because after it there is no document to ask.** An
-    // append to an encrypted document re-reads the file it wrote to check the
-    // cross-reference chained correctly, and `lopdf` parses no objects at all
-    // without the key --- so that check would count zero pages against the two
-    // it expects and roll a correct save back. Asked only for the arm that
-    // needs it, and dropped when this function returns:
-    // `docs/THREAT-MODEL.md` §T6.9.
-    //
-    // A failure to answer is not a refusal. The document is about to be closed
-    // either way and a plain document has no password to lose, so `None` is the
-    // right answer for both "it has none" and "the service could not say" ---
-    // and if the second is wrong, the append's own read-back refuses and rolls
-    // back rather than writing something unchecked.
-    // Already held: asked once above the match, where the rewrite arm needs it.
-    // This was a second ask keyed on which arm ran, and both arms now want the
-    // same answer.
-
-    // Past this line every failure is an `after_close`: the reader's document is
-    // being taken apart, and the honest thing to report is that they have to
-    // open the file again rather than a message that reads like a refusal.
-    //
-    // The model first, for the reason `close_document` gives --- document
-    // numbers are reused, and a journal left under a handle the service is free
-    // to hand to another file is one document's edits applied to another's
-    // pages.
-    edits.close(doc);
-    let (reply, rx) = reply_channel();
-    service.close(doc, reply);
-    let closed = await_reply("save_document", rx).await;
-
-    // Attempted whether or not the close was acknowledged. The model is gone
-    // either way, so the reader is reopening either way, and a rename that the
-    // mapping really did block reports that itself --- which is a better message
-    // than one this end guesses from a close reply.
-    //
-    // **On the blocking pool, and this whole match had been on the async
-    // runtime until 2026-08-23.** Every arm below does real file work on a file
-    // the size of the reader's document: the rewrite hashes every byte of it in
-    // `verify_before_commit` and then renames, and the append writes, waits for
-    // the platter, reads the whole file back and *parses it with `lopdf`*. That
-    // last one is a parse of attacker-derived bytes --- the previous revision is
-    // the document the reader opened --- so it belongs where the other three
-    // coordinator-side parses already are. `docs/THREAT-MODEL.md` residual risk
-    // 17 said the append had moved into the worker; its *preparation* had, and
-    // this is the half that had not.
-    //
-    // **Who re-reads the file the append writes**, chosen the same way the
-    // render backend is and for the same reason: the previous revision of that
-    // file is the document the reader opened, so the parse belongs in a
-    // sandboxed child wherever there can be one. A platform with none still
-    // saves --- refusing would make it useless rather than uncontained, which is
-    // the rule `Backend::default_here` already follows --- and it is not silent:
-    // `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable.
-    //
-    // Built here rather than inside `save::append_in_place`, because choosing it
-    // needs the app handle and that function is reachable from `cargo test`,
-    // where there is none.
-    let reread = outside_of(&app, service.backend());
-
-    // `prepared` is consumed rather than borrowed, which is what lets it cross
-    // into the closure, and nothing after this line reads it.
-    let landed = tauri::async_runtime::spawn_blocking(move || match prepared {
-        Prepared::Rewrite(staged) => {
-            // One more look before the rename, closing the window the split
-            // above opens. What it compares and why it compares against staging
-            // rather than against the open is on the function, where a test can
-            // reach it.
+    save_order::save_over(
+        &live,
+        Path::new(&source),
+        move |prepared, password| async move {
+            // **Who re-reads the file the append writes**, chosen the same way the
+            // render backend is and for the same reason: the previous revision of
+            // that file is the document the reader opened, so the parse belongs in a
+            // sandboxed child wherever there can be one. A platform with none still
+            // saves --- refusing would make it useless rather than uncontained,
+            // which is the rule `Backend::default_here` already follows --- and it
+            // is not silent: `render::UNSANDBOXED_MARK` is what keeps the two runs
+            // distinguishable.
             //
-            // `after_close`, and this is worth stating because the comment here
-            // said the opposite until 2026-08-19 while the code did what it does
-            // now. Nothing has been renamed, so it is tempting to call this a
-            // refusal that costs nothing --- but the close two statements up has
-            // already happened, so the reader's model and their journal are
-            // gone. `refused` would tell them their document is still open when
-            // it is not, which is the one thing that flag decides.
-            save::verify_before_commit(&staged, Path::new(&source))
-                .map_err(SaveFailure::after_close_by)?;
-            save::commit_in_place(&staged.path, Path::new(&source))
-                .map_err(SaveFailure::after_close)
-        }
-        // No second look of its own because it takes its own, and it has to be
-        // its own: `verify_before_commit` compares against a *path*, and an
-        // append writes through a *handle*. `append_in_place` opens the file,
-        // asks `Appended::verified` the same length-and-timestamp question
-        // through that handle, writes, reads back and rolls back through it, and
-        // finally checks that the pathname still names it.
-        //
-        // This comment claimed the opposite until 2026-08-22 --- that comparing
-        // a length alone was "a sharper answer" than comparing a length and a
-        // timestamp --- and the code agreed with it. It is the wrong way round,
-        // `fingerprint.rs` says so in its own header, and `docs/TRAPS.md` has
-        // had *Equal length is not no change* since before either was written.
-        Prepared::Append(appended) => {
-            save::append_in_place(&appended, Path::new(&source), password.as_deref(), &*reread)
-                .map_err(SaveFailure::after_close)
-        }
-    })
-    .await
-    // The pool itself failing --- a panic in the closure, or a runtime shutting
-    // down. `after_close` for the same reason every arm above is: the document
-    // is gone whatever happened to the file.
-    .map_err(|e| SaveFailure::after_close(format!("the save did not finish: {e}")))?;
+            // Built here rather than inside `save::append_in_place`, because
+            // choosing it needs the app handle and that function is reachable from
+            // `cargo test`, where there is none.
+            let reread = outside_of(&landing_app, backend);
 
-    landed.map_err(|why| with_close_note(why, closed))
+            // **On the blocking pool, and this whole match had been on the async
+            // runtime until 2026-08-23.** Every arm below does file work that
+            // blocks: the rewrite takes its last look at the source in
+            // `verify_before_commit` and then renames, and the append writes, waits
+            // for the platter, reads the whole file back and *parses it with
+            // `lopdf`*. That last one is a parse of attacker-derived bytes --- the
+            // previous revision is the document the reader opened --- so it belongs
+            // where the other three coordinator-side parses already are.
+            // `docs/THREAT-MODEL.md` residual risk 17 said the append had moved into
+            // the worker; its *preparation* had, and this is the half that had not.
+            //
+            // This said the rewrite "hashes every byte of it in
+            // `verify_before_commit`" until 2026-08-31, which was never true and made
+            // the arms sound alike. That function compares length and modification
+            // time --- the digest of every byte ran earlier, in `save::rewrite_ready`,
+            // before staging. So the rewrite arm is here for its rename rather than
+            // for its size, and the append arm is the one that is proportional to
+            // the reader's document.
+            tauri::async_runtime::spawn_blocking(move || match prepared {
+                Prepared::Rewrite(staged) => {
+                    // One more look before the rename, closing the window the
+                    // staging opens. What it compares and why it compares against
+                    // staging rather than against the open is on the function, where
+                    // a test can reach it.
+                    //
+                    // `after_close`, and this is worth stating because the comment
+                    // here said the opposite until 2026-08-19 while the code did what
+                    // it does now. Nothing has been renamed, so it is tempting to
+                    // call this a refusal that costs nothing --- but the close has
+                    // already happened, so the reader's model and their journal are
+                    // gone. `refused` would tell them their document is still open
+                    // when it is not, which is the one thing that flag decides.
+                    save::verify_before_commit(&staged, Path::new(&landing_source))
+                        .map_err(SaveFailure::after_close_by)?;
+                    save::commit_in_place(&staged.path, Path::new(&landing_source))
+                        .map_err(SaveFailure::after_close)
+                }
+                // No second look of its own because it takes its own, and it has to
+                // be its own: `verify_before_commit` compares against a *path*, and
+                // an append writes through a *handle*. `append_in_place` opens the
+                // file, asks `Appended::verified` the same length-and-timestamp
+                // question through that handle, writes, reads back and rolls back
+                // through it, and finally checks that the pathname still names it.
+                //
+                // This comment claimed the opposite until 2026-08-22 --- that
+                // comparing a length alone was "a sharper answer" than comparing a
+                // length and a timestamp --- and the code agreed with it. It is the
+                // wrong way round, `fingerprint.rs` says so in its own header, and
+                // `docs/TRAPS.md` has had *Equal length is not no change* since
+                // before either was written.
+                Prepared::Append(appended) => save::append_in_place(
+                    &appended,
+                    Path::new(&landing_source),
+                    password.as_deref(),
+                    &*reread,
+                )
+                .map_err(SaveFailure::after_close),
+            })
+            .await
+            // The pool itself failing --- a panic in the closure, or a runtime
+            // shutting down. `after_close` for the same reason every arm above is:
+            // the document is gone whatever happened to the file. It leaves as the
+            // outer result, which is what keeps the close note off it; see
+            // `save_order::save_over`.
+            .map_err(|e| SaveFailure::after_close(format!("the save did not finish: {e}")))
+        },
+    )
+    .await
 }
 
 /// Adds what became of the close to a failure that happened after it.
@@ -1857,14 +1845,18 @@ async fn save_document(
 /// failed to close should be told once, on whichever refusal reaches them.
 ///
 /// **A function rather than a closure inside the command, so it has a failing
-/// case.** `save_document` is an async Tauri command that needs a running app,
-/// a render service and a real file, so nothing in `cargo test` can call it ---
-/// which is this repository's own rule about a guard written inline in a
-/// command, arriving in the same function whose comments already cite it twice.
+/// case.** `save_document` was an async Tauri command holding the whole
+/// sequence, needing a running app, a render service and a real file, so
+/// nothing in `cargo test` could call it --- which is this repository's own rule
+/// about a guard written inline in a command, arriving in the function whose
+/// comments already cited it twice. Since 2026-08-31 the sequence is in
+/// `save_order.rs` and *is* reachable, so this is no longer the only tested
+/// thing on that path; it stays a function because the rule that put it here is
+/// still the right one and its own tests are aimed at it.
 ///
 /// The fields a program branches on are untouched. Only `message` grows, which
 /// is the one part of a `SaveFailure` written for a human.
-fn with_close_note(mut why: SaveFailure, closed: Result<(), String>) -> SaveFailure {
+pub(crate) fn with_close_note(mut why: SaveFailure, closed: Result<(), String>) -> SaveFailure {
     if let Err(also) = closed {
         why.message = format!(
             "{} --- and the document did not close cleanly: {also}",
@@ -2492,6 +2484,24 @@ async fn print_document(
         None => None,
     };
     let build = move || -> Result<Vec<u8>, String> {
+        // **The two routes that do not go through `save::print_bytes`, which asks
+        // this itself.** All three read `source` by name, so all three can be
+        // handed a file that is no longer the one the reader is looking at ---
+        // `Passthrough` prints the whole of it, `Range` prints the page numbers
+        // the reader typed against a document that no longer has those pages.
+        // Asked once here rather than in each arm, because a second call would
+        // hash the file twice for the arm that already did it.
+        //
+        // `plan` is what carries the fingerprint, and a print with no document
+        // open has none to compare: `print::route` sends a plan-less job to
+        // `Range`, and nothing about it was made against a file. See
+        // `save::print_ready` for why a missing fingerprint prints rather than
+        // being refused.
+        if !matches!(route, print::Route::Working) {
+            if let Some(plan) = plan.as_ref() {
+                save::print_ready(&source, plan).map_err(|refused| refused.message)?;
+            }
+        }
         match route {
             print::Route::Passthrough => {
                 std::fs::read(&source).map_err(|e| format!("could not read {source:?}: {e}"))
