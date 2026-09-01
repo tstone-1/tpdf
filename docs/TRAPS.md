@@ -2955,6 +2955,40 @@ produce.
 So: match replies by their own identity, never by arrival; and when adding concurrency, re-read
 every check whose meaning depended on there being one of something.
 
+### Three ways to be wrong about whether your own build is still running
+
+One session, one afternoon, three wrong answers in a row about a `scripts/gates.py` run --- and
+each wrong answer caused the next problem.
+
+**`ps` without `-e` lists only this shell's processes.** `ps -o pid,time,command | grep cargo`
+returned nothing while **two** full gate runs were compiling, and that empty output was read as
+*the run died*. It is the same shape as a query with a predicate the data does not use: absence
+and a wrong question produce identical output. `pgrep -l cargo` answers correctly and is
+shorter. The tell that should have stopped it: the output file's mtime was seconds old, which
+no dead run produces.
+
+**Start time cannot tell two runs' processes apart.** Having concluded a run was dead, the next
+step was to clear what looked like orphans holding the build lock --- chosen by `lstart`, on the
+reasoning that the earlier one must be stale. It was not: both runs had a clippy, and the live
+one had started first. Killing it killed the run that was working. **Parentage is what
+identifies a run**: `ps -eo pid,ppid,etime,comm` and walking up to the `gates.py` pid says which
+tree a `cargo` belongs to, in one call and with no reasoning. This is the mirror of the
+`caffeinate` entry below --- there the fix was to match on argv rather than parentage, here it
+is to match on parentage rather than a timestamp; what they share is that the cheap-looking
+attribute is the one that does not identify anything.
+
+**`pkill -f 'gates.py'` kills the script and leaves its `cargo` children running.** They keep
+the build-directory lock, so the *next* run sits at `Blocking waiting for file lock on build
+directory` producing no output --- which reads as a wedged compile, and sends you to diagnose
+the new run instead of clearing the old one. Kill the children first, or kill the process group.
+
+**The compound cost was two abandoned gate runs and about twenty minutes**, none of it in the
+code under test. The general form is the one this file records elsewhere and is worth stating
+in this shape too: **when an instrument reports that nothing is happening, prove the instrument
+can see something happening before believing it.** `pgrep -l cargo` while a build is definitely
+running is a two-second control.
+
+---
 ### `caffeinate <utility>` becomes a child of the utility, so a child count counts it
 
 Every observation of a *process* in this repository comes from `pgrep -P <us>` --- deliberately,
@@ -8836,6 +8870,37 @@ same quantity, and a set is a different quantity from a list.** Deduplication an
 the measurement and the comparison turns a check into one that fires on the data rather than
 on the defect.
 
+### A refactor moved three callers away, and the mutation kept its anchor and lost its meaning
+
+`save::write_atomically` wrote a document's bytes through a staged file and a rename. Three
+production paths called it --- the copy, the split and the merge --- and one mutation stood
+behind the property: replace its body with `std::fs::write`, and
+`the_destination_is_replaced_whole_rather_than_written_through` goes red, because that test
+runs the **copy**.
+
+On 2026-09-01 the copy and the split moved to the worker seam, where the bytes never reach
+this process and there is nothing to hand `write_atomically`. Only the merge still called it.
+From that moment the mutation could redden nothing: the test's path no longer went through
+the function the mutation edits, and the property it certified was carried by `stage` and
+`commit` with nothing aimed at them.
+
+**Every standing instrument said the tree was healthy.** `check_mutation_anchors.py` reported
+the anchor present exactly once, which was true --- it reads the file, and the function was
+still there. The suite was green. The anchors gate is *by design* unable to see this: it
+answers whether a mutation can be applied, never whether applying it does anything. Only a
+run answers the second, and the full table is minutes, so it runs before a push rather than
+after an edit.
+
+**What found it was deleting the function.** `cargo` reported it unused once the merge moved
+too, which is a fact about callers that no mutation harness reports. So: **when a refactor
+takes callers away from a function, list the mutations aimed at it and ask which test still
+reaches it.** `grep -n '<function name>' scripts/mutate_rust.py` is the whole cost.
+
+The repair was not to keep the function. `commit` is where the rename actually is and four
+writing paths end there, so the mutation moved onto it and now covers more than it did before
+the refactor. A mutation orphaned by a move is usually pointing at the wrong layer.
+
+---
 ### A mutation harness knows only the tests it was told to run
 
 Both unit harnesses select their suite from a list they carry: `mutate_rust.py`'s `FILTERS`
@@ -14503,6 +14568,100 @@ instrument; naming which half is weak beats implying both are strong.
 number removed from the README is in a generated file or one `grep -c` away. A count in prose
 has no gate by construction, and this repository has now been caught by that three times in
 three documents.
+
+
+⚠ **It happened again on 2026-09-01, in the same bullet, and the commit that broke it was the
+commit correcting that bullet's first sentence.** Five paths moved into the worker; the same
+day, the containment wording of that README bullet was rewritten for the macOS/Windows
+distinction --- and its third sentence, two lines below the edit, went on saying *"Save a copy,
+Redact to a copy, Extract, Split, Merge and Print still read the file in the app process"*. An
+outside reader found it, again, the day after.
+
+**An edit that touches a paragraph is not a reading of the paragraph.** The clause under the
+cursor is the one in mind; the rest is scenery, and it is scenery in exactly the moment it has
+most likely just been falsified, because a paragraph collects sentences about one subject and a
+change to that subject is what brought you there. This is not the drift of neglect the entry
+above describes --- it is drift at the point of maximum attention.
+
+Two things follow, and the second is the one with teeth. **When a change moves a capability,
+grep for the capability's name across the tracked documents rather than editing the passage you
+came for** --- here, `git grep -n 'in the app process'` names four documents in one call and
+would have caught the README, `AGENTS.md` and the threat model's *unmeasured* block together.
+And **a checklist scheduled at release cannot catch a claim falsified between releases**: the
+mitigation this entry already records is `BUILD.md`'s release step, it was in place, and it was
+structurally unable to fire, because nobody was cutting a release.
+
+---
+### A fixture that aborts its parser cannot live in a directory something sweeps
+
+`testdata/xref-bomb.pdf` is the reproducer for residual risk 21: a cross-reference stream whose
+`/W` widths make `lopdf` reach `handle_alloc_error`. It was generated beside the other fixtures,
+which is where every fixture goes, and the next full run of `cargo test` ended like this:
+
+    memory allocation of 3333333333333333332 bytes failed
+    error: test failed, to rerun pass `--lib`
+    Caused by: process didn't exit successfully: ... (signal: 6, SIGABRT)
+
+`save::tests::every_rewritten_fixture_is_structurally_sound` walks `testdata/*.pdf` and
+`Document::load`s each one. **1,150 tests had passed and the run reported none of them**, which
+is the entry about a framework aborting the whole test binary, reached by adding a file.
+
+**The fix is the directory, not an exemption.** Three sweeps read that namespace --- two Rust
+tests and `scripts/viewer_sweep.py` --- and `read_dir` is not recursive, so
+`testdata/abort/xref-bomb.pdf` is out of all three at once **and out of whichever sweep is
+written next**. An exemption list in each would have needed every future sweeper to know, which
+is the same shape as a rule written down and not enforced.
+
+Two things to carry:
+
+- **A directory of fixtures carries a contract, and it is usually "you may open these".** Every
+  sweep over it is that contract being relied on. A file that violates it needs a different
+  namespace, not a note.
+- **The check that would have caught it is the one that did**, eventually --- but only on a full
+  suite run, minutes long, and the failure named a memory allocation rather than a new file. When
+  adding a fixture whose whole purpose is that parsing it is fatal, run the suite before doing
+  anything else with it.
+
+---
+### A risk and a gate both keyed on writing cannot see the path that only reads
+
+`docs/THREAT-MODEL.md` residual risk 18 is the inventory of coordinator-side `lopdf` parses.
+It was written in August as a list of the operations that **write** a document --- save,
+save a copy, extract, split, merge --- because those were the ones found, and the name stuck
+to the mechanism rather than to the property. `scripts/check_writers.py` was then built on the
+same footing: it derives its list from the terminal writers in `save.rs`.
+
+Two parses were invisible to both, and both were found by somebody reading the code rather
+than by any instrument here.
+
+**`print::build`**, found by an outside review on 2026-08-31. Printing a page range loads the
+reader's document with `lopdf`, walks the page tree and serialises --- in the process holding
+the window --- and then hands the bytes to a printer. It writes no file, so the risk's own
+definition excluded it and the gate structurally could not see it. Reaching it is opening a
+document and typing two numbers.
+
+**`verify::scan`**, found the next day while closing the first. The redaction verification
+re-reads the file that was just written and parses it here to decide whether the removal was
+genuine. Same shape: a reader, not a writer.
+
+**The property that matters is *what parses attacker-derived bytes in the coordinator*, and
+every instrument was measuring *what writes a file*.** Those two sets overlapped enough for a
+month that the difference never showed. The failure is not that the list was short --- it is
+that a list keyed on the wrong property reads exactly like a complete one, because everything
+on it is true.
+
+Three things to copy:
+
+- **Ask what the property is before choosing what to enumerate.** "Which commands write a
+  file" is checkable and was worth checking; it is not the same question as "where does a
+  parse of the reader's document happen", and the second is the one the boundary exists for.
+- **The gate keeps its definition.** It answers a real question --- how many ways can the
+  webview cause a write --- and weakening it to cover parses would give one check answering
+  two questions badly. What changed is the *claim* around it: the threat model now says which
+  half it covers.
+- **`git grep -n 'Document::load'` over the tracked tree answers the parsing question in one
+  call**, and would have found both. A one-line sweep is not a gate, and it is what a gate
+  would have to be built from.
 
 ---
 ### A guard the type system already makes unexpressible has no mutation to write

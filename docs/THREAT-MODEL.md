@@ -174,13 +174,18 @@ attacker-controlled bytes inside the coordinator:
 - `print_macos::present` — the same parser again, on the **main thread**, inside AppKit's
   run loop.
 - `print::build` — `lopdf` — whenever the job is not a passthrough, which today means
-  whenever the reader has rotated the view.
+  whenever the reader has rotated the view. **Moved 2026-09-01**, see below.
 
 Two of the three cannot move. `NSPrintOperation` needs the application's own window and its
 `NSPrintInfo`, so the panel is in the coordinator by construction; PDFKit is also the parser
 the print system will use itself, which is the whole argument for reading the job back with
-it (`print_macos`). What *can* move is `print::build`'s `lopdf` rewrite and the verification
-read, and neither has. Reaching this needs no more than ⌘P on an open document.
+it (`print_macos`). What *could* move was `print::build`'s `lopdf` rewrite, and it has:
+`print::build_update` is a pure function of the document's bytes and the page range, run
+through `Request::PrintRange` in the same sandboxed worker every other rewrite uses, and
+`save::print_range_bytes` is the coordinator half that owns the scratch file and no parse.
+The verification read stays, deliberately, and is the whole point of it: it is the platform's
+own parser, asked whether it can read what we built. Reaching *that* needs no more than ⌘P on
+an open document, and it is disclosed rather than closed.
 
 **Windows is the same exposure with a different parser, since 2026-07-30.** `print_win::read`
 and `print_win::spool` both parse in the coordinator, using `Windows.Data.Pdf` where macOS uses
@@ -275,12 +280,30 @@ Windows. If the cap is reached the worker is killed and the save is refused, whi
 containment behaving as designed and a save the reader cannot complete; it is not data loss,
 since nothing has been written at that point.
 
-The ones that remain --- a merge, and a print of a page range --- run under
-`tauri::async_runtime::spawn_blocking`, and it is worth being exact about
-what that does and does not buy, because the name invites the wrong reading: it moves the work
-off the async runtime's threads. It does not move it out of the process holding the window,
-the edit journal and the user's filesystem authority. "Off the async thread" is not "out of
-the trusted process", and the two were being treated as the same thing.
+**The merge followed on 2026-09-01, and with it every writing path is out.** It was the
+widest of them --- the only operation that parses documents tpdf never opened --- and it moved
+on the same seam through `worker_proto::Request::Merge`, with the incoming files handed over
+as a second read-only mapping (`worker::IN_FD`). What the coordinator does now is *read* those
+files: it copies their bytes into the mapping and never asks what they mean.
+
+⚠ **One `lopdf` parse remains in the coordinator, and it is a reader rather than a writer:
+`verify::scan`.** The redaction verification re-reads the file that was just written and
+parses it here, on the blocking pool. Its bytes derive from the reader's document, so this is
+the same exposure the writers had. **It was missed for exactly the reason `print::build` was**
+--- this section, residual risk 18 and `scripts/check_writers.py` are all keyed on *writing*,
+and a verification writes nothing. `docs/TRAPS.md` has that under *A risk and a gate both
+keyed on writing cannot see the path that only reads*.
+
+It is the narrowest of the parses that have been here: the bytes are one tpdf wrote seconds
+ago rather than the file as it arrived, and its own load is bounded. It is not moved, and the
+route to moving it is the one the others took --- `verify::scan` is already a pure function of
+bytes and needles.
+
+That parse runs under `tauri::async_runtime::spawn_blocking`, and it is worth being exact
+about what that does and does not buy, because the name invites the wrong reading: it moves
+the work off the async runtime's threads. It does not move it out of the process holding the
+window, the edit journal and the user's filesystem authority. "Off the async thread" is not
+"out of the trusted process", and the two were being treated as the same thing.
 
 Four things bound how much that is worth, and they are why this is a `[NOT MOVED]` rather
 than a blocker:
@@ -2323,14 +2346,32 @@ which is what makes it evidence rather than a milestone.
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
 
-18. **Merge, and a print of a page range, parse documents inside the coordinator**
+18. **The redaction verification parses inside the coordinator**
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
     day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).
-    So the writers left here are the rewriting save --- a deletion, a move, a turn, a crop ---
-    and the two copy paths, and `lopdf` reads the source bytes in the app process on those,
+    The writers left after that were the rewriting save --- a deletion, a move, a turn, a crop
+    --- and the two copy paths, and `lopdf` read the source bytes in the app process on those,
     under `spawn_blocking`, which moves the work off the async runtime and not out of the
     process.
+
+    ⚠ **Every one of those writers is closed as of 2026-09-01, and what this entry is now
+    named for is a *reader* it never listed.** `verify::scan` re-reads the file a redaction
+    has just written and parses it here, on the blocking pool, to decide whether the removal
+    was genuine. Its bytes derive from the reader's document, so it is the same exposure the
+    writers had --- and it was invisible to this entry, to §3 and to
+    `scripts/check_writers.py` alike, because all three enumerate the operations that
+    **write**. A verification writes nothing. That is the second time this month an
+    instrument keyed on writing hid a parse: `print::build` was the first, found by an outside
+    review a day earlier. `docs/TRAPS.md` has it under *A risk and a gate both keyed on
+    writing cannot see the path that only reads*.
+
+    Two things bound it, and neither closes it. The bytes are ones tpdf wrote seconds earlier
+    rather than the file as it arrived, so a hostile construction has to survive our own
+    serialiser first; and the load is bounded like every other. What would close it is the
+    move the others took --- `verify::scan` is already a pure function of bytes and needles,
+    and the file it reads is one the coordinator has just created and could hand over as a
+    descriptor. Nothing here is built.
 
     ⚠ **The append is not off this list, and this entry said it was until 2026-08-23.** Its
     *preparation* moved; its **verification** did not. `save::append_in_place` re-reads the
@@ -2460,32 +2501,55 @@ which is what makes it evidence rather than a milestone.
     in `save::rewrite_update`. Leaving it behind would have meant shipping a decrypted copy
     of the reader's document out of the sandbox in order to refuse it.
 
-    ⚠ **`print::build` is a coordinator-side parse this entry has never listed.** The
-    page-range route --- a range the reader typed, or any print with no document open ---
-    calls it, and it loads the file with `lopdf`, walks the page tree and serialises, all
-    here. It is the same exposure as the one above by a different function, and it was
-    missed for the same reason the 2026-08-30 correction records: this entry has enumerated
-    commands where the property is one of functions. Its non-passthrough half is already a
-    pure function of the bytes and the job, so closing it is one more request down the
-    channel that now exists.
+    ⚠ **`print::build` was a coordinator-side parse this entry never listed, and it closed
+    on 2026-09-01 --- the day after it was written down.** The page-range route --- a range
+    the reader typed, or any print with no document open --- called it, and it loaded the
+    file with `lopdf`, walked the page tree and serialised, all here. It was the same
+    exposure as the one above by a different function, and it was missed for the same reason
+    the 2026-08-30 correction records: this entry has enumerated **commands**, and the
+    property is one of **functions**.
+
+    **The gate has the same blind spot, and that is the part worth keeping.**
+    `scripts/check_writers.py` derives its list from the terminal writers in `save.rs`, so a
+    path that parses the reader's document and *writes nothing* is invisible to it by
+    construction --- a print job goes to a printer. Every instrument here was keyed on
+    writing; the property is parsing. See `docs/TRAPS.md`, *A risk and a gate both keyed on
+    writing cannot see the path that only reads*.
+
+    It is closed by `crate::print::build_update`, the pure half, run through
+    `worker_proto::Request::PrintRange` in the same sandboxed worker as every other rewrite,
+    with `save::print_range_bytes` owning the scratch file and doing no parse. It answers
+    with `Reply::Rewrote` deliberately: the fact is the same one --- N bytes down the output
+    channel --- and the coordinator compares it against the staged file's own size through
+    the same `save::landed_is` a rewrite uses. `worker-probe` is 37 checks now, the three new
+    ones being the differential, the needs-a-worker control and the scratch cleanup.
+
+    **No password crosses on this request**, and that is not an omission:
+    `print::build_update` refuses an encrypted document whether or not the key is held,
+    because `lopdf`'s full serialiser emits every object in the clear and a selection cannot
+    be appended. Sending the key would buy a decrypted copy and nothing else.
 
     **What it costs is one spawn per operation, measured.** On `testdata/text-base14.pdf`,
     best of five interleaved and three consecutive runs: the copy is 4.0 ms here and 11.9 ms
     in a worker (+8.0), the print job 0.2 -> 7.2 (+7.0), and the rewrite 0.2 -> 7.2 (+7.1).
     `text-wide.pdf` reads +7.2, +7.0 and +6.9. All three are the same fixed cost --- a
     process start plus PDFium's initialisation --- rather than anything proportional to the
-    document. `worker-probe` is 34/34 on macOS and prints all three numbers.
+    document. `worker-probe` is 40/40 on macOS and prints all three numbers.
 
-    ⚠ **The Windows half is unmeasured, and nothing new has to be written to measure it.**
-    The mechanism there is a `DuplicateHandle` of the staging file into the child's table,
-    named in argv on `--out-handle` --- the same route the document's section already takes,
-    and the granted access travels with the handle rather than being re-checked against the
-    low-integrity token. That is the expected behaviour and it has not been run. The five
-    checks above are in `worker-probe`, which already runs on Windows, so the evidence is
-    one invocation rather than a new probe; `BUILD.md` makes it a step. Until that run
-    happens, a rewriting save on Windows is a path this document describes rather than one
-    it has watched work --- and `AGENTS.md` records what one sentence about two independent
-    implementations has cost before.
+    **The Windows half was measured on 2026-09-01, and it took no new probe.** The mechanism
+    there is a `DuplicateHandle` of the staging file into the child's table, named in argv on
+    `--out-handle` --- the same route the document's section already takes, and the granted
+    access travels with the handle rather than being re-checked against the low-integrity
+    token. That was the expected behaviour, and expected behaviour is what this document had
+    instead of a reading for as long as the sentence here said *unmeasured*. `worker-probe`
+    is a step of both CI legs now rather than a run somebody remembers to make, and on run
+    33501693368 it reported **34/34 checks passed, 0 not applicable to this platform** on
+    `windows-2025` --- so the copy, the split, the print job and the rewrite's output channel
+    are each watched working there, not described.
+
+    ⚠ **The read and socket ceiling of the Windows boundary is unchanged by that**, and is
+    residual risk 4. A measured output channel says the descriptor handover works; it says
+    nothing about what a compromised worker could still reach.
 
     The general shape is the one this entry already records --- **a mitigation that moved
     half a path reads exactly like one that moved the path**, and the half that stayed is
@@ -2501,11 +2565,29 @@ which is what makes it evidence rather than a milestone.
     command is on the blocking pool --- so what it adds is exposure to more attacker-chosen
     input on the existing path, not a new kind of access.
 
-    It is worth stating separately because the mitigation that would close it is a
-    *different* one. The append's fix is an output channel; a merge's inputs could go
-    through a worker on the way in, since what has to come back per file is a page count and
-    an object graph --- which is the whole file, so it has the rewrite's problem after all.
-    Nothing here is closed; this is the disclosure.
+    **Closed 2026-09-01, and the paragraph above was wrong about how.** It said the incoming
+    files "could go through a worker on the way in, since what has to come back per file is a
+    page count and an object graph --- which is the whole file, so it has the rewrite's
+    problem after all". That reasoning had the direction backwards: nothing has to come back
+    *per file*. The merge is one operation with one answer, so the files go **in** and the
+    merged document comes out down the output channel the rewrite already had.
+
+    They go in as one read-only mapping --- every incoming file concatenated, with
+    `save::Incoming` naming where each begins, how long it is and what to call it --- on
+    `worker::IN_FD`. One mapping rather than one per file because the descriptor shuffle
+    between `fork` and `exec` may not allocate, so a descriptor per file would need a
+    compile-time cap, and a cap on how many documents a reader may merge is a product limit
+    invented to suit a shuffle. `Reply::Merged` carries two numbers, which is why it is a
+    variant of its own rather than the `Reply::Rewrote` a page-range print reuses: the page
+    count can only be taken where the merged document is.
+
+    The coordinator's remaining part is to **read** those files, and reading is not parsing:
+    `save::concatenated` copies bytes into a buffer and never asks what they mean.
+
+    `worker-probe` is 40 checks now. Three of them are this: the coordinator and the worker
+    merge a document with itself and produce byte-identical output with the same page count,
+    that count is the merged document's rather than any plan's, and the merge refuses when
+    there is no worker to be had.
 
     Decompression is bounded at
     `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather
@@ -2588,9 +2670,19 @@ which is what makes it evidence rather than a milestone.
     fills and a save that refuses, and the pool restarts a process. That is the entry about a
     pool replacing a dead worker with the same bytes and faulting again --- correct behaviour
     with an unhelpful shape, rather than a compromise. Before those moves it would have taken
-    the application down from `lib::print_job`, and it still can through `save::write_merged`
-    and `print::build`, which is residual risk 18's remaining half and the concrete argument
-    for closing it.
+    the application down from `lib::print_job`. **The last route by which it still could ---
+    `save::write_merged` --- closed later the same day**, so every `lopdf` load of the reader's
+    document now happens where an abort takes a worker rather than the window. The one
+    coordinator-side `lopdf` parse left is `verify::scan`, which reads a file tpdf wrote
+    seconds earlier rather than the document as it arrived; a construction reaching it has to
+    survive our own serialiser first.
+
+    **`testdata/abort/xref-bomb.pdf` is the reproducer, generated like every other fixture**
+    (`testdata/make_xref_bomb_pdf.py`) --- in a subdirectory of its own, because every sweep
+    over `testdata/*.pdf` would otherwise load it and die, and `worker-probe` hands it to a rewrite through a real
+    worker: the worker dies, the coordinator is told so in words, and the probe carries on. The
+    coordinator arm is deliberately not run against it --- it would take the probe with it,
+    which is the finding rather than a test.
 
     Nothing here is a memory-safety defect and nothing is exploitable beyond availability: the
     allocation is refused, not made. The fixes available are upstream in `lopdf`, or a
