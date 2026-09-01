@@ -403,6 +403,53 @@ fn outside_of(app: &tauri::AppHandle, backend: render::Backend) -> Box<dyn save:
     }
 }
 
+/// Scans a file this build just wrote for the words a redaction removed.
+///
+/// **One statement of the read-back, for the two commands that redact.** Both
+/// wrote a file and both have to answer `docs/PLAN.md` §6's question about it,
+/// and until 2026-09-01 both answered it by reading the bytes into the app
+/// process and handing them to `lopdf` --- the last coordinator-side parse of
+/// attacker-controlled input, and the one `docs/THREAT-MODEL.md` residual risk
+/// 18 was left naming. `scanning` is where that parse happens now.
+///
+/// **By path, and that is unchanged rather than overlooked.** Both callers have
+/// already renamed and closed, so there is no handle left to scan through, and
+/// anything that replaces the file between that rename and this open is what
+/// gets scanned. What is new is only that the *length* comes from the open
+/// handle rather than from reading to end of file, which is the same question
+/// asked of the same descriptor. The window is disclosed in both callers and in
+/// residual risk 18; closing it means the writers returning their open file.
+///
+/// **`&dyn Verifier`, not `&dyn Outside`**, though every caller holds the
+/// second: the seam a redaction's read-back needs is the scan, and taking the
+/// wider type would hand this function a rewriter it must not call. The
+/// coercion from one to the other is trait upcasting, which costs nothing and
+/// is what lets a test double be a verifier and no more.
+///
+/// # Errors
+///
+/// The file could not be opened or measured. A file that cannot be *parsed* is
+/// not an error --- it is a blind spot inside the report, which is what
+/// [`verify::Report`] is for.
+fn scan_written_file(
+    scanning: &dyn save::Verifier,
+    at: &std::path::Path,
+    needles: &[String],
+    password: Option<&str>,
+) -> Result<verify::Report, String> {
+    let mut file = std::fs::File::open(at)
+        .map_err(|why| format!("the redacted file could not be read back: {why}"))?;
+    // From the handle rather than from the name: the two can be different files
+    // by now, and it is the one that was opened that is about to be mapped.
+    let len = file
+        .metadata()
+        .map_err(|why| format!("the redacted file could not be measured: {why}"))?
+        .len();
+    let len = usize::try_from(len)
+        .map_err(|_| format!("the redacted file is {len} bytes, which is more than fits here"))?;
+    scanning.scan(&mut file, len, needles, password)
+}
+
 /// The vendored library in a development checkout, and `None` in a release build.
 ///
 /// **Debug builds only, and that is a load-path decision rather than tidiness.**
@@ -1073,10 +1120,13 @@ async fn redact_copy(
     // at it in the same second. Disclosed rather than claimed shut: the append,
     // whose destination is the reader's own open document, does hold its handle.
     let verifying = key.clone();
+    // A second `Outside`, because `writing` was moved into the write above and
+    // the two are the same choice made twice rather than one choice shared. It
+    // costs a `Box` and a worker spawn on the path that has already written a
+    // file and waited for the platter.
+    let scanning = outside_of(&app, service.backend());
     let report = tauri::async_runtime::spawn_blocking(move || {
-        std::fs::read(&written)
-            .map_err(|why| format!("the redacted file could not be read back: {why}"))
-            .map(|bytes| verify::scan(&bytes, &needles, verifying.as_deref()))
+        scan_written_file(&*scanning, &written, &needles, verifying.as_deref())
     })
     .await
     .map_err(|e| format!("the verification did not run: {e}"))??;
@@ -1190,6 +1240,10 @@ async fn redact_document(
     let committing = source.clone();
     let needles = asked.needles.clone();
     let verifying = key.clone();
+    // A second `Outside` --- `redact_copy` says why, and here there is one more
+    // reason: the service is closed above, so there is no worker left to ask and
+    // this one is spawned for the scan and dropped after it.
+    let scanning = outside_of(&app, service.backend());
     let landed = tauri::async_runtime::spawn_blocking(move || {
         let at = Path::new(&committing);
         // One more look before the rename, closing the window staging opens.
@@ -1198,13 +1252,11 @@ async fn redact_document(
         // Read back rather than verified from what was written, which is the
         // rule the copy and the append both follow: what matters is the file on
         // disk, and the buffer that produced it agrees with itself.
-        std::fs::read(at)
-            .map_err(|why| {
-                SaveFailure::after_close(format!(
-                    "the file was written but could not be read back to check it: {why}"
-                ))
-            })
-            .map(|bytes| verify::scan(&bytes, &needles, verifying.as_deref()))
+        scan_written_file(&*scanning, at, &needles, verifying.as_deref()).map_err(|why| {
+            SaveFailure::after_close(format!(
+                "the file was written but could not be read back to check it: {why}"
+            ))
+        })
     })
     .await
     .map_err(|e| SaveFailure::after_close(format!("the redaction did not finish: {e}")))?;
@@ -3447,6 +3499,133 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
 
+    use crate::save;
+
+    /// A [`save::Verifier`] that answers what it is told to and records the ask.
+    ///
+    /// The double that makes the seam observable, and the same shape as
+    /// `save::tests::Fake`: without it the only way to ask whether the
+    /// coordinator delegated the scan or did it itself is to read the source,
+    /// and a source-level assertion proves a shape rather than an ordering.
+    ///
+    /// It implements [`save::Verifier`] and nothing else, which is what
+    /// narrowing [`super::scan_written_file`] from `Outside` bought.
+    struct FakeScanner {
+        answer: Result<crate::verify::Report, String>,
+        asked: std::sync::Mutex<Vec<Ask>>,
+    }
+
+    /// One call to [`save::Verifier::scan`], as the double saw it.
+    ///
+    /// A named struct rather than the tuple this was, because clippy refuses a
+    /// type that complex --- and it reads better in the assertion, where three
+    /// positional fields would have to be counted.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Ask {
+        len: usize,
+        needles: Vec<String>,
+        password: Option<String>,
+    }
+
+    impl save::Verifier for FakeScanner {
+        fn scan(
+            &self,
+            _file: &mut std::fs::File,
+            len: usize,
+            needles: &[String],
+            password: Option<&str>,
+        ) -> Result<crate::verify::Report, String> {
+            self.asked.lock().expect("record the ask").push(Ask {
+                len,
+                needles: needles.to_vec(),
+                password: password.map(str::to_string),
+            });
+            self.answer.clone()
+        }
+    }
+
+    /// The redaction read-back asks the verifier, and does not parse the file.
+    ///
+    /// **The keystone for the third seam**, and it is red on the code this
+    /// replaced. The file scanned here is not a PDF at all --- so a coordinator
+    /// that parsed it would report a blind spot saying the file could not be
+    /// parsed, whatever any verifier said. Getting the verifier's answer back
+    /// verbatim, on exactly those bytes, is what says the parse is somewhere
+    /// else now.
+    ///
+    /// It is the accounting observable for a property that is otherwise
+    /// invisible: every number a caller can see is identical whether the scan
+    /// happened here or in a worker, because the two agree wherever both answer,
+    /// so the thing to assert is *who was asked*, with what, and about how much.
+    #[test]
+    fn the_redaction_read_back_does_not_parse_the_file_it_wrote() {
+        let at = std::env::temp_dir().join("tpdf-scan-written-file.bin");
+        std::fs::write(&at, b"this is not a PDF at all").expect("write the scratch file");
+
+        let scanner = FakeScanner {
+            answer: Ok(crate::verify::Report {
+                objects: 7,
+                ..Default::default()
+            }),
+            asked: std::sync::Mutex::new(Vec::new()),
+        };
+        let needles = vec!["secret".to_string()];
+        let report = super::scan_written_file(&scanner, &at, &needles, Some("key"))
+            .expect("the verifier answered");
+
+        // The answer is the verifier's, unaltered. A coordinator that parsed
+        // these bytes could not have produced it: `verify::scan` reaches no
+        // objects in a file that is not a PDF, and says so in `blind`.
+        assert_eq!(report.objects, 7, "the answer is the verifier's");
+        assert!(
+            report.blind.is_empty(),
+            "nothing here second-guessed the verifier: {:?}",
+            report.blind
+        );
+
+        // And what crossed. The length is the file's, taken from the handle
+        // that was opened rather than from the name; the needles and the key are
+        // the caller's.
+        let asked = scanner.asked.lock().expect("read the record");
+        assert_eq!(asked.len(), 1, "asked exactly once");
+        assert_eq!(
+            asked[0],
+            Ask {
+                len: 24,
+                needles: needles.clone(),
+                password: Some("key".to_string()),
+            },
+            "the verifier was handed the file's length, the needles and the key"
+        );
+        drop(asked);
+        let _ = std::fs::remove_file(&at);
+    }
+
+    /// A file that is not there is an error, not an empty report.
+    ///
+    /// The control for the test above, and it is the direction that matters: a
+    /// read-back which answered `Report::default()` for a missing file would
+    /// report *verified* about a file nobody looked at, which is the one thing
+    /// `docs/PLAN.md` §6 forbids. The verifier is never reached, so a fake that
+    /// would answer cleanly is what makes the assertion mean something.
+    #[test]
+    fn a_read_back_of_a_file_that_is_not_there_is_an_error() {
+        let scanner = FakeScanner {
+            answer: Ok(crate::verify::Report::default()),
+            asked: std::sync::Mutex::new(Vec::new()),
+        };
+        let missing = std::env::temp_dir().join("tpdf-scan-written-file-absent.bin");
+        let _ = std::fs::remove_file(&missing);
+
+        let why = super::scan_written_file(&scanner, &missing, &[], None)
+            .expect_err("a file that is not there cannot be scanned");
+        assert!(why.contains("read back"), "{why}");
+        assert!(
+            scanner.asked.lock().expect("read the record").is_empty(),
+            "the verifier was never asked about a file that does not exist"
+        );
+    }
+
     /// The compile-time development path must not be a candidate in a release.
     ///
     /// **Both arms are real, and the release one is why this exists.**
@@ -3975,14 +4154,21 @@ mod tests {
     /// closed window.
     ///
     /// **`docs/THREAT-MODEL.md` §3 and residual risk 18 rest on this**, and it
-    /// is a property of the build rather than of any code written here: `save`,
-    /// `save_copy` and `extract_pages` all parse attacker-controlled bytes with
-    /// `lopdf` inside the coordinator, under `spawn_blocking`. That containment
-    /// exists only while the crate unwinds. Adding `panic = "abort"` to a
-    /// release profile --- a one-line change made for binary size, with nothing
-    /// about parsing in view --- would turn every one of those into a process
-    /// death taking the reader's unsaved journal with it, and no other check
-    /// here would notice.
+    /// is a property of the build rather than of any code written here. It was
+    /// written for `save`, `save_copy` and `extract_pages`, which parsed
+    /// attacker-controlled bytes with `lopdf` in the coordinator under
+    /// `spawn_blocking`; every one of those parses is in a worker as of
+    /// 2026-09-01, and the property is still load-bearing for two reasons.
+    /// `save::Here` is the fallback a platform with no sandbox gets and parses
+    /// here exactly as they did. And a `spawn_blocking` task that panics for
+    /// any other reason --- a poisoned lock, a slice out of bounds in code
+    /// nobody was thinking about --- reaches the reader as a refusal only while
+    /// the crate unwinds.
+    ///
+    /// Adding `panic = "abort"` to a release profile --- a one-line change made
+    /// for binary size, with nothing about parsing in view --- would turn every
+    /// one of those into a process death taking the reader's unsaved journal
+    /// with it, and no other check here would notice.
     ///
     /// So the disclosure is pinned rather than asserted. A claim about runtime
     /// behaviour belongs in an experiment, not in a document, which

@@ -296,14 +296,24 @@ have to come *back*, when nothing comes back per file. They go **in**, as one re
 mapping on `worker::IN_FD` with `save::Incoming` naming each, and the merged document goes out
 down the channel a rewrite already had.
 
-⚠ **What residual risk 18 now names is a *reader* it never listed: `verify::scan`.** The
-redaction verification parses the file it just wrote, in the coordinator. It was invisible to
-that risk, to `docs/THREAT-MODEL.md` §3 and to `scripts/check_writers.py` alike, because all
-three enumerate what **writes** --- the same blind spot that hid `print::build`, twice in two
-days. The index has the trap. **Windows is
-wired the same way and is measured**: `worker-probe` is a step of both CI legs, and it reported
-34/34 with nothing skipped on run 33501693368 --- the count at that run; six checks added
-later the same day have not been through a Windows leg yet.
+⚠ **The last one was a *reader* residual risk 18 never listed: `verify::scan`.** The
+redaction verification parses the file it just wrote, and it was invisible to that risk, to
+`docs/THREAT-MODEL.md` §3 and to `scripts/check_writers.py` alike, because all three enumerate
+what **writes** --- the same blind spot that hid `print::build`, twice in two days. The index
+has the trap.
+
+**It moved on 2026-09-01, through `save::Verifier` and `Request::Verify`, so on both shipped
+platforms no `lopdf` parse of a document happens in the coordinator at all.** `save::Here`
+remains the exception and is what a platform with no sandbox gets. Two properties of that move
+are not guessable from the feature: the scan needs the reader's password, because a redacted
+copy of an encrypted document is re-encrypted and a worker without the key parses no objects
+and finds nothing --- an absence that reads exactly like a clean file; and a report is now a
+reply read under `MAX_REPLY_BYTES`, so `verify::MAX_OBJECT_REASONS` bounds its per-object lists
+and counts the rest. The index has that second one too.
+
+**Windows is wired the same way and is measured**: `worker-probe` is a step of both CI legs,
+and it reported 34/34 with nothing skipped on run 33501693368 --- the count at that run;
+checks added since have not all been through a Windows leg.
 
 **Since 2026-08-23 a reader can open a document behind a password.** Until then an encrypted
 PDF could be chosen from the file dialog and then not opened by any route --- `open_failure`
@@ -1161,6 +1171,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - One refusal, three callers, one string --- and the string named one of them
 - A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
 - A gate that reads prose as code can pass for the wrong reason, and rewording a comment turns it red
+- An unbounded report crossing a bounded pipe turns a bad file into a failed check
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose

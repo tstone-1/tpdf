@@ -611,6 +611,14 @@ fn handle(
             Ok(pages) => Response::reply(Reply::Reread(pages)),
             Err(e) => Response::err(e),
         },
+        Request::Verify { needles } => match render::run_verify(document, needles) {
+            Ok(report) => Response::reply(Reply::Verified(Box::new(report))),
+            // Only the bytes being unreadable reaches here. A document that
+            // cannot be *parsed* is a report with a blind spot in it, not an
+            // error --- which is `crate::verify::Report`'s whole shape, and is
+            // why this arm is so much narrower than it looks.
+            Err(e) => Response::err(e),
+        },
         // Reached when the document opened without one --- a reader who typed a
         // password for a file that did not need it, or a second worker for a
         // document whose encryption an empty user password already satisfied.

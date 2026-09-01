@@ -302,6 +302,39 @@ pub enum Request {
     /// A worker answering this holds the **written** file, not the document the
     /// reader opened --- it is spawned for the verification and dropped after it.
     Reread,
+    /// Every needle a redaction removed, looked for in the mapped file.
+    ///
+    /// **[`Request::Reread`]'s sharper twin, and the last parse to leave the
+    /// coordinator.** That one asks whether a save chained; this one asks
+    /// whether the words are gone, which is the question `docs/PLAN.md` §6 makes
+    /// mandatory after a redaction and forbids answering with a bare success.
+    /// Until 2026-09-01 it was answered by `crate::verify::scan` in the app
+    /// process, over the bytes of a file whose previous revision is the
+    /// attacker's document verbatim --- so `docs/THREAT-MODEL.md` residual risk
+    /// 18 named it long after every *writing* path had moved. It was invisible
+    /// to that risk's own wording, to §3's table and to
+    /// `scripts/check_writers.py` alike, because all three enumerate what
+    /// writes and this one only reads.
+    ///
+    /// **The answer is a verdict, and the bytes stay here.** A
+    /// [`crate::verify::Report`] is a set of needles that were found and two
+    /// lists of reasons; nothing in it is a copy of the document. Its per-object
+    /// lists are bounded by `verify::MAX_OBJECT_REASONS` precisely because it is
+    /// now a reply read under [`MAX_REPLY_BYTES`].
+    ///
+    /// **The needles travel in the message**, which is the one thing here worth
+    /// stating against this type's standing property. They are the reader's own
+    /// words, taken off the page they are being removed from --- so they are not
+    /// a secret from a worker that is holding the same page, and they are
+    /// already in the file this request is about.
+    ///
+    /// A worker answering this holds the **written** file, like
+    /// [`Request::Reread`]'s does, and is spawned for the check and dropped
+    /// after it.
+    Verify {
+        /// What must no longer be findable, in the reader's own words.
+        needles: Vec<String>,
+    },
     /// Try the document again with a reader's password.
     ///
     /// **The one request that carries a secret**, which is worth stating against
@@ -441,6 +474,16 @@ pub enum Reply {
     /// A count and nothing else: the bytes it was read from stay in the worker,
     /// which is the whole point of asking. See [`Request::Reread`].
     Reread(usize),
+    /// What the scan of the written file found, and what it could not look at.
+    ///
+    /// **Boxed, and the reason is `clippy::large_enum_variant` rather than the
+    /// wire**: a `Report` is a `BTreeSet` and two `Vec`s, which is far the
+    /// largest thing this enum carries, and serde writes a `Box<T>` as its `T`
+    /// --- so the indirection costs a reader of the protocol nothing. The same
+    /// is true of [`Reply::Properties`], which says so in the same words.
+    ///
+    /// A verdict and no bytes. See [`Request::Verify`].
+    Verified(Box<crate::verify::Report>),
     Unlocked,
     /// A pre-spawned worker has finished warming and has no document yet.
     ///
@@ -696,6 +739,12 @@ mod tests {
                 "Reread",
                 "asked by `save::InWorker` of a worker it spawned itself, outside the \
                  pool, to check a file it has just appended to",
+            ),
+            (
+                "Verify",
+                "asked by `save::InWorker` of a worker it spawned itself, outside the \
+                 pool, to scan a file it has just redacted --- the same route as \
+                 `Reread` and for the same reason",
             ),
             (
                 "Rewrite",
@@ -974,6 +1023,9 @@ mod tests {
             // tag separates a page count from a byte count.
             Reply::Reread(2),
             Reply::Rewrote(2),
+            // The other boxed one, for `Reply::Properties`'s reason and asserting
+            // the same thing: the indirection changed the wire by nothing.
+            Reply::Verified(Box::default()),
             // Two numbers where the pair above is one, which is the whole reason
             // it is a variant rather than a third `usize`.
             Reply::Merged { bytes: 2, pages: 2 },
@@ -1004,6 +1056,7 @@ mod tests {
                 | Reply::Append(_)
                 | Reply::Reread(_)
                 | Reply::Rewrote(_)
+                | Reply::Verified(_)
                 | Reply::Merged { .. }
                 | Reply::Unlocked
                 | Reply::Warm => {}

@@ -1885,6 +1885,19 @@ pub(crate) fn run_reread(document: &OpenDocument) -> Result<usize, String> {
     document.graph().reread_pages()
 }
 
+/// Scans the mapped file for a redaction's needles, on the render thread.
+///
+/// [`run_reread`]'s companion, and the same shape: a worker spawned for the
+/// check holds the file that was just written, and what comes back is a verdict
+/// rather than the bytes it was read from. See
+/// `crate::worker_proto::Request::Verify`.
+pub(crate) fn run_verify(
+    document: &OpenDocument,
+    needles: &[String],
+) -> Result<crate::verify::Report, String> {
+    document.graph().verify(needles)
+}
+
 /// Reads a document's links on the render thread.
 ///
 /// Cached inside [`crate::docgraph::DocumentGraph`] like the comments are, so the `lopdf` parse

@@ -369,6 +369,32 @@ impl DocumentGraph {
         crate::save::reread_pages(&bytes, self.password())
     }
 
+    /// What a redaction verification finds in these bytes.
+    ///
+    /// Uncached, like [`DocumentGraph::reread_pages`] and for the same reason:
+    /// this is a question about a file that has *just* been written, and a
+    /// cached answer would be about the revision before it.
+    ///
+    /// **The password is the graph's own**, which is the whole reason this is a
+    /// method here rather than a free function the worker calls. A redacted copy
+    /// of an encrypted document is re-encrypted, so a scan arriving without the
+    /// key parses no objects at all and finds nothing --- and finding nothing is
+    /// what a clean file looks like. `crate::verify::scan` refuses to certify
+    /// that, so the failure is safe; handing it the key is what lets it answer
+    /// the question instead of declining it.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable. A file that cannot be *parsed* is not an error
+    /// --- it is a blind spot, and `crate::verify::Report` is the type that says
+    /// so.
+    pub fn verify(&self, needles: &[String]) -> Result<crate::verify::Report, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        Ok(crate::verify::scan(&bytes, needles, self.password()))
+    }
+
     /// Whether the page tree has been parsed for this document yet.
     ///
     /// **An accounting observable.** `RawDocument::original_box` is meant to
