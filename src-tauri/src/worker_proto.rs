@@ -194,14 +194,23 @@ pub enum Request {
     /// descriptor succeeds and `File::create` on any path is refused with
     /// `EPERM`.
     ///
-    /// `view` is the reader's own rotation in quarter turns, which is zero for
-    /// every save and non-zero only for a print job. It travels because the plan
-    /// does not carry it --- rotating the view is not an edit.
+    /// `job` says what the answer is for --- a save or a print job --- which is
+    /// two facts rather than one: the reader's own view rotation, which is part
+    /// of the paper and not of the document, and whether an encrypted source is
+    /// refused. It travels because the plan carries neither: rotating the view
+    /// is not an edit, and what a rewrite is *for* is not a property of it.
+    ///
+    /// **The refusal it decides is made here, in the worker.** It used to be
+    /// made in the coordinator, between the two phases of a parse the
+    /// coordinator was doing; the parse moved and the refusal came with it,
+    /// because the alternative is shipping a decrypted copy of the reader's
+    /// document out of the sandbox in order to refuse it. See
+    /// `crate::save::rewrite_update`.
     Rewrite {
         /// What to write. Never a path, never a destination.
         plan: crate::edits::Plan,
-        /// The reader's own rotation, in quarter turns clockwise.
-        view: u8,
+        /// What the answer is for. Never a path, never a destination.
+        job: crate::save::Job,
     },
     /// How many pages `lopdf` finds in the mapped document.
     ///

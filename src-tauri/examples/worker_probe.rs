@@ -817,7 +817,7 @@ fn main() {
         let len = source.metadata().map_err(|e| e.to_string())?.len() as usize;
         let mut out = std::fs::File::create(to).map_err(|e| e.to_string())?;
         let wrote = who
-            .write(&mut source, len, &mut out, plan, None)
+            .write(&mut source, len, &mut out, plan, save::Job::Save, None)
             .map_err(|why| why.message)?;
         // The same check the coordinator makes, for the same reason: the length
         // reported and the length on disk are two independent statements.
@@ -922,7 +922,7 @@ fn main() {
         Ok(mut worker) => {
             let said = worker.call(&Request::Rewrite {
                 plan: turning.clone(),
-                view: 0,
+                job: save::Job::Save,
             });
             check(
                 "a worker with nowhere to write refuses to rewrite",
@@ -936,6 +936,171 @@ fn main() {
     }
     let _ = std::fs::remove_file(&by_hand);
     let _ = std::fs::remove_file(&by_worker);
+
+    // --- Save a copy, across the boundary ----------------------------------
+    //
+    // **The seam is the same one, and the wiring is not.** Everything above
+    // exercises `save::InWorker` directly; this asks `save::write_copy` --- the
+    // function the Save a copy, Extract and Redact to a copy commands all reach
+    // --- and so covers the staging, the length check and the rename as well as
+    // the channel. A copy's destination is a name the reader chose, which is the
+    // one thing the in-place path never has.
+    let copy_by_hand = std::env::temp_dir().join("tpdf-worker-probe-copy-here.pdf");
+    let copy_by_worker = std::env::temp_dir().join("tpdf-worker-probe-copy-worker.pdf");
+    let copy_to = |who: &dyn save::Rewriter, to: &Path| -> Result<save::Copied, String> {
+        // Removed first, because `write_copy` renames onto the destination and a
+        // stale file from the previous iteration would make "it exists" mean
+        // nothing.
+        let _ = std::fs::remove_file(to);
+        save::write_copy(&document, &turning, to, None, who).map_err(|why| why.message)
+    };
+
+    let mut copy_here_ms = f64::MAX;
+    let mut copy_worker_ms = f64::MAX;
+    let mut copied_here = Err("not run".to_string());
+    let mut copied_worker = Err("not run".to_string());
+    for _ in 0..5 {
+        let at = Instant::now();
+        copied_here = copy_to(rewriting, &copy_by_hand);
+        copy_here_ms = copy_here_ms.min(at.elapsed().as_secs_f64() * 1000.0);
+        let at = Instant::now();
+        copied_worker = copy_to(&rewrite_in_worker, &copy_by_worker);
+        copy_worker_ms = copy_worker_ms.min(at.elapsed().as_secs_f64() * 1000.0);
+    }
+    println!(
+        "[INFO] a copy is {copy_here_ms:.1} ms here and {copy_worker_ms:.1} ms in a worker \
+         (+{:.1}, best of 5 interleaved)",
+        copy_worker_ms - copy_here_ms
+    );
+    let same_copy = copied_here.is_ok()
+        && copied_worker.is_ok()
+        && std::fs::read(&copy_by_hand).ok() == std::fs::read(&copy_by_worker).ok()
+        && std::fs::read(&copy_by_hand).is_ok();
+    check(
+        "the worker and the coordinator write the same copy",
+        same_copy,
+        format!("coordinator {copied_here:?}, worker {copied_worker:?}"),
+    );
+
+    // The same discriminating question the rewrite asks, and it has to be asked
+    // again here: a `write_copy` that had quietly kept its own parse would agree
+    // with the coordinator on every fixture. Pointed at a directory with no
+    // PDFium, the worker path cannot start a child and the in-process one still
+    // writes.
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-copy-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let engineless = save::InWorker::at(nowhere.clone());
+    let copy_without = copy_to(&engineless, &copy_by_worker);
+    let copy_still = copy_to(rewriting, &copy_by_hand);
+    check(
+        "and the copy path really needs a worker",
+        copy_without.is_err() && copy_still.is_ok(),
+        format!("worker {copy_without:?}, coordinator {copy_still:?}"),
+    );
+    // A refused copy leaves nothing at the name the reader chose, and nothing
+    // beside it. The destination was removed before the refused call, so its
+    // absence is this call's answer rather than a leftover of the last one.
+    check(
+        "and a refused copy leaves nothing at the destination",
+        !copy_by_worker.exists(),
+        format!(
+            "{} exists: {}",
+            copy_by_worker.display(),
+            copy_by_worker.exists()
+        ),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
+    let _ = std::fs::remove_file(&copy_by_hand);
+    let _ = std::fs::remove_file(&copy_by_worker);
+
+    // --- The print job, across the boundary --------------------------------
+    //
+    // **The one path whose answer comes back**, because `NSPrintOperation` and
+    // `Windows.Data.Pdf` take bytes rather than a pathname. So the worker writes
+    // into a scratch file the coordinator made and the coordinator reads it,
+    // which is a read of bytes tpdf wrote a moment ago rather than a parse of
+    // the reader's document. The differential is byte for byte, for the reason
+    // the rewrite's is: one document under one plan is deterministic.
+    let print_to = |who: &dyn save::Rewriter| -> Result<Vec<u8>, String> {
+        save::print_bytes(&document, &turning, 1, None, who).map_err(|why| why.message)
+    };
+    // **Counted before as well as after, and the absolute form was tried
+    // first.** `scripts/mutate_rust.py` carries a mutation that deletes the
+    // removal this check is about --- so proving the check works leaves exactly
+    // the file it exists to forbid, and the next run of the probe reports a
+    // defect that is its own evidence. Two of them were sitting in `$TMPDIR`
+    // when this was written, one per mutation run. A difference is the reading;
+    // a total is a reading about every run that ever happened here.
+    let scratch_files = || {
+        std::fs::read_dir(std::env::temp_dir())
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| {
+                        Some(entry.ok()?.file_name().to_string_lossy().into_owned())
+                    })
+                    .filter(|name| name.starts_with("tpdf-print-job."))
+                    .count()
+            })
+            .unwrap_or(usize::MAX)
+    };
+    let scratch_before = scratch_files();
+    let mut print_here_ms = f64::MAX;
+    let mut print_worker_ms = f64::MAX;
+    let mut printed_here = Err("not run".to_string());
+    let mut printed_worker = Err("not run".to_string());
+    for _ in 0..5 {
+        let at = Instant::now();
+        printed_here = print_to(rewriting);
+        print_here_ms = print_here_ms.min(at.elapsed().as_secs_f64() * 1000.0);
+        let at = Instant::now();
+        printed_worker = print_to(&rewrite_in_worker);
+        print_worker_ms = print_worker_ms.min(at.elapsed().as_secs_f64() * 1000.0);
+    }
+    println!(
+        "[INFO] a print job is {print_here_ms:.1} ms here and {print_worker_ms:.1} ms in a \
+         worker (+{:.1}, best of 5 interleaved)",
+        print_worker_ms - print_here_ms
+    );
+    check(
+        "the worker and the coordinator build the same print job",
+        matches!((&printed_here, &printed_worker), (Ok(a), Ok(b)) if a == b && !a.is_empty()),
+        format!(
+            "coordinator {} bytes, worker {} bytes",
+            printed_here.as_ref().map_or(0, Vec::len),
+            printed_worker.as_ref().map_or(0, Vec::len)
+        ),
+    );
+
+    // The same discriminating question again: a `print_bytes` that had kept its
+    // own parse would agree with the coordinator everywhere.
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-print-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let engineless = save::InWorker::at(nowhere.clone());
+    let print_without = print_to(&engineless);
+    let print_still = print_to(rewriting);
+    check(
+        "and the print path really needs a worker",
+        print_without.is_err() && print_still.is_ok(),
+        format!(
+            "worker {:?}, coordinator {} bytes",
+            print_without.as_ref().err(),
+            print_still.as_ref().map_or(0, Vec::len)
+        ),
+    );
+    // **And the scratch file the job was built in is gone**, on the refusal as
+    // well as on the answer. It holds the reader's document decrypted and
+    // reordered, in the shared temporary directory --- so one left behind is a
+    // copy of their document under a name they never chose. Counted rather than
+    // named, because `save::job_scratch` picks the name.
+    let leftovers = scratch_files();
+    check(
+        "and no print job is left behind in the temporary directory",
+        leftovers == scratch_before,
+        format!(
+            "{scratch_before} scratch file(s) named tpdf-print-job.* before, {leftovers} after"
+        ),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
 
     println!(
         "\n{}/{checks} checks passed, {skipped} not applicable to this platform",

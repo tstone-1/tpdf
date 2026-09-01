@@ -170,7 +170,8 @@ fn run(library: &Path) -> Result<bool, String> {
     let out = std::env::temp_dir().join("tpdf-redact-apply-probe.pdf");
     let _ = std::fs::remove_file(&out);
     let count = document.page_count();
-    save::write_copy(&source, &plan_for(count, plan), &out, None).map_err(|why| why.message)?;
+    save::write_copy(&source, &plan_for(count, plan), &out, None, &save::Here)
+        .map_err(|why| why.message)?;
     let bytes = std::fs::read(&out).map_err(|why| why.to_string())?;
     println!("[..] wrote {} bytes to {}", bytes.len(), out.display());
 
@@ -361,7 +362,8 @@ fn annotations(
     let out = std::env::temp_dir().join("tpdf-redact-annots-probe.pdf");
     let _ = std::fs::remove_file(&out);
     let count = document.page_count();
-    save::write_copy(&source, &plan_for(count, plan), &out, None).map_err(|why| why.message)?;
+    save::write_copy(&source, &plan_for(count, plan), &out, None, &save::Here)
+        .map_err(|why| why.message)?;
     let bytes = std::fs::read(&out).map_err(|why| why.to_string())?;
     println!("[..] wrote {} bytes to {}", bytes.len(), out.display());
 
@@ -629,7 +631,7 @@ fn forms(
     let out = std::env::temp_dir().join("tpdf-redact-form-probe.pdf");
     let _ = std::fs::remove_file(&out);
     let planned = form_plan(0, count, &objects, &plan, region);
-    save::write_copy(&source, &planned, &out, None).map_err(|why| why.message)?;
+    save::write_copy(&source, &planned, &out, None, &save::Here).map_err(|why| why.message)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     let holds = |needle: &str| {
         bytes
@@ -667,7 +669,7 @@ fn forms(
     let planned = form_plan(1, count, &shared, &plan, region);
     let out = std::env::temp_dir().join("tpdf-redact-form-shared-probe.pdf");
     let _ = std::fs::remove_file(&out);
-    let refused = save::write_copy(&source, &planned, &out, None);
+    let refused = save::write_copy(&source, &planned, &out, None, &save::Here);
     ok &= check(
         "a form the document draws twice is refused",
         refused
@@ -786,7 +788,7 @@ fn images(
     let out = std::env::temp_dir().join("tpdf-redact-image-probe.pdf");
     let _ = std::fs::remove_file(&out);
     let planned = image_plan(0, count, &objects, &plan, region);
-    save::write_copy(&source, &planned, &out, None).map_err(|why| why.message)?;
+    save::write_copy(&source, &planned, &out, None, &save::Here).map_err(|why| why.message)?;
     let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
     let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
     ok &= check(
@@ -832,7 +834,7 @@ fn images(
     let planned = image_plan(1, count, &twice, &plan, region);
     let out = std::env::temp_dir().join("tpdf-redact-image-shared-probe.pdf");
     let _ = std::fs::remove_file(&out);
-    let refused = save::write_copy(&source, &planned, &out, None);
+    let refused = save::write_copy(&source, &planned, &out, None, &save::Here);
     ok &= check(
         "a picture the document draws twice is refused",
         refused

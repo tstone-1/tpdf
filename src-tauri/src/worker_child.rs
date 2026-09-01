@@ -563,7 +563,7 @@ fn handle(
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
-        Request::Rewrite { plan, view } => rewrite(document, out, plan, *view),
+        Request::Rewrite { plan, job } => rewrite(document, out, plan, *job),
         Request::Reread => match render::run_reread(document) {
             Ok(pages) => Response::reply(Reply::Reread(pages)),
             Err(e) => Response::err(e),
@@ -600,14 +600,14 @@ fn rewrite(
     document: &OpenDocument,
     out: Option<&mut std::fs::File>,
     plan: &crate::edits::Plan,
-    view: u8,
+    job: crate::save::Job,
 ) -> Response {
     let Some(out) = out else {
         return Response::err(
             "this worker was not started with anywhere to write, so it cannot rewrite a document",
         );
     };
-    let bytes = match render::run_rewrite(document, plan, view) {
+    let bytes = match render::run_rewrite(document, plan, job) {
         Ok(bytes) => bytes,
         // `refused`, not `err`: some of these refusals are answerable by
         // reloading and the rest are not, and which is which is a fact the

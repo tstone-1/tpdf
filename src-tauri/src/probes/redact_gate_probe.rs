@@ -179,7 +179,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         notes: Vec::new(),
         discards: Vec::new(),
     };
-    save::write_copy(file, &plan, &out, None).map_err(|e| e.message)?;
+    save::write_copy(file, &plan, &out, None, &save::Here).map_err(|e| e.message)?;
 
     let page = GatePage {
         page: 0,

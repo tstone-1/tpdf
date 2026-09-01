@@ -29,7 +29,7 @@
 //! are the fully-qualified paths becoming imports --- which is the point.
 
 use crate::edits::Plan;
-use crate::save::{InWorker, Outside, Refusal, Reread, Rewriter, NO_VIEW_TURN};
+use crate::save::{InWorker, Job, Outside, Refusal, Reread, Rewriter};
 use crate::worker::Worker;
 use crate::worker_proto::{Reply, Request};
 use crate::worker_shm::Shm;
@@ -147,6 +147,7 @@ impl Rewriter for InWorker {
         len: usize,
         out: &mut std::fs::File,
         plan: &Plan,
+        job: Job,
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         // The handles, never the pathnames. See [`Rewriter`].
@@ -165,7 +166,7 @@ impl Rewriter for InWorker {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut worker = worker;
-            let _ = tx.send(Self::ask_rewrite(&mut worker, &plan, key.as_deref()));
+            let _ = tx.send(Self::ask_rewrite(&mut worker, &plan, job, key.as_deref()));
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
@@ -181,6 +182,7 @@ impl InWorker {
     fn ask_rewrite(
         worker: &mut Worker,
         plan: &Plan,
+        job: Job,
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         if let Some(password) = password {
@@ -198,7 +200,7 @@ impl InWorker {
 
         let answered = worker.call(&Request::Rewrite {
             plan: plan.clone(),
-            view: NO_VIEW_TURN,
+            job,
         })?;
         if !answered.ok {
             // The one bit that has to survive the pipe: whether Reload is the

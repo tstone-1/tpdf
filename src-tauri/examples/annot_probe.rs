@@ -688,7 +688,7 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
             args.page
         ))
     });
-    save::write_copy(&args.file, &plan, &out, None).map_err(|why| why.message)?;
+    save::write_copy(&args.file, &plan, &out, None, &save::Here).map_err(|why| why.message)?;
     if args.mode == Mode::NoAp {
         strip_appearances(&out)?;
     }

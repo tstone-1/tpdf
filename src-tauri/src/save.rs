@@ -246,14 +246,60 @@ pub struct Staged {
     pub verified: Fingerprint,
 }
 
-/// What a save passes for the reader's own rotation: none.
+/// What a rewrite is being produced for.
 ///
-/// Named rather than written as `0` at both call sites, because the parameter it
-/// fills is a quarter-turn count and a bare zero there reads as "no rotation at
-/// all" --- which is wrong: the plan's own per-page turns still apply. This says
-/// *the view adds nothing*, which is the fact. Saving stores the document, and
-/// how the reader happens to be holding it is not part of the document.
-pub(crate) const NO_VIEW_TURN: u8 = 0;
+/// **Two facts that always move together, so they are one value.** A rewrite
+/// differs between a save and a print job in exactly two ways: the reader's own
+/// view rotation is part of the paper and not part of the document, and an
+/// encrypted document may be saved and may not be printed in part. Carrying
+/// those as a `u8` and a `bool` was the first shape of this and is the one
+/// `docs/TRAPS.md` records as *two copies of a distinction drift* --- a caller
+/// setting one and forgetting the other gets a print job written in the clear,
+/// or a save whose pages come out turned the way the reader happened to be
+/// holding them.
+///
+/// It replaced `NO_VIEW_TURN`, which was a named zero for the same reason
+/// stated the other way round: a bare `0` in a quarter-turn parameter reads as
+/// *no rotation at all*, which is wrong, since the plan's own per-page turns
+/// still apply. [`Job::Save`] says *the view adds nothing*, which is the fact.
+///
+/// **It crosses the worker boundary**, which is why it is `serde`-derived: it is
+/// the field [`crate::worker_proto::Request::Rewrite`] carries, and the whole
+/// point of it being a value rather than a rule in the coordinator is that the
+/// coordinator no longer does the parse the rule is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Job {
+    /// The document, stored. Its encryption is kept and the view adds nothing.
+    Save,
+    /// Paper, turned by the reader's own rotation in quarter turns clockwise.
+    ///
+    /// **Refused for an encrypted document**, and neither answer a rewrite can
+    /// give is right: re-encrypting hands `NSPrintOperation` or
+    /// `Windows.Data.Pdf` a document they cannot read, and not re-encrypting
+    /// hands the platform --- and Print to PDF, and a printer's spool --- a
+    /// decrypted copy of a document somebody encrypted deliberately.
+    Print {
+        /// The reader's own rotation, in quarter turns clockwise.
+        view: u8,
+    },
+}
+
+impl Job {
+    /// The quarter turns the reader's own view adds, which only a print job has.
+    #[must_use]
+    pub fn view(self) -> u8 {
+        match self {
+            Self::Save => 0,
+            Self::Print { view } => view,
+        }
+    }
+
+    /// Whether this is paper, which is what the encryption refusal turns on.
+    #[must_use]
+    fn is_print(self) -> bool {
+        matches!(self, Self::Print { .. })
+    }
+}
 
 /// Asks whether the file a print job is about to be built from is the one the
 /// reader opened.
@@ -348,96 +394,215 @@ pub fn print_ready(source: &Path, plan: &Plan) -> Result<(), Refusal> {
 /// marks land at coordinates measured on the document they opened, over content
 /// that is no longer it, and paper does not say so.
 ///
+/// **The parse is `rewriter`'s, and since 2026-09-01 that is what this function
+/// is.** It read the source into this process and parsed it here, which made
+/// every print of an edited document a coordinator-side parse of
+/// attacker-controlled bytes --- `docs/THREAT-MODEL.md` residual risk 18. It now
+/// takes the seam [`stage_in_place`] and [`write_copy`] take, with the one
+/// difference printing forces: the answer has to come **back**, because
+/// `NSPrintOperation` and `Windows.Data.Pdf` are handed bytes and not a
+/// pathname. So the worker writes into a scratch file this process created and
+/// this process reads it, which is a read of bytes tpdf itself wrote a moment
+/// ago and not a parse of the reader's document. The parse that was here is
+/// gone; what the platform then does with the job is the readback, which is
+/// disclosed and is the whole point of it being an independent parser.
+///
+/// `view` is the reader's own rotation, in quarter turns clockwise, which is the
+/// one input a print job has and a save does not --- see [`Job`].
+///
 /// # Errors
 ///
-/// The source is not the file the plan was made against ([`print_ready`]), or
-/// anything [`planned_bytes`] refuses --- including an encrypted source, which
-/// printing reaches only when the reader has edited it, since an untouched one
-/// is handed over byte for byte and never parsed here. `password` is the
-/// reader's, and it is what makes that refusal the encryption one rather than
-/// the locked-document one; see the body.
+/// The source is not the file the plan was made against ([`print_ready`]), the
+/// scratch file cannot be created or read back, or anything [`rewrite_update`]
+/// refuses --- including an encrypted source, which printing reaches only when
+/// the reader has edited it, since an untouched one is handed over byte for byte
+/// and never parsed at all. `password` is the reader's, and it is what makes
+/// that refusal the encryption one rather than the locked-document one; see
+/// [`rewrite_update`], which is where both now live.
 pub fn print_bytes(
     source: &Path,
     plan: &Plan,
     view: u8,
     password: Option<&str>,
+    rewriter: &dyn Rewriter,
 ) -> Result<Vec<u8>, Refusal> {
-    // Before the read, for the reason `rewrite_ready` sits before the parse in
-    // `stage_in_place`: a guard asked after the surgery is a true sentence about
-    // the wrong document. Asked here rather than by the caller because
-    // `print::route`'s `Working` arm calls this function *directly* --- the same
-    // shape that left the encryption refusal below uncovered.
+    // Before anything is read, for the reason `rewrite_ready` sits before the
+    // parse in `stage_in_place`: a guard asked after the surgery is a true
+    // sentence about the wrong document. Asked here rather than by the caller
+    // because `print::route`'s `Working` arm calls this function *directly*.
     print_ready(source, plan)?;
-    // **Its own refusal, between the two phases, and it is not a second copy of
-    // `print::build`'s.** Until 2026-08-28 `checked` refused every document
-    // `lopdf` had decrypted, and that refusal was what stopped this function
-    // handing a print job something it should not have. Making the rewrite
-    // preserve encryption removed it --- for the save paths deliberately, and for
-    // this one by accident: `print::route`'s `Working` arm calls here
-    // *directly*, so `print::build`'s guard never sees it. Removing a guard
-    // removes it for every caller, including the ones the change was not about.
-    //
-    // Neither answer a rewrite can give is right for a print job. Re-encrypting
-    // hands `NSPrintOperation` or `Windows.Data.Pdf` a document they cannot
-    // read; not re-encrypting hands the platform a decrypted copy of a document
-    // whose author encrypted it, which is a different decision from *let the
-    // rewrite work* and has not been measured. So it is refused, and the
-    // reader is told which operation is the one that works.
-    //
-    // Between the phases rather than before them, because `Checked` is where the
-    // answer is: `checked` holds the state it took off the document, and asking
-    // the file again here would be a second parse deciding the same fact.
-    //
-    // **And it takes the reader's password, for a refusal.** That reads like a
-    // contradiction and is the whole point: without the key `checked` refuses
-    // first, with *"tpdf could not unlock it ... Open it with its password
-    // first"* --- said to a reader who has the document open with its password,
-    // and naming an escape they have already taken. The refusal below is the one
-    // that names an operation that works, and it is only reachable once the
-    // parse in front of it succeeds. A guard whose neighbour refuses the same
-    // input cannot be reached by it, and until this argument existed the only
-    // document that reached this line was one with an *empty* user password,
-    // which `lopdf` opens unprompted --- which is why the test for it uses that
-    // fixture and why the wrong sentence went unmeasured.
-    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
-    let checked = checked(&original, plan, view, password)?;
-    if checked.encryption.is_some() {
-        return Err(
-            "This document is encrypted, and printing part of it would have to write a copy \
-             the printer could not read. Print the whole document instead --- that is handed \
-             over unchanged."
-                .into(),
-        );
+    // The handle, never the pathname handed on --- see `opened_to_rewrite`.
+    let (mut reading, len) = opened_to_rewrite(source)?;
+    let (at, mut into) = job_scratch()?;
+    // Read back through the same handle the worker wrote down, never by
+    // re-opening `at`: the file is unlinked below and the name is this process's
+    // own, but reading a handle rather than a name is what the whole boundary is
+    // written in and there is no reason for this one call to be the exception.
+    let built = staged_rewrite(
+        rewriter,
+        &mut reading,
+        len,
+        &mut into,
+        plan,
+        Job::Print { view },
+        password,
+    )
+    .and_then(|wrote| {
+        read_whole(&mut into, wrote)
+            .map_err(|e| Refusal::from(format!("the print job could not be read back: {e}")))
+    });
+    // Whatever happened. The scratch file holds a decrypted, reordered copy of
+    // the reader's document, so leaving one behind on a refusal would be worse
+    // than the refusal.
+    drop(into);
+    let _ = std::fs::remove_file(&at);
+    built
+}
+
+/// Serialises every test in the crate that builds a print job.
+///
+/// **[`job_scratch`] names its file in a directory the whole suite shares**, and
+/// `cargo test` runs its tests in parallel --- so a scratch file another print
+/// test had open when this one counted them is a difference the counting test
+/// reports as a leftover. Measured rather than reasoned about: the mutation
+/// harness's control run went red on
+/// `a_print_job_whose_writer_refuses_leaves_no_scratch_file_behind` on a tree
+/// whose whole suite had passed a minute earlier, which is the shape this
+/// repository files under *flake* and which is not one.
+///
+/// **Here rather than in either test module, because the tests that reach
+/// [`print_bytes`] are in two of them** --- this file's and `print.rs`'s --- and
+/// a lock each would serialise two groups against themselves and neither
+/// against the other, which is the second-copy shape `docs/TRAPS.md` records.
+///
+/// Poisoning is stepped over deliberately: a panicking neighbour has already
+/// failed and reported, and turning that into a second failure here would name
+/// the wrong test.
+#[cfg(test)]
+pub(crate) fn print_lock() -> std::sync::MutexGuard<'static, ()> {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A private, empty file for a worker to write a print job into.
+///
+/// **Not [`stage`], and the difference is the destination.** Staging exists to
+/// put a file beside the one it will replace so the rename is atomic; a print
+/// job replaces nothing and is never renamed anywhere --- it is read back into
+/// this process and the file is removed. What it shares with staging is the part
+/// that matters: the name is fresh per call and the file is created with
+/// `create_new`, so nothing existing is truncated and a symlink at that path is
+/// refused outright.
+///
+/// **Created `0600` on Unix, rather than with the process umask.** A staged copy
+/// lands beside the reader's own document, in a directory they chose; this one
+/// lands in the temporary directory, which on both platforms is per-user but is
+/// not the reader's own. What it holds for the length of a print is their
+/// document with the encryption off and the pages in the order they asked for,
+/// which is not a thing to write `0644` anywhere. Windows has no counterpart to
+/// copy a mode from and no umask to widen it: a file there inherits the ACL of
+/// the directory it is created in, and `%TEMP%` is inside the user's profile.
+///
+/// # Errors
+///
+/// No unused name after [`STAGING_ATTEMPTS`] tries, or the file cannot be
+/// created.
+fn job_scratch() -> Result<(PathBuf, std::fs::File), Refusal> {
+    let dir = std::env::temp_dir();
+    for attempt in 0..STAGING_ATTEMPTS {
+        let at = dir.join(staging_name(
+            std::ffi::OsStr::new("tpdf-print-job"),
+            attempt,
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        match options.open(&at) {
+            Ok(file) => return Ok((at, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(Refusal::from(format!(
+                    "the print job needs somewhere to be built and {at:?} could not be \
+                     created: {e}"
+                )))
+            }
+        }
     }
-    rewrite(plan, checked)
+    Err(Refusal::from(format!(
+        "could not find an unused temporary name in {dir:?} after {STAGING_ATTEMPTS} tries"
+    )))
 }
 
 /// Writes the pages `plan` keeps, each with its own turn, from `source` to `out`.
 ///
+/// **The parse is `rewriter`'s, and since 2026-09-01 that is what this function
+/// is.** It read the source into this process and applied the plan here, through
+/// [`planned_bytes`], which made every Save a copy, every Extract and every
+/// Redact to a copy a coordinator-side parse of attacker-controlled bytes ---
+/// `docs/THREAT-MODEL.md` residual risk 18, reached by pressing the one button a
+/// reader is told to press when a save in place refuses. It now takes the seam
+/// [`stage_in_place`] already took, and the shape is the same one: the file's
+/// **handle** goes in, the staging file's handle goes in, and a length comes
+/// back.
+///
+/// **The destination is not the file the rewriter is handed**, which is what
+/// made this reachable at all and is worth stating rather than leaving to be
+/// read out of the code. A copy's destination is a path the reader chose in a
+/// dialog, and handing a sandboxed child a descriptor to that would be handing
+/// it something it did not create. What it is handed is the staging file
+/// [`stage`] creates beside that destination --- the same file, created the same
+/// way, as the one an in-place save stages --- and the rename onto the reader's
+/// chosen name happens here, in the process that has the authority for it.
+///
 /// # Errors
 ///
-/// Everything [`planned_bytes`] refuses; `out` is the source; or the write
-/// fails. The temporary file is removed on every failing path that created one.
+/// Everything [`rewrite_ready`] and the rewriter refuse; `out` is the source; the
+/// source cannot be opened or measured; a rewriter that wrote a different number
+/// of bytes than it reported; or the write fails. The temporary file is removed
+/// on every failing path that created one.
 pub fn write_copy(
     source: &Path,
     plan: &Plan,
     out: &Path,
     password: Option<&str>,
+    rewriter: &dyn Rewriter,
 ) -> Result<Copied, Refusal> {
     if same_file(source, out) {
         return Err(
             "tpdf cannot save over the document it is reading --- choose another name".into(),
         );
     }
-    // Named differently from `stage_in_place`'s, deliberately. The two calls are
-    // otherwise character-for-character identical, which made one mutation's
-    // anchor ambiguous the moment this line gained a binding --- and an ambiguous
-    // anchor is refused, so the mutation stops being able to fail. Distinct names
-    // are the fix; a longer anchor is only the workaround.
-    let copy = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;
-    write_atomically(out, &copy.bytes)?;
+    // `Proceed` rather than `Refuse`, which is the one place a copy and a save
+    // in place differ on purpose: a copy IS the fallback the in-place refusal
+    // points at, so refusing a changed source here would leave a reader whose
+    // file moved under them with nowhere at all to put their work. What comes
+    // back is the fact, and `Copied` carries it to them.
+    let ready = rewrite_ready(source, plan, OnChange::Proceed)?;
+    // Named differently from `stage_in_place`'s, deliberately, and the reason is
+    // the mutation harness rather than taste: two character-for-character
+    // identical calls make one anchor ambiguous, an ambiguous anchor is refused,
+    // and the mutation then stops being able to fail. Distinct bindings are the
+    // fix; a longer anchor is only the workaround.
+    let (mut reading, len) = opened_to_rewrite(source)?;
+    let staged = stage(out, |writing| {
+        staged_rewrite(
+            rewriter,
+            &mut reading,
+            len,
+            writing,
+            plan,
+            Job::Save,
+            password,
+        )
+        .map(|_| ())
+    })?;
+    commit(&staged, out)?;
     Ok(Copied {
-        changed: copy.changed,
+        changed: ready.changed,
     })
 }
 
@@ -518,6 +683,7 @@ pub fn write_split(
     plans: &[Plan],
     out: &Path,
     password: Option<&str>,
+    rewriter: &dyn Rewriter,
 ) -> Result<Split, Refusal> {
     if plans.len() < 2 {
         return Err("a split writes at least two files".into());
@@ -538,30 +704,47 @@ pub fn write_split(
         }
     }
 
-    let mut changed = false;
+    // **Asked once for the whole split, not once per part.** It is a question
+    // about the *file* --- is this still the one the plans were made against ---
+    // and the answer cannot differ between two parts of one run without the
+    // source having been replaced mid-split, which is a race no number of
+    // fingerprints closes. Once is also what stops a 337 MB source being hashed
+    // as many times as the reader asked for files.
+    let ready = rewrite_ready(source, &plans[0], OnChange::Proceed)?;
+    // **Opened once, and every part is rewritten from that one handle.** A part
+    // is a rewrite of the same document under a different plan, so re-opening
+    // per part would be re-opening a name --- and a source replaced between part
+    // two and part three would give the reader a numbered set built from two
+    // different documents, with nothing saying so.
+    // Named `opened` and `into`, where `write_copy`'s are `reading` and
+    // `writing`, and that is the mutation harness rather than taste: two
+    // character-for-character identical calls make one anchor ambiguous, an
+    // ambiguous anchor is refused, and the mutation stops being able to fail.
+    let (mut opened, len) = opened_to_rewrite(source)?;
+
     let mut written: Vec<String> = Vec::new();
     for (plan, target) in plans.iter().zip(&targets) {
-        let part = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password).map_err(
-            |why| Refusal {
-                message: format!(
-                    "{} ({} of {} written)",
-                    why.message,
-                    written.len(),
-                    plans.len()
-                ),
-                changed: why.changed,
-            },
-        )?;
-        changed |= part.changed;
-        write_atomically(target, &part.bytes).map_err(|why| {
-            Refusal::from(format!(
-                "{why} ({} of {} written)",
+        // The count is what a reader needs to know which files stand, and it is
+        // added to whatever refused --- the rewriter's refusal about the document
+        // or this side's about the disk, both of which reach here as a
+        // `Refusal` and keep the field a window branches on.
+        let landed = stage(target, |into| {
+            staged_rewrite(rewriter, &mut opened, len, into, plan, Job::Save, password).map(|_| ())
+        })
+        .and_then(|staged| Ok(commit(&staged, target)?))
+        .map_err(|why| Refusal {
+            message: format!(
+                "{} ({} of {} written)",
+                why.message,
                 written.len(),
                 plans.len()
-            ))
-        })?;
+            ),
+            changed: why.changed,
+        });
+        landed?;
         written.push(target.display().to_string());
     }
+    let changed = ready.changed;
     Ok(Split {
         changed,
         paths: written,
@@ -668,7 +851,7 @@ pub fn write_merged(
     // incoming file is refused a few lines below because there is no way to
     // write one file that preserves *two* documents' encryption --- and tpdf
     // holds no key for those anyway, having never opened them.
-    let base = planned_bytes(source, plan, OnChange::Proceed, NO_VIEW_TURN, password)?;
+    let base = planned_bytes(source, plan, OnChange::Proceed, Job::Save, password)?;
     let mut merged = Document::load_mem_with_options(
         &base.bytes,
         lopdf::LoadOptions {
@@ -834,17 +1017,9 @@ pub fn stage_in_place(
     // filesystem as the thing it will replace, which is what makes the rename
     // atomic rather than a copy.
     let target = resolved(source);
-    // **Opened here and read through, never re-opened by name.** Everything
-    // `rewrite_ready` just established is about *this* file, and a rewriter that
-    // opened `target` again would apply the plan to whatever has that name by
-    // then --- the same race [`Reread`] is written to close, on the way in
-    // rather than on the way out.
-    let mut file = std::fs::File::open(&target)
-        .map_err(|e| format!("could not open {target:?} to save it: {e}"))?;
-    let len = file
-        .metadata()
-        .map_err(|e| format!("could not measure {target:?}: {e}"))?
-        .len() as usize;
+    // Opened here and read through, never re-opened by name --- the reason is
+    // on `opened_to_rewrite`, which is where the three paths that do it share it.
+    let (mut file, len) = opened_to_rewrite(&target)?;
 
     // **The document refusals now arrive after the temporary file exists**, and
     // that is a change worth naming rather than leaving to be noticed. They used
@@ -855,27 +1030,79 @@ pub fn stage_in_place(
     // is the free half: `rewrite_ready` above still refuses a changed file
     // before a byte is written anywhere.
     let path = stage(&target, |out| {
-        let wrote = rewriter.write(&mut file, len, out, plan, password)?;
-        // **The one check on the way back**, and it is here rather than in the
-        // rewriter because only this side can make it: the worker says how many
-        // bytes it wrote and this file says how many it has, and the two are
-        // independent statements about the same write. A short write, a second
-        // rewrite appending to the first, or a reply built for another request
-        // all disagree here. Neither number is derived from the other.
-        let landed = out
-            .metadata()
-            .map_err(|e| format!("could not measure the staged file: {e}"))?
-            .len();
-        if landed != wrote as u64 {
-            return Err(format!(
-                "the rewritten document was reported as {wrote} bytes and the staged file is \
-                 {landed} --- the save was not completed"
-            )
-            .into());
-        }
-        Ok(())
+        staged_rewrite(rewriter, &mut file, len, out, plan, Job::Save, password).map(|_| ())
     })?;
     Ok(Staged { path, verified })
+}
+
+/// Has `rewriter` fill a staging file, and checks that what landed is what it said.
+///
+/// **The one statement of what a delegated rewrite has to satisfy**, read by
+/// every path that has one: [`stage_in_place`], [`write_copy`] and
+/// [`write_split`]. It was inline in the first of those while it was the only
+/// one, and a second copy of it is how the paths would come to disagree about
+/// what a completed write is --- `docs/TRAPS.md` has that under *two copies of a
+/// distinction drift*, and this module has already paid for it once with two
+/// spellings of the same `same_file` guard.
+///
+/// **The check is here rather than in the rewriter because only this side can
+/// make it**: the writer says how many bytes it wrote and this file says how
+/// many it has, and the two are independent statements about the same write. A
+/// short write, a second rewrite appending to the first, or a reply built for
+/// another request all disagree here. Neither number is derived from the other,
+/// which is what makes it a check rather than a restatement --- and it is the
+/// only one there can be, because on the worker path the bytes never enter this
+/// process.
+///
+/// # Errors
+///
+/// Everything the rewriter refuses, the staged file not being measurable, and a
+/// length that disagrees with the one reported.
+fn staged_rewrite(
+    rewriter: &dyn Rewriter,
+    source: &mut std::fs::File,
+    len: usize,
+    out: &mut std::fs::File,
+    plan: &Plan,
+    job: Job,
+    password: Option<&str>,
+) -> Result<usize, Refusal> {
+    let wrote = rewriter.write(source, len, out, plan, job, password)?;
+    let landed = out
+        .metadata()
+        .map_err(|e| format!("could not measure the staged file: {e}"))?
+        .len();
+    if landed != wrote as u64 {
+        return Err(format!(
+            "the rewritten document was reported as {wrote} bytes and the staged file is \
+             {landed} --- the save was not completed"
+        )
+        .into());
+    }
+    Ok(wrote)
+}
+
+/// Opens a document to be rewritten, and measures it.
+///
+/// **A handle and a length, never a pathname handed on**, which is the whole
+/// reason it exists as a step of its own on three paths. Everything the caller
+/// established about this file --- that it is still the one the plan was made
+/// against, or that it is not --- is about *this* file, and a rewriter that
+/// opened the path again would apply the plan to whatever has that name by
+/// then. It is the same race [`Reread`] closes on the way out, closed here on
+/// the way in.
+///
+/// # Errors
+///
+/// The file cannot be opened or measured.
+fn opened_to_rewrite(source: &Path) -> Result<(std::fs::File, usize), Refusal> {
+    let file = std::fs::File::open(source)
+        .map_err(|e| format!("could not open {source:?} to read it: {e}"))?;
+    let len = file
+        .metadata()
+        .map_err(|e| format!("could not measure {source:?}: {e}"))?
+        .len() as usize;
+    Ok((file, len))
 }
 
 /// How a save should be written.
@@ -1854,6 +2081,7 @@ pub trait Rewriter: Send {
         len: usize,
         out: &mut std::fs::File,
         plan: &Plan,
+        job: Job,
         password: Option<&str>,
     ) -> Result<usize, Refusal>;
 }
@@ -1881,12 +2109,13 @@ impl Rewriter for Here {
         len: usize,
         out: &mut std::fs::File,
         plan: &Plan,
+        job: Job,
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         use std::io::Write as _;
 
         let original = read_whole(source, len).map_err(|e| e.to_string())?;
-        let bytes = rewrite_update(&original, plan, NO_VIEW_TURN, password)?;
+        let bytes = rewrite_update(&original, plan, job, password)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
             .map_err(|e| format!("the rewritten document could not be written: {e}"))?;
@@ -2107,12 +2336,12 @@ fn planned_bytes(
     source: &Path,
     plan: &Plan,
     on_change: OnChange,
-    view: u8,
+    job: Job,
     password: Option<&str>,
 ) -> Result<Planned, Refusal> {
     let ready = rewrite_ready(source, plan, on_change)?;
     let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
-    Ok(ready.with(rewrite_update(&original, plan, view, password)?))
+    Ok(ready.with(rewrite_update(&original, plan, job, password)?))
 }
 
 /// What the caller established about the file before anything parsed it.
@@ -2201,19 +2430,48 @@ fn rewrite_ready(source: &Path, plan: &Plan, on_change: OnChange) -> Result<Rewr
 /// reader's filesystem authority. The same split [`append_update`] has, for the
 /// same reason, and `docs/THREAT-MODEL.md` residual risk 18 is what it narrows.
 ///
-/// `view` is the reader's own rotation in quarter turns, which a print job has
-/// and a save does not --- see [`NO_VIEW_TURN`].
+/// `job` says what the answer is for --- see [`Job`], which carries both of the
+/// ways a print job differs from a save.
+///
+/// **The print refusal is here, and it moved with the parse.** It used to sit in
+/// [`print_bytes`], between the two phases, which was the right place while the
+/// two phases ran in the coordinator: `Checked` is where the answer is, and
+/// asking the file again would have been a second parse deciding the same fact.
+/// The phases are in a worker now, so the refusal followed them --- staying
+/// behind would have meant either shipping the reader's decrypted document to
+/// this process to be refused, or not refusing at all.
 ///
 /// # Errors
 ///
-/// As [`planned_bytes`], minus the file being readable.
+/// As [`planned_bytes`], minus the file being readable; and, for a print job, an
+/// encrypted document.
 pub fn rewrite_update(
     original: &[u8],
     plan: &Plan,
-    view: u8,
+    job: Job,
     password: Option<&str>,
 ) -> Result<Vec<u8>, Refusal> {
-    rewrite(plan, checked(original, plan, view, password)?)
+    let checked = checked(original, plan, job.view(), password)?;
+    // **Between the phases, which is where the answer is.** `checked` holds the
+    // encryption state it took off the document, so this reads what has already
+    // been established rather than asking the bytes a second question.
+    //
+    // **And it is only reachable once the parse in front of it succeeds**, which
+    // is why the reader's password reaches a function whose job here is to
+    // refuse: without the key `checked` refuses first, with *"tpdf could not
+    // unlock it ... Open it with its password first"* --- said to a reader who
+    // has the document open with its password, naming an escape they have
+    // already taken. A guard whose neighbour refuses the same input cannot be
+    // reached by it.
+    if job.is_print() && checked.encryption.is_some() {
+        return Err(
+            "This document is encrypted, and printing part of it would have to write a copy \
+             the printer could not read. Print the whole document instead --- that is handed \
+             over unchanged."
+                .into(),
+        );
+    }
+    rewrite(plan, checked)
 }
 
 /// Checks a plan against a document's bytes, writing nothing.
@@ -5100,6 +5358,36 @@ fn canonical_parent(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`write_copy`] with the in-process writer, which is what a copy took
+    /// before a worker did the parsing.
+    ///
+    /// The tests below are about what a copy *contains* --- which pages, which
+    /// turns, which crops, what a redaction took out --- and not one of them is
+    /// about which process parsed it. The seam has its own tests, aimed at it and
+    /// named for it. Writing `&Here` at fifty call sites would put the answer to
+    /// a question none of them asks in front of every one of them, and the
+    /// alias says which writer is running more plainly than the argument does.
+    fn copy_here(
+        source: &Path,
+        plan: &Plan,
+        out: &Path,
+        password: Option<&str>,
+    ) -> Result<Copied, Refusal> {
+        write_copy(source, plan, out, password, &Here)
+    }
+
+    /// [`write_split`] with the in-process writer. [`copy_here`]'s counterpart,
+    /// for the same reason.
+    fn split_here(
+        source: &Path,
+        plans: &[Plan],
+        out: &Path,
+        password: Option<&str>,
+    ) -> Result<Split, Refusal> {
+        write_split(source, plans, out, password, &Here)
+    }
+
     use crate::edits::PageView;
     use crate::pagetree::effective_rotation;
 
@@ -5308,7 +5596,7 @@ mod tests {
         let before = page_count_with(&source, "swordfish");
         assert_eq!(before, 2, "the fixture is two pages");
 
-        write_copy(&source, &keeping(2, &[(0, 0)]), &out, Some("swordfish")).expect("rewrite");
+        copy_here(&source, &keeping(2, &[(0, 0)]), &out, Some("swordfish")).expect("rewrite");
 
         // **Two assertions, and neither is redundant.** The page count says the
         // rewrite happened; the byte scan says the encryption came back. A
@@ -5346,7 +5634,8 @@ mod tests {
             println!("[SKIP] a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do: generate testdata/ (BUILD.md)");
             return;
         };
-        let why = print_bytes(&source, &keeping(2, &[(0, 0)]), NO_VIEW_TURN, None)
+        let _serial = crate::save::print_lock();
+        let why = print_bytes(&source, &keeping(2, &[(0, 0)]), 0, None, &Here)
             .expect_err("a print job from an encrypted document must be refused");
         assert!(
             why.message.contains("encrypted"),
@@ -5356,7 +5645,7 @@ mod tests {
         // And the same document IS rewritable, which is what makes the refusal
         // above a decision about printing rather than about the document.
         let scratch = Scratch::new("print-enc");
-        write_copy(
+        copy_here(
             &source,
             &keeping(2, &[(0, 0)]),
             &scratch.0.join("out.pdf"),
@@ -5380,13 +5669,9 @@ mod tests {
             println!("[SKIP] a_print_job_from_a_locked_document_names_the_escape_that_exists: generate testdata/ (BUILD.md)");
             return;
         };
-        let why = print_bytes(
-            &source,
-            &keeping(2, &[(0, 0)]),
-            NO_VIEW_TURN,
-            Some("swordfish"),
-        )
-        .expect_err("a print job from an encrypted document must be refused");
+        let _serial = crate::save::print_lock();
+        let why = print_bytes(&source, &keeping(2, &[(0, 0)]), 0, Some("swordfish"), &Here)
+            .expect_err("a print job from an encrypted document must be refused");
         assert!(
             why.message.contains("Print the whole document"),
             "the refusal must name the operation that works, not one the reader has already \
@@ -5399,7 +5684,7 @@ mod tests {
         // a different sentence --- so a `print_bytes` that quietly ignored its
         // new argument would pass the first assertion only by accident of which
         // message it happened to produce. These two must not be the same string.
-        let locked = print_bytes(&source, &keeping(2, &[(0, 0)]), NO_VIEW_TURN, None)
+        let locked = print_bytes(&source, &keeping(2, &[(0, 0)]), 0, None, &Here)
             .expect_err("without the key the parse itself is refused");
         assert!(
             locked.message.contains("could not unlock"),
@@ -5426,6 +5711,7 @@ mod tests {
             );
             return;
         };
+        let _serial = crate::save::print_lock();
         let scratch = Scratch::new("print-changed");
         let at = scratch.0.join("open.pdf");
         std::fs::copy(&source, &at).expect("plant the document the reader opened");
@@ -5433,13 +5719,13 @@ mod tests {
 
         // The control, first, so that what follows is a difference and not a
         // reading. A file nobody touched prints.
-        print_bytes(&at, &plan, NO_VIEW_TURN, None)
+        print_bytes(&at, &plan, 0, None, &Here)
             .expect("an unchanged file is the whole point of the guard letting it through");
 
         // A newer copy of the same report landing over the open document: same
         // four pages, different bytes.
         let newer = scratch.0.join("newer.pdf");
-        write_copy(
+        copy_here(
             &source,
             &keeping(4, &[(0, 1), (1, 0), (2, 0), (3, 0)]),
             &newer,
@@ -5448,7 +5734,7 @@ mod tests {
         .expect("a sibling of the same shape");
         std::fs::copy(&newer, &at).expect("land it over the open document");
 
-        let why = print_bytes(&at, &plan, NO_VIEW_TURN, None)
+        let why = print_bytes(&at, &plan, 0, None, &Here)
             .expect_err("a print job over a file that is not the one opened must be refused");
         // The flag, not the wording, is what a caller branches on, and since
         // 2026-09-01 `print_document` rejects with the whole `Refusal` --- so
@@ -5597,7 +5883,7 @@ mod tests {
         };
         let scratch = Scratch::new("enc-locked");
         let out = scratch.0.join("out.pdf");
-        let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out, None)
+        let why = copy_here(&source, &keeping(2, &[(0, 0)]), &out, None)
             .expect_err("a locked document cannot be rewritten");
         assert!(
             why.message.contains("could not unlock"),
@@ -5641,7 +5927,7 @@ mod tests {
             turns[1] = 1;
 
             let out = scratch.join(&format!("{name}.out.pdf"));
-            write_copy(&path, &plan_of(&turns), &out, None)
+            copy_here(&path, &plan_of(&turns), &out, None)
                 .unwrap_or_else(|e| panic!("{name}: {e}"));
 
             let written = std::fs::read(&out).expect("read written");
@@ -5919,7 +6205,7 @@ mod tests {
             keeping(total, &[(0, 0), (1, 0)]),
             keeping(total, &[(2, 0), (3, 0)]),
         ];
-        let done = write_split(&source, &plans, &out, None).expect("split");
+        let done = split_here(&source, &plans, &out, None).expect("split");
         assert_eq!(done.paths.len(), 2);
 
         let mut seen: Vec<i64> = Vec::new();
@@ -5968,7 +6254,7 @@ mod tests {
         let taken = scratch.join("part-2.pdf");
         std::fs::write(&taken, b"not a pdf, and not to be destroyed").expect("plant");
 
-        let why = write_split(&source, &plans, &out, None).expect_err("refused");
+        let why = split_here(&source, &plans, &out, None).expect_err("refused");
         assert!(why.message.contains("already exists"), "{why}");
         assert!(
             why.message.contains("part-2.pdf"),
@@ -5988,7 +6274,7 @@ mod tests {
         // that refuses everything, and this whole test would pass against a
         // function whose body is one `Err`.
         std::fs::remove_file(&taken).expect("unplant");
-        write_split(&source, &plans, &out, None).expect("the same call, with nothing in the way");
+        split_here(&source, &plans, &out, None).expect("the same call, with nothing in the way");
         assert!(scratch.join("part-1.pdf").exists() && scratch.join("part-2.pdf").exists());
     }
 
@@ -6001,7 +6287,7 @@ mod tests {
         let scratch = Scratch::new("split-one");
         let plans = [keeping(page_count(&source) as u32, &[(0, 0)])];
         let why =
-            write_split(&source, &plans, &scratch.join("part.pdf"), None).expect_err("refused");
+            split_here(&source, &plans, &scratch.join("part.pdf"), None).expect_err("refused");
         assert!(why.message.contains("at least two files"), "{why}");
     }
 
@@ -6067,7 +6353,7 @@ mod tests {
         assert!(count > 1, "this needs a second page to be the control");
         let out = scratch.join("cropped.pdf");
         let want = [72.0, 100.0, 400.0, 600.0];
-        write_copy(&path, &plan_cropping(count, 0, want), &out, None).expect("write");
+        copy_here(&path, &plan_cropping(count, 0, want), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -6130,7 +6416,7 @@ mod tests {
         // everywhere and this is the fixture where those differ.
         let turns = vec![2u8; count];
         let out = scratch.join("composed.pdf");
-        write_copy(&path, &plan_of(&turns), &out, None).expect("write");
+        copy_here(&path, &plan_of(&turns), &out, None).expect("write");
 
         let before = Document::load(&path).expect("load source");
         let after = Document::load(&out).expect("load written");
@@ -6158,7 +6444,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         // Turn the second page only. The first inherits 90 from the tree and is
         // left alone.
-        write_copy(&source, &plan_of(&[0, 1]), &out, None).expect("write");
+        copy_here(&source, &plan_of(&[0, 1]), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -6318,7 +6604,7 @@ mod tests {
 
         // One quarter-turn asked for on each page number. They are one page, so
         // the answer is one quarter-turn, not two.
-        write_copy(&source, &plan_of(&[1, 1]), &out, None).expect("agreeing turns are honoured");
+        copy_here(&source, &plan_of(&[1, 1]), &out, None).expect("agreeing turns are honoured");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -6337,7 +6623,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &plan_of(&[1, 2]), &out, None).expect_err("must refuse");
+        let why = copy_here(&source, &plan_of(&[1, 2]), &out, None).expect_err("must refuse");
         assert!(
             why.message.contains("same page"),
             "the message says why rather than naming an internal id: {why}"
@@ -6364,7 +6650,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        write_copy(&source, &plan_of(&[0, 0]), &out, None)
+        copy_here(&source, &plan_of(&[0, 0]), &out, None)
             .expect("an unedited document still saves");
         assert!(out.exists());
     }
@@ -6412,7 +6698,7 @@ mod tests {
         let scratch = Scratch::new("delete");
         let out = scratch.join("kept.pdf");
         // Page 2 removed; the other three keep their own rotations.
-        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 0)]), &out, None).expect("write");
+        copy_here(&path, &keeping(4, &[(0, 0), (2, 0), (3, 0)]), &out, None).expect("write");
 
         let written = std::fs::read(&out).expect("read written");
         let after = os_pdf::read(&written).expect("the OS parser reads the saved copy");
@@ -6450,7 +6736,7 @@ mod tests {
         let before = Document::load(&path).expect("load source");
         let source_ids = ordered_pages(&before);
         // Drop page 2, and turn what was page 4 by a quarter.
-        write_copy(&path, &keeping(4, &[(0, 0), (2, 0), (3, 1)]), &out, None).expect("write");
+        copy_here(&path, &keeping(4, &[(0, 0), (2, 0), (3, 1)]), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -6488,7 +6774,7 @@ mod tests {
 
         let kept: Vec<(u32, u8)> = (1..count as u32).map(|source| (source, 0)).collect();
         let trimmed = scratch.join("trimmed.pdf");
-        write_copy(&path, &keeping(count as u32, &kept), &trimmed, None).expect("write");
+        copy_here(&path, &keeping(count as u32, &kept), &trimmed, None).expect("write");
         assert!(
             !has_outline(&Document::load(&trimmed).expect("load written")),
             "a page was dropped, so its destinations are gone"
@@ -6497,7 +6783,7 @@ mod tests {
         // The control. Without it this check passes for a save that drops every
         // outline it ever sees, which is a different and much worse rule.
         let whole = scratch.join("whole.pdf");
-        write_copy(&path, &plan_of(&vec![0u8; count]), &whole, None).expect("write");
+        copy_here(&path, &plan_of(&vec![0u8; count]), &whole, None).expect("write");
         assert!(
             has_outline(&Document::load(&whole).expect("load written")),
             "nothing was dropped, so the bookmarks survive"
@@ -6571,7 +6857,7 @@ mod tests {
         let (kept_number, kept_stream) = streams[0];
 
         let out = scratch.join("one.pdf");
-        write_copy(&path, &keeping(count, &[(0, 0)]), &out, None).expect("write");
+        copy_here(&path, &keeping(count, &[(0, 0)]), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
         assert_eq!(after.get_pages().len(), 1, "one page was asked for");
 
@@ -6612,7 +6898,7 @@ mod tests {
             .map(|s| (s, 0))
             .collect();
         let out = scratch.join("rest.pdf");
-        write_copy(&path, &keeping(count, &kept), &out, None).expect("write");
+        copy_here(&path, &keeping(count, &kept), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
 
         assert!(
@@ -6666,7 +6952,7 @@ mod tests {
 
         let count = before.get_pages().len();
         let out = scratch.join("copy.pdf");
-        write_copy(&path, &plan_of(&vec![0u8; count]), &out, None).expect("write");
+        copy_here(&path, &plan_of(&vec![0u8; count]), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
         for orphan in &orphans {
             assert!(
@@ -6742,7 +7028,7 @@ mod tests {
             } else {
                 plan_of(&vec![0u8; count])
             };
-            if write_copy(&path, &plan, &out, None).is_err() {
+            if copy_here(&path, &plan, &out, None).is_err() {
                 // Encrypted, signed, or a shape the writer refuses. Its refusal
                 // is another test's subject; what matters here is that a file it
                 // *did* write is sound.
@@ -6826,7 +7112,7 @@ mod tests {
         let scratch = Scratch::new("size-floor");
         let out = scratch.join("out.pdf");
         let kept: Vec<(u32, u8)> = (0..count as u32 - 1).map(|source| (source, 0)).collect();
-        write_copy(&path, &keeping(count as u32, &kept), &out, None).expect("write");
+        copy_here(&path, &keeping(count as u32, &kept), &out, None).expect("write");
 
         let back = Document::load(&out).expect("reload");
         let size = back
@@ -6863,7 +7149,7 @@ mod tests {
         std::fs::write(&source, shared_page_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &keeping(2, &[(0, 0)]), &out, None).expect_err("must refuse");
+        let why = copy_here(&source, &keeping(2, &[(0, 0)]), &out, None).expect_err("must refuse");
         assert!(
             why.message.contains("same page") && why.message.contains("on its own"),
             "the message says what cannot be done and what can: {why}"
@@ -6884,7 +7170,7 @@ mod tests {
         let out = scratch.join("out.pdf");
 
         // Pages 1 and 2 are one object; page 3 is its own. Keep only page 3.
-        write_copy(&source, &keeping(3, &[(2, 0)]), &out, None).expect("write");
+        copy_here(&source, &keeping(3, &[(2, 0)]), &out, None).expect("write");
         let after = Document::load(&out).expect("load written");
         assert_eq!(
             ordered_pages(&after).len(),
@@ -6970,7 +7256,7 @@ mod tests {
 
         let scratch = Scratch::new("reordered");
         let out = scratch.join("out.pdf");
-        write_copy(
+        copy_here(
             &path,
             &keeping(4, &[(2, 0), (0, 0), (3, 0), (1, 0)]),
             &out,
@@ -6994,7 +7280,7 @@ mod tests {
         // plan would pass the assertion above and would flatten the page tree of
         // every document anyone ever saved.
         let untouched = scratch.join("untouched.pdf");
-        write_copy(
+        copy_here(
             &path,
             &keeping(4, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
             &untouched,
@@ -7031,7 +7317,7 @@ mod tests {
         let before = Document::load(&path).expect("load source");
         let source_ids = ordered_pages(&before);
         // Page 2 dropped; the old page 4 moved to the front and turned a quarter.
-        write_copy(&path, &keeping(4, &[(3, 1), (0, 0), (2, 0)]), &out, None).expect("write");
+        copy_here(&path, &keeping(4, &[(3, 1), (0, 0), (2, 0)]), &out, None).expect("write");
 
         let after = Document::load(&out).expect("load written");
         let ids = ordered_pages(&after);
@@ -7084,7 +7370,7 @@ mod tests {
 
         let out = scratch.join("moved.pdf");
         // The last page to the front, so it leaves the node it inherited from.
-        write_copy(
+        copy_here(
             &source,
             &keeping(4, &[(3, 0), (0, 0), (1, 0), (2, 0)]),
             &out,
@@ -7125,7 +7411,7 @@ mod tests {
         );
 
         let out = scratch.join("copied.pdf");
-        write_copy(
+        copy_here(
             &source,
             &keeping(4, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
             &out,
@@ -7142,7 +7428,7 @@ mod tests {
         // out flat, so the assertion above is about this plan rather than about
         // a reorder that never happens.
         let moved = scratch.join("moved.pdf");
-        write_copy(
+        copy_here(
             &source,
             &keeping(4, &[(3, 0), (0, 0), (1, 0), (2, 0)]),
             &moved,
@@ -7274,7 +7560,7 @@ mod tests {
         let mut kept: Vec<(u32, u8)> = (0..count as u32).map(|source| (source, 0)).collect();
         kept.swap(0, 1);
         let out = scratch.join("swapped.pdf");
-        write_copy(&path, &keeping(count as u32, &kept), &out, None).expect("write");
+        copy_here(&path, &keeping(count as u32, &kept), &out, None).expect("write");
 
         assert!(
             has_outline(&Document::load(&out).expect("load written")),
@@ -7296,7 +7582,7 @@ mod tests {
         // reachable from a frontend sending something the model never produced,
         // which is exactly the argument for not trusting the number.
         let why =
-            write_copy(&path, &keeping(4, &[(0, 0), (9, 0)]), &out, None).expect_err("must refuse");
+            copy_here(&path, &keeping(4, &[(0, 0), (9, 0)]), &out, None).expect_err("must refuse");
         assert!(why.message.contains("does not have"), "{why}");
         assert!(!out.exists());
     }
@@ -7308,7 +7594,7 @@ mod tests {
         std::fs::write(&source, encrypted_document()).expect("write fixture");
         let out = scratch.join("out.pdf");
 
-        let why = write_copy(&source, &plan_of(&[0]), &out, None).expect_err("must refuse");
+        let why = copy_here(&source, &plan_of(&[0]), &out, None).expect_err("must refuse");
         assert!(
             why.message.contains("encrypted"),
             "the message names the reason: {why}"
@@ -7365,7 +7651,7 @@ mod tests {
         // being silently written in the clear before the guard was corrected.
         if let Some(path) = fixture("incr-encrypted-open.pdf") {
             examined += 1;
-            write_copy(&path, &plan_of(&[0, 0]), &out, None)
+            copy_here(&path, &plan_of(&[0, 0]), &out, None)
                 .expect("a document tpdf can unlock is rewritten");
             let raw = std::fs::read(&out).expect("read back");
             assert!(
@@ -7388,7 +7674,7 @@ mod tests {
         // through rather than a dead end.
         if let Some(path) = fixture("incr-encrypted-pw.pdf") {
             examined += 1;
-            let why = write_copy(&path, &plan_of(&[0, 0]), &out, None)
+            let why = copy_here(&path, &plan_of(&[0, 0]), &out, None)
                 .expect_err("a locked document must be refused");
             assert!(
                 why.message.contains("encrypted"),
@@ -7468,14 +7754,14 @@ mod tests {
         let out = scratch.join("out.pdf");
         let count = page_count(&path);
 
-        let why = write_copy(&path, &plan_of(&vec![0u8; count + 1]), &out, None)
-            .expect_err("must refuse");
+        let why =
+            copy_here(&path, &plan_of(&vec![0u8; count + 1]), &out, None).expect_err("must refuse");
         assert!(why.message.contains("changed since it was opened"), "{why}");
         assert!(!out.exists());
 
         // And the matching plan is accepted, so the refusal is about the
         // mismatch rather than about this document.
-        write_copy(&path, &plan_of(&vec![0u8; count]), &out, None)
+        copy_here(&path, &plan_of(&vec![0u8; count]), &out, None)
             .expect("the matching plan writes");
         assert!(out.exists());
     }
@@ -7484,7 +7770,7 @@ mod tests {
     fn an_empty_plan_is_refused() {
         let scratch = Scratch::new("empty");
         let out = scratch.join("out.pdf");
-        let why = write_copy(
+        let why = copy_here(
             Path::new("../testdata/rotated.pdf"),
             &plan_of(&[]),
             &out,
@@ -7513,7 +7799,7 @@ mod tests {
         std::fs::copy(&path, &copy).expect("copy fixture");
         let before = std::fs::read(&copy).expect("read");
 
-        let why = write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &copy, None).expect_err("must refuse");
+        let why = copy_here(&copy, &plan_of(&[1, 0, 0, 0]), &copy, None).expect_err("must refuse");
         assert!(why.message.contains("save over"), "{why}");
         assert_eq!(
             std::fs::read(&copy).expect("read"),
@@ -7524,7 +7810,7 @@ mod tests {
         // The same file reached by a different spelling of the path is still the
         // same file --- a comparison of the strings would let this through.
         let indirect = scratch.join(".").join("copy.pdf");
-        assert!(write_copy(&copy, &plan_of(&[1, 0, 0, 0]), &indirect, None).is_err());
+        assert!(copy_here(&copy, &plan_of(&[1, 0, 0, 0]), &indirect, None).is_err());
     }
 
     /// Staging writes the whole document and changes nothing the reader has.
@@ -7885,8 +8171,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        write_copy(&open, &plan_of(&[1, 0, 0, 0]), &out, None)
-            .expect("a copy needs no fingerprint");
+        copy_here(&open, &plan_of(&[1, 0, 0, 0]), &out, None).expect("a copy needs no fingerprint");
         assert!(out.exists());
     }
 
@@ -7924,7 +8209,7 @@ mod tests {
         );
         std::fs::write(&open, &bytes).expect("rewrite");
 
-        let copied = write_copy(&open, &plan, &out, None).expect("a copy risks nothing");
+        let copied = copy_here(&open, &plan, &out, None).expect("a copy risks nothing");
         assert!(copied.changed, "and it says the source had changed");
         assert!(out.exists(), "and the reader's edits are somewhere");
         // Still a real document rather than a placeholder, which is the half a
@@ -7948,7 +8233,7 @@ mod tests {
         let out = scratch.join("out.pdf");
         std::fs::copy(&path, &open).expect("copy fixture");
 
-        let copied = write_copy(&open, &plan_opened_as(&[1, 0, 0, 0], &open), &out, None)
+        let copied = copy_here(&open, &plan_opened_as(&[1, 0, 0, 0], &open), &out, None)
             .expect("an untouched source copies");
         assert!(!copied.changed);
         assert!(out.exists());
@@ -7984,7 +8269,7 @@ mod tests {
             "the fixture really is a different shape"
         );
 
-        let why = write_copy(&open, &plan, &out, None).expect_err("must refuse");
+        let why = copy_here(&open, &plan, &out, None).expect_err("must refuse");
         assert!(why.changed, "and it is offered as a change: {why}");
         assert!(!out.exists(), "and writes nothing");
     }
@@ -8086,7 +8371,7 @@ mod tests {
         let scratch = Scratch::new("fresh");
         let out = scratch.join("brand-new.pdf");
         assert!(!out.exists(), "the control: it really is absent");
-        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out, None)
+        copy_here(&path, &plan_of(&[0, 0, 0, 0]), &out, None)
             .expect("a fresh destination is accepted");
         assert!(out.exists());
     }
@@ -8194,7 +8479,7 @@ mod tests {
         };
         let scratch = Scratch::new("partial");
         let out = scratch.join("done.pdf");
-        write_copy(&path, &plan_of(&[1, 1, 1, 1]), &out, None).expect("write");
+        copy_here(&path, &plan_of(&[1, 1, 1, 1]), &out, None).expect("write");
         assert!(out.exists());
         assert!(
             partials_beside(&out).is_empty(),
@@ -8241,7 +8526,7 @@ mod tests {
              so a change to one is visible in the other"
         );
 
-        write_copy(&path, &plan_of(&[0, 0, 0, 0]), &out, None).expect("write");
+        copy_here(&path, &plan_of(&[0, 0, 0, 0]), &out, None).expect("write");
 
         // Deliberately not `assert_eq!`: the failing side is a whole PDF, and
         // `assert_eq!` on two `Vec<u8>` prints every byte as a decimal number ---
@@ -8639,7 +8924,7 @@ mod tests {
             "the premise: a deletion cannot be an append"
         );
 
-        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let bytes = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
         let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
         assert_eq!(after.get_pages().len(), 2, "both pages were kept");
 
@@ -8662,7 +8947,7 @@ mod tests {
         // fixture and the same writer with nothing deleted: the marker is there.
         // Without this the assertion above passes for a writer that never wrote
         // the stream at all, and for a fixture that never held it.
-        let kept = rewrite_update(&original, &plan_of(&[0, 0]), NO_VIEW_TURN, None)
+        let kept = rewrite_update(&original, &plan_of(&[0, 0]), Job::Save, None)
             .expect("the rewrite with nothing deleted");
         assert!(
             String::from_utf8_lossy(&kept).contains(marker),
@@ -8682,7 +8967,7 @@ mod tests {
         let mut plan = plan_of(&[0, 0]);
         plan.discards = vec![crate::edits::PlannedDiscard { object: (9_999, 0) }];
         assert!(
-            rewrite_update(&original, &plan, NO_VIEW_TURN, None).is_err(),
+            rewrite_update(&original, &plan, Job::Save, None).is_err(),
             "an object the document does not have was accepted"
         );
 
@@ -8697,7 +8982,7 @@ mod tests {
             object: (page.0, page.1),
         }];
         assert!(
-            rewrite_update(&original, &plan, NO_VIEW_TURN, None).is_err(),
+            rewrite_update(&original, &plan, Job::Save, None).is_err(),
             "a page was accepted as a comment to delete"
         );
     }
@@ -8732,7 +9017,7 @@ mod tests {
             "the premise: a plan carrying a page no file supplies cannot be an append"
         );
 
-        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let bytes = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
         let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
         let pages = ordered_pages(&after);
         assert_eq!(pages.len(), 3, "two from the file and one made");
@@ -8810,7 +9095,7 @@ mod tests {
             crop: None,
         });
 
-        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let bytes = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
         let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
         let pages = ordered_pages(&after);
         let made = after.get_dictionary(pages[2]).expect("the made page");
@@ -8882,7 +9167,7 @@ mod tests {
              this goes out through the rewrite"
         );
 
-        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let bytes = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
         let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
         let pages = ordered_pages(&after);
         assert_eq!(
@@ -8952,7 +9237,7 @@ mod tests {
              test exercises the writer the append test cannot reach"
         );
 
-        let bytes = rewrite_update(&original, &plan, NO_VIEW_TURN, None).expect("the rewrite");
+        let bytes = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
         let after = Document::load_mem(&bytes).expect("the rewritten file must parse");
         assert_eq!(after.get_pages().len(), 1, "one page was kept");
 
@@ -9184,7 +9469,7 @@ mod tests {
             !rewriting.is_appendable(),
             "the premise: dropping a page is what forces the other writer"
         );
-        let refused = rewrite_update(&original, &rewriting, NO_VIEW_TURN, None)
+        let refused = rewrite_update(&original, &rewriting, Job::Save, None)
             .expect_err("a page is not a comment on this path either");
         assert!(
             refused.message.contains("not an annotation"),
@@ -9225,8 +9510,8 @@ mod tests {
             made: "D:20260829120000Z".into(),
         }];
 
-        let refused = rewrite_update(&original, &plan, NO_VIEW_TURN, None)
-            .expect_err("a page is not a comment");
+        let refused =
+            rewrite_update(&original, &plan, Job::Save, None).expect_err("a page is not a comment");
         assert!(
             refused.message.contains("not an annotation"),
             "the refusal must say what is wrong: {refused:?}"
@@ -10062,6 +10347,12 @@ mod tests {
         /// a rename over the reader's document.
         overstate_by: usize,
         asked: std::cell::RefCell<Vec<(usize, Option<String>)>>,
+        /// What each call said the rewrite was for.
+        ///
+        /// Kept beside `asked` rather than as a third element of its tuples,
+        /// because the tests that read `asked` are about the length and the
+        /// password and would all have to be rewritten to say nothing new.
+        jobs: std::cell::RefCell<Vec<Job>>,
     }
 
     impl FakeWriter {
@@ -10070,6 +10361,7 @@ mod tests {
                 answer,
                 overstate_by: 0,
                 asked: std::cell::RefCell::new(Vec::new()),
+                jobs: std::cell::RefCell::new(Vec::new()),
             }
         }
     }
@@ -10081,6 +10373,7 @@ mod tests {
             len: usize,
             out: &mut std::fs::File,
             _plan: &Plan,
+            job: Job,
             password: Option<&str>,
         ) -> Result<usize, Refusal> {
             use std::io::Write as _;
@@ -10088,6 +10381,7 @@ mod tests {
             self.asked
                 .borrow_mut()
                 .push((len, password.map(str::to_string)));
+            self.jobs.borrow_mut().push(job);
             let bytes = self.answer.clone()?;
             out.write_all(&bytes).map_err(|e| e.to_string())?;
             Ok(bytes.len() + self.overstate_by)
@@ -10153,6 +10447,218 @@ mod tests {
             std::fs::read(&staged.path).expect("read the staged file"),
             b"%PDF-1.7 whatever the worker produced",
             "the staged file holds what the writer wrote and nothing this process made"
+        );
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_document_it_copies() {
+        // **The keystone of the copy path's move, and it is red on the code
+        // this replaced.** The source planted here is not a PDF at all, so a
+        // coordinator that parsed it would refuse before writing anything ---
+        // which is what `planned_bytes` did until 2026-09-01, on Save a copy,
+        // on Extract and on Redact to a copy. Save a copy is also the operation
+        // an in-place refusal points a reader at, so it is the parse a reader
+        // is most often told to reach for.
+        //
+        // The copy landing on those bytes is what says the parse is somewhere
+        // else now. It is the accounting observable for a property that is
+        // otherwise invisible: every number a caller can see is the same
+        // whichever process parsed, so the thing to assert is *who was asked*.
+        let scratch = Scratch::new("copy-delegates");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let out = scratch.join("copy.pdf");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 whatever the worker produced".to_vec()));
+
+        write_copy(&at, &plan, &out, None, &writer).expect("the writer's bytes are it");
+
+        assert_eq!(
+            writer.asked.borrow().len(),
+            1,
+            "asked exactly once, so the copy has one rewrite in it and not two"
+        );
+        assert_eq!(
+            std::fs::read(&out).expect("read the copy"),
+            b"%PDF-1.7 whatever the worker produced",
+            "the copy holds what the writer wrote and nothing this process made"
+        );
+        assert_eq!(
+            leftovers_beside(&out),
+            Vec::<String>::new(),
+            "and the staging file it was written through is gone"
+        );
+    }
+
+    #[test]
+    fn a_copy_whose_writer_refuses_leaves_nothing_at_the_destination() {
+        // The other direction, and it is what makes the test above a statement
+        // about delegation rather than about a file appearing. A refusal from
+        // the writer has to reach the reader as its own sentence, with no
+        // partial document under the name they chose and no staging file beside
+        // it --- `stage` owns the second half and this is what says the copy
+        // path really goes through it.
+        let scratch = Scratch::new("copy-refused");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let out = scratch.join("copy.pdf");
+        let writer = FakeWriter::writing(Err(
+            "this document keeps a page the plan does not name".into()
+        ));
+
+        let why = write_copy(&at, &plan, &out, None, &writer).expect_err("must refuse");
+
+        assert!(
+            why.message.contains("keeps a page"),
+            "the writer's own refusal reaches the reader: {}",
+            why.message
+        );
+        assert!(!out.exists(), "and nothing was left at the name they chose");
+        assert_eq!(
+            leftovers_beside(&out),
+            Vec::<String>::new(),
+            "nor beside it under a name they did not choose"
+        );
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_document_it_splits() {
+        // [`the_coordinator_does_not_parse_the_document_it_copies`] for the
+        // path that writes several files, and the count is the second half of
+        // it: a split asks the writer once per part, so a fixture of two plans
+        // that produced one answer would be a split writing one document twice.
+        let scratch = Scratch::new("split-delegates");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let out = scratch.join("part.pdf");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 one part of a split".to_vec()));
+
+        let done = write_split(&at, &[plan.clone(), plan], &out, None, &writer).expect("split");
+
+        assert_eq!(
+            writer.asked.borrow().len(),
+            2,
+            "asked once per part, so every file is its own rewrite"
+        );
+        assert_eq!(done.paths.len(), 2, "two plans, two files");
+        for path in &done.paths {
+            assert_eq!(
+                std::fs::read(path).expect("read a part"),
+                b"%PDF-1.7 one part of a split",
+                "every part holds what the writer wrote and nothing this process made"
+            );
+        }
+        assert_eq!(
+            leftovers_beside(&out),
+            Vec::<String>::new(),
+            "and no staging file survives the run"
+        );
+    }
+
+    /// How many print-job scratch files are sitting in the temporary directory.
+    ///
+    /// The observable for "the job's own file was removed". It holds the
+    /// reader's document decrypted and reordered, so one left behind is a copy
+    /// of their document in a shared directory under a name they never chose.
+    /// Counted rather than named, because `job_scratch` picks its own name and a
+    /// test that guessed it would pass by agreeing with itself. Read under
+    /// [`print_lock`], which is what makes the count answerable at all.
+    fn print_scratch_files() -> usize {
+        std::fs::read_dir(std::env::temp_dir())
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| {
+                        Some(entry.ok()?.file_name().to_string_lossy().into_owned())
+                    })
+                    .filter(|name| name.starts_with("tpdf-print-job."))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn the_coordinator_does_not_parse_the_document_it_prints() {
+        // **The keystone of the print job's move.** The source planted here is
+        // not a PDF, so a coordinator that parsed it would refuse before
+        // building anything --- which is what `print_bytes` did until
+        // 2026-09-01, on every print of a document the reader had edited.
+        //
+        // The job coming back on those bytes is what says the parse is
+        // somewhere else now. What still happens here is the *read back* of the
+        // job, which is bytes tpdf wrote a moment ago rather than the reader's
+        // document, and the platform's own parse of them afterwards --- which is
+        // the disclosed readback and the whole point of it being independent.
+        let _serial = crate::save::print_lock();
+        let scratch = Scratch::new("print-delegates");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 the job the worker built".to_vec()));
+        let before = print_scratch_files();
+
+        let bytes = print_bytes(&at, &plan, 2, None, &writer).expect("the writer's bytes are it");
+
+        assert_eq!(
+            writer.asked.borrow().len(),
+            1,
+            "asked exactly once, so the job has one rewrite in it and not two"
+        );
+        assert_eq!(
+            bytes, b"%PDF-1.7 the job the worker built",
+            "the job is what the writer wrote and nothing this process made"
+        );
+        // **The reader's own rotation reaches the writer, and it is what a print
+        // job has that a save does not.** A `Job::Save` here would put the pages
+        // on paper the way the file holds them rather than the way the reader is
+        // looking at them, and every byte-level assertion above would still pass.
+        assert_eq!(
+            writer.jobs.borrow().as_slice(),
+            &[Job::Print { view: 2 }],
+            "the writer is told this is paper, and which way up"
+        );
+        assert_eq!(
+            print_scratch_files(),
+            before,
+            "and the scratch file the job was built in is gone"
+        );
+    }
+
+    #[test]
+    fn a_print_job_whose_writer_refuses_leaves_no_scratch_file_behind() {
+        // The other direction, and it is the one that matters most: the scratch
+        // file holds the reader's document with its encryption off and its pages
+        // reordered. A refusal is exactly when a cleanup is easiest to skip.
+        let _serial = crate::save::print_lock();
+        let scratch = Scratch::new("print-refused");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let writer = FakeWriter::writing(Err("this document is encrypted".into()));
+        let before = print_scratch_files();
+
+        let why = print_bytes(&at, &plan, 0, None, &writer).expect_err("must refuse");
+
+        assert!(
+            why.message.contains("encrypted"),
+            "the writer's own refusal reaches the reader: {}",
+            why.message
+        );
+        assert_eq!(
+            print_scratch_files(),
+            before,
+            "and nothing was left in the temporary directory"
+        );
+    }
+
+    #[test]
+    fn a_save_tells_the_writer_it_is_a_save() {
+        // The control for the job assertion above, and it is what stops that one
+        // being satisfied by a writer told `Print` for everything. The three save
+        // paths differ from the print one in exactly this value.
+        let scratch = Scratch::new("save-job");
+        let (at, plan) = staging_subject(&scratch, "unparseable.pdf").expect("a subject");
+        let out = scratch.join("copy.pdf");
+        let writer = FakeWriter::writing(Ok(b"%PDF-1.7 written".to_vec()));
+
+        stage_in_place(&at, &plan, None, &writer).expect("stage");
+        write_copy(&at, &plan, &out, None, &writer).expect("copy");
+
+        assert_eq!(
+            writer.jobs.borrow().as_slice(),
+            &[Job::Save, Job::Save],
+            "a save is a save, however it is written"
         );
     }
 
@@ -10530,7 +11036,7 @@ mod tests {
 
             let plan = plan_opened_as(&vec![0u8; count], &path);
             let started = std::time::Instant::now();
-            let built = planned_bytes(&path, &plan, OnChange::Refuse, NO_VIEW_TURN, None)
+            let built = planned_bytes(&path, &plan, OnChange::Refuse, Job::Save, None)
                 .expect("rewrite the document");
             let took = started.elapsed();
             let peak = crate::worker::phys_footprint(me).unwrap_or(0);
@@ -10641,8 +11147,8 @@ mod tests {
                 appends.push((clock.elapsed().as_secs_f64() * 1000.0, added));
 
                 let clock = std::time::Instant::now();
-                let whole = planned_bytes(&at, &plan, OnChange::Proceed, NO_VIEW_TURN, None)
-                    .expect("rewrite");
+                let whole =
+                    planned_bytes(&at, &plan, OnChange::Proceed, Job::Save, None).expect("rewrite");
                 let wrote = whole.bytes.len();
                 write_atomically(&out, &whole.bytes).expect("write");
                 rewrites.push((clock.elapsed().as_secs_f64() * 1000.0, wrote));
@@ -10751,7 +11257,7 @@ mod tests {
             let out = scratch.join("out.pdf");
             std::fs::write(&source, document_with_annots(shape)).expect("write fixture");
 
-            write_copy(&source, &plan_with_mark(one_quad()), &out, None)
+            copy_here(&source, &plan_with_mark(one_quad()), &out, None)
                 .unwrap_or_else(|e| panic!("{shape:?}: {e}"));
 
             // What the *page* lists, in order. The comment that was already
@@ -10778,7 +11284,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_with_mark(one_quad()), &out, None).expect("save");
+        copy_here(&source, &plan_with_mark(one_quad()), &out, None).expect("save");
 
         let doc = Document::load(&out).expect("reopen");
         let page = ordered_pages(&doc)[0];
@@ -10830,7 +11336,7 @@ mod tests {
         let quads = |source: &std::path::Path, out: &std::path::Path, turns: u8| -> Vec<f32> {
             let mut plan = plan_with_mark(one_quad());
             plan.pages[0].turns = turns;
-            write_copy(source, &plan, out, None).expect("save");
+            copy_here(source, &plan, out, None).expect("save");
             let doc = Document::load(out).expect("reopen");
             let page = ordered_pages(&doc)[0];
             let annots = doc
@@ -10921,8 +11427,7 @@ mod tests {
                 made: "D:20260818120000Z".to_string(),
             }],
         };
-        let why =
-            write_copy(&source, &plan, &out, None).expect_err("a shared page must be refused");
+        let why = copy_here(&source, &plan, &out, None).expect_err("a shared page must be refused");
         assert!(
             why.message.contains("same page object"),
             "the refusal does not say why: {why}"
@@ -10975,7 +11480,7 @@ mod tests {
                 made: "D:20260818120000Z".to_string(),
             }],
         };
-        write_copy(&source, &plan, &out, None).expect("a mark on the unshared page is fine");
+        copy_here(&source, &plan, &out, None).expect("a mark on the unshared page is fine");
         assert_eq!(listed_on_page(&out, 2), vec!["Highlight".to_string()]);
         // And nowhere else: a writer that put the mark on the first page it
         // found would satisfy the line above on a one-page document and is
@@ -10996,7 +11501,7 @@ mod tests {
             right: 72.0,
             bottom: 118.0,
         }];
-        let why = write_copy(&source, &plan_with_mark(flat), &out, None)
+        let why = copy_here(&source, &plan_with_mark(flat), &out, None)
             .expect_err("a mark covering nothing must be refused");
         assert!(why.message.contains("no area"), "{why}");
     }
@@ -11937,7 +12442,7 @@ mod tests {
             images: vec![0],
             image_objects: 1,
         }];
-        write_copy(&source, &plan, &out, None).expect("save");
+        copy_here(&source, &plan, &out, None).expect("save");
         let bytes = std::fs::read(&out).expect("read back");
         assert!(
             !bytes.windows(PIXELS.len()).any(|w| w == PIXELS),
@@ -12349,7 +12854,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, encrypted_document()).expect("write fixture");
-        let why = write_copy(&source, &plan_with_mark(one_quad()), &out, None)
+        let why = copy_here(&source, &plan_with_mark(one_quad()), &out, None)
             .expect_err("an encrypted source must still be refused");
         assert!(why.message.contains("encrypted"), "{why}");
     }
@@ -12359,7 +12864,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_of_kind(kind, one_quad()), &out, None).expect("save");
+        copy_here(&source, &plan_of_kind(kind, one_quad()), &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         // The one annotation on the page, followed rather than searched for:
         // the fixture is written with none, so anything found here is ours.
@@ -12461,7 +12966,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, plan, &out, None).expect("save");
+        copy_here(&source, plan, &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         // Every form XObject in the file, of which the fixture has none.
         let stream = doc
@@ -12560,7 +13065,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_with_ink(), &out, None).expect("save");
+        copy_here(&source, &plan_with_ink(), &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         let stream = doc
             .objects
@@ -12614,7 +13119,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
-        write_copy(&source, &plan_with_ink(), &out, None).expect("save");
+        copy_here(&source, &plan_with_ink(), &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         let lists: Vec<&Vec<Object>> = doc
             .objects
@@ -12632,7 +13137,7 @@ mod tests {
 
         // The other direction: a highlight written the same way carries none.
         let out2 = scratch.join("out2.pdf");
-        write_copy(&source, &plan_with_mark(one_quad()), &out2, None).expect("save");
+        copy_here(&source, &plan_with_mark(one_quad()), &out2, None).expect("save");
         let doc2 = Document::load(&out2).expect("reopen");
         assert!(
             doc2.objects
@@ -12971,7 +13476,7 @@ mod tests {
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, source_bytes).expect("write fixture");
-        write_copy(&source, plan, &out, None).expect("save");
+        copy_here(&source, plan, &out, None).expect("save");
         let doc = Document::load(&out).expect("reopen");
         let stream = doc
             .objects

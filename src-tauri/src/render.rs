@@ -1844,9 +1844,9 @@ pub(crate) fn run_append(
 pub(crate) fn run_rewrite(
     document: &OpenDocument,
     plan: &crate::edits::Plan,
-    view: u8,
+    job: crate::save::Job,
 ) -> Result<Vec<u8>, crate::save::Refusal> {
-    document.graph().rewrite(plan, view)
+    document.graph().rewrite(plan, job)
 }
 
 /// Re-reads the mapped document with `lopdf` and counts its pages.
