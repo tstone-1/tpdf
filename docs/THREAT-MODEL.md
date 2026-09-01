@@ -74,7 +74,7 @@ Four principals, each trusting only what is below it in the table.
 |---|---|---|
 | **Webview** (Svelte) | Draws, receives tiles, issues commands --- eight of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
-| **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No filesystem, no network, no path to the document, cannot create a file |
+| **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** --- on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
@@ -121,6 +121,19 @@ different property, and the one the row now states. §T9 is the worked-out versi
 Both corrections are the failure the release checklist's step 6 exists for: a row in a
 summary table that stopped agreeing with the section beneath it, in the direction that
 over-claims. Neither could go red, and neither was found by a probe.
+
+**The worker row was wrong the same way, and it is a security claim rather than a summary of
+one.** It read "No filesystem, no network" flatly until 2026-09-01. That is macOS: the profile
+denies reads, writes and socket binds, and §T4 measures it. Windows is a job object plus a
+low-integrity token --- it denies writes and it denies reaching into the app process, and it
+denies neither reads nor sockets. Residual risk 4 has carried the read half since 2026-08-02;
+nothing carried the socket half until §T4 gained it on 2026-09-01, and that half is still a
+reading of `sandbox_win` rather than a measurement. What holds on both platforms is the rest of
+the row: the worker is never handed a path and cannot create a file, which is why the document
+and the output arrive as descriptors, and is what makes the Windows read ceiling narrower than
+it sounds. Found by an external review reading this row against §6 --- the third row in a
+four-row table to drift from the section under it, which is now the strongest argument this
+document has for the checklist step that re-reads it.
 
 Two consequences of that table are load-bearing and worth stating separately.
 
@@ -245,13 +258,14 @@ rather than PDFium's at open --- which the first draft of that check got wrong w
 a pass --- and a fourth asks for something only the worker path needs, since two readers
 agreeing says nothing about whether a worker was involved at all (23/23).
 
-What has **not** moved is the rewrite: a deletion, a move, a turn or a crop still reserialises
-the whole document in the coordinator, and so do Save a copy and Extract. The reason is memory
-rather than the protocol, and it was measured on 2026-08-22 rather than assumed: a rewrite's
-output buffer is the size of the file, and a worker holding the 337 MB scan is already at
-1029.8 MB of footprint after answering an *append* --- 667 MB of which the append itself added.
-A Windows worker is capped at 1024 MB of commit. `docs/PLAN.md` §3 has the table, the three
-designs the measurement re-ranks, and the one open question it leaves.
+**The rewrite moved on 2026-08-28 and the copy paths, Split and the working-document print job
+on 2026-09-01**, all through `save::Rewriter` and an output channel that is a descriptor rather
+than a reply --- residual risk 18 has the mechanism and what it costs. What the memory
+measurement of 2026-08-22 decided was not *whether* a rewrite could move but how large a
+document may be **appended to** inside a worker: a worker holding the 337 MB scan reaches
+1029.8 MB of footprint after answering an append, 667 MB of which the append added, against a
+1024 MB Windows commit cap. `save::APPEND_MAX_BYTES` is that bound. `docs/PLAN.md` §3 has the
+table, the three designs the measurement re-ranks, and the one open question it leaves.
 
 **That cap applies to the append this section is about**, which is worth saying plainly rather
 than leaving in the plan. On Windows the document's mapping is file-backed and not commit, so
@@ -261,7 +275,8 @@ Windows. If the cap is reached the worker is killed and the save is refused, whi
 containment behaving as designed and a save the reader cannot complete; it is not data loss,
 since nothing has been written at that point.
 
-The three that remain run under `tauri::async_runtime::spawn_blocking`, and it is worth being exact about
+The ones that remain --- a merge, and a print of a page range --- run under
+`tauri::async_runtime::spawn_blocking`, and it is worth being exact about
 what that does and does not buy, because the name invites the wrong reading: it moves the work
 off the async runtime's threads. It does not move it out of the process holding the window,
 the edit journal and the user's filesystem authority. "Off the async thread" is not "out of
@@ -590,8 +605,26 @@ filesystem, not data reads from the font directories. Hence the shape of the pro
 The general rule, and it is the third time this shape has appeared in this project: **verify
 a sandbox by comparing pixels, never by checking that the render returned `ok`.**
 
-**Residual.** A hostile document can still learn which paths exist. It cannot read one,
-write one, or open a socket. `sandbox_init` denials also do not appear in the unified log
+**Windows answers half of this, and the half it does not answer is in this section's own
+title.** §6's containment is a job object plus a low-integrity token, and neither restricts
+sockets: `sandbox_win` sets `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`, `_PROCESS_MEMORY`,
+`_KILL_ON_JOB_CLOSE` and `_DIE_ON_UNHANDLED_EXCEPTION`, and an integrity level --- read the
+file, there is no network call in it. The Windows mechanism that gates network *capability*
+is AppContainer, which this is not. **Nothing here has measured a socket bind from a
+contained Windows worker**, so this is a ceiling read off the code rather than a result, and
+the honest statement is that the network is not denied there rather than that it is reachable.
+The measurement is one rung on `examples/win_sandbox_probe.rs`, which already re-execs a
+contained child and compares its work against an uncontained control; a bind of a TCP and a
+UDP socket in that child is the Windows twin of `worker-bench --mode authority`.
+
+Until 2026-09-01 the evidence above was the whole of this section, so a macOS result read as
+covering both platforms --- the same shape as the README sentence corrected the same day, and
+the same shape as §6's own inverted error, in the other direction.
+
+**Residual.** On **macOS**, a hostile document can still learn which paths exist; it cannot
+read one, write one, or open a socket. On **Windows** it cannot write and cannot
+`OpenProcess`, and it can read anything the user can (residual risk 4) and, on the reading of
+the code above, open a socket. `sandbox_init` denials also do not appear in the unified log
 without an explicit report clause, so "no log entries" is not evidence that nothing was
 denied.
 
@@ -1322,7 +1355,10 @@ open on their screen. The job over an edited encrypted document is still refused
 print job produces go to `NSPrintOperation` or `Windows.Data.Pdf`, which would need the key
 themselves, so making it work means handing the platform a decrypted copy of a document whose
 author encrypted it. That is a different decision from *let the rewrite work*, and it has not
-been measured. (This paragraph said "`print_bytes` passes `None`" until 2026-08-31, two days
+been measured. Since 2026-09-01 the refusal is made in the worker rather than here: it travels
+as `save::Job::Print` on `Request::Rewrite` and is decided in `save::rewrite_update`, because
+the parse it depends on moved and the alternative is shipping the decrypted document out of the
+sandbox in order to refuse it. (This paragraph said "`print_bytes` passes `None`" until 2026-08-31, two days
 after it stopped being the mechanism; the outcome it described never changed.)
 
 #### T6.11 — Redacting, added 2026-08-26
@@ -2103,7 +2139,8 @@ which is what makes it evidence rather than a milestone.
    bounded by anything smaller than the pool size. Isolation is unaffected: every worker is
    separately sandboxed and separately killable, and one dying costs its document one
    process rather than the document.
-4. **A contained Windows worker can still read any file the user can** (§6). This entry read
+4. **A contained Windows worker can still read any file the user can, and nothing in the
+   containment denies it a socket** (§6, §T4). This entry read
    "Windows compiles and is entirely uncontained ... nothing uses it, so the risk is
    undiminished" until 2026-08-02, and the containment had been wired since 2026-07-29 — the
    correction is in §6, along with why an under-claim is the more expensive direction to get
@@ -2112,7 +2149,12 @@ which is what makes it evidence rather than a milestone.
    before `main` and is only reachable through Chromium's initial-token handover. The
    mitigation meanwhile is that the worker is never given a path — document and output arrive
    as inherited handles — so a compromised worker must guess at what to read rather than
-   being handed it. A platform with neither mechanism still falls back to in-process, records
+   being handed it. **The network half was added on 2026-09-01 and is a reading of the code,
+   not a measurement**: `sandbox_win` sets job-object limits and an integrity level and makes
+   no network call, and integrity level is not what gates network capability on Windows —
+   AppContainer is. §T4 names the one rung of `examples/win_sandbox_probe.rs` that would
+   settle it. macOS denies socket binds and that *is* measured (`worker-bench --mode
+   authority`). A platform with neither mechanism still falls back to in-process, records
    `render::UNSANDBOXED_MARK` and prints a `[WARN]`; no such platform is shipped.
 5. **A hostile document can enumerate paths** under the sandbox profile.
 6. **The form-fill environment is initialised on every document open**, so that surface is
@@ -2281,7 +2323,7 @@ which is what makes it evidence rather than a milestone.
     could plausibly believe removes something. Redaction is `docs/PLAN.md` §6 and is not
     built.
 
-18. **A rewriting save, Save a copy, Extract and Merge parse documents inside the coordinator**
+18. **Merge, and a print of a page range, parse documents inside the coordinator**
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
     day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).
@@ -2389,27 +2431,50 @@ which is what makes it evidence rather than a milestone.
     **What is not closed.** `save::Here` still parses in the coordinator, and it is what a
     platform with no sandbox gets --- refusing would make such a platform useless rather
     than uncontained, which is the rule `Backend::default_here` already follows, and
-    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. **The copy
-    paths, Split, Merge and the print job are unchanged and are the rest of this entry**:
-    `write_copy`, `write_split` and `write_merged` go through `save::planned_bytes`, which
-    reads the file and parses it here, and `print_bytes` reads the source itself.
+    `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. Beyond that,
+    **two paths remain and they are named rather than counted**: `save::write_merged`, and
+    `print::build` on the page-range print route.
 
-    ⚠ **That sentence said "the two copy paths ... all four go through `planned_bytes`"
-    until 2026-08-30, and it was wrong twice** --- found by the release checklist's step 6,
-    in the same pass that found §3's row disagreeing with its own list. There are **three**
-    commands on the copy path, not two: `save_copy`, `extract_pages` and `redact_copy` all
-    reach `write_copy`. And the print job is not one of the functions going through
-    `planned_bytes` at all --- `print_bytes` calls `std::fs::read` on the source directly,
-    which is the same exposure by a different route and is why the correction names the
-    functions rather than counting the commands. A list and a count in one sentence,
-    disagreeing with each other, is this document's third instance of the same defect; the
-    `writers` gate covers §3's list and nothing covers this one, because what it enumerates
-    is a property of the code that no marker states. The
-    seam they need is the one that now exists, so the work is wiring rather than design ---
-    but a copy's destination is chosen by the reader in a file dialog, and handing a worker
-    a descriptor to a file it did not create is a decision this entry has not made yet.
-    Printing is different again: its answer has to come back **into** this process to reach
-    `NSPrintOperation`, so the output channel does not fit it at all.
+    ⚠ **The copy paths, Split and the working-document print job closed 2026-09-01.**
+    `save::write_copy`, `save::write_split` and `save::print_bytes` take the same
+    `save::Rewriter` the rewrite took, and the shape is the rewrite's: the source's
+    **handle** goes in, a staging file's handle goes in, and a length comes back. The
+    question this entry left open --- *handing a worker a descriptor to a file it did not
+    create is a decision this entry has not made yet* --- turned out not to arise: what the
+    worker is handed is the staging file `save::stage` creates beside the reader's chosen
+    destination, the same file created the same way as an in-place save's, and the rename
+    onto the name the reader picked happens in the coordinator. Printing is the one that
+    needed an answer of its own, and it is not the output channel that had to change: the
+    job's bytes come back **into** this process because `NSPrintOperation` and
+    `Windows.Data.Pdf` take bytes rather than a pathname, so the worker writes into a
+    scratch file this process created and this process reads it back through the handle that
+    wrote it. That read is of bytes tpdf produced a moment ago; the parse of the reader's
+    document is gone, and the platform's own parse afterwards is the readback this document
+    describes elsewhere and wants.
+
+    **The print refusal moved with the parse, and had to.** An encrypted document may be
+    saved and may not be printed in part, and that decision used to be made in the
+    coordinator between the two phases of a parse the coordinator was doing. It is now
+    `save::Job` --- one value carrying both of the ways a print job differs from a save, the
+    reader's view rotation and this refusal --- travelling on `Request::Rewrite` and decided
+    in `save::rewrite_update`. Leaving it behind would have meant shipping a decrypted copy
+    of the reader's document out of the sandbox in order to refuse it.
+
+    ⚠ **`print::build` is a coordinator-side parse this entry has never listed.** The
+    page-range route --- a range the reader typed, or any print with no document open ---
+    calls it, and it loads the file with `lopdf`, walks the page tree and serialises, all
+    here. It is the same exposure as the one above by a different function, and it was
+    missed for the same reason the 2026-08-30 correction records: this entry has enumerated
+    commands where the property is one of functions. Its non-passthrough half is already a
+    pure function of the bytes and the job, so closing it is one more request down the
+    channel that now exists.
+
+    **What it costs is one spawn per operation, measured.** On `testdata/text-base14.pdf`,
+    best of five interleaved and three consecutive runs: the copy is 4.0 ms here and 11.9 ms
+    in a worker (+8.0), the print job 0.2 -> 7.2 (+7.0), and the rewrite 0.2 -> 7.2 (+7.1).
+    `text-wide.pdf` reads +7.2, +7.0 and +6.9. All three are the same fixed cost --- a
+    process start plus PDFium's initialisation --- rather than anything proportional to the
+    document. `worker-probe` is 34/34 on macOS and prints all three numbers.
 
     ⚠ **The Windows half is unmeasured, and nothing new has to be written to measure it.**
     The mechanism there is a `DuplicateHandle` of the staging file into the child's table,
@@ -2502,7 +2567,37 @@ which is what makes it evidence rather than a milestone.
     So a *not verified* from this engine means the same as one from Vision, and a *clean* rests
     on a control the engine may in principle have reconstructed rather than read. The
     instrument that would narrow it is the corpus sweep `redact-reach-probe` already does on
-    macOS, run against real documents on Windows; it has not been.
+    macOS, run against real documents on Windows; it has not been, as of 2026-09-01. Since
+    that date the run is named in `BUILD.md`'s release checklist at **step 8**, with the flags
+    it needs there --- `--no-gate` off, because the gate is the half under test --- rather than
+    living only in this sentence, which nothing reads before a tag.
+
+21. **A 358-byte document ends the process that parses it, and no guard we can write will
+    stop it**, added 2026-09-01. A cross-reference stream declares the byte widths of its own
+    fields in `/W`, and `lopdf` multiplies them out and asks for a zeroed buffer of the result
+    without checking it: `/W [1 4 3333333333333333332]` gives `memory allocation of
+    3333333333333333332 bytes failed`. **That is `handle_alloc_error`, so it is an abort and
+    not a panic** --- `catch_unwind` cannot see it, and there is no point in the tpdf code
+    where a check could go, because the code that would have to check is `lopdf`'s own
+    cross-reference parser. The threshold is sharp: `W[2] = 2^45` completes, `2^46` aborts.
+
+    **It is on the load path**, so every reader of the object graph reaches it: `annots::scan`,
+    `links::scan`, `docinfo::scan`, `encoding::scan` and `save::rewrite_update`, verified by
+    feeding one file to each. What bounds the damage is where those parses run, which since
+    2026-08-28 and 2026-09-01 is a worker for all of them: a reader sees a panel that never
+    fills and a save that refuses, and the pool restarts a process. That is the entry about a
+    pool replacing a dead worker with the same bytes and faulting again --- correct behaviour
+    with an unhelpful shape, rather than a compromise. Before those moves it would have taken
+    the application down from `lib::print_job`, and it still can through `save::write_merged`
+    and `print::build`, which is residual risk 18's remaining half and the concrete argument
+    for closing it.
+
+    Nothing here is a memory-safety defect and nothing is exploitable beyond availability: the
+    allocation is refused, not made. The fixes available are upstream in `lopdf`, or a
+    pre-parse of the cross-reference stream's `/W` before handing the bytes over, which means
+    writing a second cross-reference parser to protect the first. Neither has been done.
+    Found 2026-09-01 by coverage-guided fuzzing of `lopdf` through our own entry points,
+    independently by two targets.
 
 ## 8. How to re-verify any of this
 

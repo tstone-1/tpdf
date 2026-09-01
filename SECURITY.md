@@ -1,9 +1,17 @@
 # Security policy
 
 tpdf parses attacker-controlled files for a living, and it makes two claims that are worth
-holding it to: that every document is parsed and rendered in a **sandboxed worker process**
-with no filesystem or network authority, and that a redaction **removes** content rather
-than covering it. Reports that falsify either are the most valuable thing anyone can send.
+holding it to: that every document is parsed and rendered in a **sandboxed worker process**,
+and that a redaction **removes** content rather than covering it. Reports that falsify either
+are the most valuable thing anyone can send.
+
+The first claim is not the same on both platforms, and this file said *no filesystem or
+network authority* without qualification until 2026-09-01. On **macOS** it is exactly that:
+reads, writes and socket binds are all denied by the profile, and measured. On **Windows** the
+worker is denied writes and denied any reach into the app process; it is **not** denied reads,
+and nothing in the containment denies it a socket. `docs/THREAT-MODEL.md` §T4, §6 and residual
+risk 4 carry the full version, including which parts are measured and which are read off the
+code.
 
 `docs/THREAT-MODEL.md` is the worked-out position — what is being defended, the trust
 boundaries, the sandbox profile in full, and the residual risks in one list. Every claim
@@ -25,7 +33,10 @@ you do not need to have diagnosed it.
 
 **In scope**
 
-- Escaping the worker sandbox, or reaching the filesystem or network from inside it.
+- Escaping the worker sandbox, or reaching the filesystem or network from inside it — on
+  Windows, reading a file the user can read and opening a socket are the disclosed ceiling
+  above rather than defects, so a report there is valuable when it shows a **write**, a reach
+  into the app process, or an escape from the job object.
 - Anything that causes the *application* process to parse or map a PDF engine — the
   boundary's whole purpose. Note the one documented exception: printing maps the operating
   system's own PDF parser into the app process on both platforms, which is stated rather

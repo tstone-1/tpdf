@@ -1746,10 +1746,69 @@ the serialisation are hundreds of milliseconds it is noise, and this fixture is 
 worst case for it. Nothing else on the save path got slower --- the parse moved, it did not
 happen twice.
 
-⚠ **Run it on Windows before the next release.** The rewrite's output channel there is a
-`DuplicateHandle` into the child rather than a `dup2` before `exec`, and no run has yet
-exercised it --- so the five checks above are macOS evidence for a mechanism that has two
-implementations. `AGENTS.md` records what a single sentence about two platforms costs.
+**Six more on 2026-09-01, so the number is now 34** --- measured **34/34 with none not
+applicable on macOS**, against `text-base14.pdf` and `text-wide.pdf` alike; the Windows figure
+was 19/19 before any of the last fifteen existed and has not been re-run. Three of them put a
+worker on **Save a copy** and three on the **print job**, which are the last two writing paths
+`docs/THREAT-MODEL.md` residual risk 18 was disclosing.
+
+The copy's three are the shapes above with one difference: they go through `save::write_copy`
+rather than through `save::InWorker` directly, so they cover the staging, the length check and
+the rename as well as the channel --- a copy's destination is a name the reader chose in a
+dialog, which the in-place path never has. The differential is byte for byte again.
+
+The print job's three are the same shapes for the one path whose answer comes **back**:
+`NSPrintOperation` and `Windows.Data.Pdf` take bytes rather than a pathname, so the worker
+writes into a scratch file this process created and this process reads it. The third check is
+the one only this path needs --- that no `tpdf-print-job.*` file is left in the temporary
+directory, on the refusal as well as on the answer, because what it holds for the length of a
+print is the reader's document with its encryption off and its pages in the order they asked
+for.
+
+**What those two moves cost is printed beside them**, measured the same way as the rewrite's
+and reported as minima of five interleaved runs. On `text-base14.pdf`, over three consecutive
+runs: the copy is **4.0 ms here and 11.9 ms in a worker, +8.0**, and the print job **0.2 ms
+here and 7.2 ms in a worker, +7.0**. The rewrite on the same runs reads **+7.1**, and
+`text-wide.pdf` gives +7.2 for the copy, +7.0 for the print job and +6.9 for the rewrite. All
+three are one number: a process spawn plus PDFium's initialisation, **fixed rather than
+proportional** to the document.
+
+⚠ **The copy's in-process baseline is 4.0 ms where the rewrite's and the print job's are 0.2,
+and that is the check rather than the copy being slower.** A copy is written through
+`save::stage`, which ends in `sync_data` --- the bytes have to be on the platter before the
+rename swaps them in. A print job is read straight back out of the handle that wrote it and
+never has to reach the platter, and `worker-probe` measures the rewrite through `Rewriter`
+directly rather than through `stage_in_place`. Comparing the three *deltas* is comparing the
+same mechanism; comparing their baselines is comparing three different amounts of disk.
+
+⚠ **The first readings taken for this paragraph were 1.5 to 2 times these, and the machine
+was the variable.** They were measured under a load average of 8 to 12 with another job
+saturating the cores, which is exactly what interleaving does *not* correct for: it controls
+for drift between the two arms, not for a machine that is slow for both. Take a reading only
+when the box is quiet, and say so when it was not.
+
+⚠ **`26.9.0` shipped without a Windows run, and this paragraph is why.** The rewrite's output
+channel there is a `DuplicateHandle` into the child rather than a `dup2` before `exec`, so the
+five checks above are macOS evidence for a mechanism that has two implementations, and nothing
+has exercised the Windows one --- last measured **19/19 on 2026-08-24**, before these five, the
+four verification-side checks and the six writing-path ones above existed. `AGENTS.md` records what a single sentence about
+two platforms costs.
+
+**The requirement was real and the placement was the defect.** This said *"Run it on Windows
+before the next release"* until 2026-09-01, and a release then went out without it. An
+imperative in a reference section is read by whoever is already in that section; a release
+gate is read by whoever is cutting a release, and those are different readings of the same
+file. That is the checklist-weaker-than-its-gate trap, found by an external review rather
+than by anything here.
+
+**So it is neither, now: both workflows run this probe on both legs, on every push**
+(`.github/workflows/ci.yml` and the `gates` job of `release.yml`, which the `workflows` gate
+holds equal). It costs under a second, needs no screen, and runs against
+`testdata/text-wide.pdf`, since `scripts/ci_fixtures.py` cannot produce the `text-base14.pdf`
+above --- the macOS reading is the same against both fixtures (34/34 as of 2026-09-01, and
+28/28 when it was 28), and was taken in **both profiles** (0.36 s release, and the debug one CI
+actually builds), so neither the fixture nor the profile is load-bearing. The debt is paid continuously rather than once, and the reading below
+stays as the last thing measured by hand.
 
 Reverting `worker_child`'s bind arm to `bind(&library_dir)?` turns both red with
 `worker stopped answering (exited with 1 (0x00000001))` --- which is the string the reader who
@@ -5020,6 +5079,46 @@ starts at 0 and increments within the month.
 8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
    it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
    `print-probe` (§8), which is the only check that reaches a real spooler.
+
+   **One more on Windows, and it blocks the tag rather than decorating it.** This step is
+   where a Windows-only mechanism gets exercised, and it lives here rather than in a step of
+   its own on purpose: fifteen sentences across five files and `release.yml` name the steps of
+   this list by number, so inserting one renames every reference --- the trap of that name,
+   arriving in the list that made it worth writing.
+
+   ```
+   cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-reach-probe -- ^
+       %USERPROFILE%\Downloads --pages 3 --regions 40
+   ```
+
+   **`redact-reach-probe` against real scanned documents.** Windows OCR rests on
+   `win-ocr-probe`'s synthetic validation, which reads clean text at two sizes and therefore
+   never puts the engine near its limit; the corpus sweep is what would, and
+   `docs/THREAT-MODEL.md` §20 says so about itself. Note the flags differ from the macOS
+   invocation in §`redact-reach-probe`: **drop `--no-gate`**, because the gate is the half
+   under test here. Counts and shapes only leave the process --- no page text, no recognised
+   string, no filename beyond the stem. Record the result where this file's macOS numbers
+   live, **labelled Windows**.
+
+   ⚠ **It has not run as of 2026-09-01.** That is the current state rather than an
+   instruction, and it is written as a state deliberately: a reader cannot otherwise tell an
+   unpaid debt from a paid one. **This is the one that cannot be moved to CI**, and the reason
+   is what the probe is for: it needs a corpus of *real* documents, which a hosted runner
+   has none of and must not be given.
+
+   **`worker-probe` used to be listed here and is a CI step instead, since 2026-09-01.** The
+   rewrite's output channel is `dup2` before `exec` on macOS and `DuplicateHandle` into a
+   suspended child on Windows, so one platform's result says nothing about the other; macOS
+   was at 34/34 and the last Windows run was **19/19 on 2026-08-24**, before the four
+   verification-side checks, the five writing-side ones and the six copy-and-print ones
+   existed --- and `26.9.0` shipped without a Windows run. The probe needs no screen and takes under a second, so both
+   workflows' `gates` job now runs it on both legs against `testdata/text-wide.pdf`, and every
+   push proves it rather than every release. `text-wide.pdf` rather than the `text-base14.pdf`
+   this file's own invocation uses: `scripts/ci_fixtures.py` generates nothing from
+   `make_text_pdf.py`, and the macOS reading is the same against both fixtures, so the probe
+   is not fixture-specific. The general form is worth carrying --- **a requirement that cannot go
+   red belongs in a runner, not in a checklist**, and a checklist step is what you write when
+   no runner can hold it, as with the sweep above.
 
    On macOS also `scripts/menu_check.py` and `scripts/save_check.py` against the bundle.
    **They do not take the same arguments, and naming them in one breath is what made this

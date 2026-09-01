@@ -19,6 +19,132 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Changed: five more paths stopped parsing the document in the app process
+
+Save a copy, Extract, Split, Redact to a copy and the print job over the working document now
+parse in a sandboxed worker, through the `save::Rewriter` seam an in-place save has used since
+26.9.0. The shape is that save's: the source's **handle** goes in, a staging file's handle goes
+in, and a length comes back. The coordinator never holds the document's bytes or the new file's.
+
+The question the threat model left open --- handing a worker a descriptor to a file the reader
+named in a dialog --- turned out not to arise. What the worker is handed is the staging file
+created beside the destination, the same way an in-place save creates one; the rename onto the
+reader's chosen name happens in the coordinator.
+
+Printing needed an answer of its own, and it was not the channel. `NSPrintOperation` and
+`Windows.Data.Pdf` take bytes rather than a pathname, so the job has to come back into this
+process: the worker writes it into a scratch file this process created, and this process reads
+it back through the handle that wrote it. Those are bytes tpdf produced a moment ago. The
+platform's own parse of them afterwards is the readback the threat model already describes.
+
+The refusal to print part of an encrypted document moved with the parse, and had to: leaving it
+behind would have meant shipping a decrypted copy of the reader's document out of the sandbox in
+order to refuse it. A save and a print job differ in exactly two ways that always move together
+--- the reader's view rotation, and that refusal --- so they are one `save::Job` value rather
+than a `u8` and a `bool`.
+
+Split asks the rewriter once per part but opens the source and fingerprints it **once for the
+run**, so a file replaced between part two and part three cannot give the reader a numbered set
+built from two different documents. One worker per output rather than a set of descriptors was
+decided by measuring: a spawn is 7 to 8 ms fixed, a three-way split is ~24 ms, and generalising
+the handover would have changed the spawn protocol's shape on both platforms to save ~16 ms on
+an operation invoked by hand from a dialog.
+
+Cost, best of five interleaved on `text-base14.pdf`: the copy 4.0 ms here and 11.9 ms in a
+worker, the print job 0.2 to 7.2. Fixed rather than proportional --- one process start plus
+PDFium's initialisation. `worker-probe` is 34/34, up from 28.
+
+Two paths still parse in the app process and are now named rather than counted: `write_merged`,
+which needs N+1 input mappings and therefore a change to the spawn protocol rather than a reuse
+of this seam; and `print::build` on the page-range print route, which the threat model had never
+listed at all.
+
+### Fixed: a 2,289-byte document made the properties panel allocate 1,081 MB
+
+`docinfo::read_xmp` asked for the catalog's `/Metadata` packet with the unbounded
+`decompressed_content()`, the last production call of it in the tree. `LoadOptions::
+max_decompressed_size`, which the loader does set, bounds what the *loader* expands and not what
+a caller asks a stream for afterwards, so a document could declare any size and get it. It is a
+worker that pays, against a Windows job object capping commit at 1 GiB.
+
+The bound is now `xmp::MAX_PACKET`, not the 64 MiB `MAX_DECODE` that was in scope: `xmp::scan`
+discards any packet over 1 MiB and reports it unread, so everything between the two constants
+was being inflated in order to be thrown away one line later.
+
+**The answer never changed, only the cost** --- which is why the test asserts on the packet
+length reported rather than on `unread`. The first draft asserted `unread` and could not fail:
+that is already true for an oversized packet whether or not anything inflated it.
+
+### Fixed: the writers gate was passing for the wrong reason
+
+`scripts/check_writers.py` classified `print_document` as a command that writes a file because
+its body contains the words `save::print_bytes` in a **comment** --- one explaining that it does
+not call it for a print job. Strip the comments and the count was zero, so rewording that
+sentence would have turned the gate red for a command nobody had touched, and the
+classification was never evidence about the code.
+
+It now strips comments with a scanner that tracks string literals (`//` occurs inside `https://`,
+and a blind strip would delete a real call written after one) and follows a call into a free
+function in the same file, which is how `print_document` genuinely reaches a writer. Both halves
+were shown to matter separately: on a healthy tree all four combinations report the same eight
+commands, and it takes rewording the comment, planting one, and deleting the real call to tell
+them apart.
+
+### Changed: the rewrite's Windows output channel is proved on every push, not before a release
+
+`BUILD.md` carried a ⚠ reading *"run `worker-probe` on Windows before the next release"* from
+2026-08-28. `26.9.0` shipped without that run. The requirement was right and its placement was
+the defect: an imperative in a reference section is read by whoever is already in that section,
+and a release gate is read by whoever is cutting a release.
+
+Both workflows' `gates` job now runs `worker-probe` on both legs, against
+`testdata/text-wide.pdf`. The nine checks that had never run on Windows include the one saying
+the rewrite's output channel is real, and that channel is different code on the two platforms
+--- `dup2` before `exec` on macOS, `DuplicateHandle` into a suspended child on Windows --- so
+the macOS result never stood in for it. macOS was at 28/28 and the last Windows run was 19/19
+on 2026-08-24, before the four verification-side and five writing-side checks existed.
+
+The fixture is `text-wide.pdf` rather than the `text-base14.pdf` `BUILD.md`'s own invocation
+names, because `scripts/ci_fixtures.py` deliberately generates nothing from `make_text_pdf.py`.
+28/28 was measured against `text-wide.pdf` first, in both the release profile (0.36 s) and the
+debug one CI builds, so neither the fixture nor the profile is load-bearing.
+
+One thing did **not** move to CI and says why: `redact-reach-probe` against real scanned
+documents on Windows, which is what `docs/THREAT-MODEL.md` §20 names as the instrument that
+would narrow the Windows OCR verdict. It needs a corpus of real documents, which a hosted
+runner has none of and must not be given, so it is step 8 of the release checklist with its
+flags and a dated line saying it has not run. **A requirement that cannot go red belongs in a
+runner; a checklist step is what you write when no runner can hold it.**
+
+### Fixed: three documents claimed a worker authority that is macOS-only
+
+`SECURITY.md`, the trust-boundary table in `docs/THREAT-MODEL.md` §3, and `release.yml`'s
+release notes all said the worker holds *no filesystem or network authority*, without
+qualification. That is macOS, where the profile denies reads, writes and socket binds and §T4
+measures it. On Windows the containment is a job object plus a low-integrity token: it denies
+writes and denies reaching into the app process, and it denies neither reads nor sockets.
+
+The read half has been residual risk 4 since 2026-08-02. The socket half was in no document at
+all --- §T4 is titled *Filesystem and network reach from a compromised worker* and answered
+only for macOS --- and it is now stated for what it is: a reading of `sandbox_win`, which sets
+four job-object limits and an integrity level and makes no network call, rather than a
+measurement. §T4 names the one rung of `examples/win_sandbox_probe.rs` that would settle it.
+
+`release.yml`'s notes also still said Windows has no text recogniser to ask, which has been
+false since `26.8.12`. That block is a literal in the workflow on purpose, so nothing can go
+red for a stale sentence in it; this is the fifth drift its own parenthetical records, and the
+first found from outside.
+
+### Fixed: a prose count in `docs/RATIONALE.md`
+
+The argument for keeping the window harness inside the shipped bundle rested on running "the
+109-name invariant" against the artifact that ships --- four paragraphs below the one explaining
+why a count in prose goes stale. The invariant is that *every corpus reports the same set of
+check names*, which `scripts/viewer_sweep.py` asserts by diffing the sets pairwise; a total
+cannot carry it, because a name that stops being printed and a name that starts skipping look
+identical in one. 109 is a reading taken on 2026-07-30 that `BUILD.md` still records, correctly,
+as dated.
+
 ### Fixed: a refused print now arrives with the actions that answer it
 
 26.9.0 taught printing to refuse a file that changed on disk under the open document, and
