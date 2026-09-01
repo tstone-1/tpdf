@@ -34,6 +34,8 @@
 //! worse than none --- the same reason a bounded outline walk reports what it cut
 //! rather than presenting a partial tree as whole.
 
+/// Only [`build`] takes one, and that function is test-only --- see its header.
+#[cfg(test)]
 use std::path::Path;
 
 use lopdf::{Document, LoadOptions};
@@ -46,7 +48,7 @@ use crate::sweep;
 use crate::encoding::MAX_DECODE;
 
 /// One page of a print job.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PagePlan {
     /// Which page of the file, one-based, as `lopdf` numbers them.
     pub number: u32,
@@ -59,7 +61,7 @@ pub struct PagePlan {
 }
 
 /// Which pages to print.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Pages {
     /// Every page, in document order, exactly as the file has them.
     All,
@@ -95,7 +97,7 @@ pub enum Pages {
 }
 
 /// What to print, and how it should be oriented.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Job {
     pub pages: Pages,
     /// Quarter-turns clockwise the *view* is rotated by, 0 to 3.
@@ -221,7 +223,37 @@ pub fn route(plan: Option<&Plan>, pages: Option<Vec<u32>>, view: u8) -> Route {
     Route::Working
 }
 
-/// Produces the bytes to hand to the print system.
+/// Produces the bytes to hand to the print system, reading `source` here.
+///
+/// **Test-only since 2026-09-01, and the `cfg` is the mechanism rather than a
+/// note.** This function takes a *path*, which means it opens the reader's
+/// document and parses it in whatever process calls it --- and the process that
+/// used to call it is the one holding the window. Every test below hands it a
+/// fixture on disk, which is exactly what it is for; nothing in the application
+/// may, so the compiler is what says so. The production route is
+/// [`crate::save::print_range_bytes`], which hands [`build_update`] to a
+/// sandboxed worker through the seam a save already uses.
+#[cfg(test)]
+pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
+    let original = std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"))?;
+    build_update(&original, job)
+}
+
+/// Produces the bytes to hand to the print system, from the document's bytes.
+///
+/// **Pure, and that is the whole point of it existing separately** --- the same
+/// split, for the same reason, as [`crate::save::rewrite_update`]. Everything
+/// here parses and serialises attacker-controlled bytes; nothing here opens a
+/// file, names a path, or knows one exists, which is what lets it run in a
+/// sandboxed worker rather than in the process holding the window and the
+/// reader's filesystem authority.
+///
+/// **This was the last route that parsed a document in the coordinator by
+/// pressing a key a reader is told to press.** `docs/THREAT-MODEL.md` residual
+/// risk 18 did not list it at all until 2026-09-01: it names the writers, and a
+/// page range writes nothing --- it builds bytes and hands them to a printer.
+/// The document it parses is the reader's, verbatim, and the way to reach it is
+/// to open a file and type a range.
 ///
 /// # Errors
 ///
@@ -229,19 +261,23 @@ pub fn route(plan: Option<&Plan>, pages: Option<Vec<u32>>, view: u8) -> Route {
 /// rather than repaired: a range the reader typed is an instruction, and
 /// silently printing the pages that happened to exist --- or nothing at all ---
 /// is the kind of plausible wrong answer that only shows up on paper.
-pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
+pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
     if job.is_passthrough() {
-        return std::fs::read(source).map_err(|e| format!("could not read {source:?}: {e}"));
+        return Ok(original.to_vec());
     }
 
-    let mut doc = Document::load_with_options(
-        source,
+    // `load_mem_with_options`, not `load_with_options`, and the difference is
+    // the whole split: a path is authority and bytes are not, so a function that
+    // takes the second can run where there is none. `save::checked` reads this
+    // way for the same reason and says so in the same words.
+    let mut doc = Document::load_mem_with_options(
+        original,
         LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse {source:?}: {e}"))?;
+    .map_err(|e| format!("could not parse the document: {e}"))?;
 
     // **An encrypted document is printed whole or not at all**, and the reason
     // is that this branch reserialises: `lopdf`'s full writer emits every object
@@ -264,10 +300,12 @@ pub fn build(source: &Path, job: &Job) -> Result<Vec<u8>, String> {
     // both are refused: even with the key, this writer cannot put the encryption
     // back. An append could, and a page selection is not appendable.
     if doc.was_encrypted() || doc.is_encrypted() {
-        return Err(format!(
-            "{source:?} is encrypted, and printing a selection of it would produce an \
-             unencrypted copy. Print the whole document instead."
-        ));
+        return Err(
+            "This document is encrypted, and printing a selection of it would produce \
+             an unencrypted copy. Print the whole document instead --- that is handed over \
+             unchanged."
+                .to_string(),
+        );
     }
 
     let table = doc.get_pages();

@@ -310,6 +310,46 @@ impl DocumentGraph {
         crate::save::rewrite_update(&bytes, plan, job, self.password())
     }
 
+    /// Merges these bytes, under `plan`, with the documents in `inputs`.
+    ///
+    /// [`DocumentGraph::rewrite`]'s widest counterpart: the incoming documents
+    /// are files tpdf never opened, and `incoming` names where each of them
+    /// begins in the mapping handed over, and what to call it. See `crate::worker_proto::Request::Merge`.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable, or anything `crate::save::merge_update`
+    /// refuses.
+    pub fn merge(
+        &self,
+        plan: &crate::edits::Plan,
+        inputs: crate::save::Inputs<'_>,
+    ) -> Result<(Vec<u8>, u32), crate::save::Refusal> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| crate::save::Refusal::from("the document's bytes could not be read"))?;
+        crate::save::merge_update(&bytes, plan, inputs, self.password())
+    }
+
+    /// Builds a print job for the page range `job` names.
+    ///
+    /// [`DocumentGraph::rewrite`]'s counterpart for the print route that carries
+    /// no plan. **It takes no password**, unlike every other reader here, and
+    /// that is `crate::print::build_update`'s refusal rather than an omission:
+    /// its writer emits every object in the clear, so an encrypted document is
+    /// refused whether or not the key is held.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable, or anything `crate::print::build_update`
+    /// refuses.
+    pub fn print_range(&self, job: &crate::print::Job) -> Result<Vec<u8>, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        crate::print::build_update(&bytes, job)
+    }
+
     /// How many pages `lopdf` finds in these bytes.
     ///
     /// Uncached, like [`DocumentGraph::append`] and for a related reason: those

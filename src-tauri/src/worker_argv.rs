@@ -33,6 +33,24 @@ pub fn doc_len_arg(args: &[String]) -> Option<usize> {
     value_of(args, "--doc-len").and_then(|v| v.parse().ok())
 }
 
+/// How long the merge input mapping is, if the parent handed one over.
+///
+/// `None` when the flag is absent, which is what says there is no such mapping:
+/// see [`crate::worker::IN_LEN_ARGV`].
+#[must_use]
+pub fn in_len_arg(args: &[String]) -> Option<usize> {
+    value_of(args, crate::worker::IN_LEN_ARGV).and_then(|v| v.parse().ok())
+}
+
+/// The merge input section handle the parent passed, on Windows.
+///
+/// `usize` for [`doc_handle_arg`]'s reason.
+#[cfg(windows)]
+#[must_use]
+pub fn in_handle_arg(args: &[String]) -> Option<usize> {
+    value_of(args, crate::worker::IN_HANDLE_ARGV).and_then(|v| v.parse().ok())
+}
+
 /// The document section handle the parent passed, on Windows.
 ///
 /// `usize` rather than `i32`, for the reason [`crate::worker_shm::Shm::raw_handle`]

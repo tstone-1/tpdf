@@ -1849,6 +1849,29 @@ pub(crate) fn run_rewrite(
     document.graph().rewrite(plan, job)
 }
 
+/// Merges the mapped document with the handed-over files on the render thread.
+///
+/// [`run_rewrite`]'s widest counterpart --- see
+/// `crate::worker_proto::Request::Merge`.
+pub(crate) fn run_merge(
+    document: &OpenDocument,
+    plan: &crate::edits::Plan,
+    inputs: crate::save::Inputs<'_>,
+) -> Result<(Vec<u8>, u32), crate::save::Refusal> {
+    document.graph().merge(plan, inputs)
+}
+
+/// Builds a print job for a page range on the render thread.
+///
+/// [`run_rewrite`]'s counterpart for the route that carries no plan --- see
+/// `crate::worker_proto::Request::PrintRange`.
+pub(crate) fn run_print_range(
+    document: &OpenDocument,
+    job: &crate::print::Job,
+) -> Result<Vec<u8>, String> {
+    document.graph().print_range(job)
+}
+
 /// Re-reads the mapped document with `lopdf` and counts its pages.
 ///
 /// The counterpart of [`run_append`] on the verification side --- see

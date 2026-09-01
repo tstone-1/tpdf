@@ -45,14 +45,15 @@ use crate::progressive::{self, CancelToken};
 use crate::queue::{Claim, SharedQueue};
 use crate::render::{self, PageSize, TileFormat, TileRequest};
 #[cfg(windows)]
-use crate::worker::{doc_handle_arg, out_handle_arg, tile_handle_arg, Handover};
+use crate::worker::{doc_handle_arg, in_handle_arg, out_handle_arg, tile_handle_arg, Handover};
 use crate::worker::{
-    doc_len_arg, library_dir_arg, Reply, Request, Response, Shm, PRESPAWN_ARGV, TILE_CAPACITY,
+    doc_len_arg, in_len_arg, library_dir_arg, Reply, Request, Response, Shm, PRESPAWN_ARGV,
+    TILE_CAPACITY,
 };
 #[cfg(target_os = "macos")]
 use crate::worker::{recv_document, SANDBOX_PROFILE, SOCK_FD};
 #[cfg(unix)]
-use crate::worker::{DOC_FD, OUT_ARGV, OUT_FD, TILE_FD};
+use crate::worker::{DOC_FD, IN_FD, OUT_ARGV, OUT_FD, TILE_FD};
 
 /// Runs this process as a render worker. Never returns.
 pub fn main(args: &[String]) -> ! {
@@ -127,6 +128,9 @@ fn serve(args: &[String]) -> Result<(), String> {
     // an ordinary worker a refusal with a reason rather than a write into
     // whatever fd 6 happens to be.
     let mut out_file = adopt_output(args);
+    // The same, for the one request that reads documents this process was never
+    // told the names of. `None` for every worker but one spawned to merge.
+    let inputs = adopt_inputs(args)?;
 
     // Adopted before the sandbox when there is one to adopt. Read-only: a worker
     // must not be able to write the reader's file.
@@ -228,6 +232,7 @@ fn serve(args: &[String]) -> Result<(), String> {
             &queue,
             &mut tile_shm,
             out_file.as_mut(),
+            inputs.as_ref(),
             &request,
         );
         reply(&mut out, &response)?;
@@ -286,6 +291,41 @@ fn adopt_output(args: &[String]) -> Option<std::fs::File> {
     // SAFETY: the parent named this handle in the spawn's handle list, so it is
     // live here, and nothing else in this process owns it.
     Some(unsafe { std::fs::File::from_raw_handle(handle as *mut std::ffi::c_void) })
+}
+
+/// Adopts the merge input mapping the parent handed over, where there is one.
+///
+/// **Read-only, and read from argv rather than probed**, for [`adopt_output`]'s
+/// reason turned the other way: a worker that was given none must not read
+/// whatever descriptor 7 happens to be. The flag carries the length as well,
+/// since a mapping has to be given its size --- see
+/// [`crate::worker::IN_LEN_ARGV`].
+///
+/// A failure to map is `Err` rather than `None`, which are different facts: no
+/// flag means no merge was intended, and a flag that will not map means one was
+/// and cannot be served.
+#[cfg(unix)]
+fn adopt_inputs(args: &[String]) -> Result<Option<Shm>, String> {
+    let Some(len) = in_len_arg(args) else {
+        return Ok(None);
+    };
+    // SAFETY: as `adopt_document`. The parent dup2'd a live descriptor to this
+    // number before exec when it passed the flag.
+    unsafe { Shm::from_fd(IN_FD, len, false) }.map(Some)
+}
+
+/// Adopts the merge input mapping the parent handed over, where there is one.
+///
+/// The handle arrives in argv rather than on a fixed number, for the reason
+/// [`adopt_tile`] gives.
+#[cfg(windows)]
+fn adopt_inputs(args: &[String]) -> Result<Option<Shm>, String> {
+    let Some(len) = in_len_arg(args) else {
+        return Ok(None);
+    };
+    let handle = in_handle_arg(args).ok_or("--in-handle is missing or unreadable")?;
+    // SAFETY: as `adopt_document`.
+    unsafe { Shm::from_handle(handle, len, false) }.map(Some)
 }
 
 /// Adopts the document mapping, read-only.
@@ -504,6 +544,7 @@ fn handle(
     queue: &SharedQueue,
     tile: &mut Shm,
     out: Option<&mut std::fs::File>,
+    inputs: Option<&Shm>,
     request: &Request,
 ) -> Response {
     match request {
@@ -564,6 +605,8 @@ fn handle(
             Err(e) => Response::err(e),
         },
         Request::Rewrite { plan, job } => rewrite(document, out, plan, *job),
+        Request::PrintRange { job } => print_range(document, out, job),
+        Request::Merge { plan, incoming } => merge(document, out, inputs, plan, incoming),
         Request::Reread => match render::run_reread(document) {
             Ok(pages) => Response::reply(Reply::Reread(pages)),
             Err(e) => Response::err(e),
@@ -621,6 +664,85 @@ fn rewrite(
     match out.write_all(&bytes).and_then(|()| out.flush()) {
         Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
         Err(e) => Response::err(format!("the rewritten document could not be written: {e}")),
+    }
+}
+
+/// Merges the mapped document with the handed-over files, down the output
+/// channel.
+///
+/// [`rewrite`]'s widest counterpart --- see
+/// [`crate::worker_proto::Request::Merge`] for what arrives where, and why the
+/// incoming documents are a mapping rather than part of the message.
+///
+/// **Two refusals rather than one**, and they are different facts: a worker with
+/// nowhere to write was not spawned to write, and a worker with no input mapping
+/// was not spawned to merge. Saying so separately is what stops a coordinator
+/// defect reading as a document defect.
+///
+/// `refused`, like [`rewrite`]: a merge carries the reader's plan, so the
+/// changed-on-disk refusal `Response::changed` exists for can reach here through
+/// `crate::save::rewrite_update`.
+fn merge(
+    document: &OpenDocument,
+    out: Option<&mut std::fs::File>,
+    inputs: Option<&Shm>,
+    plan: &crate::edits::Plan,
+    incoming: &[crate::save::Incoming],
+) -> Response {
+    let Some(out) = out else {
+        return Response::err(
+            "this worker was not started with anywhere to write, so it cannot merge documents",
+        );
+    };
+    let Some(inputs) = inputs else {
+        return Response::err(
+            "this worker was not started with the documents to merge, so it cannot merge them",
+        );
+    };
+    let handed = crate::save::Inputs {
+        whole: inputs.as_slice(),
+        each: incoming,
+    };
+    let (bytes, pages) = match render::run_merge(document, plan, handed) {
+        Ok(answer) => answer,
+        Err(why) => return Response::refused(&why),
+    };
+    match out.write_all(&bytes).and_then(|()| out.flush()) {
+        Ok(()) => Response::reply(Reply::Merged {
+            bytes: bytes.len(),
+            pages,
+        }),
+        Err(e) => Response::err(format!("the merged document could not be written: {e}")),
+    }
+}
+
+/// Builds a print job for a page range and writes it down the output channel.
+///
+/// [`rewrite`]'s counterpart for the one print route that carries no plan --- see
+/// [`crate::worker_proto::Request::PrintRange`] for why it is a request of its
+/// own, and `crate::print::build_update` for what it refuses.
+///
+/// **`err`, not `refused`, and that is the difference from [`rewrite`].** Every
+/// refusal here is about the *document* --- a page number that is not in it, an
+/// empty selection, an encrypted source --- and none of them is answered by
+/// reloading the file, which is the one bit `Response::refused` carries.
+fn print_range(
+    document: &OpenDocument,
+    out: Option<&mut std::fs::File>,
+    job: &crate::print::Job,
+) -> Response {
+    let Some(out) = out else {
+        return Response::err(
+            "this worker was not started with anywhere to write, so it cannot build a print job",
+        );
+    };
+    let bytes = match render::run_print_range(document, job) {
+        Ok(bytes) => bytes,
+        Err(why) => return Response::err(why),
+    };
+    match out.write_all(&bytes).and_then(|()| out.flush()) {
+        Ok(()) => Response::reply(Reply::Rewrote(bytes.len())),
+        Err(e) => Response::err(format!("the print job could not be written: {e}")),
     }
 }
 

@@ -66,6 +66,14 @@ TERMINAL = [
     "commit_in_place",
     "append_in_place",
     "print_bytes",
+    # Added 2026-09-01 with the page-range print's move. `print_document` already
+    # reaches `print_bytes`, so no command was misclassified without it -- but a
+    # terminal writer this list does not know about is precisely the gap that
+    # produced two findings that day, and the next command to reach only this one
+    # would have been missed. It creates a file for the same reason
+    # `print_bytes` does: a print job comes back as bytes, so it is built in a
+    # scratch file this process makes.
+    "print_range_bytes",
 ]
 
 NUMBERS = {

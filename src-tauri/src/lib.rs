@@ -2066,6 +2066,7 @@ async fn split_document(
 /// parses every file it was given.
 #[tauri::command]
 async fn merge_documents(
+    app: tauri::AppHandle,
     edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
@@ -2077,6 +2078,11 @@ async fn merge_documents(
     // for the same reason.
     let plan = edits.plan(doc)?;
     let password = password_for(&service, doc, "merge_documents").await;
+    // **Who parses the documents**, chosen as `save_copy` chooses it --- and here
+    // it decides more than anywhere else, because a merge parses files tpdf has
+    // never opened. See `save::merge_update` and
+    // `worker_proto::Request::Merge`.
+    let writing = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
         let others: Vec<std::path::PathBuf> = others.into_iter().map(Into::into).collect();
         save::write_merged(
@@ -2085,6 +2091,7 @@ async fn merge_documents(
             &others,
             Path::new(&path),
             password.as_deref(),
+            &*writing,
         )
     })
     .await
@@ -2587,7 +2594,7 @@ fn print_job(
             let plan = plan.ok_or("the working document has no plan to print")?;
             save::print_bytes(source, plan, turns, password, rewriter)
         }
-        print::Route::Range(job) => print::build(source, job).map_err(save::Refusal::from),
+        print::Route::Range(job) => save::print_range_bytes(source, job, rewriter),
     }
 }
 

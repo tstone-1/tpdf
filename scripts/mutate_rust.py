@@ -286,14 +286,20 @@ MUTATIONS = [
         "a_control_no_scale_can_render_is_refused_with_a_cause_of_its_own",
     ),
     Mutation(
-        # Merge the file on disk rather than the working document. Every edit
-        # the reader made -- deleted pages, turns, crops, marks -- is silently
-        # absent from the result, and the page count agrees with itself for any
-        # plan that keeps every page. Only a plan that drops one can tell.
+        # Merge the document as the file holds it rather than as the reader has
+        # it. Every edit they made -- deleted pages, turns, crops, marks -- is
+        # silently absent from the result, and the page count agrees with itself
+        # for any plan that keeps every page. Only a plan that drops one can
+        # tell.
+        #
+        # **Re-aimed 2026-09-01**, when the merge moved into a worker: it read
+        # `source` by path, and the pure function that replaced it has no path
+        # to read. Skipping the rewrite is the same fact expressed against the
+        # bytes.
         "merge: read the source file instead of the document the reader has",
         "src/save.rs",
-        "    let mut merged = Document::load_mem_with_options(\n        &base.bytes,",
-        "    let mut merged = Document::load_with_options(\n        source,",
+        "    let base = rewrite_update(base, plan, Job::Save, password)?;",
+        "    let base = base.to_vec();",
         "the_open_documents_edits_reach_the_merge",
     ),
     Mutation(
@@ -376,10 +382,13 @@ MUTATIONS = [
         # a reader is shown then describes what they had, not what was written
         # -- so a merge that dropped every incoming page reports success with a
         # plausible figure.
+        # **Re-aimed 2026-09-01**, when the count moved into `merge_update` with
+        # the parse that can take it. It is the worker's half; the coordinator's
+        # is *report a page count of this process's own*, below.
         "merge: report the open document's page count as the merge's",
         "src/save.rs",
-        "        pages: merged.get_pages().len() as u32,",
-        "        pages: plan.pages.len() as u32,",
+        "    let pages = merged.get_pages().len() as u32;",
+        "    let pages = plan.pages.len() as u32;",
         "a_merge_holds_every_page_of_every_document",
     ),
     Mutation(
@@ -2017,12 +2026,25 @@ MUTATIONS = [
         "saving_over_the_open_document_is_refused",
     ),
     Mutation(
-        # Copy the bytes into place instead of renaming. An interrupted save then
-        # leaves a truncated PDF where the reader's file was.
+        # Copy the staged file into place instead of renaming it. An interrupted
+        # save then leaves a truncated PDF where the reader's file was.
+        #
+        # **Re-aimed 2026-09-01, and it had stopped being able to fail before
+        # that.** It was aimed at `write_atomically`, which had three callers --
+        # the copy, the split and the merge -- until the copy and the split moved
+        # to the seam on 2026-09-01 and the merge followed. The test named below
+        # goes through the COPY, so from the moment that path stopped calling
+        # `write_atomically` the mutation could redden nothing, while the anchors
+        # gate went on reporting the anchor present exactly once. That gate reads
+        # the file; only a run reads the coverage. `docs/TRAPS.md` records the
+        # shape under *A refactor orphans mutations nobody can see*.
+        #
+        # `commit` is the mechanism now, and it is stronger: four writing paths
+        # end there rather than one.
         "save: write straight to the destination rather than renaming into it",
         "src/save.rs",
-        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    let staged = stage(out, |file| {",
-        "fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {\n    return std::fs::write(out, bytes).map_err(|e| e.to_string());\n    #[allow(unreachable_code)]\n    let staged = stage(out, |file| {",
+        "    std::fs::rename(staged, out).map_err(|e| {",
+        "    std::fs::copy(staged, out).map(|_| ()).map_err(|e| {",
         "the_destination_is_replaced_whole_rather_than_written_through",
     ),
     Mutation(
@@ -3851,8 +3873,10 @@ MUTATIONS = [
         # either way on a document that parses.
         "save: build the print job in the coordinator instead of the worker",
         "src/save.rs",
-        "    let built = staged_rewrite(\n        rewriter,",
-        "    let built = staged_rewrite(\n        &Here,",
+        # **Re-aimed 2026-09-01**, when the scratch dance both print routes do
+        # moved into `into_scratch` and this call became the closure's body.
+        "        staged_rewrite(\n            rewriter,\n            reading,",
+        "        staged_rewrite(\n            &Here,\n            reading,",
         "the_coordinator_does_not_parse_the_document_it_prints",
     ),
     Mutation(
@@ -3897,6 +3921,72 @@ MUTATIONS = [
         "            staged_rewrite(rewriter, &mut opened, len, into, plan, Job::Save, password)",
         "            staged_rewrite(&Here, &mut opened, len, into, plan, Job::Save, password)",
         "the_coordinator_does_not_parse_the_document_it_splits",
+    ),
+    Mutation(
+        # Merge in the coordinator, which is what every merge did until
+        # 2026-09-01 -- and this one parses more than the reader's own document:
+        # every file they picked in a dialog is loaded too. The bytes are
+        # identical either way on documents that parse, so only a source this
+        # process cannot read can notice.
+        "merge: merge in the coordinator instead of the worker",
+        "src/save.rs",
+        "        staged_merge(\n            merger,",
+        "        staged_merge(\n            &Here,",
+        "the_coordinator_does_not_parse_the_documents_it_merges",
+    ),
+    Mutation(
+        # Start every incoming document at the beginning of the buffer. Each one
+        # then reads the first file's bytes under its own name and length -- the
+        # page count is plausible, every span is inside the buffer, and the
+        # result is a document. Only an assertion that reads the BYTES each span
+        # points at can see it.
+        #
+        # `at: 0` rather than something cleverer, and that is a lesson: the first
+        # version read `incoming.first()` inside the `push` that gives `incoming`
+        # its element type, so the mutated file did not compile and the harness
+        # reported `no summary line` -- which reads exactly like a drifted
+        # anchor. A mutation has to be a program.
+        "merge: start every incoming document at the beginning of the buffer",
+        "src/save.rs",
+        "            at: inputs.len(),",
+        "            at: 0,",
+        "the_coordinator_does_not_parse_the_documents_it_merges",
+    ),
+    Mutation(
+        # Report the page count this process guessed rather than the one the
+        # writer answered. Counting it here would mean parsing the merged
+        # document, which is the parse that moved -- so the only honest source is
+        # the reply.
+        "merge: report a page count of this process's own",
+        "src/save.rs",
+        "        .map(|counted| pages = counted)",
+        "        .map(|_| pages = 0)",
+        "the_coordinator_does_not_parse_the_documents_it_merges",
+    ),
+    Mutation(
+        # Build the page range in the coordinator, which is what every print of
+        # a typed range did until 2026-09-01 -- and which residual risk 18 never
+        # listed, because it names the paths that *write* a document and this
+        # one writes nothing. The bytes are identical either way on a document
+        # that parses, so only a source this process cannot read can notice.
+        "save: build a page-range print job in the coordinator instead of the worker",
+        "src/save.rs",
+        "        staged_range(rewriter, reading, len, into, job)",
+        "        staged_range(&Here, reading, len, into, job)",
+        "the_coordinator_does_not_parse_the_document_it_prints_a_range_of",
+    ),
+    Mutation(
+        # Send the writer every page instead of the range the reader typed. The
+        # job is well formed, the scratch file is cleaned up, the length checks
+        # out and the reader gets a document -- the whole of it. Only an
+        # assertion that reads what CROSSED can see this, which is why the test
+        # named below records the job the writer was handed rather than only the
+        # bytes it gave back.
+        "save: print every page instead of the range that was asked for",
+        "src/save.rs",
+        "        staged_range(rewriter, reading, len, into, job)",
+        "        staged_range(\n            rewriter,\n            reading,\n            len,\n            into,\n            &crate::print::Job { pages: crate::print::Pages::All, turns: job.turns },\n        )",
+        "the_coordinator_does_not_parse_the_document_it_prints_a_range_of",
     ),
     Mutation(
         # Write every part of a split through one plan. The count of parts is

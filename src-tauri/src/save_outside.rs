@@ -170,6 +170,76 @@ impl Rewriter for InWorker {
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
+
+    fn merge(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        plan: &Plan,
+        inputs: crate::save::Inputs<'_>,
+        password: Option<&str>,
+    ) -> Result<(usize, u32), Refusal> {
+        // **A third mapping, and it is the incoming documents.** `write` and
+        // `write_range` hand the worker one document and a file to write; this
+        // hands it the files the reader chose as well, concatenated and
+        // read-only. See `crate::worker::IN_FD`.
+        let mapped = Shm::map_open_file(source, len)?;
+        let mut carried = Shm::create(inputs.whole.len().max(1))?;
+        carried.as_mut_slice()[..inputs.whole.len()].copy_from_slice(inputs.whole);
+        let worker = Worker::spawn_merging(
+            std::sync::Arc::new(mapped),
+            &carried,
+            out,
+            &self.library_dir,
+        )?;
+
+        let pid = worker.pid();
+        let key = password.map(str::to_string);
+        let plan = plan.clone();
+        let incoming = inputs.each.to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut worker = worker;
+            let _ = tx.send(Self::ask_merge(
+                &mut worker,
+                &plan,
+                &incoming,
+                key.as_deref(),
+            ));
+        });
+        // **`carried` outlives the wait**, which the binding rather than a
+        // comment is what guarantees: dropping the mapping here would unmap the
+        // pages the child is reading, and the child would take a fault on a
+        // document that is perfectly good.
+        let answered = awaited(&rx, DEFAULT_DEADLINE, pid)?;
+        drop(carried);
+        answered
+    }
+
+    fn write_range(
+        &self,
+        source: &mut std::fs::File,
+        len: usize,
+        out: &mut std::fs::File,
+        job: &crate::print::Job,
+    ) -> Result<usize, Refusal> {
+        // Everything here is `write`'s and means the same: the handles rather
+        // than the pathnames, a worker spawned for this one answer, and the ask
+        // on a thread so a document that sends `lopdf` round in circles cannot
+        // hold the blocking pool for ever.
+        let mapped = Shm::map_open_file(source, len)?;
+        let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?;
+
+        let pid = worker.pid();
+        let job = job.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut worker = worker;
+            let _ = tx.send(Self::ask_print_range(&mut worker, &job));
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
 }
 
 impl InWorker {
@@ -217,6 +287,85 @@ impl InWorker {
             // than the protocol.
             other => Err(format!(
                 "the worker answered the rewrite with {}",
+                match other {
+                    Some(reply) => format!("{reply:?}"),
+                    None => "no payload at all".to_string(),
+                }
+            )
+            .into()),
+        }
+    }
+
+    /// The two requests a merge makes, on the thread that owns the worker.
+    ///
+    /// [`InWorker::ask_rewrite`]'s counterpart, and the unlock in front of it is
+    /// there for the same reason: `lopdf` parses no objects at all for a
+    /// document it cannot authenticate, so a locked base would merge into an
+    /// empty document rather than refusing. The password is the base's; the
+    /// incoming files are refused if they are encrypted, and tpdf holds no key
+    /// for them anyway.
+    fn ask_merge(
+        worker: &mut Worker,
+        plan: &Plan,
+        incoming: &[crate::save::Incoming],
+        password: Option<&str>,
+    ) -> Result<(usize, u32), Refusal> {
+        if let Some(password) = password {
+            let answered = worker.call(&Request::Unlock {
+                password: password.to_string(),
+            })?;
+            if !answered.ok {
+                return Err(format!(
+                    "the worker could not take the document's password: {}",
+                    answered.error
+                )
+                .into());
+            }
+        }
+
+        let answered = worker.call(&Request::Merge {
+            plan: plan.clone(),
+            incoming: incoming.to_vec(),
+        })?;
+        if !answered.ok {
+            return Err(Refusal {
+                message: answered.error,
+                changed: answered.changed,
+            });
+        }
+        match answered.reply {
+            Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
+            other => Err(format!(
+                "the worker answered the merge with {}",
+                match other {
+                    Some(reply) => format!("{reply:?}"),
+                    None => "no payload at all".to_string(),
+                }
+            )
+            .into()),
+        }
+    }
+
+    /// The one request a page-range print makes, on the thread that owns the
+    /// worker.
+    ///
+    /// **No unlock in front of it**, which is the difference from
+    /// [`InWorker::ask_rewrite`] and is not an omission: `print::build_update`
+    /// refuses an encrypted document whether or not the key is held, so sending
+    /// a password would buy a decrypted copy of a document somebody encrypted
+    /// deliberately and nothing else.
+    fn ask_print_range(worker: &mut Worker, job: &crate::print::Job) -> Result<usize, Refusal> {
+        let answered = worker.call(&Request::PrintRange { job: job.clone() })?;
+        if !answered.ok {
+            return Err(Refusal {
+                message: answered.error,
+                changed: answered.changed,
+            });
+        }
+        match answered.reply {
+            Some(Reply::Rewrote(bytes)) => Ok(bytes),
+            other => Err(format!(
+                "the worker answered the print job with {}",
                 match other {
                     Some(reply) => format!("{reply:?}"),
                     None => "no payload at all".to_string(),

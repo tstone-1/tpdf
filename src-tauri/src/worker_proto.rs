@@ -212,6 +212,73 @@ pub enum Request {
         /// What the answer is for. Never a path, never a destination.
         job: crate::save::Job,
     },
+    /// Build a print job for a page range, into the handed-over file.
+    ///
+    /// **The one route that carries no plan**, and the last parse of the
+    /// reader's document the coordinator did. A range is an instruction about
+    /// *pages* --- it says nothing about edits, so it carries no marks and no
+    /// crops --- which is why it is a request of its own rather than a
+    /// [`Request::Rewrite`] with a synthesised plan. Building that plan would
+    /// mean resolving page numbers against the document's own page table in the
+    /// coordinator, which is the parse this moves.
+    ///
+    /// **It answers with [`Reply::Rewrote`], deliberately**, because the answer
+    /// is the same fact: N bytes went down the output channel. A reply variant
+    /// per caller would be two names for one measurement, and the coordinator
+    /// compares it against the staged file's own size either way.
+    ///
+    /// No password. `crate::print::build_update` refuses an encrypted document
+    /// rather than unlocking one --- its writer emits every object in the clear,
+    /// so a key would produce a decrypted copy rather than a printable one.
+    ///
+    /// **The page list it carries is bounded by the document, not by the
+    /// reader**, which is worth saying because requests are unbounded by design:
+    /// [`MAX_REPLY_BYTES`] guards the direction the hostile input comes *from*,
+    /// and this one goes the other way. `crate::print::sheets` refuses a range
+    /// past the page count before any list is built, and [`Request::Append`]
+    /// already carries a `Plan` whose own page list is the same size. So this
+    /// adds no class of payload the boundary did not already take.
+    PrintRange {
+        /// Which pages, and the reader's own view rotation. Never a path.
+        job: crate::print::Job,
+    },
+    /// Merge the mapped document with the files on [`crate::worker::IN_FD`].
+    ///
+    /// **The last coordinator-side parse, and the widest one.** Every other
+    /// request is about the document the reader opened; this one is about files
+    /// tpdf has never seen --- a reader picks them in a dialog and each is parsed
+    /// whole. Residual risk 18 has carried it as the operation that widens the
+    /// exposure by a different axis, and until 2026-09-01 all of it ran in the
+    /// process holding the window.
+    ///
+    /// **The incoming documents do not travel in this message.** They arrive as
+    /// one read-only mapping, concatenated, and `spans` names where each begins
+    /// and how long it is. A request is JSON: a document inside one would be an
+    /// array of numbers at three bytes per byte, which for a merge of four
+    /// scanned files is a gigabyte of text. See [`crate::worker::IN_FD`] for why
+    /// it is one mapping rather than one per file.
+    ///
+    /// The coordinator reads those files to fill the mapping, and reading is not
+    /// parsing: it copies bytes and never asks what they mean. What it no longer
+    /// does is hand them to `lopdf`.
+    ///
+    /// **`plan` applies to the mapped document only**, which is the same
+    /// asymmetry the coordinator had: the base is the document on screen and
+    /// carries the reader's edits, and an incoming file is appended as it is.
+    /// The password, likewise, is the base's --- sent ahead on
+    /// [`Request::Unlock`] --- and an encrypted incoming file is refused rather
+    /// than opened, because one file cannot preserve two documents' encryption.
+    Merge {
+        /// The reader's edits, for the mapped document. Never a path.
+        plan: crate::edits::Plan,
+        /// Where each incoming document begins in the mapping, how long it is,
+        /// and what to call it in a message.
+        ///
+        /// **Checked against the mapping in the worker, not trusted.** A span
+        /// past the end is a defect in the coordinator, and the worker says so
+        /// rather than reading whatever is there.
+        incoming: Vec<crate::save::Incoming>,
+    },
     /// How many pages `lopdf` finds in the mapped document.
     ///
     /// **The other half of [`Request::Append`]'s move.** That one builds a
@@ -350,6 +417,21 @@ pub enum Reply {
     /// channel, and this is what the coordinator checks the staged file's own
     /// size against. See [`Request::Rewrite`].
     Rewrote(usize),
+    /// How many bytes a merge wrote, and how many pages the result has.
+    ///
+    /// **A variant of its own rather than [`Reply::Rewrote`]**, which the print
+    /// range deliberately reuses, and the difference is that this answer is two
+    /// facts. The page count is what the window reports back to the reader ---
+    /// *"4 documents, 37 pages"* --- and it can only be counted where the merged
+    /// document is, which is the worker. A `Rewrote` plus a second request would
+    /// be a second parse of the same bytes to learn a number the first parse
+    /// already had.
+    Merged {
+        /// How many bytes went down the output channel.
+        bytes: usize,
+        /// How many pages `lopdf` finds in the merged document.
+        pages: u32,
+    },
     /// The password was accepted, or was not needed.
     ///
     /// Carries nothing: [`Request::Unlock`] asks a yes-or-no question, and the
@@ -622,6 +704,18 @@ mod tests {
                  whole of why it cannot go through an `Engine` method",
             ),
             (
+                "PrintRange",
+                "asked by `save::InWorker` of a worker spawned with the print job's \
+                 scratch descriptor, for the same reason `Rewrite` is: no pooled worker \
+                 has one",
+            ),
+            (
+                "Merge",
+                "asked by `save::InWorker` of a worker spawned with the incoming files \
+                 as a second read-only mapping and the staging file's descriptor, neither \
+                 of which a pooled worker has",
+            ),
+            (
                 "Unlock",
                 "sent by whoever holds the password before its first real request, on \
                  both the pooled and the save path",
@@ -880,6 +974,9 @@ mod tests {
             // tag separates a page count from a byte count.
             Reply::Reread(2),
             Reply::Rewrote(2),
+            // Two numbers where the pair above is one, which is the whole reason
+            // it is a variant rather than a third `usize`.
+            Reply::Merged { bytes: 2, pages: 2 },
             Reply::RedactPlans(Vec::new()),
             Reply::Unlocked,
             Reply::Warm,
@@ -907,6 +1004,7 @@ mod tests {
                 | Reply::Append(_)
                 | Reply::Reread(_)
                 | Reply::Rewrote(_)
+                | Reply::Merged { .. }
                 | Reply::Unlocked
                 | Reply::Warm => {}
             }

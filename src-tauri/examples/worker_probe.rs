@@ -19,6 +19,7 @@ use std::time::Instant;
 use tpdf_lib::docmodel::PageSource;
 use tpdf_lib::document::OpenDocument;
 
+use tpdf_lib::print;
 use tpdf_lib::progressive::{self};
 use tpdf_lib::save;
 use tpdf_lib::worker;
@@ -1101,6 +1102,182 @@ fn main() {
         ),
     );
     let _ = std::fs::remove_dir_all(&nowhere);
+
+    // --- The page range, across the same boundary ---------------------------
+    //
+    // **The last route that parsed the reader's document in the coordinator**,
+    // and the one `docs/THREAT-MODEL.md` residual risk 18 never listed --- it
+    // names the paths that *write* a document, and a range print writes nothing.
+    // It carries no plan, so the differential is over a `print::Job` instead:
+    // page 1, kept, with the reader's own quarter turn on top.
+    let range = print::Job {
+        pages: print::Pages::Only(vec![print::PagePlan {
+            number: 1,
+            turns: 0,
+        }]),
+        turns: 1,
+    };
+    let range_to = |who: &dyn save::Rewriter| -> Result<Vec<u8>, String> {
+        save::print_range_bytes(&document, &range, who).map_err(|why| why.message)
+    };
+    let range_before = scratch_files();
+    let ranged_here = range_to(rewriting);
+    let ranged_worker = range_to(&rewrite_in_worker);
+    check(
+        "the worker and the coordinator build the same range print job",
+        matches!((&ranged_here, &ranged_worker), (Ok(a), Ok(b)) if a == b && !a.is_empty()),
+        format!(
+            "coordinator {} bytes, worker {} bytes",
+            ranged_here.as_ref().map_or(0, Vec::len),
+            ranged_worker.as_ref().map_or(0, Vec::len)
+        ),
+    );
+
+    // The discriminating question, a fourth time: two readers agreeing says
+    // nothing about whether a worker was involved at all.
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-range-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let engineless = save::InWorker::at(nowhere.clone());
+    let range_without = range_to(&engineless);
+    let range_still = range_to(rewriting);
+    check(
+        "and the range print path really needs a worker",
+        range_without.is_err() && range_still.is_ok(),
+        format!(
+            "worker {:?}, coordinator {} bytes",
+            range_without.as_ref().err(),
+            range_still.as_ref().map_or(0, Vec::len)
+        ),
+    );
+    let range_left = scratch_files();
+    check(
+        "and no range print job is left behind either",
+        range_left == range_before,
+        format!("{range_before} scratch file(s) before, {range_left} after"),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
+
+    // --- The merge, across the same boundary -------------------------------
+    //
+    // **The widest of them**, and the last to move: every other request is about
+    // the document the reader opened, and this one parses files they picked in a
+    // dialog. The document is merged with itself, which is a legitimate merge
+    // and needs no second fixture --- what is being compared is the two writers,
+    // not the two documents.
+    let merged_out = std::env::temp_dir().join("tpdf-worker-probe-merged.pdf");
+    let merge_to = |who: &dyn save::Rewriter| -> Result<save::Merged, String> {
+        let _ = std::fs::remove_file(&merged_out);
+        save::write_merged(
+            &document,
+            &turning,
+            std::slice::from_ref(&document),
+            &merged_out,
+            None,
+            who,
+        )
+        .map_err(|why| why.message)
+    };
+    let merged_here = merge_to(rewriting);
+    let bytes_here = std::fs::read(&merged_out).unwrap_or_default();
+    let merged_worker = merge_to(&rewrite_in_worker);
+    let bytes_worker = std::fs::read(&merged_out).unwrap_or_default();
+    check(
+        "the worker and the coordinator merge the same documents",
+        matches!((&merged_here, &merged_worker), (Ok(a), Ok(b)) if a.pages == b.pages)
+            && bytes_here == bytes_worker
+            && !bytes_here.is_empty(),
+        format!(
+            "coordinator {:?} pages / {} bytes, worker {:?} pages / {} bytes",
+            merged_here.as_ref().map(|m| m.pages),
+            bytes_here.len(),
+            merged_worker.as_ref().map(|m| m.pages),
+            bytes_worker.len()
+        ),
+    );
+    // **The page count came back from where the document is.** A merge of a
+    // document with itself has twice its pages, which no plan in this process
+    // could have told it.
+    let doubled = u32::try_from(page_count).unwrap_or(u32::MAX) * 2;
+    check(
+        "and the page count is the merged document's, not the plan's",
+        matches!(&merged_worker, Ok(m) if m.pages == doubled),
+        format!(
+            "{:?} against {page_count} in the source",
+            merged_worker.as_ref().map(|m| m.pages)
+        ),
+    );
+
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-merge-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let engineless = save::InWorker::at(nowhere.clone());
+    let merge_without = merge_to(&engineless);
+    let merge_still = merge_to(rewriting);
+    check(
+        "and the merge path really needs a worker",
+        merge_without.is_err() && merge_still.is_ok(),
+        format!(
+            "worker {:?}, coordinator {:?}",
+            merge_without.as_ref().err(),
+            merge_still.as_ref().map(|m| m.pages)
+        ),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
+    let _ = std::fs::remove_file(&merged_out);
+
+    // --- The document that ends the process which parses it ----------------
+    //
+    // **`docs/THREAT-MODEL.md` residual risk 21**, and the only check here whose
+    // subject is a defect rather than a capability. A cross-reference stream
+    // declares its own field widths, `lopdf` multiplies them out and asks for a
+    // buffer of the result, and `handle_alloc_error` **aborts** --- so no guard
+    // in tpdf can catch it and `catch_unwind` cannot see it.
+    //
+    // What is asserted is containment: the worker dies, the coordinator is told
+    // in words, and this probe carries on. **The coordinator arm is deliberately
+    // not run**, which is the one place in this file where a differential is
+    // refused rather than skipped: running it would end the probe, and the fact
+    // that it would is the finding rather than a check.
+    let bomb = document
+        .parent()
+        .map(|dir| dir.join("abort").join("xref-bomb.pdf"))
+        .filter(|at| at.exists());
+    if let Some(bomb) = bomb {
+        let out = std::env::temp_dir().join("tpdf-worker-probe-bomb.pdf");
+        let _ = std::fs::remove_file(&out);
+        // A plan over one page, because the fixture has one --- and it never
+        // gets that far: the parse that reads the page tree is the one that
+        // aborts.
+        let bombed = save::write_copy(&bomb, &turn_plan(1), &out, None, &rewrite_in_worker);
+        check(
+            "a document that aborts its parser takes the worker and not this process",
+            bombed.is_err(),
+            format!("worker {:?}", bombed.as_ref().err().map(|why| &why.message)),
+        );
+        // **The reason has to name the worker's death rather than the
+        // document.** A refusal saying the file is malformed would mean `lopdf`
+        // returned an error, which is a different --- and much better --- fact
+        // than the one this fixture exists to pin. If this check ever goes red
+        // because the message changed shape, read it before changing the
+        // assertion: `lopdf` growing a bound here is the outcome we want.
+        let named_the_worker = bombed
+            .as_ref()
+            .err()
+            .is_some_and(|why| why.message.contains("worker"));
+        check(
+            "and the coordinator says the worker stopped, rather than blaming the file",
+            named_the_worker,
+            format!("said {:?}", bombed.as_ref().err().map(|why| &why.message)),
+        );
+        let _ = std::fs::remove_file(&out);
+    } else {
+        for what in [
+            "a document that aborts its parser takes the worker and not this process",
+            "and the coordinator says the worker stopped, rather than blaming the file",
+        ] {
+            skipped += 1;
+            println!("[SKIP] {what:52} not applicable --- xref-bomb.pdf is not generated");
+        }
+    }
 
     println!(
         "\n{}/{checks} checks passed, {skipped} not applicable to this platform",
