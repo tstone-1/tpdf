@@ -20711,6 +20711,34 @@ kept the gate red one line below the code that had just stopped causing it. A sc
 read comments differently from code. When the thing being explained is a forbidden string, the
 explanation cannot quote it.
 
+### The count was printed and asserted by nothing, and git can answer emptily
+
+`check_dates.py` derives its population from `git ls-files`, and it fails closed when git
+*errors*: `check=True`, and the exception prints `[FAIL] could not list tracked files`. What it
+did not catch is git **succeeding and returning nothing**, which prints
+
+```
+[OK] no date ahead of 2026-09-02 in 0 tracked text files
+```
+
+and exits 0. The population is right there in the verdict, honestly reported, and no assertion
+reads it. Every other gate in `scripts/` already refuses a zero; this one was the exception, and
+it is the gate whose subject is the whole repository.
+
+**Printing a population is not asserting it.** That is the durable half. A count in the output
+is the standard advice for making a structural audit readable --- this repository states it as a
+rule --- and following the rule as far as *printing* leaves the check exactly as weak as before,
+while making it look thorough to anyone who reads the line rather than the code.
+
+The mutation that proves it is one environment variable and needs no fixture:
+`GIT_INDEX_FILE=/tmp/no-such-index` makes `git ls-files` print nothing and exit **0**. That is
+the shape the error branch structurally cannot see, because git did not fail.
+
+Worth separating from the neighbouring entry about a tool whose universe comes from a command:
+that one is about the command being *absent*, and the fix is to fail closed on the error. This
+is the command being *present and answering emptily*, which passes every check written for the
+first case.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`
