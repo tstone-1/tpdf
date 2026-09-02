@@ -20685,6 +20685,32 @@ sibling `check_workflow_fixtures.py` did not.** Two scripts, one directory apart
 same two files, one of them right. A correct implementation next door is not a check on the
 other one, and its existence made the wrong one look reviewed.
 
+### A green gate run and the commit after it are about different trees
+
+`scripts/gates.py` reported 23/23 and the commit that followed it was red. Nothing changed
+between them except `git add`.
+
+`check_dates.py` scans **tracked** files. The new file being committed was untracked while the
+gates ran, so the gate could not see it; `git add -A` brought it into scope, and the tree at
+`HEAD` then carried a date in the future that the gate would have rejected a second earlier.
+The verification and the artifact it was supposed to verify were two different sets of files.
+
+Every tracked-file scanner has this shape --- here that is `dates`, and the same reasoning
+applies to any check whose population comes from `git ls-files` rather than from a directory
+walk. **On a commit that ADDS a file, stage first and run the gates second.** A commit that only
+edits tracked files is unaffected, which is why this had never come up.
+
+Two things made it worse than a slip. The file was a *mutation harness*, so its table carried a
+deliberately-future date as test data: the data a check needs in order to be tested was itself
+the defect that check reports. That is the trap about a scanner reading its own exemption table,
+arriving through a mutation table. The fix is to assemble the string instead of writing it ---
+`AHEAD = f"{date.today().year + 1}-..."` --- so the file at rest contains no such date.
+
+And the first attempt at that fix left the literal in the **comment explaining the fix**, which
+kept the gate red one line below the code that had just stopped causing it. A scanner does not
+read comments differently from code. When the thing being explained is a forbidden string, the
+explanation cannot quote it.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`

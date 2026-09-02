@@ -38,15 +38,17 @@ and is wrong, and the mutation that separates it from the correct walk is a
 carrying the count, because a green run on its own is also what a gate that
 stopped looking produces.
 
-WHAT IS COVERED, and it is not all of them. Nine of the sixteen Python-backed
-gates have at least one mutation here as of 2026-09-02: `fixtures`, `traps`,
-`dates`, `toolchain`, `pdfium`, `docs`, `sinks`, `workflows`, `anchors`. Seven do
-not --- `mutations`, `corpora`, `wiring`, `classified`, `writers`, `bundleshare`,
-`notices` --- and each is harder for a reason worth stating rather than leaving as
-an omission: the first two need a new test file or a new generated fixture, the
-next three need a registered command or a callback to exist, and the last two read
-a completed build. Written down because a harness covering half its population and
-saying nothing about the half it skips is the shape this repository keeps finding.
+WHAT IS COVERED: fifteen of the sixteen Python-backed gates, as of 2026-09-02.
+The exception is `bundleshare`, and the reason is measured rather than assumed.
+It needs two things this harness does not do. Its subject is the *built* bundle,
+so a mutation would have to run `npm run build` between the edit and the gate ---
+each row here runs one gate and nothing else. And the obvious edit does not work:
+a 200,000-character exported constant added to `viewercheck.ts` left the family at
+151,362 units, unchanged, because Vite tree-shakes an export nothing imports. A
+row that reaches it has to grow code that is actually *reached*. Stated this
+precisely so the next attempt starts from the second problem rather than the
+first, and because a harness that covers most of its population and says nothing
+about the rest is the shape this repository keeps finding.
 
 WHAT IT FOUND ON ITS FIRST TWO RUNS. `fetch_pdfium.py --check` printed `TAG` and
 never compared it against the installed tree, so it answered `[OK] pdfium
@@ -66,6 +68,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -73,6 +76,16 @@ import live_output  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 GATES = ROOT / "scripts" / "gates.py"
+
+#: A date that has not happened, assembled rather than written down.
+#:
+#: `scripts/check_dates.py` scans every tracked file for a date later than
+#: today, and this file is tracked. So the `dates` mutation below cannot carry
+#: its own future date as a literal --- doing so put next year's date into the tree
+#: and the gate reported it, correctly, which made the harness's control refuse
+#: to run. Same year and day, one year on, so it is in the future whenever this
+#: is read and matches nothing when the file is at rest.
+AHEAD = f"{date.today().year + 1}-{date.today():%m-%d}"
 
 
 @dataclass(frozen=True)
@@ -167,13 +180,22 @@ MUTATIONS = [
     ),
     # --- a date that has not happened yet ------------------------------------
     Mutation(
+        # **The date is computed, never written.** A literal future date here is
+        # a future date in a tracked file, which is precisely what `check_dates`
+        # scans for --- so the row that tests the gate becomes a defect the gate
+        # reports, and the harness's control refuses to start. Written as a
+        # literal first, and it turned `dates` red on a clean tree.
+        #
+        # This is the trap about a scanner reading its own exemption table,
+        # arriving through a mutation table rather than an allowlist. The fix is
+        # to keep the string out of the file: `AHEAD` is built at import.
         "dates: a stamp in the future, which is how 70 of them shipped at once",
         "dates",
         "docs/TRAPS.md",
         "Measured 2026-09-02 by planting",
-        "Measured 2027-09-02 by planting",
+        f"Measured {AHEAD} by planting",
         red=True,
-        says="2027-09-02",
+        says=AHEAD,
     ),
     # --- the toolchain pin ---------------------------------------------------
     # --- the toolchain pin, and the mutation that could not have worked -------
@@ -284,6 +306,84 @@ MUTATIONS = [
         'CI_BLOCK = "            brew install a package that is not there\\n"',
         red=True,
         says="anchor occurs",
+    ),
+    # --- the list that answers "how many ways can the webview cause a write" --
+    Mutation(
+        # `docs/THREAT-MODEL.md` §3's marker is the claim, and the row's count
+        # follows it. It was wrong three times in two weeks, always
+        # under-claiming, before the gate existed.
+        "writers: a writing command missing from the threat model's list",
+        "writers",
+        "docs/THREAT-MODEL.md",
+        "<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document -->",
+        "<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_document -->",
+        red=True,
+        says="redact_copy",
+    ),
+    # --- a command the window harness neither drives nor excuses --------------
+    Mutation(
+        # Two commands shipped unclassified on 2026-08-29 because the harness
+        # asserting this needs a screen and is run by hand.
+        "classified: a registered command in neither probes nor undriven",
+        "classified",
+        "src/lib/viewercheck.ts",
+        # **Two lines, because the id alone occurs twice**: once where the
+        # harness registers the command and once in the probe that drives it.
+        # The probe is the half that classifies, so the anchor carries the
+        # `from:` line under it to name that one.
+        '      id: "view.fitWidth",\n      from: () => viewer.setFit("page"),',
+        '      id: "view.fitWidthUnclassified",\n      from: () => viewer.setFit("page"),',
+        red=True,
+        says="view.fitWidth",
+    ),
+    # --- a callback the component declares and App.svelte never supplies ------
+    Mutation(
+        # The founding defect: the box shipped inert with three layers of tests
+        # green, because nothing looks at the object literal that joins them.
+        "wiring: an optional callback dropped from App.svelte's literal",
+        "wiring",
+        "src/App.svelte",
+        "        onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),\n",
+        "",
+        red=True,
+        says="onMarkRemove",
+    ),
+    # --- a corpus with no stated purpose -------------------------------------
+    Mutation(
+        # The gate is a set difference between `testdata/*.pdf` and this list,
+        # so dropping an entry is the same question from the other side as
+        # adding an unclassified fixture --- and it needs no PDF written.
+        "corpora: a window corpus with no stated purpose",
+        "corpora",
+        "scripts/viewer_sweep.py",
+        '    ("outline-simple", "the only fixture with an ordinary outline"),\n',
+        "",
+        red=True,
+        says="outline-simple",
+    ),
+    # --- a vitest suite nobody mutates and nobody excused --------------------
+    Mutation(
+        # Twelve seconds here against a control pass in the front-end harness,
+        # which is the whole reason this gate exists.
+        "mutations: a test suite neither mutated nor excluded with a reason",
+        "mutations",
+        "scripts/mutate_frontend.py",
+        "UNMUTATED = {",
+        "UNMUTATED = {} if True else {",
+        red=True,
+        says="UNMUTATED",
+    ),
+    # --- the notices file going stale ----------------------------------------
+    Mutation(
+        # A hand-maintained notices file is wrong the first time a dependency
+        # changes and nothing says so, which is why this is generated.
+        "notices: a THIRD-PARTY-NOTICES.md that no longer matches the tree",
+        "notices",
+        "THIRD-PARTY-NOTICES.md",
+        "# Third-party notices\n",
+        "# Third-party notices, edited by hand so the file is now stale\n",
+        red=True,
+        says="THIRD-PARTY-NOTICES.md",
     ),
 ]
 
