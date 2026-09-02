@@ -964,6 +964,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Two mutations that survived because they were aimed at the exemption
 - A green gate run and the commit after it are about different trees
 - The count was printed and asserted by nothing, and git can answer emptily
+- The step that blocks the release was written for a shell the machine does not run
 - An emptiness control written as a threshold is a measurement of the platform it was written on
 - The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
 - Two nested `Result`s because the outer one is the pool

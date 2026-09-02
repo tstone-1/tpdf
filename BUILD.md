@@ -5295,10 +5295,17 @@ starts at 0 and increments within the month.
    this list by number, so inserting one renames every reference --- the trap of that name,
    arriving in the list that made it worth writing.
 
+   ```powershell
+   cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-reach-probe -- `
+       "$env:USERPROFILE\Downloads" --pages 3 --regions 40
    ```
-   cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-reach-probe -- ^
-       %USERPROFILE%\Downloads --pages 3 --regions 40
-   ```
+
+   **That was written in `cmd.exe` syntax until 2026-09-02**, on machines this portfolio
+   documents as PowerShell 7 --- `^` is not a line continuation there and `%USERPROFILE%` does
+   not expand, so the first line would have run with a literal `^` argument and the second as
+   a command of its own. It was the only cmd-syntax block in this file; every other Windows
+   example here is a ```powershell fence using `$env:`. Nothing caught it because nothing ran
+   it, which the note below says in as many words.
 
    **`redact-reach-probe` against real scanned documents.** Windows OCR rests on
    `win-ocr-probe`'s synthetic validation, which reads clean text at two sizes and therefore

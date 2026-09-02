@@ -20739,6 +20739,37 @@ that one is about the command being *absent*, and the fix is to fail closed on t
 is the command being *present and answering emptily*, which passes every check written for the
 first case.
 
+### The step that blocks the release was written for a shell the machine does not run
+
+`BUILD.md`'s release step 8 carries the one command that blocks a tag --- `redact-reach-probe`
+over a corpus of real documents, on Windows, which cannot move to CI because a hosted runner has
+no such corpus and must not be given one. It was written as
+
+```
+cargo run ... --example redact-reach-probe -- ^
+    %USERPROFILE%\Downloads --pages 3 --regions 40
+```
+
+which is `cmd.exe`. Both Windows machines here are documented as PowerShell 7. There, `^` is not
+a line continuation --- the backtick is --- so the first line runs with a literal `^` appended to
+its arguments and the second line runs as a command of its own; and `%USERPROFILE%` is a literal
+string that expands to nothing. Two failures, neither of which says "wrong shell".
+
+It was the **only** cmd-syntax block in a file whose every other Windows example is a
+```powershell fence using `$env:`, so it was not a house style --- it was one block written in a
+different dialect and never executed.
+
+**And the document says why, three lines below it: "It has not run as of 2026-09-01."** A step
+carrying its own never-run notice is the one place a syntax error can live indefinitely, because
+the notice explains the absence of evidence and reads as an outstanding task rather than as an
+untested instruction. The two are not the same thing and the note cannot tell them apart.
+
+The general form: **a command that has never been run is not a command that works**, and the
+shell it is written for is the cheapest part to get wrong and the least likely to be reviewed ---
+a reader checks the flags. When a checklist step cannot be exercised by a runner, the syntax is
+the one thing that can still be checked from anywhere: which shell, which variable spelling,
+which continuation character. Compare it against a block in the same file that *is* run.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`
