@@ -4655,9 +4655,11 @@ nothing about which:
 
 1. **A real defect.** Re-runs alone, allocates or crashes on its own.
 2. **A sampler misattribution.** libFuzzer runs without a sanitizer here, so its memory sampler
-   fires on a timer and blames whatever is executing. One artifact in this repository is
+   fires on a timer and blames whatever is executing. The clearest instance triaged here was
    `oom-da39a3ee...`, which is the SHA-1 of the **empty string** --- verified with
-   `printf '' | shasum`. The empty input allocates nothing.
+   `printf '' | shasum`, not inferred from the name. The empty input allocates nothing. It was
+   deleted on 2026-09-02 along with five siblings, so do not go looking for it; a shape-(2)
+   artifact carries no information and costs the next reader a triage.
 3. **A real defect below the threshold.** The one that is easy to get wrong, because it reads
    exactly like (2): the input genuinely amplifies, just not past `-rss_limit_mb`, so libFuzzer
    only ever filed the largest instance of the same bug.
@@ -4690,6 +4692,15 @@ That control is what separated shapes (2) and (3) here. Three `save_rewrite_upda
 about to be written off as sampler noise; with the fix reverted they read **207 MB**, **291 MB**
 and **6,201 MB** against a 54 MB floor. All three were the same defect at three magnitudes, and
 only the largest had ever been filed as an OOM.
+
+**Know what an ordinary parse of that size costs before calling anything an outlier.** This is
+the measurement that separates (2) from (3) when there is no fix to revert, and it is cheap:
+run three corpus files of the same size. Measured 2026-09-02, `lopdf_load` has a 32 MB floor,
+and 2,879-byte corpus documents cost **32 MB, 100 MB and 165 MB** --- so the three artifacts
+sitting at 100 MB were squarely ordinary, and one perfectly healthy corpus file is the most
+expensive input of the three. `links_scan`'s floor is 53 MB and its corpus reads 53--54 MB. A
+single reading against a remembered floor would have made every one of those look like a
+finding.
 
 **A `crash-` whose message is `memory allocation of N bytes failed` is an abort, not a panic.**
 `catch_unwind` cannot see it, and in this repository it is upstream: `lopdf`'s cross-reference

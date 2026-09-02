@@ -20518,7 +20518,8 @@ artifacts at once.
 Three of them re-ran clean against the current build. The available readings were *fixed
 earlier today* and *never real --- the sampler blamed the wrong input*, and this file already
 carries the second as a live hazard: libFuzzer without a sanitizer samples memory on a timer, so
-one artifact in this very directory is `oom-da39a3ee...`, the SHA-1 of the **empty string**.
+the clearest instance triaged here was `oom-da39a3ee...`, the SHA-1 of the **empty string**
+(deleted 2026-09-02, with five siblings, once each had been attributed).
 Writing all three off as sampler noise was one keystroke away and would have been wrong.
 
 **The control is to revert the fix and re-run.** With the two bounds taken back out, the three
