@@ -962,6 +962,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A `run:` line is not a `run:` step, and the emptiness control could not tell the difference
 - A pin the gate prints and never reads, and the rule that they move together
 - Two mutations that survived because they were aimed at the exemption
+- A green gate run and the commit after it are about different trees
 - An emptiness control written as a threshold is a measurement of the platform it was written on
 - The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
 - Two nested `Result`s because the outer one is the pool
