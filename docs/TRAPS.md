@@ -19196,6 +19196,47 @@ The general form: **a check that compares two artifacts to each other cannot see
 present in both.** When the artifacts are copies by construction, the invariant worth asserting
 is against something outside the pair --- here, whether the file named can exist at all.
 
+### A `run:` line is not a `run:` step, and the emptiness control could not tell the difference
+
+The checker in the entry above scanned lines whose stripped form starts with `run:` or `- run:`.
+That is the whole of a one-line step and the *first* line of every other kind. A step with more
+than one command is written `run: |`, and each of its commands then sits on a following line
+starting with neither --- so every fixture path inside a block scalar was invisible to the gate
+written to find exactly that mistake.
+
+Measured 2026-09-02 by planting `./probe testdata/no-such-fixture.pdf` inside the block at
+`ci.yml:154`. The gate printed `[OK] all 6 workflow fixture path(s)` and exited 0. Moved to a
+line of its own at the `run:` indent, the identical string failed.
+
+**The reason it survived review is the emptiness control, which is written as `asked == 0`.**
+That control is real and it fires --- if every path moved into a block, the count would reach
+zero and the gate would say so. It cannot fire on *partial* blindness, and partial is the case
+that happens: the six one-line paths hold the count at six while a seventh, written in the
+ordinary multi-command style, is never read. A control on the total is blind to a subset, and
+the subset is where new work lands, because a new probe step almost always needs more than one
+command.
+
+Two things to carry:
+
+* **When a check reports a count, mutate for the count going *up*, not only for a failure.** The
+  control that settled the fix was a *valid* fixture planted in the block: the gate stayed green,
+  and `asked` went 6 to 7. Green-to-green with the number moving is what proves the line was
+  read; a bogus path failing proves only that some path failed somewhere.
+* **Pair it with an over-reach control.** The same string dedented out of the block must *not* be
+  read, and the count must stay at six. Without that, "scan everything after a `run:`" passes the
+  first mutation just as well and is wrong.
+
+The fix consumes the block by indentation --- `|`, `>` and their chomping and keep indicators open
+one, and it ends at the first non-blank line indented no deeper than the `run` key. It is
+dependency-free because there is no PyYAML here and its sibling `check_workflow_parity.py` is
+plain `re` too.
+
+**The wider gap this sits in, measured the same day and not yet closed:** `scripts/` holds 14
+`check_*.py` gate scripts, there is no test file for any of them, and no mutation harness names
+one --- `mutate_rust.py` and `mutate_frontend.py` mention `check_*` only in prose. Each was proved
+by hand at the time it was written, and nothing re-proves them afterwards. This gate had been
+half-blind since the day it was written and every run of it was green.
+
 ### An emptiness control written as a threshold is a measurement of the platform it was written on
 
 `ocr-worker-probe` reads the loader's image table, asserts the table was read, and then
