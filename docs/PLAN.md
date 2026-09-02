@@ -12999,9 +12999,10 @@ What is genuinely uncovered is narrower and was measured rather than reasoned ab
 
 That is `redact-probe`'s corpus rather than this one, and it is the next increment here.
 
-**Two of those three are closed --- 2026-09-02.** Both were the same defect wearing two
+**All three are closed --- 2026-09-02.** The first two were one defect wearing two
 hats: `text-marked.pdf` is the one fixture a redaction probe opens that has a real
-structure tree, and it was built in the shape that exercised the least code.
+structure tree, and it was built in the shape that exercised the least code. The
+third was a different thing entirely and is written up below the two.
 
 * **`/Alt` and `/E` now exist on a linked structure element.** The carrier element carries
   `STRUCT-ALT-GONE` and `STRUCT-E-GONE`, the untouched line's element carries
@@ -13022,15 +13023,35 @@ structure tree, and it was built in the shape that exercised the least code.
   two mutations are aimed at it: slipping `||` to `&&` in the limits comparison, and never
   descending `/Kids` at all. Both caught.
 
-**`/OC` marked content is the one left, and it is a different piece of work.**
-`hostile-ocg.pdf` draws its needle inside `/OC /MC0 BDC`, where `/MC0` is a **name** into
-the page's `/Properties` --- so it is the shared-property-list branch of the marked-content
-handler, reached with a real OCG dictionary rather than the hand-built one the unit tests
-use. What has not been measured, and decides how the case can be built at all, is whether
-PDFium's text extraction returns glyphs inside an optional content group whose default
-state is OFF. If it does not, the region cannot be located the way every other case here
-locates one, and the finding is larger than the fixture: a redaction flow that finds words
-through PDFium cannot offer to remove text a reader cannot see.
+**And the third is closed too --- 2026-09-02, later the same day.** `hostile-ocg.pdf` is
+a `redact-probe` case now, two cases to three, and it reaches the one branch of the
+marked-content handler nothing else there does: a span written `/OC /MC0 BDC`, whose
+property list is a **name** into the page's `/Properties` rather than an inline dictionary,
+resolved to a real `/Type /OCG` dictionary a parser produced. It is allowed through rather
+than refused because the group carries `/Name` and none of `SHADOW_TEXT`, which is the
+distinction the refusal is drawn on.
+
+⚠ **The measurement this was waiting on came back the other way, and the paragraph here
+predicted the wrong answer.** It asked whether PDFium's text extraction returns glyphs
+inside an optional content group whose default state is OFF, and said that if it did not,
+the finding would be larger than the fixture --- a redaction flow that finds words through
+PDFium could not offer to remove text a reader never sees. **It does return them**: 163
+characters for that page, the needle among them, so the region is built from character
+boxes exactly like every other case. The worry does not arise, and it is recorded here
+rather than deleted because a prediction that was checked and refuted is worth more than
+one that was quietly replaced by its answer.
+
+What that leaves is an asymmetry worth keeping in view rather than a defect: extraction
+ignores `/OC` while a renderer honours it, which is what makes *searchable but not drawn*
+possible, and §6's whole premise is that a file holds more than a page shows. Whether
+PDFium's **renderer** honours the group is the mirror question and is not measured here.
+
+**The case is the only reacher of that branch, shown rather than claimed.** Forcing the
+shared-list refusal turns `hostile-ocg.pdf` red and leaves `text-base14.pdf` and
+`links.pdf` green, because both of those write their spans with an inline dictionary and
+never reach the name arm at all. A case that reddened with everything else would have added
+a document rather than coverage --- and unlike the two fixtures beside it, a hosted runner
+can build this one, since `make_hostile_pdf.py` is dependency-free.
 
 ### Phase 4 — Forms and visual signatures
 

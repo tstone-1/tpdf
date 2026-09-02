@@ -1226,6 +1226,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A mutation harness knows only the tests it was told to run
 - A verification chained after a failed edit reports success for work that is not there
 - A restored file with its original timestamp leaves the build serving the mutation
+- The gates rebuild debug and the probes run release, so a green suite says nothing about the binary you are about to run
 - Three mechanisms, no checks: measure what a commit's tests can actually see
 - A verdict that reads a timeout as "no result" throws away the finding
 - A mutation naming a test the harness cannot run reports SURVIVED

@@ -4356,6 +4356,34 @@ Worth pairing with the entry about a control contaminated by the phase before it
 cases where the *fixture* decides whether an assertion means what it says, and neither is
 visible until a corpus with the awkward shape runs.
 
+### The gates rebuild debug and the probes run release, so a green suite says nothing about the binary you are about to run
+
+2026-09-02, restoring after a hand-rolled A/B. `src/redact.rs` was mutated to force the
+shared-property-list refusal, `redact-probe` was rebuilt **release** to measure it, and the
+source was then restored from a backup. `scripts/gates.py` ran afterwards and reported
+**23/23**. The next run of the probe reported `2 case(s) ran, 1 failure(s)`.
+
+Nothing was wrong with the tree. `grep -c` on the restored line answered 1, so the source
+was correct, and the gate suite really had compiled it --- in **debug**, which is what its
+`bins` gate builds (`cargo build --locked --bins --examples`). Every probe in `BUILD.md` is
+invoked `--release`. The two profiles have separate target directories, so the release
+binary was still the mutated one and no amount of green from the suite could say so.
+
+**The reassuring artifact is the gate run itself.** The sibling entry above is about a
+restore whose timestamp lets cargo skip the rebuild; this is the opposite --- the rebuild
+genuinely happened, of a different artifact than the one under test. A `[FAIL]` from a probe
+immediately after a clean suite reads as a real defect in the change you just made, and the
+first instinct is to go looking in the source that was just proved correct.
+
+Two habits, and the first is cheaper than it looks. **Rebuild the same profile you measured
+in, in the same call as the restore**, so the mutation and its undo are symmetric --- an A/B
+whose two legs are built differently is not an A/B. And when a probe disagrees with a green
+gate run, **check which binary you ran before you check the code**: `cargo build --release
+--example <name>` and re-run, which settles it in one command and costs a minute.
+
+Generalises past mutations: any hand edit reverted while a debug build is what gets
+exercised leaves every `--release` probe answering for the older tree.
+
 ### A restored file with its original timestamp leaves the build serving the mutation
 
 **This repository had already paid for this once**, and the entry it wrote down named the

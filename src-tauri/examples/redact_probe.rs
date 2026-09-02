@@ -67,6 +67,40 @@ const CASES: &[Case] = &[
         remove: "Line 01 of page 1",
         keep: "Line 08 of page 1",
     },
+    // Text inside an optional content group whose default state is OFF, which
+    // reaches the one branch of the marked-content handler nothing else here
+    // does: the span is written `/OC /MC0 BDC`, so its property list is a
+    // **name** into the page's `/Properties` rather than an inline dictionary,
+    // and `property_list` resolves it to a real `/Type /OCG` dictionary a parser
+    // produced. Every other exercise of that branch builds its dictionary in
+    // Rust. It is allowed through rather than refused because the OCG carries
+    // `/Name` and none of `SHADOW_TEXT`, which is the distinction the refusal is
+    // drawn on.
+    //
+    // **That this case can exist at all is a measurement, taken 2026-09-02.**
+    // PDFium's text extraction returns the words of a group that is off --- 163
+    // characters for this page, the needle among them --- so the region can be
+    // built from character boxes exactly like every other case here. The
+    // opposite answer was the one expected, and it would have meant a redaction
+    // flow that finds words through PDFium cannot offer to remove text a reader
+    // never sees. Worth keeping in view: extraction ignoring `/OC` while a
+    // renderer honours it is what makes *searchable but not drawn* possible, and
+    // §6's whole premise is that a file holds more than a page shows.
+    //
+    // **It is the only case here that reaches that branch, shown rather than
+    // claimed.** Forcing the refusal --- `SHADOW_TEXT.into_iter().find(|_key|
+    // true)`, which is a mutation `scripts/mutate_rust.py` already carries for
+    // the unit test --- turns this case red and leaves `text-base14.pdf` and
+    // `links.pdf` green. The two of them write their spans with an *inline*
+    // dictionary, so neither ever reaches the name arm at all. A new case that
+    // reddens with everything else would have added a document rather than
+    // coverage.
+    Case {
+        file: "hostile-ocg.pdf",
+        page: 0,
+        remove: "TPDF-NEEDLE-OCGHIDDEN-4711-0815",
+        keep: "no reader draws it",
+    },
 ];
 
 /// The same line, in a document that keeps three copies of it.

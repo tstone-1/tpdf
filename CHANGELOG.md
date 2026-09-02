@@ -19,6 +19,34 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Tested: a redaction over text in a switched-off layer, and PDFium answered the question the other way
+
+`hostile-ocg.pdf` is a `redact-probe` case now --- two cases to three. It reaches the one
+branch of the marked-content handler nothing else there does: a span written `/OC /MC0 BDC`,
+whose property list is a **name** into the page's `/Properties` rather than an inline
+dictionary, resolved to a real `/Type /OCG` dictionary a parser produced. Everything else
+that exercises that branch builds its dictionary in Rust.
+
+**It is the only case that reaches it, shown rather than claimed.** Forcing the shared-list
+refusal reddens `hostile-ocg.pdf` and leaves `text-base14.pdf` and `links.pdf` green; both of
+those write inline dictionaries and never reach the name arm. A case that reddened with
+everything else would have added a document rather than coverage.
+
+⚠ **The measurement it waited on refuted the prediction made for it.** The question was
+whether PDFium's text extraction returns glyphs inside an optional content group whose
+default state is OFF; the note in `docs/PLAN.md` said that if it did not, the finding would
+be larger than the fixture, since a flow that finds words through PDFium could not offer to
+remove text a reader never sees. It does return them --- 163 characters for that page, the
+needle among them --- so the region is built from character boxes like every other case, and
+the worry does not arise. Kept in the plan rather than deleted, because a prediction that was
+checked and refuted is worth more than one quietly replaced by its answer. What remains is an
+asymmetry rather than a defect: extraction ignores `/OC` while a renderer honours it, which is
+what makes *searchable but not drawn* possible. Whether PDFium's renderer honours it is the
+mirror question and is not measured.
+
+Unlike the two fixtures beside it, a hosted runner can build this one --- `make_hostile_pdf.py`
+is dependency-free. Phase 3's list of next increments is now empty.
+
 ### Tested: two thirds of the shadow-text keys, and the parent tree's `/Kids`, had never met the loader
 
 `redact.rs`'s `SHADOW_TEXT` is `/ActualText`, `/Alt` and `/E` --- three places one line of a
