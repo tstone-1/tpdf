@@ -2888,12 +2888,20 @@ anything. Every collecting route reporting nothing is the same output whether th
 or the corpus hides nothing at all, and only `copy` and `lopdf` --- which are supposed to leak
 --- can tell those apart. On the real corpus they leak 14 carriers.
 
-**It is not a gate and cannot be one**, for the reason `scripts/ci_fixtures.py` already gives:
-the generator shells out to `qpdf`, which is not a build dependency and is on neither CI
-runner, so `hostile-manifest.json` does not exist on a fresh checkout or in CI. A gate that
-refuses on a precondition of running is red on every machine that is not running --- the same
-reasoning that put `redact-reach-probe` in the release checklist instead. Run it by hand after
-anything that touches `sweep.rs`, `verify.rs` or the rewrite.
+**It is not a `scripts/gates.py` gate and cannot be one**, because that list has to pass on a
+fresh checkout where `testdata/` is empty and `hostile-manifest.json` therefore does not exist.
+A gate that refuses on a precondition of running is red on every machine that is not running.
+
+**It is a CI step on both legs since 2026-09-02**, which is a different thing and was worth the
+one install line it costs. The paragraph here said *"not a gate and cannot be one"* for about
+an hour, and the reason it gave --- qpdf is on neither runner --- was a fact about the runners
+rather than about the work: both workflows install it now, `ci_fixtures.py --hostile` builds the
+corpus, and the strict run follows. Homebrew on macOS, the project's own pinned release zip on
+Windows, which is the asymmetry the prerequisites table at the top of this file already
+describes for a person.
+
+Run it by hand as well after anything that touches `sweep.rs`, `verify.rs` or the rewrite ---
+CI answers on push, and the loop while you are working is the instrument that owns the change.
 
 Last run 2026-09-02 on macOS arm64: **15 fixtures, exit 0**, no collecting route leaking or
 dropping, every unreadable file refusing certification, controls leaking 14.

@@ -38,8 +38,12 @@ discovered:
     none of the three. The reading it invited is the expensive one: that
     `text-heavy.pdf` is generatable and merely excluded here, when in fact
     nothing anywhere can produce it.
-  * `hostile-*.pdf` from `make_hostile_pdf.py` --- it shells out to qpdf, which
-    is not installed on a hosted runner.
+  * nothing, as of 2026-09-02, from `make_hostile_pdf.py`. That line read "it
+    shells out to qpdf, which is not installed on a hosted runner", which was
+    true and was also the reason `sanitize-rewrite` --- the harness
+    `docs/PLAN.md` Phase 3 states its exit criterion in terms of --- ran on no
+    machine but a developer's. qpdf is installed by both workflows now and the
+    corpus is behind `--hostile` below.
   * `incr-scan-5p.pdf` --- `make_incremental_pdf.py` writes ~550 MB on purpose
     and needs pyhanko.
 
@@ -56,7 +60,7 @@ is still dependency-free: that module reaches for fonttools inside the function
 that embeds a font, which nothing here calls. `make_links_pdf.py` imports it
 for the same writer and is dependency-free for the same reason.
 
-Usage: scripts/ci_fixtures.py [--check]
+Usage: scripts/ci_fixtures.py [--check] [--signed] [--hostile]
 
   --check  report which of the fixtures exist and exit non-zero if any is
            missing, without generating anything. For asking whether a machine
@@ -165,6 +169,43 @@ SIGNED: list[tuple[str, list[str]]] = [
 ]
 
 
+#: The hostile corpus, which needs **qpdf** and is behind `--hostile`.
+#:
+#: Apart for the same reason `SIGNED` is: it needs something installed, and the
+#: flag is what says so out loud rather than leaving a runner to discover it as
+#: a `FileNotFoundError` naming `CreateProcess`. Only `hostile-encrypted.pdf`
+#: needs qpdf to be *written* --- `make_hostile_pdf.py` refuses by name if it is
+#: absent --- but `sanitize-rewrite` runs two of its six routes through qpdf and
+#: checks every output with `qpdf --check`, so the tool is a run-time dependency
+#: of the harness as much as a build-time one of the corpus.
+#:
+#: `hostile-manifest.json` is listed last and is not a PDF: it is what the
+#: harness actually reads, and a run that produced fifteen documents and no
+#: manifest would fail inside the harness with a message about a missing file
+#: rather than here, where the generator that should have written it is named.
+HOSTILE: list[tuple[str, list[str]]] = [
+    (f"testdata/{name}", ["testdata/make_hostile_pdf.py", "testdata"])
+    for name in (
+        "hostile-orphan.pdf",
+        "hostile-orphan-cycle.pdf",
+        "hostile-stale.pdf",
+        "hostile-trailing.pdf",
+        "hostile-objstm.pdf",
+        "hostile-attachment.pdf",
+        "hostile-metadata.pdf",
+        "hostile-unused-form.pdf",
+        "hostile-nested-form.pdf",
+        "hostile-ocg.pdf",
+        "hostile-structure.pdf",
+        "hostile-bomb.pdf",
+        "hostile-filters.pdf",
+        "hostile-scan.pdf",
+        "hostile-encrypted.pdf",
+        "hostile-manifest.json",
+    )
+]
+
+
 def check(wanted: list[tuple[str, list[str]]]) -> int:
     """Reports which fixtures are present. Non-zero if any is missing."""
     missing = 0
@@ -217,8 +258,17 @@ def main() -> int:
         action="store_true",
         help="include the signed fixtures, which need pyhanko installed",
     )
+    parser.add_argument(
+        "--hostile",
+        action="store_true",
+        help="include the hostile corpus, which needs qpdf on PATH",
+    )
     args = parser.parse_args()
-    wanted = FIXTURES + SIGNED if args.signed else FIXTURES
+    wanted = list(FIXTURES)
+    if args.signed:
+        wanted += SIGNED
+    if args.hostile:
+        wanted += HOSTILE
     return check(wanted) if args.check else generate(wanted)
 
 
