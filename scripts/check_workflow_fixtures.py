@@ -75,12 +75,43 @@ def wanted(path: Path) -> list[tuple[int, str]]:
     executes rather than what is written.
     """
     out: list[tuple[int, str]] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    number = 0
+    while number < len(lines):
+        line = lines[number]
+        number += 1
         stripped = line.lstrip()
         if not (stripped.startswith("run:") or stripped.startswith("- run:")):
             continue
         for stem in PATH.findall(line):
             out.append((number, stem))
+        # **A `run:` line is not a `run:` step, and reading only the line is how
+        # this check went blind.** A step with more than one command is written
+        # `run: |`, and every command in it then sits on a *following* line that
+        # starts with neither `run:` nor `- run:`. Scanning line-starts alone
+        # therefore sees the one-line steps and nothing else --- and the
+        # emptiness control below cannot notice, because it asks whether the
+        # count is zero and the one-line steps keep it at six. Measured
+        # 2026-09-02: a bogus `testdata/no-such-fixture.pdf` planted inside the
+        # block at `ci.yml:154` was reported `[OK] all 6 workflow fixture
+        # path(s)`, exit 0.
+        #
+        # So consume the block: `|`, `>` and their chomping and keep indicators
+        # open one, and it runs until the first non-blank line indented no
+        # deeper than the `run` key itself.
+        after = stripped.split("run:", 1)[1].strip()
+        if not after or after[0] not in "|>":
+            continue
+        key = len(line) - len(line.lstrip())
+        if stripped.startswith("- run:"):
+            key = line.index("run:")
+        while number < len(lines):
+            body = lines[number]
+            if body.strip() and (len(body) - len(body.lstrip())) <= key:
+                break
+            number += 1
+            for stem in PATH.findall(body):
+                out.append((number, stem))
     return out
 
 

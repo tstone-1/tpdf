@@ -959,6 +959,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A field added to a shared plan is read by one writer, and nothing says which
 - A guard checked after the surgery is a true sentence about the wrong document
 - A workflow step is the one source no local gate reads, and mine named a file that cannot exist
+- A `run:` line is not a `run:` step, and the emptiness control could not tell the difference
 - An emptiness control written as a threshold is a measurement of the platform it was written on
 - The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
 - Two nested `Result`s because the outer one is the pool
