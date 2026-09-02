@@ -85,21 +85,28 @@ struct RawPage {
     crop: Option<[f64; 4]>,
 }
 
-/// Quarter turns, reduced -- and the reduction is a **found defect being worked
-/// around**, not a modelling choice.
+/// The raw byte, unreduced -- and passing it through is the point.
 ///
-/// Unreduced, this generator's very first hour produced
-/// `attempt to add with overflow` at `save.rs:2628`, in
-/// `(page.turns + view % 4) % 4`: both operands are `u8`, `page.turns` is not
-/// reduced before the addition, and any value from 253 up overflows. In a
-/// release build there are no overflow checks, so the same input turns the page
-/// the wrong way instead of panicking.
+/// This generator's very first hour produced `attempt to add with overflow` in
+/// `(page.turns + view % 4) % 4`: both operands were `u8` and `page.turns` was
+/// not reduced before the addition, so any value from 253 up overflowed. The
+/// reduction lived **here** for a day, because libFuzzer stops on a crash and
+/// leaving it would have spent every future run re-finding one defect and
+/// reaching nothing behind it. That is a workaround in the instrument, which is
+/// the wrong side: what it hid is exactly the mismatch this target exists to
+/// put to `rewrite_update`.
 ///
-/// It is reduced here because libFuzzer stops on a crash: leaving it would spend
-/// every future run re-finding this one defect and reaching nothing behind it.
-/// **Delete the `% 4` to reproduce**, which is the whole of the repro.
+/// `save.rs` reduces both operands as of 2026-09-02, so the value goes through
+/// as it arrives and the run reaches the turns behind 253.
+///
+/// **One claim the old comment made was wrong, and it is why the defect read as
+/// worse than it was:** it said a release build "turns the page the wrong way
+/// instead of panicking". It does not. 256 is a multiple of 4, so a wrapping
+/// `u8` addition followed by `% 4` gives the true sum's remainder --- checked
+/// over all 1,024 pairs. The defect was a panic in every build with overflow
+/// checks on and a correct answer in every build without.
 fn turns_of(raw: u8) -> u8 {
-    raw % 4
+    raw
 }
 
 #[derive(Arbitrary, Debug)]

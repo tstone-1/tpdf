@@ -19,6 +19,36 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Fixed: a page turn outside the documented range panicked the rewrite
+
+`save::rewrite_update` composed the reader's view rotation onto each page as
+`page.turns + view % 4` --- both `u8`, neither reduced --- which overflows from 253 up.
+`PageView::turns` documents 0 to 3 and the model holds to it, normalising every rotation with
+`rem_euclid(4)`. But a plan reaches that function from *outside* this process: across the worker
+boundary, out of a restored session, against a file replaced under the reader. Refusing rather
+than trusting such a plan is what the function is for, so a documented range is a contract the
+caller may break and not a range this side may lean on. Both operands are reduced now.
+
+**The release build was never wrong, and saying so exactly is what keeps the fix from being
+oversold.** 256 is a multiple of 4, so wrapping and then taking `% 4` gives the true sum's
+remainder --- enumerated over all 1,024 pairs, zero disagreements. What was wrong is that every
+build with overflow checks on panicked instead of answering: `cargo test`, `cargo run`, and the
+worker under `tauri dev`. The print route's own composition at `print.rs:328` widens to `i16`
+first and was never at risk, which is two implementations of one composition with only one of
+them careful.
+
+**Found by the fuzzer in its first hour and then hidden by it.** libFuzzer stops on a crash, so
+`fuzz/fuzz_targets/save_rewrite_update.rs` reduced `turns` in its own generator to reach past
+this --- which took the plan-against-a-document mismatch that target exists to explore out of
+every later run. The generator passes the byte through again. The crash artifact is the A/B:
+against a binary built with the generator's reduction removed it panics at `save.rs:3034`, and
+against the same binary with this fix in place it does not, with the one line of `save.rs` as
+the only variable.
+
+Two existing mutations were aimed at the line this changed and are re-aimed with it --- neither
+had moved, and `check_mutation_anchors.py` is what said so. A third, new one restores the
+unreduced addition.
+
 ### Changed: `save.rs` is three files
 
 An outside review named the one maintainability finding against the crate: `save.rs` at 14,090

@@ -20442,6 +20442,37 @@ Start them serially, or give each its own target directory. The general form is 
 file for `cargo` generally; it is worth its own line here because a fuzzing run is *expected* to
 be quiet for an hour, which is the one situation where silence carries no information at all.
 
+### A generator that works around the defect it found stops looking behind it
+
+`fuzz/fuzz_targets/save_rewrite_update.rs` found `attempt to add with overflow` in its first
+hour, at `(page.turns + view % 4) % 4` in `save.rs`: both operands `u8`, `page.turns` never
+reduced, so any value from 253 up overflows. libFuzzer stops on a crash, so the target reduced
+the value in its own generator --- `turns_of(raw) { raw % 4 }` --- with a comment saying
+plainly that this was a workaround for a real defect.
+
+That is the wrong side of the boundary, and it took the target's whole subject out of every
+later run. A plan reaching `rewrite_update` from outside --- across the worker boundary, out of
+a restored session, against a file replaced under the reader --- is the mismatch that target
+exists to put to it, and its own header says so. Reducing `turns` in the generator removed
+exactly that dimension, permanently, in the one place written to explore it. A workaround in
+the code under test is a fix; a workaround in the instrument is a blind spot with a comment
+on it.
+
+**The claim that made leaving it look acceptable was never measured, and it is false.** The
+comment said a release build "turns the page the wrong way instead of panicking", so the defect
+read as a live wrong answer the harness was politely stepping around. It is not one: 256 is a
+multiple of 4, so a wrapping `u8` addition followed by `% 4` gives the true sum's remainder ---
+enumerated over all 1,024 pairs, zero disagreements. What the defect actually was is a panic in
+every build with overflow checks on (`cargo test`, `cargo run`, the worker under `tauri dev`)
+and a correct answer in every build without. Both halves point the same way: reduce in
+`save.rs`, restore the generator to identity.
+
+**And the artifact is why an untriaged crash file must be re-run under the code that found
+it.** `crash-732de3ab...` does not reproduce against any binary built after the workaround
+landed, so the obvious reading --- *stale, something fixed it* --- is available and wrong.
+Nothing had been fixed; the instrument had stopped asking. Deleting the `% 4` and rebuilding is
+what named `save.rs:3034` in one line of backtrace.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`

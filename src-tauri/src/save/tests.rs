@@ -1173,6 +1173,87 @@ fn a_turn_composes_with_the_rotation_the_page_already_had() {
     }
 }
 
+/// A plan whose turns are outside the documented 0-to-3 is reduced, not added
+/// to.
+///
+/// `rewrite_update` takes its plan from outside this process --- across the
+/// worker boundary, out of a restored session, against a file replaced under
+/// the reader --- so `PageView::turns` documenting 0 to 3 is a contract the
+/// caller may break rather than a range this side may lean on. Unreduced,
+/// `page.turns + view % 4` overflows `u8` from 253 up.
+///
+/// **The release build was never wrong**, which is why this test asserts the
+/// answer rather than merely surviving: 256 is a multiple of 4, so wrapping
+/// and then reducing gives the true sum's remainder. What was wrong is that
+/// every build with overflow checks on --- `cargo test`, `cargo run`, the
+/// worker under `tauri dev` --- panicked here instead of answering. Found by
+/// `fuzz/fuzz_targets/save_rewrite_update.rs`, which had to reduce the value
+/// in its own generator to reach anything behind this.
+///
+/// The two arms are 254 and 2, which are the same turn, against a control at
+/// the same turns with no view rotation --- without which a writer that
+/// ignored `turns` altogether would pass both.
+#[test]
+fn a_turn_past_the_documented_range_is_reduced_rather_than_added() {
+    let Some(path) = fixture("rotated.pdf") else {
+        println!("[SKIP] rotated.pdf not generated");
+        return;
+    };
+    let original = std::fs::read(&path).expect("read the fixture");
+    let before = Document::load_mem(&original).expect("load the fixture");
+    let count = ordered_pages(&before).len();
+
+    // 254 % 4 == 2, and the view adds 3: one quarter turn. The addition is
+    // 257, which is what overflows.
+    let out_of_range = rewrite_update(
+        &original,
+        &plan_of(&vec![254u8; count]),
+        Job::Print { view: 3 },
+        None,
+    )
+    .expect("a turn outside the range is reduced, not refused");
+    let in_range = rewrite_update(
+        &original,
+        &plan_of(&vec![2u8; count]),
+        Job::Print { view: 3 },
+        None,
+    )
+    .expect("the same turn, written the ordinary way");
+    let no_view = rewrite_update(&original, &plan_of(&vec![2u8; count]), Job::Save, None)
+        .expect("the control: the same turns with nothing added");
+
+    let wide = Document::load_mem(&out_of_range).expect("load the reduced rewrite");
+    let ordinary = Document::load_mem(&in_range).expect("load the ordinary rewrite");
+    let control = Document::load_mem(&no_view).expect("load the control");
+    let source_ids = ordered_pages(&before);
+    let wide_ids = ordered_pages(&wide);
+    let ordinary_ids = ordered_pages(&ordinary);
+    let control_ids = ordered_pages(&control);
+
+    for (at, from) in source_ids.iter().enumerate() {
+        let start = effective_rotation(&before, *from);
+        let reduced = effective_rotation(&wide, wide_ids[at]).rem_euclid(360);
+        assert_eq!(
+            reduced,
+            (start + 90).rem_euclid(360),
+            "page {at}: 254 turns plus a view of 3 is one quarter turn"
+        );
+        assert_eq!(
+            reduced,
+            effective_rotation(&ordinary, ordinary_ids[at]).rem_euclid(360),
+            "page {at}: 254 and 2 are the same turn and must write the same rotation"
+        );
+        // The control. Two turns with nothing added is 180, which differs
+        // from the 90 above --- so a writer that ignored the plan's turns, or
+        // ignored the view, cannot satisfy both assertions.
+        assert_eq!(
+            effective_rotation(&control, control_ids[at]).rem_euclid(360),
+            (start + 180).rem_euclid(360),
+            "page {at}: the control must differ, or the checks above say nothing"
+        );
+    }
+}
+
 /// A page nobody turned must come out byte-for-byte as it went in, and the
 /// interesting case is a page that *inherits* its rotation.
 ///
