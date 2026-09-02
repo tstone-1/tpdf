@@ -3153,6 +3153,26 @@ while three of the five carrier counts are identical is what agreement looks lik
 that is not fixed; a count would have said nothing here, which is the reason the paragraph
 above insists on a ratio. The cheap half ran in 2.5 s.
 
+**Measured on Windows 2026-09-02, the ratio travels and one carrier does not.** Release
+step 8's Windows half, which had never run: 109 documents and 8,940 regions of a real
+`%USERPROFILE%\Downloads` gave **68.1%** taken whole, against 67.7% and 66.9% on macOS ---
+three corpora, two platforms, 0.8 and 1.2 of a point apart. That is the ratio doing exactly
+what the paragraph above claims for it, over a sample three times the size and a document
+set with nothing in common with the Mac's.
+
+The carrier counts are the half that does not travel, and one of them is a finding rather
+than a corpus difference. Path 2,555, path-in-form 231, image-in-form 2, no page-level
+image, no shading --- all of that is a different pile of documents, and the counts are not
+comparable to the table above by construction. **Form-in-form is 169 (1.9% of all regions,
+5.9% of the refusals), where both macOS runs had 0.** The table above reads 8 then 0 for that
+carrier, which is the fix working; a reader arriving at it without this row would take the 0
+as the case being closed. It is not closed --- it is a *Not done* two sections up, where a
+nested form is reported and never followed --- and on a corpus of datasheets and supplier
+packets it is the third-largest carrier there is. **A zero on one corpus is not evidence of
+absence, and this one sat next to the number that made it look like a result.**
+
+The removal half is deterministic, so both runs of it printed the same figures; the gate
+half is below.
 **The first thing the run found is that every image refusal in the corpus was a form
 child**, and not one was a page-level picture --- so the carrier closed the day before
 really is closed, which no check here could otherwise have said. The second is the
@@ -3537,6 +3557,64 @@ regions to two populations, and both are now honestly reported: a control too sm
 Neither has a remedy that measurement supports, and the next one to try --- a different recogniser,
 or a control chosen for legibility rather than for size --- is a larger piece of work than a
 session. `docs/PLAN.md` §6's other open items are better value.
+
+#### The gate on Windows, and what two engines disagree about --- measured 2026-09-02
+
+Release step 8's Windows half, run for the first time. 109 documents, 8,940 regions,
+5,254 of them read back on 186 pages, 23.5 s with the gate on against 5.3 s without ---
+so the gate costs 4.4x here, where the macOS note in `BUILD.md` puts it at 40x. Windows
+OCR is simply much faster than Vision. Every bucket closes: the twelve causes plus zero
+run-refusals sum to 3,263 exactly, and no `[WARN]` printed.
+
+| | macOS, `--regions 40` | Windows, `--regions 40` |
+|---|---|---|
+| gate regions | 1,469 | **5,254** |
+| still reads as text | 79 (5.4%) | **0 (0.00%)** |
+| shown unreadable | 404 (27.50%) | **1,991 (37.89%)** |
+| could not be shown unreadable | 986 (67.1%) | 3,263 (62.11%) |
+
+**The Windows engine both certifies more and alarms less, and that is the direction a
+verification gate must not drift in.** *Still reads as text* is the verdict that says the
+removal left something readable; on macOS it is 4.7--6.4% and the section below calls it
+stable across all four densities, and here it is 0 of 5,254. At the same time *shown
+unreadable* --- the only verdict that certifies --- is ten points higher. Both figures move
+the same way: this engine says *proved clean* more often and *still readable* never.
+
+⚠ **Platform and corpus vary together here, so this run cannot say which one did it.** The
+Mac's `~/Downloads` and this box's share no document. A weaker recogniser and a corpus of
+cleaner, larger type produce the same two numbers, and nothing in these two runs separates
+them --- the trap of that name, arriving in the measurement that decides whether the gate
+can be trusted equally on both platforms. **The experiment that separates them is one
+corpus on both machines**, which is a fixture problem rather than a probe problem: the
+sweep needs real documents and neither corpus can travel. The cheap approximation is
+`testdata/`, which is synthetic and therefore exactly the population `win-ocr-probe`
+already covers and `docs/THREAT-MODEL.md` §20 says is not enough. Recorded as open.
+
+**Three axes read differently from the Mac's, and one reverses a documented argument.**
+
+*The scale rule clears its bound here.* Of 372 controls not read back, **332 rendered at or
+above `MIN_CONTROL_PX`** and 40 below, with the two clamps in `ocr_gate::scale_for`
+attributing every one of the 332 to *neither*. On 2026-08-28 the Mac read 34 of 38 *below*
+the floor. So on this corpus the failure is not the scale rule missing what it aims at ---
+it is the engine declining a control that was rendered legibly, which is a different
+problem with a different fix.
+
+*The under-2 pt bucket is empty.* The section below ranks that control as the next
+increment, on the strength of its being the one bucket absolute in every axis --- 24 of 24
+and 40 of 40 unread. Here it is **0 of 0**: every control in 109 documents landed in 2--6 pt
+(1,586) or 6--12 pt (782). The ranking is not wrong, but its subject does not occur in this
+corpus at all, so the increment would be unfalsifiable on this machine.
+
+⚠ *Token length reverses.* `BUILD.md`'s `redact-reach-probe` section carries a ⚠ paragraph
+arguing from the denominator that long tokens fail **less** --- 22.7% for eight-or-more
+against 33.3% for five-to-seven --- and concludes that moving `control_from_page` off the
+longest qualifying word would push the chooser toward the worse bucket. On Windows the rate
+climbs monotonically with length: **7.6%** at four characters, **10.9%** at five-to-seven,
+**23.6%** at eight-or-more. The two engines agree almost exactly on long tokens (23.6%
+against 22.7%) and disagree entirely on short ones, where Vision is three times worse. That
+paragraph's arithmetic is right and its conclusion is macOS-only; the repair it argues
+against is the right one here. **A rate argument is about the engine that produced it**, and
+this one had no platform label until now.
 
 #### Padding was built, measured and reverted --- 2026-08-28
 
@@ -12646,9 +12724,18 @@ Split, Merge and Print still parse here. The first four could take the same seam
 a copy's destination is chosen by the reader in a file dialog, so handing a worker
 a descriptor to a file it did not create is a decision that has not been made.
 Printing cannot use it at all --- its answer has to come back into this process to
-reach `NSPrintOperation`. And **Windows is wired and unmeasured**: the handle is
-duplicated into the child rather than `dup2`'d before `exec`, which is expected to
-work and has not been run.
+reach `NSPrintOperation`.
+
+⚠ **This paragraph ended with "Windows is wired and unmeasured ... has not been run"
+until 2026-09-02, and it had been false since 2026-09-01.** `worker-probe` became a step
+of both CI legs that day, and on run 33626718480 --- the current `main` --- the
+`windows-2025` leg reported **45/45 with 0 not applicable to this platform**, the
+handed-over handle exercised end to end and the negative control with it: *a worker with
+nowhere to write refuses to rewrite*. `AGENTS.md` was corrected when the step landed and
+this was not, so for a day the two documents gave different answers to one question, which
+is the failure `AGENTS.md`'s own quality-gates section names. The handle is still
+`DuplicateHandle`d into a suspended child rather than `dup2`'d before `exec` --- that half
+was never the doubt; what was unmeasured was whether it works, and it is measured now.
 
 #### Back and Forward grey when there is nowhere to go --- done 2026-08-23
 

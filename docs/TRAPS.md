@@ -5429,6 +5429,74 @@ is not something reading the code would have told you.
 reads, 174 unanswered and 68 of them the control --- every figure §6 recorded. That is what
 says the attribution work changed no verdict, which no new measurement could have said.
 
+### The engine that certifies a redaction is more permissive on one platform, and it both certifies more and alarms less
+
+2026-09-02, the first Windows run of `redact-reach-probe` with the gate on --- release step 8's
+Windows half, which had never been executed. 109 documents, 5,254 regions read back. Against the
+macOS reading at the same density:
+
+| | macOS | Windows |
+|---|---|---|
+| gate regions | 1,469 | 5,254 |
+| *still reads as text* | 79 (5.4%) | **0 (0.00%)** |
+| *shown unreadable* | 404 (27.50%) | **1,991 (37.89%)** |
+
+Both numbers move the same way, and that way is the wrong one. *Still reads as text* is the
+verdict that says a removal left something a reader could recover; on macOS it is 4.7--6.4% and
+`docs/PLAN.md` §6 calls it stable across all four densities, and here it is zero over five
+thousand regions. *Shown unreadable* is the only verdict that certifies, and it is ten points
+higher. **A recogniser that reads less certifies more.** For a gate whose entire purpose is to
+refuse to certify what it cannot prove, a weaker engine does not produce a weaker report --- it
+produces a more confident one, and the confidence is the defect.
+
+⚠ **This run cannot say whether the engine or the corpus did it, because they varied together.**
+The Mac's `~/Downloads` and the Windows box's share no document. A more permissive recogniser and
+a corpus of cleaner, larger type predict exactly these two numbers, and nothing in the pair of
+runs separates them. The experiment that would is one corpus on both machines, and that is a
+fixture problem rather than a probe problem: the sweep needs *real* documents, neither corpus can
+travel, and the synthetic stand-in is the population `win-ocr-probe` already covers and
+`docs/THREAT-MODEL.md` §20 says is not enough on its own.
+
+The general form, and it is not about OCR. **Wherever a check's verdict comes from a platform
+black box, the verdict is a property of that box, and the reassuring reading is the one to
+distrust.** A platform engine moves with the OS: a Windows Update or a macOS point release can
+change what it reads with nothing in this repository changing, which `ocr.rs`'s `EngineId` doc
+comment already says is why the gate insists on a control every time. What it did not say is that
+the *rates* are engine-scoped too, so every figure in §6 taken before this run was an unlabelled
+macOS figure.
+
+Related and distinct: *Two variables a corpus cannot separate* is one corpus where the geometry
+forces one property from another; this is two corpora where the platform and the population move
+together and only a shared corpus can pull them apart.
+
+### A rate argument carries the engine that produced it, and this one reversed on the other platform
+
+Same run, 2026-09-02. `BUILD.md`'s `redact-reach-probe` section carries a ⚠ paragraph that is
+itself a good lesson --- 29 of 33 unread controls drew eight characters or more, which reads as an
+indictment of `control_from_page` choosing the longest qualifying word until the denominator turns
+it into 29 of **128**, a rate of 22.7% against 33.3% for five-to-seven characters. Long tokens fail
+*less*, so the obvious repair moves the chooser toward the worse bucket. That paragraph closes with
+the right general rule and was written with no platform label on it.
+
+On Windows the rate climbs monotonically with length instead:
+
+| the control token drew | macOS | Windows |
+|---|---|---|
+| 4 characters | --- | 26 / 343 (7.6%) |
+| 5 to 7 characters | 33.3% | 113 / 1,039 (10.9%) |
+| 8 or more | 29 / 128 (22.7%) | 233 / 986 (**23.6%**) |
+
+The two engines agree almost exactly on the long bucket and disagree entirely on the short ones,
+where Vision is three times worse. So the arithmetic is right, the conclusion is macOS-only, and
+**on Windows the repair that paragraph argues against is the correct one.**
+
+The denominator rescued the argument from being wrong about its own platform; nothing rescued it
+from being read as a fact about the mechanism. **A rate produced by a black box is a fact about
+that box**, and an argument that ranks an increment on one is scoped to whichever engine was
+running when it was taken. The cheap habit is to write the platform into the sentence, not into
+the surrounding section --- the surrounding section here said macOS and the paragraph got quoted
+without it.
+
 ### A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault
 
 `ocr_gate::MIN_CONTROL_PX` is 16, documented as *"the shortest line the vendored Vision build

@@ -2731,6 +2731,16 @@ and the obvious repair moves the chooser toward the worse bucket. A count of fai
 by a property is never evidence about that property until the same bucketing is applied to the
 population.
 
+⚠ **That reading is macOS's, and Windows reverses it.** Measured 2026-09-02 over 109 documents
+and 372 unread controls, the rate climbs with token length rather than falling: 7.6% at four
+characters, 10.9% at five to seven, **23.6%** at eight or more. The two engines agree almost
+exactly on the long bucket --- 23.6% against Vision's 22.7% --- and disagree on the short ones,
+where Vision is three times worse. So the paragraph above is arithmetically right and its
+conclusion does not travel: on Windows the repair it argues against is the correct one. The
+denominator saved the argument from being wrong on macOS; what it could not supply is the
+platform label, and a rate is a fact about the engine that produced it. `docs/PLAN.md` §6 under
+*The gate on Windows* carries both columns.
+
 **A third axis prints under the same cause: what the engine had actually returned.**
 `ocr::Unread` rides on the verdict and carries how many spans came back for the whole probe
 image, how many fell in the control band, and how far outside the band the nearest span
@@ -5316,11 +5326,21 @@ starts at 0 and increments within the month.
    string, no filename beyond the stem. Record the result where this file's macOS numbers
    live, **labelled Windows**.
 
-   ⚠ **It has not run as of 2026-09-01.** That is the current state rather than an
-   instruction, and it is written as a state deliberately: a reader cannot otherwise tell an
-   unpaid debt from a paid one. **This is the one that cannot be moved to CI**, and the reason
-   is what the probe is for: it needs a corpus of *real* documents, which a hosted runner
-   has none of and must not be given.
+   **It ran for the first time on 2026-09-02**, and the reading is in `docs/PLAN.md` §6
+   under *The gate on Windows*. 109 documents, 8,940 regions, 5,254 read back: **68.1%**
+   taken whole, against 67.7% and 66.9% on macOS, so the ratio travels. The gate cost
+   **4.4x** the cheap half here (23.5 s against 5.3 s) rather than the 40x quoted for macOS
+   above --- that figure is Vision's, and Windows OCR is much faster. Every bucket closed
+   and no `[WARN]` printed. Three axes read differently from the Mac's and one of them
+   reverses the token-length argument in the ⚠ paragraph above; that paragraph now carries
+   the platform label it lacked.
+
+   **The state line stays, because the debt is now a different one.** The run separates
+   nothing: the two corpora share no document, so a more permissive engine and a corpus of
+   cleaner type explain the Windows figures equally well, and §6 records that as open.
+   **This is the one that cannot be moved to CI**, and the reason is what the probe is for:
+   it needs a corpus of *real* documents, which a hosted runner has none of and must not be
+   given.
 
    **`worker-probe` used to be listed here and is a CI step instead, since 2026-09-01.** The
    rewrite's output channel is `dup2` before `exec` on macOS and `DuplicateHandle` into a

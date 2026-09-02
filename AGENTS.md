@@ -312,8 +312,11 @@ reply read under `MAX_REPLY_BYTES`, so `verify::MAX_OBJECT_REASONS` bounds its p
 and counts the rest. The index has that second one too.
 
 **Windows is wired the same way and is measured**: `worker-probe` is a step of both CI legs,
-and it reported 34/34 with nothing skipped on run 33501693368 --- the count at that run;
-checks added since have not all been through a Windows leg.
+and it reported **45/45 with 0 not applicable to this platform** on run 33626718480, which is
+the current `main`. That supersedes the 34/34 recorded here from run 33501693368, and closes
+the caveat that stood beside it --- the checks added since have now been through a Windows leg.
+Read the count from the run rather than from this line: it is a fact about a build, and the
+sentence it sits in has been stale once already.
 
 **Since 2026-08-23 a reader can open a document behind a password.** Until then an encrypted
 PDF could be chosen from the file dialog and then not opened by any route --- `open_failure`
@@ -1038,6 +1041,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A message set before the operation that clears the message area is a message nobody sees
 - A frame-rate pass means nothing without a coverage number beside it
 - A rate whose sample size is also an input to the mechanism does not travel, and 40 regions a page is not a reader
+- The engine that certifies a redaction is more permissive on one platform, and it both certifies more and alarms less
+- A rate argument carries the engine that produced it, and this one reversed on the other platform
 - Interleaving controls for drift, not for what the last variant left behind
 - Three similarity metrics in a row, each unable to see its own failure
 - A timer that starts after the setup measures the wrong thing, and reports it
