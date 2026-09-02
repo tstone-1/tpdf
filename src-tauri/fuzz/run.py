@@ -183,6 +183,29 @@ RSS_LIMIT_MB = 2048
 # what it means everywhere else.
 RSS_LIMIT_OVERRIDE = {"lopdf_load": 6144, "save_rewrite_update": 6144}
 
+# The targets that cannot finish a run without forking, and why.
+#
+# libFuzzer stops at the **first** finding. That is the right default: a finding
+# is the point, and stopping puts it in front of you. It is the wrong default
+# for a target that reaches a defect **we cannot fix**, because the run then
+# ends at the same place every time and everything behind it is unreachable.
+#
+# Both of these reach `docs/THREAT-MODEL.md` residual risk 21 --- `lopdf`'s
+# cross-reference parser multiplies out the field widths a document declares in
+# `/W` and asks for the product, which aborts through `handle_alloc_error` where
+# no `catch_unwind` and no guard in tpdf's own code can sit. Measured 2026-09-02
+# on `lopdf_load`: **80,269 executions in 21 s** before it stopped, against
+# **380,803 in 96 s** forked, on the same corpus and the same binary. It had been
+# stopping like that since 2026-09-01, and nothing said so, because no campaign
+# had been run to completion since.
+#
+# In fork mode each input runs in a child, so an abort costs a child rather than
+# the run. Read what that changes under `verdicts`, below --- it is not free.
+MUST_FORK = {
+    "lopdf_load": "reaches residual risk 21 within seconds and stops there",
+    "encoding_scan": "the same abort, through its own entry point",
+}
+
 
 def environment() -> "dict[str, str]":
     """The build environment: one toolchain, and the link flag the build needs.
@@ -227,7 +250,22 @@ def binary(target: str) -> Path:
     return FUZZ / "target" / TRIPLE / "release" / target
 
 
-def run(target: str, seconds: int, background: bool) -> "subprocess.Popen | int":
+def artifacts_of(target: str) -> "set[str]":
+    """The artifact filenames this target has on disk right now.
+
+    **The verdict reads this rather than an exit code**, and that is the whole
+    reason it exists. In fork mode libFuzzer answers 0 for a run that finished,
+    findings and all, so an exit code stops meaning what it means everywhere
+    else in this repository. A file appearing in `artifacts/<target>/` means the
+    same thing in both modes.
+    """
+    directory = FUZZ / "artifacts" / target
+    return {entry.name for entry in directory.iterdir()} if directory.is_dir() else set()
+
+
+def run(
+    target: str, seconds: int, background: bool, fork: bool
+) -> "subprocess.Popen | int":
     length, _why = TARGETS[target]
     command = [
         str(binary(target)),
@@ -237,8 +275,13 @@ def run(target: str, seconds: int, background: bool) -> "subprocess.Popen | int"
         f"-timeout={TIMEOUT_S}",
         f"-rss_limit_mb={RSS_LIMIT_OVERRIDE.get(target, RSS_LIMIT_MB)}",
         "-print_final_stats=1",
-        str(FUZZ / "corpus" / target),
     ]
+    if fork or target in MUST_FORK:
+        # `-fork=1` runs each input in a child; `-ignore_crashes=1` is what makes
+        # the parent carry on rather than exiting with the child. Without the
+        # second flag the first is nearly pointless here.
+        command += ["-fork=1", "-ignore_crashes=1"]
+    command.append(str(FUZZ / "corpus" / target))
     (FUZZ / "artifacts" / target).mkdir(parents=True, exist_ok=True)
     print(f"[INFO] {' '.join(command)}")
     if not background:
@@ -263,6 +306,11 @@ def main() -> int:
     parser.add_argument("--all", action="store_true", help="every target")
     parser.add_argument("--list", action="store_true", help="the targets and their bounds")
     parser.add_argument("--build-only", action="store_true", help="build, do not run")
+    parser.add_argument(
+        "--fork",
+        action="store_true",
+        help="run every target forked, so a finding does not end the run",
+    )
     parser.add_argument(
         "--seconds", type=int, default=3600, help="wall time per target (default 3600)"
     )
@@ -309,9 +357,26 @@ def main() -> int:
         return 0
 
     if not args.background:
+        # **The same verdict as the background path, and it is a separate copy
+        # of nothing.** This branch is the common invocation --- a bare
+        # `--target <name>` lands here --- and when the artifact check was first
+        # written it covered only the branch below, so the one people actually
+        # run kept the exit code as its whole answer. `docs/TRAPS.md` has that
+        # shape as *a check bound to one caller covers only that caller*; here
+        # the interpreter said so, because `run` had grown an argument.
         worst = 0
         for name in chosen:
-            worst = max(worst, run(name, args.seconds, background=False))
+            before = artifacts_of(name)
+            code = run(name, args.seconds, background=False, fork=args.fork)
+            new_artifacts = sorted(artifacts_of(name) - before)
+            for artifact in new_artifacts:
+                print(f"[FAIL] new artifact: artifacts/{name}/{artifact}")
+            if new_artifacts:
+                print(
+                    "       triage it before believing anything else: BUILD.md, "
+                    "'Reading an artifact'"
+                )
+            worst = max(worst, code, 1 if new_artifacts else 0)
         return worst
 
     missing = [name for name in chosen if not binary(name).is_file()]
@@ -326,17 +391,37 @@ def main() -> int:
         )
         return 2
 
-    started = [(name, run(name, args.seconds, background=True)) for name in chosen]
+    # Snapshotted **before** anything starts, because the verdict below is a
+    # difference and not a count: `artifacts/` already holds files from earlier
+    # runs, and a run that finds nothing must not inherit them as its own.
+    before = {name: artifacts_of(name) for name in chosen}
+    started = [
+        (name, run(name, args.seconds, background=True, fork=args.fork))
+        for name in chosen
+    ]
     print(f"[OK] {len(started)} target(s) started; they stop after {args.seconds}s each")
     failed = 0
     for name, process in started:
         code = process.wait()
-        # libFuzzer exits non-zero on a finding, which is the outcome worth
-        # reporting loudly -- and also on a build or corpus error, so the log is
-        # what says which.
-        verdict = "[OK]" if code == 0 else "[FAIL]"
-        print(f"{verdict} {name}: exit {code}  (log: {LOGS / f'{name}.log'})")
-        failed += code != 0
+        new_artifacts = sorted(artifacts_of(name) - before[name])
+        # **Two observables, because neither covers the other.** A non-zero exit
+        # is a build error, a corpus that will not read, a bad flag -- and, in
+        # the default mode, a finding. A new artifact is a finding in *either*
+        # mode, and in fork mode it is the only sign of one: libFuzzer answers 0
+        # for a forked run that completed, however many children it buried. A
+        # harness that kept reading the exit code alone would report a target
+        # aborting every few minutes as permanently green, which is the failure
+        # shape `docs/TRAPS.md` collects from a dozen directions.
+        bad = code != 0 or bool(new_artifacts)
+        verdict = "[FAIL]" if bad else "[OK]"
+        forked = " forked" if (args.fork or name in MUST_FORK) else ""
+        print(f"{verdict} {name}{forked}: exit {code}  (log: {LOGS / f'{name}.log'})")
+        for artifact in new_artifacts:
+            print(f"       new artifact: artifacts/{name}/{artifact}")
+        if new_artifacts:
+            print("       triage it before believing anything else: BUILD.md, "
+                  "'Reading an artifact'")
+        failed += bad
     return 1 if failed else 0
 
 

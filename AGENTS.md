@@ -545,9 +545,15 @@ between `build` and it, reading the same sourcemaps for a different question.
 a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.3` turned both
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
-outside everything the list covers. `scripts/check_windows.py` closes it in about 8 s ---
+outside everything the list covers. `scripts/check_windows.py` closes it ---
 `cargo check --target x86_64-pc-windows-msvc --all-targets`, which does not link and so needs
-headers rather than a linker. **Deliberately not a gate**: it needs a 629 MB SDK splat a fresh
+headers rather than a linker. **It costs 1 s warm and over ten minutes cold**, measured
+2026-09-02 on the same tree an hour apart; this said "about 8 s" flat, which is the warm figure
+for the `check` alone and describes neither run anyone actually makes. The whole cost is
+building every dependency for a second target, so the number you get is decided by whether
+`target/x86_64-pc-windows-msvc/` already exists --- and a fresh checkout, which is the case the
+next sentence is about, always pays the cold one. Budget for it rather than being surprised by
+it: a ten-minute timeout on what a document calls an eight-second check reads as a hang. **Deliberately not a gate**: it needs a 629 MB SDK splat a fresh
 checkout does not have, and CI runs a real `windows-2025` runner, which is better evidence. Run
 it before pushing anything that touches a Windows-only file, and before a tag; `BUILD.md` step
 5 has the one-time setup and the reason the missing PDFium DLL reads as a broken checkout.
