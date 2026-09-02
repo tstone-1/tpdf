@@ -2856,6 +2856,48 @@ the **left** of the table --- the region counts (43 / 156 / 448 / 1,389) and the
 control-selection causes (1 / 8 / 106 / 850), neither of which any scale can touch. Those are
 the control over the harness; the verdict columns are the measurement.
 
+### `sanitize-rewrite`: does a collected rewrite sanitize without losing the document
+
+The instrument `docs/PLAN.md` Phase 3 states its exit criterion in terms of. It runs six
+routes over `testdata/hostile-*.pdf` --- a byte copy and a plain `lopdf` round trip as
+controls, then `lopdf`'s own collection, our mark-and-sweep, `qpdf`, and `qpdf` with object
+streams --- and checks each against `hostile-manifest.json`, which says per needle whether a
+rewrite is supposed to remove it, keep it, or be unable to decide.
+
+```
+python3 testdata/make_hostile_pdf.py testdata
+cargo run --manifest-path src-tauri/Cargo.toml --example sanitize-rewrite -- --strict
+```
+
+**`--strict` is not decoration, and the harness had none until 2026-09-02.** Without it every
+run exits 0: a leak, a dropped carrier, a fixture that does not contain its own needles, all
+printed and none of them fatal. A criterion nothing can refuse is not a criterion. What
+`--strict` asserts, and each part was proved able to fire by a control manifest rather than
+reasoned about:
+
+| assertion | control that makes it fail |
+|---|---|
+| no **collecting** route keeps a needle marked `removed` | declare a surviving carrier `removed` --- 4 failures |
+| no collecting route drops one marked `survives` | unlink the nested chain from the page --- 8 failures |
+| a fixture carrying `unverifiable` or `needs-ocr` never reports clean | declare a clean fixture `unverifiable` --- 4 failures |
+| the **non-collecting** routes leak something | a manifest of only-surviving fixtures --- 1 failure |
+| a run covered at least one fixture | `--only no-such-fixture` --- 1 failure |
+
+The fourth is the one worth understanding, because it is what makes the first three mean
+anything. Every collecting route reporting nothing is the same output whether the sweep works
+or the corpus hides nothing at all, and only `copy` and `lopdf` --- which are supposed to leak
+--- can tell those apart. On the real corpus they leak 14 carriers.
+
+**It is not a gate and cannot be one**, for the reason `scripts/ci_fixtures.py` already gives:
+the generator shells out to `qpdf`, which is not a build dependency and is on neither CI
+runner, so `hostile-manifest.json` does not exist on a fresh checkout or in CI. A gate that
+refuses on a precondition of running is red on every machine that is not running --- the same
+reasoning that put `redact-reach-probe` in the release checklist instead. Run it by hand after
+anything that touches `sweep.rs`, `verify.rs` or the rewrite.
+
+Last run 2026-09-02 on macOS arm64: **15 fixtures, exit 0**, no collecting route leaking or
+dropping, every unreadable file refusing certification, controls leaking 14.
+
 ### `encrypted-rewrite-probe`: does a rewrite keep an encrypted document's encryption
 
 `docs/PLAN.md` §5 said for months that letting a reader delete a page from an encrypted

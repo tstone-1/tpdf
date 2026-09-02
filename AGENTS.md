@@ -1094,6 +1094,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Two mechanisms for one rule, and it took two survivors to see it
 - Two mechanisms, one outcome, and deleting either one would have been the defect
 - A check no gate runs is a check nobody runs, and two commands shipped past it
+- A harness printed `[FAIL]` and exited 0, under a criterion that names it
 - A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships
 - A readings table outlived the code that produced it, and every document still agreed
 - An accounting observable nobody reads is the same as not having one

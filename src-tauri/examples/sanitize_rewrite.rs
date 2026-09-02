@@ -19,6 +19,15 @@
 //!
 //! Usage:
 //!     sanitize-rewrite [--manifest PATH] [--outdir DIR] [--only NAME] [--bench PATH]
+//!                      [--strict]
+//!
+//! `--strict` turns the table into a verdict and exits non-zero on a bad one.
+//! Without it this prints numbers and always succeeds, which is right for a
+//! spike being read and wrong for the thing `docs/PLAN.md` Phase 3 names as its
+//! exit criterion --- a criterion nothing can refuse is not one. What it asserts
+//! is in [`Findings`], and the half worth stating here is the control: the
+//! non-collecting routes have to leak, because a corpus in which nothing leaks
+//! anywhere makes every clean verdict a statement about an empty set.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -98,6 +107,13 @@ struct Route {
     name: &'static str,
     what: &'static str,
     run: fn(&Path, &Path) -> Result<String, String>,
+    /// Whether this route collects unreachable objects.
+    ///
+    /// The distinction is what makes `--strict` a check rather than a tally.
+    /// A collecting route that leaks has failed; `copy` and `lopdf` are
+    /// *supposed* to leak, and a run in which they did not would mean the
+    /// corpus is hiding nothing and every other verdict in it is vacuous.
+    collects: bool,
 }
 
 const ROUTES: &[Route] = &[
@@ -105,31 +121,37 @@ const ROUTES: &[Route] = &[
         name: "copy",
         what: "byte copy -- the control, which keeps everything",
         run: route_copy,
+        collects: false,
     },
     Route {
         name: "lopdf",
         what: "lopdf load + save, no collection",
         run: route_lopdf,
+        collects: false,
     },
     Route {
         name: "lopdf-gc",
         what: "lopdf load + prune_objects + renumber + save",
         run: route_lopdf_gc,
+        collects: true,
     },
     Route {
         name: "lopdf-mark",
         what: "lopdf load + our own mark-and-sweep + save",
         run: route_lopdf_mark,
+        collects: true,
     },
     Route {
         name: "qpdf",
         what: "qpdf in out",
         run: route_qpdf,
+        collects: true,
     },
     Route {
         name: "qpdf-objstm",
         what: "qpdf --object-streams=generate",
         run: route_qpdf_objstm,
+        collects: true,
     },
 ];
 
@@ -138,6 +160,39 @@ struct Args {
     outdir: PathBuf,
     only: Option<String>,
     bench: Option<PathBuf>,
+    /// Turn the table into a verdict, and exit non-zero when it is bad.
+    ///
+    /// Off by default because the table is what a person reading a spike wants.
+    /// `docs/PLAN.md` Phase 3's exit criterion is a claim about this corpus, and
+    /// a claim nothing can refuse is not a criterion -- so the criterion has a
+    /// switch that refuses.
+    strict: bool,
+}
+
+/// What one fixture's routes found, in the shape `--strict` rules on.
+#[derive(Default)]
+struct Findings {
+    /// The fixture proved it holds its own needles before any rewrite.
+    usable: bool,
+    /// A needle that had to go, still there after a *collecting* route.
+    leaked: Vec<String>,
+    /// A needle that had to stay, gone after a *collecting* route.
+    lost: Vec<String>,
+    /// A fixture whose carriers say nothing can read them, reported clean.
+    certified: Vec<String>,
+    /// Leaks the non-collecting routes found. The emptiness control: zero here
+    /// over the whole corpus means the fixtures hide nothing, and every clean
+    /// verdict above is then a statement about an empty set.
+    control_leaks: usize,
+}
+
+impl Findings {
+    fn absorb(&mut self, other: Findings) {
+        self.leaked.extend(other.leaked);
+        self.lost.extend(other.lost);
+        self.certified.extend(other.certified);
+        self.control_leaks += other.control_leaks;
+    }
 }
 
 fn main() -> ExitCode {
@@ -178,6 +233,7 @@ fn parse_args() -> Result<Args, String> {
         outdir: root.join("src-tauri/target/spike04"),
         only: None,
         bench: None,
+        strict: false,
     };
 
     let mut raw = std::env::args().skip(1);
@@ -188,6 +244,7 @@ fn parse_args() -> Result<Args, String> {
             "--outdir" => args.outdir = PathBuf::from(value()?),
             "--only" => args.only = Some(value()?),
             "--bench" => args.bench = Some(PathBuf::from(value()?)),
+            "--strict" => args.strict = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -220,13 +277,20 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
     }
 
     let mut vacuous = Vec::new();
+    let mut total = Findings::default();
+    let mut ran = 0usize;
     for fixture in &manifest.fixtures {
         if args.only.iter().any(|only| !fixture.file.contains(only)) {
             continue;
         }
         match fixture_report(pdfium, args, &corpus, fixture) {
-            Ok(true) => {}
-            Ok(false) => vacuous.push(fixture.file.clone()),
+            Ok(findings) => {
+                ran += 1;
+                if !findings.usable {
+                    vacuous.push(fixture.file.clone());
+                }
+                total.absorb(findings);
+            }
             Err(message) => return Err(format!("{}: {message}", fixture.file)),
         }
     }
@@ -242,18 +306,86 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
     if let Some(bench) = &args.bench {
         bench_report(args, bench)?;
     }
+
+    if args.strict {
+        return verdict(&total, &vacuous, ran);
+    }
     Ok(())
 }
 
-/// Runs every route over one fixture. Returns whether the fixture was usable.
+/// Rules on a whole run. `docs/PLAN.md` Phase 3's exit criterion, in four parts.
+///
+/// Each part is stated as what would have to be true for the run to prove
+/// nothing, because that is the failure this repository keeps finding: a check
+/// whose subject is empty reads exactly like a check that passed.
+fn verdict(total: &Findings, vacuous: &[String], ran: usize) -> Result<(), String> {
+    let mut failures = Vec::new();
+    println!("\n=== strict verdict over {ran} fixture(s) ===");
+
+    if ran == 0 {
+        failures.push("no fixture ran at all, so this run proved nothing".to_string());
+    }
+    for name in vacuous {
+        failures.push(format!("{name} does not contain its own needles"));
+    }
+    for line in &total.leaked {
+        failures.push(line.clone());
+    }
+    for line in &total.lost {
+        failures.push(line.clone());
+    }
+    for line in &total.certified {
+        failures.push(line.clone());
+    }
+    // The control, and it is the reason the four lines above can be believed.
+    // Every collecting route reporting nothing is the same output whether the
+    // sweep works or the corpus hides nothing at all; only the routes that do
+    // *not* collect can tell those apart, and they must find what the others
+    // removed. `--only` can select a fixture whose carriers all survive, so
+    // this is required of the whole corpus rather than of each run.
+    if ran > 1 && total.control_leaks == 0 {
+        failures.push(
+            "no non-collecting route leaked anything, so the corpus hid nothing ".to_string()
+                + "and every clean verdict above is about an empty set",
+        );
+    }
+
+    if failures.is_empty() {
+        println!("[OK]   no collecting route leaked or dropped a carrier,");
+        println!("[OK]   every file carrying something unreadable refused certification,");
+        println!(
+            "[OK]   and the control routes leaked {} carrier(s), so the corpus hides something",
+            total.control_leaks
+        );
+        return Ok(());
+    }
+    for line in &failures {
+        println!("[FAIL] {line}");
+    }
+    Err(format!(
+        "{} strict failure(s) over {ran} fixture(s)",
+        failures.len()
+    ))
+}
+
+/// Runs every route over one fixture, and reports what `--strict` rules on.
 fn fixture_report(
     pdfium: &Pdfium,
     args: &Args,
     corpus: &Path,
     fixture: &Fixture,
-) -> Result<bool, String> {
+) -> Result<Findings, String> {
     let input = corpus.join(&fixture.file);
     let needles: Vec<String> = fixture.carriers.iter().map(|c| c.needle.clone()).collect();
+    // A fixture carrying something no instrument here can read. Both of these
+    // expectations say so: `unverifiable` is a stream nothing decodes, and
+    // `needs-ocr` is a picture whose bytes were scanned and whose *picture* was
+    // not. Either one means a clean verdict would be a claim about bytes this
+    // build never read, which `docs/PLAN.md` §6 forbids.
+    let unreadable = fixture
+        .carriers
+        .iter()
+        .any(|c| c.expect == "unverifiable" || c.expect == "needs-ocr");
 
     println!("\n=== {} ===", fixture.file);
     for carrier in &fixture.carriers {
@@ -284,7 +416,10 @@ fn fixture_report(
             }
         }
     }
-    let usable = unfound.is_empty();
+    let mut findings = Findings {
+        usable: unfound.is_empty(),
+        ..Default::default()
+    };
 
     let baseline = render(pdfium, &input, RENDER_SCALE).ok();
     if baseline.is_none() {
@@ -365,6 +500,34 @@ fn fixture_report(
             dropped.len(),
             pixels,
         );
+        // Recorded from the vectors rather than from `verdict`, because a route
+        // can be both unverifiable and leaking and the verdict shows only the
+        // first. Attributed to the route, since that is what the verdict below
+        // distinguishes: a control that leaks is the corpus working.
+        if route.collects {
+            for leak in &leaks {
+                findings
+                    .leaked
+                    .push(format!("{}: {} kept {leak}", fixture.file, route.name));
+            }
+            for loss in &dropped {
+                findings
+                    .lost
+                    .push(format!("{}: {} dropped {loss}", fixture.file, route.name));
+            }
+            // The other half of Phase 3's criterion, and the half a leak count
+            // cannot express: a carrier nobody can read must make the file
+            // *refuse* certification. A clean verdict on one is the failure the
+            // whole redaction subsystem is built to avoid.
+            if unreadable && after.blind.is_empty() && after.deferred.is_empty() {
+                findings.certified.push(format!(
+                    "{}: {} reported clean, and this file carries something nothing can read",
+                    fixture.file, route.name
+                ));
+            }
+        } else {
+            findings.control_leaks += leaks.len();
+        }
         // A carrier nothing can read must produce "not verified". If the verifier
         // instead announces a verdict on it, the verifier is the thing that is
         // broken -- which is how spike 0.3's leak scanner passed a document that
@@ -426,7 +589,7 @@ fn fixture_report(
         }
     }
 
-    Ok(usable)
+    Ok(findings)
 }
 
 /// Times each route on one large document, to expose cost that a corpus of
