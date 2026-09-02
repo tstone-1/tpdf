@@ -4960,6 +4960,7 @@ starts at 0 and increments within the month.
    scripts/mutate_rust.py          # the modules in FILTERS, `cargo test --lib`
    scripts/mutate_frontend.py      # the modules under src/lib, `vitest`
    scripts/mutate_viewer.py        # every runner below, in one pass
+   scripts/mutate_python.py        # the gates themselves, ~30 s for the table
 
    # What each costs, measured 2026-08-21 when 26.8.7 was cut. Scale by the
    # PER-MUTATION figure, never by the total -- the totals move whenever
