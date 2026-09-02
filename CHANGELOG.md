@@ -19,6 +19,50 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Added: the three document classes Phase 3 names and had no fixture for
+
+`docs/PLAN.md` Phase 3's exit criterion lists seven kinds of nasty document. Four had
+fixtures. `hostile-nested-form.pdf`, `hostile-ocg.pdf` and `hostile-structure.pdf` are the
+other three: a form inside a form inside a form with only the outer one named by the page;
+page text inside an optional content group whose default state is OFF, with a second needle
+in the group's own `/Name`, reachable only through the catalog's `/OCProperties`; and the
+page's words repeated in `/ActualText` and `/Alt` on a structure element off
+`/StructTreeRoot`, which the page tree never leads to.
+
+All six carriers are reachable and must **survive**, which is the direction the corpus was
+thinnest in: eleven fixtures, and every needle that discriminated anything was one a sweep had
+to *remove*. What these catch is the opposite failure --- a sweep that is not transitive
+removes document content and calls it sanitation. Proved by control: unlinking the nested
+chain from the page makes all three collecting routes drop both carriers and report
+`clean, lossy`.
+
+### Fixed: the harness that owns Phase 3's exit criterion could not fail
+
+`sanitize-rewrite` printed `LEAKS`, printed `clean, lossy`, printed `[FAIL] these fixtures
+could not be shown to contain their own needles` --- and exited 0 for all three. It is in no
+gate and no workflow, and `BUILD.md` mentioned it only in a dependency table. A criterion
+nothing can refuse is not a criterion.
+
+`--strict` turns the table into a verdict. It asserts that no *collecting* route keeps a
+needle marked `removed` or drops one marked `survives`, that a fixture carrying something
+unreadable never reports clean, and that at least one fixture ran. The fourth assertion is
+what makes the others mean anything and is the one a tally would have missed: the
+**non-collecting** routes must leak, because every collecting route reporting nothing is the
+same output whether the sweep works or the corpus hides nothing at all. On the real corpus
+they leak 14 carriers.
+
+Each of the five failure paths was proved able to fire by a control manifest rather than
+reasoned about --- declare a surviving carrier `removed` (4 failures), unlink the nested chain
+(8), declare a clean fixture `unverifiable` (4), select only fixtures whose carriers all
+survive (1), select no fixture at all (1). The real corpus: 15 fixtures, exit 0.
+
+**It is not a gate and cannot be one.** The generator shells out to `qpdf`, which is not a
+build dependency and is on neither CI runner, so `hostile-manifest.json` exists on no fresh
+checkout --- the same reasoning that put `redact-reach-probe` in the release checklist. It is
+documented in `BUILD.md` with its invocation and its controls, to be run after anything that
+touches `sweep.rs`, `verify.rs` or the rewrite.
+
+
 ### Fixed: a page turn outside the documented range panicked the rewrite
 
 `save::rewrite_update` composed the reader's view rotation onto each page as

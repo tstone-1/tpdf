@@ -12297,6 +12297,42 @@ number only ever compared against the reading before it is invisible; and an ass
 the resting count of `pointercancel` is **zero**, or the comparison is two identical non-zero
 numbers agreeing for a reason that has nothing to do with the pan.
 
+### A harness printed `[FAIL]` and exited 0, under a criterion that names it
+
+`docs/PLAN.md` Phase 3 states its exit criterion in terms of one harness: verification passes
+over a hostile corpus and refuses to certify what it cannot decode. That harness,
+`sanitize-rewrite`, had three findings it could report --- a leak, a dropped carrier, and a
+fixture that does not contain its own needles --- and **all three printed and exited 0**. The
+last one printed the literal characters `[FAIL]`. Nothing in any gate or workflow ran it, so
+no exit code was being read either.
+
+That is worse than an unchecked property, and the reason is what a reader does: a run is
+scanned for `FAIL`, a clean one has none, and a bad one's `[FAIL]` is four lines up a
+sixty-line table under a command that succeeded. The criterion in the plan reads as satisfied
+because the instrument it names has never once complained.
+
+**The fix is a verdict, and the part worth copying is the fourth assertion.** Three of them
+are obvious --- no collecting route may keep what must go, drop what must stay, or certify a
+file carrying something nothing can read. The fourth is the emptiness control: the routes that
+do **not** collect must leak. Every collecting route reporting nothing is byte-for-byte the
+same output whether the sweep works or the corpus hides nothing at all, and only the control
+routes separate those. Without it a manifest of harmless fixtures passes exactly like a
+working sweep.
+
+**And the corpus had a direction, which is the second half of the same defect.** Eleven
+fixtures, and every needle that discriminated anything was one a sweep had to *remove*. A
+sweep that removed too much --- one that was not transitive, so a form nested inside a form
+was collected along with the page's own content --- had nothing in the corpus to catch it, and
+the file it produced still renders correctly, because the outer form is what the page draws.
+Three fixtures whose carriers must **survive** close it. Same shape as *An over-removal
+control cannot be proved by a mutation that under-removes*, one level up: there it is a
+mutation's direction, here it is a whole corpus's.
+
+Every one of the five failure paths was then proved by a control manifest --- declare a
+surviving carrier `removed`, unlink the nested chain, declare a clean fixture `unverifiable`,
+select only fixtures that survive, select none --- because a verdict written and never seen to
+refuse is the thing this entry is about.
+
 ### A check no gate runs is a check nobody runs, and two commands shipped past it
 
 `viewercheck.ts` asserts something no other instrument here does:

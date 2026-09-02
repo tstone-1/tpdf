@@ -27,6 +27,16 @@ spike claim otherwise.
   unused-form   A Form XObject listed in /Resources but never invoked. Reachable,
                 so it survives -- finding this one needs content analysis, not a
                 graph walk.
+  nested-form   A form inside a form inside a form, where only the outer one is
+                named by the page. Both inner needles survive, so a sweep that
+                is not transitive loses document content and calls it
+                sanitation.
+  ocg           Page text inside an optional content group whose default state
+                is OFF, plus a needle in the group's own /Name -- a string in a
+                dictionary reachable only through the catalog's /OCProperties.
+                Nothing draws either, and both are still in the file.
+  structure     The page's words again in /ActualText and /Alt on a structure
+                element off /StructTreeRoot, which the page tree never leads to.
   bomb          A reachable stream that inflates to 1 GiB, with a needle at the
                 very end. Nothing can decode it under a sane bound, so a verifier
                 must report *not verified* rather than clean.
@@ -37,9 +47,16 @@ spike claim otherwise.
                 it opens in any reader without a prompt. Encryption is the case
                 PLAN.md §6 names as a hard verification failure.
 
+The last three close `docs/PLAN.md` Phase 3's named document classes: nested
+XObjects, hidden OCG content and structure-tree duplicates. Every one of their
+carriers is reachable, so they all say `survives` -- which is the direction the
+corpus was thinnest in, since the failure they catch is a sweep that removes
+document content rather than one that keeps a leak.
+
 Writes `hostile-manifest.json` next to the fixtures, giving each needle and
 whether a GC'd rewrite is expected to remove it. The Rust harness reads that
-rather than hardcoding expectations.
+rather than hardcoding expectations, and `sanitize-rewrite --strict` turns it
+into a verdict that can exit non-zero.
 
 The output is gitignored. Usage:
     python3 testdata/make_hostile_pdf.py [outdir]
@@ -544,6 +561,159 @@ def build_unused_form(path: str) -> "list[dict]":
     return [carrier(text, "Form XObject in /Resources that nothing invokes", "survives")]
 
 
+def build_nested_form(path: str) -> "list[dict]":
+    """Carriers reachable only *through* another object, two and three deep.
+
+    `hostile-unused-form` puts a form one reference from the page. This puts one
+    inside another, and a third inside that, because a sweep that follows only
+    the page's own `/Resources` keeps the first and drops the rest --- and the
+    result of dropping them is a file that still renders correctly, since the
+    outer form is what the page draws. `docs/PLAN.md` Phase 3 names nested
+    XObjects for this reason.
+
+    Both carriers are reachable, so both must survive. The corpus already has
+    four fixtures whose needles must be *removed*, so the direction that is
+    missing is this one: a sweep that is not transitive loses document content
+    and calls it sanitation.
+    """
+    drawn = needle("nesteddrawn")
+    deep = needle("nesteddeep")
+    pdf = Pdf()
+    outer = pdf.reserve()
+    inner = pdf.reserve()
+    deepest = pdf.reserve()
+    catalog, _, font = skeleton(
+        pdf,
+        visible_content(
+            "nested-form",
+            ("A form inside a form inside a form. Only the outer one is named",
+             "by the page, and every level below it is document content."),
+        )
+        + "q 1 0 0 1 60 560 cm /Fx1 Do Q\n",
+        resources=b" /XObject << /Fx1 %d 0 R >>" % outer,
+    )
+    # Depth 1: named by the page, invokes the next level down.
+    pdf.put(
+        outer,
+        stream_body(
+            b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 40]"
+            b" /Resources << /XObject << /Fy1 %d 0 R >> >> >>" % inner,
+            b"q 1 0 0 1 0 0 cm /Fy1 Do Q",
+        ),
+    )
+    # Depth 2: drawn, and reachable from nothing the page names directly.
+    pdf.put(
+        inner,
+        stream_body(
+            b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 40]"
+            b" /Resources << /Font << /F1 %d 0 R >> /XObject << /Fz1 %d 0 R >> >> >>"
+            % (font, deepest),
+            ("BT /F1 12 Tf 0 10 Td (%s) Tj ET" % drawn).encode("latin-1"),
+        ),
+    )
+    # Depth 3: listed by the level above and never invoked -- the shape of
+    # `unused-form`, moved two references further from the page.
+    pdf.put(
+        deepest,
+        stream_body(
+            b"<< /Type /XObject /Subtype /Form /BBox [0 0 400 40]"
+            b" /Resources << /Font << /F1 %d 0 R >> >> >>" % font,
+            ("BT /F1 12 Tf 0 0 Td (%s) Tj ET" % deep).encode("latin-1"),
+        ),
+    )
+    write(path, pdf.serialize(catalog))
+    return [
+        carrier(drawn, "Form XObject invoked from inside another form", "survives"),
+        carrier(
+            deep,
+            "Form XObject in a nested form's /Resources, three references from the page",
+            "survives",
+        ),
+    ]
+
+
+def build_ocg(path: str) -> "list[dict]":
+    """Text on the page that no reader draws, because its layer is off.
+
+    The words are in the content stream exactly like any others; what differs is
+    a `/OC` marked-content section naming an optional content group whose default
+    state is OFF. A verifier that decided what a file contains by looking at what
+    a renderer *draws* would report this page as not holding these words, which
+    is the failure `docs/PLAN.md` Phase 3 names as hidden OCG content.
+
+    The second carrier is in the group's own `/Name`, which is a string in a
+    dictionary reachable only through the catalog's `/OCProperties` --- neither a
+    stream nor anything the page tree leads to.
+    """
+    hidden = needle("ocghidden")
+    named = needle("ocgname")
+    pdf = Pdf()
+    group = pdf.reserve()
+    catalog, _, _ = skeleton(
+        pdf,
+        visible_content(
+            "ocg",
+            ("The line below this one is in an optional content group whose",
+             "default state is OFF, so no reader draws it. It is still here."),
+        )
+        + "/OC /MC0 BDC\n"
+        + "BT /F1 11 Tf 60 560 Td (%s) Tj ET\n" % escape(hidden).decode("latin-1")
+        + "EMC\n",
+        resources=b" /Properties << /MC0 %d 0 R >>" % group,
+        catalog_extra=b" /OCProperties << /OCGs [%d 0 R] /D << /BaseState /ON"
+        b" /OFF [%d 0 R] >> >>" % (group, group),
+    )
+    pdf.put(
+        group,
+        b"<< /Type /OCG /Name (%s) >>" % escape(named),
+    )
+    write(path, pdf.serialize(catalog))
+    return [
+        carrier(hidden, "page content inside an optional content group that is off", "survives"),
+        carrier(named, "the /Name string of an OCG, reached only through /OCProperties", "survives"),
+    ]
+
+
+def build_structure(path: str) -> "list[dict]":
+    """The page's words repeated in the tagged structure tree.
+
+    `/ActualText` and `/Alt` are what a screen reader is given when the glyphs
+    will not do, so they are a second copy of the text sitting in a dictionary
+    the page tree never leads to --- `/StructTreeRoot` hangs off the catalog.
+    A rewrite that walked pages would drop them, and a redaction that cleared
+    only the content stream would leave them, which is why `redact.rs` names all
+    three of `/ActualText`, `/Alt` and `/E`. Nothing generated exercised that
+    until this fixture: the module's own tests build their structure tree in
+    Rust, so the loader was never in the loop.
+    """
+    shadow = needle("actualtext")
+    alt = needle("altstruct")
+    pdf = Pdf()
+    root = pdf.reserve()
+    element = pdf.reserve()
+    catalog, _, _ = skeleton(
+        pdf,
+        visible_content(
+            "structure",
+            ("This page is tagged, and the tag carries its own copy of the text",
+             "in /ActualText and /Alt.",),
+        ),
+        page_extra=b" /StructParents 0",
+        catalog_extra=b" /StructTreeRoot %d 0 R" % root,
+    )
+    pdf.put(root, b"<< /Type /StructTreeRoot /K [%d 0 R] >>" % element)
+    pdf.put(
+        element,
+        b"<< /Type /StructElem /S /P /P %d 0 R /ActualText (%s) /Alt (%s) /K 0 >>"
+        % (root, escape(shadow), escape(alt)),
+    )
+    write(path, pdf.serialize(catalog))
+    return [
+        carrier(shadow, "/ActualText on a structure element off the catalog", "survives"),
+        carrier(alt, "/Alt on the same structure element", "survives"),
+    ]
+
+
 def build_bomb(path: str) -> "list[dict]":
     """A reachable stream that inflates to a gigabyte, with a needle at the end."""
     text = needle("bomb")
@@ -820,6 +990,9 @@ BUILDERS = {
     "hostile-attachment.pdf": build_attachment,
     "hostile-metadata.pdf": build_metadata,
     "hostile-unused-form.pdf": build_unused_form,
+    "hostile-nested-form.pdf": build_nested_form,
+    "hostile-ocg.pdf": build_ocg,
+    "hostile-structure.pdf": build_structure,
     "hostile-bomb.pdf": build_bomb,
     "hostile-filters.pdf": build_filters,
     "hostile-scan.pdf": build_scan,

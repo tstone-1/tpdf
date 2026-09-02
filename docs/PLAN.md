@@ -12857,6 +12857,32 @@ nested XObjects, shared resources, invisible OCR layers, structure-tree duplicat
 OCG content, embedded attachments, prior incremental revisions — and correctly *refuses to
 certify* the ones it cannot fully decode.
 
+**Every class it names now has a fixture, as of 2026-09-02, and the criterion can now
+fail.** Three of the seven had none: nested XObjects, hidden OCG content and structure-tree
+duplicates. `hostile-nested-form.pdf` puts a form inside a form inside a form with only the
+outer one named by the page; `hostile-ocg.pdf` draws text inside an optional content group
+whose default state is OFF and hides a second needle in the group's own `/Name`, reachable
+only through the catalog's `/OCProperties`; `hostile-structure.pdf` repeats the page's words
+in `/ActualText` and `/Alt` on a structure element off `/StructTreeRoot`, which the page tree
+never leads to. All six carriers are reachable and must **survive**, which is the direction
+the corpus was thinnest in --- eleven fixtures and every one of its discriminating needles
+was something a sweep had to *remove*.
+
+**The instrument could not fail, which mattered more than the missing fixtures.**
+`sanitize-rewrite` printed `LEAKS`, `clean, lossy` and `[FAIL] these fixtures could not be
+shown to contain their own needles` and exited 0 for all three, and nothing runs it. It has
+a `--strict` verdict now, and `BUILD.md`'s section for it carries what that asserts together
+with the control manifest that proves each part can fire. On the real corpus: 15 fixtures,
+exit 0, controls leaking 14.
+
+**Not done:** the criterion is stated over *verification*, and `verify::scan` walks every
+object rather than the page tree --- so nesting is invisible to it by construction and these
+three fixtures exercise the **sweep**, not the scan. What no fixture yet reaches is the
+redaction path's own handling of them: `redact.rs` names `/ActualText`, `/Alt` and `/E` and
+reads `/OC` marked content, and every test for that builds its structure tree in Rust, so the
+loader has never been in the loop. That is `redact-probe`'s corpus rather than this one, and
+it is the next increment here.
+
 ### Phase 4 — Forms and visual signatures
 
 AcroForm filling with saved state, appearance stream regeneration, field inheritance,
