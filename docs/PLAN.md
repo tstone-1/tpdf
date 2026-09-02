@@ -3144,6 +3144,15 @@ control so nothing but the two edited files differs:
 | ...a form inside a form | 8 | 0 |
 | ...a shading | 1 | 1 |
 
+**Re-run 2026-09-02 and it reproduces**, which is the only thing that keeps a dated figure
+worth its date. 41 documents and 2,973 regions --- the corpus is a real `~/Downloads` and had
+gained one document --- gave **67.7%** taken whole against the 66.9% above, with the carrier
+breakdown almost unchanged: path 566 against 564, path-in-form 94 against 94, picture-in-form
+350 against 350, shading 1 against 1, and no form-in-form. The ratio moving 0.8 of a point
+while three of the five carrier counts are identical is what agreement looks like on a corpus
+that is not fixed; a count would have said nothing here, which is the reason the paragraph
+above insists on a ratio. The cheap half ran in 2.5 s.
+
 **The first thing the run found is that every image refusal in the corpus was a form
 child**, and not one was a page-level picture --- so the carrier closed the day before
 really is closed, which no check here could otherwise have said. The second is the
