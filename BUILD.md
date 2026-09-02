@@ -383,6 +383,17 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 # Python with no system font -- so those sections run there.
 #
 #   macOS arm64, 2026-08-27   48 checks, 0 failures
+#   Windows x64, 2026-09-02   52 checks, 0 failures, 0 skipped
+#
+# The count moved 48 -> 52 on 2026-09-02, when the structure-element section
+# gained `/Alt` and `/E` beside its `/ActualText` pair. `redact.rs`'s SHADOW_TEXT
+# names all three keys and only the first had a fixture any redaction probe
+# opened, so the other two were exercised by hand-built Rust dictionaries alone
+# and the loader had never produced them. Proved by A/B rather than asserted:
+# truncating SHADOW_TEXT to `[b"ActualText"]` leaves the STRUCT-CARRIER check
+# GREEN and turns exactly the two new ones red.
+#
+# The macOS line above predates those four checks and has not been re-run.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-probe
 
 # --survey answers the one question that decides whether the feature works on

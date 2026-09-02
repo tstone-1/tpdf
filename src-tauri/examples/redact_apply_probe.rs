@@ -58,6 +58,27 @@ const STRUCT_ANCESTOR: &str = "STRUCT-ANCESTOR";
 /// In the element owning a line nobody redacted. Must stay --- a rule that
 /// stripped the whole tree would pass both checks above.
 const STRUCT_OTHER: &str = "STRUCT-OTHER";
+/// `/Alt` and `/E` on the same two elements, added 2026-09-02.
+///
+/// `redact.rs`'s `SHADOW_TEXT` is `/ActualText`, `/Alt` and `/E`, and until this
+/// pair existed **only the first had a fixture any redaction probe opened**. The
+/// other two were exercised by hand-built Rust dictionaries alone, so the loader
+/// had never once produced them --- the gap `docs/PLAN.md` Phase 3 names, and the
+/// reason the array could have lost two thirds of its entries with nothing here
+/// going red.
+///
+/// The names deliberately do not begin with `STRUCT-CARRIER` or `STRUCT-OTHER`.
+/// `verify::scan` matches by substring, so a marker named `STRUCT-CARRIER-ALT`
+/// would keep the `STRUCT-CARRIER` assertion green by surviving --- *a check name
+/// that is a prefix of another cannot be aimed at*, which `docs/TRAPS.md` already
+/// records from a different direction.
+const STRUCT_ALT_GONE: &str = "STRUCT-ALT-GONE";
+/// `/E` on the element owning the redacted line's `/MCID`. Must go.
+const STRUCT_E_GONE: &str = "STRUCT-E-GONE";
+/// `/Alt` on the element for the untouched line. Must stay.
+const STRUCT_ALT_KEPT: &str = "STRUCT-ALT-KEPT";
+/// `/E` on the element for the untouched line. Must stay.
+const STRUCT_E_KEPT: &str = "STRUCT-E-KEPT";
 /// The outline entry before the carrier. Must stay --- and it is the one that
 /// catches a removal that drops the object without splicing the chain, since
 /// that leaves it with no `/Next` and the entry after it unreachable.
@@ -345,6 +366,10 @@ fn annotations(
         STRUCT_OVER.to_string(),
         STRUCT_ANCESTOR.to_string(),
         STRUCT_OTHER.to_string(),
+        STRUCT_ALT_GONE.to_string(),
+        STRUCT_E_GONE.to_string(),
+        STRUCT_ALT_KEPT.to_string(),
+        STRUCT_E_KEPT.to_string(),
         INFO_MARKER.to_string(),
         FIELD_CARRIER.to_string(),
         FIELD_WIDGET.to_string(),
@@ -389,6 +414,25 @@ fn annotations(
     ok &= check(
         &format!("and the element for the untouched line is not ({STRUCT_OTHER})"),
         report.found.contains(STRUCT_OTHER),
+    );
+    // The other two thirds of `SHADOW_TEXT`, in both directions. `/ActualText`
+    // above could pass on its own with `/Alt` and `/E` never read at all, which
+    // is what it did until this fixture carried them.
+    ok &= check(
+        &format!("its /Alt went with it ({STRUCT_ALT_GONE})"),
+        !report.found.contains(STRUCT_ALT_GONE),
+    );
+    ok &= check(
+        &format!("and its /E ({STRUCT_E_GONE})"),
+        !report.found.contains(STRUCT_E_GONE),
+    );
+    ok &= check(
+        &format!("while the untouched line keeps its /Alt ({STRUCT_ALT_KEPT})"),
+        report.found.contains(STRUCT_ALT_KEPT),
+    );
+    ok &= check(
+        &format!("and its /E ({STRUCT_E_KEPT})"),
+        report.found.contains(STRUCT_E_KEPT),
     );
     ok &= check(
         &format!("the document's own description of itself is gone ({INFO_MARKER})"),

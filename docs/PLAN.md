@@ -12999,6 +12999,39 @@ What is genuinely uncovered is narrower and was measured rather than reasoned ab
 
 That is `redact-probe`'s corpus rather than this one, and it is the next increment here.
 
+**Two of those three are closed --- 2026-09-02.** Both were the same defect wearing two
+hats: `text-marked.pdf` is the one fixture a redaction probe opens that has a real
+structure tree, and it was built in the shape that exercised the least code.
+
+* **`/Alt` and `/E` now exist on a linked structure element.** The carrier element carries
+  `STRUCT-ALT-GONE` and `STRUCT-E-GONE`, the untouched line's element carries
+  `STRUCT-ALT-KEPT` and `STRUCT-E-KEPT`, and `redact-apply-probe` asserts all four --- 48
+  checks to 52. **The A/B is what makes this worth the space**: truncating `SHADOW_TEXT` to
+  `[b"ActualText"]` leaves the existing `STRUCT-CARRIER` check **green** and turns exactly
+  the two new ones red. So the probe had been blind to two thirds of that array, and the
+  half that was covered could not see it. The names deliberately avoid `STRUCT-CARRIER-ALT`:
+  `verify::scan` matches by substring, and a marker with the old one as a prefix would have
+  kept the old assertion green by surviving.
+* **The parent tree is balanced now, so `/Kids` is walked through the loader.** The root
+  holds no `/Nums` at all. Its first kid is a trap --- `/Limits [5 9]` while its `/Nums`
+  claims key 0 and maps it to the *wrong* element --- which is what gives `/Limits` a
+  failing case: on a well-formed tree, skipping a subtree whose range excludes the key finds
+  the same element as searching it would, so the skip is an optimisation and only a document
+  that disagrees with itself can tell the two apart. A new unit test asserts the fixture's
+  shape before it asserts the lookup, so it cannot pass on the flat tree it replaced, and
+  two mutations are aimed at it: slipping `||` to `&&` in the limits comparison, and never
+  descending `/Kids` at all. Both caught.
+
+**`/OC` marked content is the one left, and it is a different piece of work.**
+`hostile-ocg.pdf` draws its needle inside `/OC /MC0 BDC`, where `/MC0` is a **name** into
+the page's `/Properties` --- so it is the shared-property-list branch of the marked-content
+handler, reached with a real OCG dictionary rather than the hand-built one the unit tests
+use. What has not been measured, and decides how the case can be built at all, is whether
+PDFium's text extraction returns glyphs inside an optional content group whose default
+state is OFF. If it does not, the region cannot be located the way every other case here
+locates one, and the finding is larger than the fixture: a redaction flow that finds words
+through PDFium cannot offer to remove text a reader cannot see.
+
 ### Phase 4 — Forms and visual signatures
 
 AcroForm filling with saved state, appearance stream regeneration, field inheritance,

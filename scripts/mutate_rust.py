@@ -1532,6 +1532,29 @@ MUTATIONS = [
         "every_shadow_text_key_goes_not_just_the_famous_one",
     ),
     Mutation(
+        # Slip the comparison so no subtree is ever skipped. `text-marked.pdf`'s
+        # first kid says `/Limits [5 9]` while its `/Nums` claims key 0, so a
+        # walk that stops honouring the limits finds the decoy's answer first --
+        # a different, wrong element rather than none, which is what gives this
+        # a failing case at all.
+        "redact: search every kid of a number tree, ignoring /Limits",
+        "src/redact.rs",
+        "                if key < low || key > high {",
+        "                if key < low && key > high {",
+        "a_balanced_parent_tree_is_walked_through_its_kids",
+    ),
+    Mutation(
+        # Read the flat `/Nums` and never descend. The function's own doc comment
+        # says this "would find nothing on every document large enough to matter
+        # -- silently, since a miss and an untagged page are the same answer",
+        # and until the fixture carried a balanced tree nothing could say so.
+        "redact: never descend a number tree's /Kids",
+        "src/redact.rs",
+        "    for kid in kids {",
+        "    for kid in Vec::<Object>::new() {",
+        "a_balanced_parent_tree_is_walked_through_its_kids",
+    ),
+    Mutation(
         # Never refuse a shared property list, so a file is written with the
         # words still in it -- or, worse, a later edit strips a dictionary other
         # pages share.

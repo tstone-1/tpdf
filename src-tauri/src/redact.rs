@@ -2539,8 +2539,9 @@ mod tests {
     }
 
     use super::{
-        covered, covered_annots, is_show, overlaps, remove_form_shows, remove_images, remove_shows,
-        FormObject, FormOther, FormText, PageObject, Plan, Unhandled, MAX_CONTENT_BYTES,
+        covered, covered_annots, is_show, overlaps, parent_tree_entry, remove_form_shows,
+        remove_images, remove_shows, FormObject, FormOther, FormText, PageObject, Plan, Unhandled,
+        MAX_CONTENT_BYTES,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -4070,5 +4071,87 @@ mod tests {
         dictionary.set("P", Object::Reference(ids[0]));
         let removed = remove_shows(&mut doc, page, &[0], 1).expect("remove");
         assert_eq!(removed.struct_carriers, 2);
+    }
+
+    /// The parent tree is walked through `/Kids`, on a file a parser produced.
+    ///
+    /// Every other test here builds its structure tree in Rust, so
+    /// [`number_tree_lookup`]'s `/Kids` descent --- the branch its own doc
+    /// comment says every document large enough to matter needs --- had never
+    /// once been reached through the loader. Both fixtures in the tree carrying
+    /// a `/ParentTree` held **zero** occurrences of `/Limits` until 2026-09-02.
+    ///
+    /// `text-marked.pdf` now writes the balanced shape, and its first kid is a
+    /// trap: `/Limits [5 9]` while its `/Nums` claims key 0 and maps it to the
+    /// element for the line nobody redacts. A reader that scanned every kid
+    /// instead of honouring `/Limits` therefore gets a *different, wrong* answer
+    /// rather than no answer, which is what makes this assertion able to fail.
+    ///
+    /// **Where its falsifier lives, stated because the answer is not CI.**
+    /// `scripts/ci_fixtures.py` deliberately builds nothing from
+    /// `make_text_pdf.py` --- it needs fonttools and embeds a *system* font ---
+    /// so on a hosted runner this prints `[SKIP]` and passes. What proves it can
+    /// go red is `scripts/mutate_rust.py`, which carries two mutations aimed
+    /// here and catches both. That is the same footing as every other assertion
+    /// resting on this fixture; it is written down rather than assumed, because
+    /// a test that skips reports success in exactly the voice of one that ran.
+    #[test]
+    fn a_balanced_parent_tree_is_walked_through_its_kids() {
+        let path = std::path::Path::new("../testdata/text-marked.pdf");
+        let Ok(doc) = Document::load(path) else {
+            println!("[SKIP] text-marked.pdf: not generated");
+            return;
+        };
+        let page = *doc.get_pages().get(&1).expect("the fixture has a page 1");
+
+        // The fixture's shape, asserted rather than assumed. Without this the
+        // test passes exactly as well on the flat `/Nums` tree the file used to
+        // carry, so it would not notice the very shape it exists to exercise
+        // being removed --- and the `/Kids` branch would go back to being
+        // reached by nothing.
+        let root = doc
+            .catalog()
+            .and_then(|catalog| catalog.get(b"StructTreeRoot"))
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_dict)
+            .and_then(|tree| tree.get(b"ParentTree"))
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+            .and_then(Object::as_dict)
+            .expect("the fixture has a parent tree")
+            .clone();
+        assert!(
+            root.get(b"Kids").is_ok(),
+            "the fixture's parent tree must be balanced, or this tests nothing"
+        );
+        assert!(
+            root.get(b"Nums").is_err(),
+            "and it must hold no shortcut at its root, for the same reason"
+        );
+
+        let entries = parent_tree_entry(&doc, page).expect("the tree resolves through /Kids");
+        assert_eq!(entries.len(), 2, "one element per marked span on the page");
+
+        // Which element came back is the whole check. The decoy's array holds
+        // one entry and names the untouched line's element, so a walk that read
+        // it would answer with a length of 1 and the wrong dictionary at 0.
+        let shadow = |at: usize| -> String {
+            let (_, object) = doc.dereference(&entries[at]).expect("a live reference");
+            let dictionary = object.as_dict().expect("a structure element");
+            String::from_utf8_lossy(
+                dictionary
+                    .get(b"ActualText")
+                    .and_then(Object::as_str)
+                    .expect("every element in this fixture carries one"),
+            )
+            .into_owned()
+        };
+        assert!(
+            shadow(0).contains("STRUCT-CARRIER"),
+            "MCID 0 is the redacted line's element, not the decoy's"
+        );
+        assert!(
+            shadow(1).contains("STRUCT-OTHER"),
+            "and MCID 1 is the untouched line's"
+        );
     }
 }
