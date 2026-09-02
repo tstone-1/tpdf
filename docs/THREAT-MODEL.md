@@ -611,6 +611,35 @@ by default and so fully decodes that same stream, costing **1.92 s of CPU at 8.4
 resident** — 600× amplification in time, at no cost in memory. A limit expressed in
 megabytes would have caught none of it.
 
+**The plan is an input too, and until 2026-09-02 nothing in this section said so.** Every
+input named above is document-shaped — a stream, a page, an object graph — and a worker serving
+a save receives a second one: a `Plan`, carrying page sizes, crops, quads and stroke points as
+`f32` and `f64`. It is not the reader's typing. It crosses the worker boundary, it is restored
+from a session, and `fuzz_targets/save_rewrite_update.rs` exists precisely because a plan can
+reach `rewrite_update` that was computed against a different revision of the file. The guards
+for its geometry were in `edits.rs`, where the *command* receives it, which is the app process.
+
+What that cost, measured: a **2,937-byte** input reached **6.2 GB of allocation in a single
+pass** through `save::rewrite_update`. `draw_wave` steps a squiggle across a quad one
+half-period at a time, so its trip count is `width / half` with `half` derived from the quad's
+*height* — a ratio of two numbers each of which is unremarkable alone. 200,049 segments, at
+about thirty bytes of `String` each. A guard already sat immediately above that loop
+(`half <= 0.0 || high <= low`) and could not have helped: it asks whether the arithmetic yields
+a stroke at all, and every one of those segments was arithmetically fine. Two bounds exist now
+— `MAX_PAGE_POINTS` refuses a made page outside PDF 1.7's own 14,400-point limit, and
+`MAX_WAVE_SEGMENTS` widens the period rather than stepping at whatever the aspect ratio asks
+for. Either alone leaves a live path: for an unturned page `from_device` carries the quad's own
+width and height straight through, so the extreme ratio is reachable on a perfectly legal page.
+
+**The audit behind that pair is narrow, and saying so is the point of putting it here.** Every
+drawing routine in `save/marks.rs` was read for loops: `draw_wash`, `draw_line`, `draw_outline`,
+`draw_ellipse`, `draw_text`, `draw_stamp` and `draw_path` all iterate a *collection* — quads,
+strokes, lines — whose length the plan's own byte size bounds, and `draw_wave` was the only one
+computing a trip count from geometry. That is a statement about the drawing routines on
+2026-09-02 and about nothing else. The rest of the save path was not swept for the same shape,
+which is why this is a residual rather than a closed item: the class is *a quantity derived
+from plan geometry*, not *the squiggle loop*.
+
 **Residual.** One pathological page still occupies its process's single PDFium thread and
 starves every other render there. Note this is our own threading choice, forced by the
 fact that concurrent PDFium calls crash --- `pdfium-render`'s `thread_safe` feature does
@@ -623,8 +652,11 @@ instrument, in that the process dies and every partial render goes with it.
 Memory is the larger residual and it is unbounded, not merely coarsely bounded: neither the
 kernel's limit (refused) nor ours (unwired) applies to a worker on macOS today. Bounding the
 *inputs* — decompressed stream size, tile dimensions, pages per request — is the layer that
-would catch a sub-interval burst even with the poll running, and only the tile bound exists
-(`protocol.rs`, refused before a worker is asked).
+would catch a sub-interval burst even with the poll running. This read "only the tile bound
+exists" until 2026-09-02; there are three, and the two added that day (`MAX_PAGE_POINTS`,
+`MAX_WAVE_SEGMENTS`) bound a **plan's** geometry rather than a document's — an input this
+section had not counted at all. The tile bound is still the only one refused before a worker is
+asked (`protocol.rs`).
 
 ### T4 — Filesystem and network reach from a compromised worker
 
@@ -2172,7 +2204,8 @@ which is what makes it evidence rather than a milestone.
    `proc_pid_rusage` poll that would substitute for them is measured in spike 0.5 and has
    no caller in the app (§T3). What is missing before it can be wired is the budget, which
    needs a measurement of a legitimate worker's peak that nothing has taken. Input limits
-   are the second layer and only the tile bound exists.
+   are the second layer, and there are three as of 2026-09-02 rather than the one this entry
+   claimed --- see risk 22, which is where the input this section had not counted is named.
 3. **A document's pool multiplies its memory by up to six, while it is being scrolled.**
    Each worker holds its own parse, at 7.8–48.2 MB depending on the corpus, so a fully
    grown pool on the A0 sheet is about 290 MB. Growth is lazy — a reader turning one page
@@ -2750,6 +2783,39 @@ which is what makes it evidence rather than a milestone.
     writing a second cross-reference parser to protect the first. Neither has been done.
     Found 2026-09-01 by coverage-guided fuzzing of `lopdf` through our own entry points,
     independently by two targets.
+
+22. **A worker trusts the geometry in the plan it is given**, added 2026-09-02. Every input
+    this document counted was document-shaped; a save hands the worker a second one. A `Plan`
+    carries page sizes, crops, quads and stroke points as raw `f32` and `f64`, and it arrives
+    from outside the app process --- across the worker boundary, out of a restored session, or
+    computed against a revision of the file that has since been replaced. `edits.rs` refuses a
+    non-finite page size and the model refuses one enclosing no area; **both of those run in
+    the coordinator**, and the same argument that moved every `lopdf` parse into a worker
+    (risk 18) says a guard there is not a guard here.
+
+    **Measured rather than argued.** `fuzz_targets/save_rewrite_update.rs` reached **6.2 GB of
+    allocation from a 2,937-byte input, in one pass** --- against 54 MB for a size-matched file
+    from the same corpus and 52 MB for an empty one. Two mechanisms, and each needed its own
+    fix: `rewrite_update` accepted a made page 1.3e190 points wide, and `draw_wave`'s trip
+    count is `width / half` where `half` comes from the quad's *height*, so an unremarkable
+    width over an unremarkable height gave 200,049 line segments. Bounding the page does not
+    close the second --- for an unturned page `from_device` carries the quad's own dimensions
+    straight through, so the ratio is reachable on a perfectly legal page. `MAX_PAGE_POINTS`
+    and `MAX_WAVE_SEGMENTS` are the two bounds; three mutations cover them and are caught by
+    the tests named for them.
+
+    **What is residual is the class, not those two.** The audit that produced them read every
+    drawing routine in `save/marks.rs` for loops, and found that all the others iterate a
+    collection whose length the plan's byte size already bounds. That is the extent of it: the
+    rest of the save path has not been swept for a quantity derived from plan geometry, and
+    the plan's other numeric fields --- crops, stroke coordinates, note lengths --- have not been
+    put to the same question. On macOS nothing catches the next one if there is one, because
+    the memory poll of risk 2 has no caller; on Windows the job object's committed-memory cap
+    refuses the allocation before a byte of it exists, which is the asymmetry §T3 describes.
+
+    Availability only. Nothing here is a memory-safety defect and no allocation succeeds that
+    should not have; the reachable harm is a worker dying, or on macOS the machine paging while
+    it tries.
 
 ## 8. How to re-verify any of this
 
