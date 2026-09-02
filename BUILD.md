@@ -286,6 +286,16 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example qpdf-probe
 # passing.
 #
 #   macOS arm64, 2026-08-26   2 cases ran, 0 failures, all three limits asserted
+#   Windows x64, 2026-09-02   3 cases ran, 0 failures, all three limits asserted
+#
+# The third case is hostile-ocg.pdf, added 2026-09-02, and unlike the two above
+# it a hosted runner CAN build it -- make_hostile_pdf.py is dependency-free. It
+# reaches the one branch of the marked-content handler nothing else here does:
+# a span written `/OC /MC0 BDC`, whose property list is a NAME into the page's
+# `/Properties` rather than an inline dictionary, resolved to a real `/Type /OCG`
+# dictionary a parser produced. Shown to be the only reacher rather than assumed:
+# forcing the shared-list refusal reddens that case and leaves the other two
+# green, because both of them write inline dictionaries.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-probe
 
 # Redaction, end to end: does the whole path actually remove the words?
