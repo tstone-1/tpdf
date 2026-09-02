@@ -3031,7 +3031,26 @@ fn checked(
                 }
                 PageSource::Blank(size) => Slot::Made(size),
             };
-            Ok((slot, (page.turns + view % 4) % 4))
+            // **Both operands are reduced, and `page.turns` is the one that
+            // matters.** `PageView::turns` documents 0 to 3, and the model
+            // holds to it --- `docmodel` normalises with `rem_euclid(4)` on
+            // every rotation. But a plan reaches this function from *outside*
+            // it: across the worker boundary, out of a restored session, or
+            // against a file replaced under the reader. That is the whole
+            // reason this function refuses rather than trusts, and a
+            // documented range is a contract the caller may break, not a
+            // guarantee this side may lean on.
+            //
+            // Unreduced it was `page.turns + view % 4`, which overflows `u8`
+            // from 253 up. **The release build was never wrong**, measured
+            // over all 1,024 pairs: 256 is a multiple of 4, so wrapping and
+            // then taking `% 4` gives the same answer as the true sum does.
+            // What it was is a panic in every build with overflow checks on
+            // --- `cargo test`, `cargo run` --- where a refusal or a correct
+            // answer belongs. Found by `fuzz/fuzz_targets/save_rewrite_update.rs`,
+            // whose `turns_of` had to reduce the value to reach anything
+            // behind this.
+            Ok((slot, (page.turns % 4 + view % 4) % 4))
         })
         .collect::<Result<Vec<_>, Refusal>>()?;
 

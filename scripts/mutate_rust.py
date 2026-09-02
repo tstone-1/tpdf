@@ -303,6 +303,26 @@ MUTATIONS = [
         "the_open_documents_edits_reach_the_merge",
     ),
     Mutation(
+        # Add the reader's view to a page turn the plan did not reduce. The
+        # plan crosses a process boundary, so `PageView::turns` documenting
+        # 0 to 3 is a contract the caller may break rather than a range this
+        # side may lean on -- and unreduced, `page.turns + view % 4`
+        # overflows `u8` from 253 up. Found by the fuzz target, whose own
+        # generator had to reduce the value to reach anything behind it.
+        #
+        # **The answer is not what this mutation breaks**, which is why the
+        # test it names asserts a rotation and a control rather than mere
+        # survival: 256 is a multiple of 4, so the wrap gives the true
+        # remainder in a build with overflow checks off. What it breaks is
+        # every build that has them on, `cargo test` included -- so this
+        # mutation kills by panic, and that panic is the defect.
+        "save: add the view to an unreduced page turn",
+        "src/save.rs",
+        "            Ok((slot, (page.turns % 4 + view % 4) % 4))",
+        "            Ok((slot, (page.turns + view % 4) % 4))",
+        "a_turn_past_the_documented_range_is_reduced_rather_than_added",
+    ),
+    Mutation(
         # Write the parts over any file already sitting at their names. The
         # reader picked ONE name in a dialog and the platform asked about that
         # one; every other part is a path this module invented, so this
@@ -5709,7 +5729,7 @@ MUTATIONS += [
         # printed upright.
         "print: drop the view rotation from a job built by the save writer",
         "src/save.rs",
-        "            Ok((slot, (page.turns + view % 4) % 4))",
+        "            Ok((slot, (page.turns % 4 + view % 4) % 4))",
         "            Ok((slot, page.turns))",
         "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
     ),
@@ -5720,7 +5740,7 @@ MUTATIONS += [
         # the same number. The test rotates one page now.
         "print: let the view rotation replace a page's own instead of composing",
         "src/save.rs",
-        "            Ok((slot, (page.turns + view % 4) % 4))",
+        "            Ok((slot, (page.turns % 4 + view % 4) % 4))",
         "            Ok((slot, view % 4))",
         "a_third_parser_sees_the_view_rotation_on_a_job_built_from_the_working_document",
     ),
