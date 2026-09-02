@@ -93,6 +93,78 @@ PLATFORM_GATES = [
 ]
 
 
+#: The platforms tpdf ships. `only_on` also knows `"linux"`, and a `#[cfg(unix)]`
+#: test really does compile there --- but nothing is released on it, so the
+#: question this gate asks is *can the named test go red on a platform somebody
+#: runs the harness on*, and that is these two.
+SHIPPED = frozenset({"macos", "windows"})
+
+
+#: A `#[cfg(...)]` sitting on the **function** rather than on its module.
+#:
+#: ⚠ **The module scan above is structurally blind to these, and that cost the
+#: whole Rust table on Windows.** `PLATFORM_GATES` matches an attribute at column
+#: 0 opening a region; a `#[cfg(unix)]` written between `#[test]` and `fn` matches
+#: neither pattern, so `gated_tests` reported the name as absent --- and absent is
+#: documented there as meaning *ungated, so it compiles everywhere*. Five
+#: mutations naming three such tests therefore passed this gate and made
+#: `mutate_rust.py` refuse all 655 on Windows, which is the exact failure the
+#: module scan was written for, one level down. Found by running the harness, not
+#: by this gate.
+FUNCTION_CFG = re.compile(r'^\s*#\[cfg\((?P<expr>.+)\)\]\s*$')
+TEST_ATTR = re.compile(r'^\s*#\[test\]\s*$')
+ATTRIBUTE = re.compile(r'^\s*#\[')
+
+
+def _split_top(text: str) -> "list[str]":
+    """Split a cfg argument list on the commas that are not inside brackets."""
+    parts, depth, current = [], 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current)
+    return [p.strip() for p in parts]
+
+
+def cfg_admits(expr: str, platform: str) -> "bool | None":
+    """Does this `#[cfg]` predicate admit `platform`? `None` if unrecognised.
+
+    Deliberately `None` rather than a guess for anything outside the vocabulary
+    the tree actually uses. A predicate read wrongly here is worse than one not
+    read at all: it would report a test as reachable on a platform where it does
+    not exist, which is the reassuring direction and the one that let this whole
+    class through in the first place.
+    """
+    expr = expr.strip()
+    for head in ("not", "any", "all"):
+        if expr.startswith(head + "(") and expr.endswith(")"):
+            inner = [cfg_admits(p, platform) for p in _split_top(expr[len(head) + 1 : -1])]
+            if any(value is None for value in inner):
+                return None
+            if head == "not":
+                return not inner[0]
+            return any(inner) if head == "any" else all(inner)
+    if expr == "test":
+        # Always true in the code this scans, and it appears only as a conjunct.
+        return True
+    if expr == "unix":
+        return platform == "macos"
+    if expr == "windows":
+        return platform == "windows"
+    match = re.fullmatch(r'target_os\s*=\s*"([a-z0-9_]+)"', expr)
+    if match:
+        return match.group(1) == platform
+    return None
+
+
 #: Any `fn`, so the scan below can be one pass over the tree rather than one per
 #: mutation. Re-walking every source for each of ~200 names took 3.4 s against
 #: 0.3 s for the rest of this gate, which is the wrong shape for something that
@@ -151,11 +223,32 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
 
     A name mapping to *several* gates is one rule with a test on each side of the
     cfg, which needs no declaration because it can go red wherever it is aimed.
+
+    **Two scans, and the second was added 2026-09-02 because the first cannot see
+    it.** A per-*function* `#[cfg]` sitting with `#[test]` above a `fn` gates the
+    test just as hard as a module attribute does and matches none of
+    `PLATFORM_GATES`; see `FUNCTION_CFG`.
+
+    The walk is anchored on the `fn` and reads its attribute block **backwards**,
+    because the two orders both occur in this tree --- `#[test]` above `#[cfg]` in
+    `save/tests.rs` and below it in `worker_shm.rs` --- and a scan that starts at
+    the `#[cfg]` and only looks ahead silently misses the first. It did: the three
+    tests this was written for came back *ungated* on the first run, while a
+    fourth beside them read correctly.
+
+    Gates on one definition **intersect** (a `#[cfg(unix)]` test inside a
+    macOS-gated module is reachable on macOS alone); gates across *separate*
+    definitions **union** (one rule with a test on each side of the cfg is
+    reachable on both). Conflating those two is the other thing the first draft
+    got wrong, and it turned a name defined for unix and for windows into the
+    empty set.
     """
     found: dict[str, set[str]] = {}
+    unreadable: list[str] = []
     for source in sorted(root.rglob("*.rs")):
         gate = None
-        for line in source.read_text(encoding="utf-8").splitlines():
+        lines = source.read_text(encoding="utf-8").splitlines()
+        for at, line in enumerate(lines):
             for pattern, platform in PLATFORM_GATES:
                 if pattern.match(line):
                     # A module attribute at column 0 opens a region that runs to
@@ -165,8 +258,48 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
                     # conservative direction.
                     gate = platform
             match = DEFINITION.match(line)
-            if match and gate is not None:
-                found.setdefault(match.group(1), set()).add(gate)
+            if not match:
+                continue
+            name = match.group(1)
+
+            # The attribute block immediately above this `fn`, read upwards until
+            # something that is not an attribute. Doc comments sit above the
+            # attributes, so they end the walk without being read.
+            saw_test, cfgs = False, []
+            for back in range(at - 1, max(at - 8, -1), -1):
+                above = lines[back]
+                if TEST_ATTR.match(above):
+                    saw_test = True
+                    continue
+                found_cfg = FUNCTION_CFG.match(above)
+                if found_cfg:
+                    cfgs.append(found_cfg.group("expr"))
+                    continue
+                if not ATTRIBUTE.match(above):
+                    break
+
+            here: set[str] | None = set(SHIPPED) if gate is None else {gate}
+            if saw_test and cfgs:
+                for expr in cfgs:
+                    if any(cfg_admits(expr, p) is None for p in SHIPPED):
+                        unreadable.append(f"{source.name}: {name}: #[cfg({expr})]")
+                        here = None
+                        break
+                    here &= {p for p in SHIPPED if cfg_admits(expr, p)}
+            elif gate is None:
+                # Neither gated as a module nor as a function: absent from the
+                # map, which is what its docstring promises about an ungated name.
+                continue
+            if here is not None:
+                found[name] = found.get(name, set()) | here
+    if unreadable:
+        # Loud rather than skipped: an unread predicate is a test whose
+        # reachability this gate cannot speak for, and staying quiet about it is
+        # how the module scan's blind spot survived.
+        raise SystemExit(
+            "[FAIL] check_mutation_anchors: unrecognised #[cfg] on a test:\n  "
+            + "\n  ".join(unreadable)
+        )
     return found
 
 
@@ -296,19 +429,37 @@ def main() -> int:
             platforms = gated.get(mutation.expect)
             if not platforms:
                 continue
+            if platforms >= SHIPPED:
+                # Reachable on both shipped platforms, so no declaration is
+                # needed -- one rule with a test on each side of the cfg.
+                #
+                # ⚠ **This was `len(platforms) > 1` until 2026-09-02, and that is
+                # not the same test.** It reads "gated more than once" as "gated
+                # everywhere", which holds for the windows+macos pair it was
+                # written against and fails for any single predicate admitting
+                # two platforms of three -- `#[cfg(unix)]` being exactly that.
+                # The question is whether the named test exists on the platform
+                # the harness is running on, so it has to be asked against the
+                # shipped set rather than against a count.
+                declared += 1
+                continue
             if mutation.only_on in platforms:
                 declared += 1
                 continue
-            if len(platforms) > 1:
-                # Reachable on every platform it is gated to, so no declaration
-                # is needed -- one rule with a test on each side of the cfg.
-                declared += 1
+            if not platforms:
+                problems.append(
+                    f"{path}: {mutation.name}\n"
+                    f"       expects `{mutation.expect}`, which is gated to no platform\n"
+                    f"       this project ships, so no run of this harness can ever\n"
+                    f"       reach it and no only_on value would be true."
+                )
                 continue
             (only,) = sorted(platforms)
             problems.append(
                 f"{path}: {mutation.name}\n"
-                f"       expects `{mutation.expect}`, which is defined only inside a\n"
-                f"       {only}-gated test module, and only_on is {mutation.only_on!r}.\n"
+                f"       expects `{mutation.expect}`, which compiles only on {only} ---\n"
+                f"       gated either as a test module or by a `#[cfg]` on the test\n"
+                f"       itself, and only_on is {mutation.only_on!r}.\n"
                 f"       On any other platform that test does not exist, and the\n"
                 f"       harness refuses the WHOLE table over an unknown name.\n"
                 f"       Set only_on=\"{only}\"."

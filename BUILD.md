@@ -4933,7 +4933,29 @@ starts at 0 and increments within the month.
    **How much of them to run is a decision, and this step used to duck it.** It read *"if any
    of the code they cover changed"*, which is true of nearly every release and therefore meant
    the full 735 in practice: about 1 hour 40 minutes, of which the viewer table alone is 55.
-   Measured over the `26.8.7` cut, that whole spend produced **one** finding. Steps are only
+   Measured over the `26.8.7` cut, that whole spend produced **one** finding.
+
+   ⚠ **Both of those figures are stale, and the tables have roughly doubled since.** Measured
+   on the `26.9.1` cut, **Windows x64, 2026-09-02**, running all three end to end:
+
+   | table | mutations | wall | each |
+   |---|---|---|---|
+   | `mutate_rust.py` | 646 (9 skipped as macOS-only) | **61.1 min** | 5.7 s |
+   | `mutate_frontend.py` | 593 | **15.9 min** | 1.6 s |
+   | `mutate_viewer.py` | 92 | **89.9 min** | 58.6 s |
+   | total | 1,331 run of 1,340 | **2 h 47 min** | --- |
+
+   So the full pass is **1,340** rather than 735, and about **2 h 47 min** rather than 1 h 40.
+   The shape of the spend is also not what the sentence above implies: the viewer table is 7%
+   of the mutations and **54%** of the time, because each one rebuilds and drives a window,
+   while the front-end table is 45% of the mutations and 10% of the time. If only one table
+   can be afforded, the two cheap ones are 77 minutes for 1,239 mutations.
+
+   The older figures are left above rather than overwritten: they were taken on a different
+   cut and their platform is not recorded, and a number whose platform is unstated is not one
+   to replace with a Windows reading. What the two together support is the *trend* --- the
+   tables grow with the code, and this step's cost estimate goes stale silently, because
+   nothing measures it but a person running it. Steps are only
    ever added to a checklist --- this is the first one this file has ever narrowed --- so the
    narrowing states its own trigger rather than leaving it to whoever is tired:
 

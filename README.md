@@ -4,7 +4,7 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: Phase 0 closed, Phase 1 in progress, Phase 2 begun. First release: `26.8.0`.**
+**Status: Phase 0 closed, Phase 1 in progress, Phase 2 met, Phase 3 in progress. First release: `26.8.0`.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
@@ -30,9 +30,11 @@ project conventions.
   document, and a worker that dies is replaced and its request retried. Saving over a document is prepared and written
   there too, and so is a redaction applied to it --- and since 2026-09-01 so are Save a copy,
   Redact to a copy, Extract, Split, Merge, and printing --- whether you print the document you
-  are looking at or a page range you type. **One `lopdf` parse is left in the app process, and
-  it is the redaction verification**; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so
-  in one place rather than leaving the first sentence to be read as covering it.
+  are looking at or a page range you type. **No `lopdf` parse of a document happens in the app
+  process at all on either shipped platform** --- the redaction verification was the last one
+  and moved into a worker on 2026-09-01; [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) has
+  the account, including why a path that only *reads* was missed by a section, a risk and a
+  gate that are all keyed on writing.
 - Tiled rendering behind a virtual scroller; zoom --- in, out, actual size, fit-width,
   fit-page, or a figure you type; view rotation; and page inversion for reading on a dark
   screen. **Hold the middle mouse button and the pages follow the pointer**, sideways as

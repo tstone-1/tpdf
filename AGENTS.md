@@ -1182,6 +1182,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A differential's most important check was hard-coded to pass when both readers failed
 - A test helper that builds its fixture with the encoder under test
 - A mock's default return value decides whether a mutation fails or hangs
+- `String(e)` on a structured refusal is `[object Object]`, and one of the three checks stayed green
 - A check reported `[OK]` with the reason it should have failed printed beside it
 - A check read the palette's rendered rows, which are capped at 64
 - A correction that changed the direction of a movement that was never happening

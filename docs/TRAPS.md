@@ -15566,6 +15566,41 @@ is a request, not a picture**, and what any given reader draws from it is that r
 business. A check comparing two renderers has to know which properties the file actually
 determines, and for a `/Text` annotation the colour is not one of them in PDFium.
 
+### `String(e)` on a structured refusal is `[object Object]`, and one of the three checks stayed green
+
+2026-09-02, running the release checklist's step 7. `mutate_viewer.py` refused before its
+first mutation: *baseline is not green*, two checks failing, both printing `[object Object]`
+where a refusal message belongs.
+
+`print_document` returns `Result<(), save::Refusal>`, and a `Refusal` is a struct --- `message`
+and `changed`. So a rejected `invoke` crosses the boundary as an **object**, and
+`viewercheck.ts`'s `printChecks` caught it with `String(e)`, which renders every object the
+same six characters. Both assertions look for text inside the message (*"is not in this
+document"*, *"no pages selected"*) and neither can find it.
+
+**The fix is one word, and the helper was already in the same file.** `describeThrown` sits
+280 lines above, and its own doc comment says exactly this: *"the one that produced it was a
+rejection from a command, which the object carries and `String` throws away."* Written for
+this case, and one call site did not use it. A helper's existence is not its adoption, and
+nothing greps for the call sites that should have taken it.
+
+**The third check in the same group passed throughout, and it is the one worth studying.** It
+asks that the answer is non-empty and does *not* mention a missing page --- and `[object
+Object]` satisfies both, so the same defect that reddened two assertions made a third one
+green. A check whose predicate is *"something came back and it isn't that other thing"* is
+satisfied by rubbish; two of the three were specific enough to notice and one was not.
+
+**Why it survived to the checklist**: `viewer_check.py` and its mutation harness are
+`BUILD.md` steps, not gates, so the breakage --- which arrived with the change that gave a
+refused print its actions --- sat unnoticed from the day it landed until somebody cut a
+release. That is the intended division of labour and it worked, but the lag is real: a
+window-driving harness cannot be a gate, so anything only it can see is found at release time
+at the earliest.
+
+The general form: **whenever an error type gains structure, every `String(e)` on that path
+becomes a silent no-op.** The compiler cannot help --- `String` accepts anything --- and the
+resulting text is plausible enough to read past in a log.
+
 ### A check reported `[OK]` with the reason it should have failed printed beside it
 
 The first run of a new phase printed this:

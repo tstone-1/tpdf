@@ -7236,6 +7236,7 @@ MUTATIONS += [
         "    let target = resolved(source);",
         "    let target = source.to_path_buf();",
         "saving_in_place_through_a_symlink_edits_the_document_the_link_names",
+        only_on="macos",
     ),
     Mutation(
         # Rename onto the link. It becomes an ordinary file holding the new
@@ -7246,6 +7247,7 @@ MUTATIONS += [
         "    commit(staged, &resolved(source))",
         "    commit(staged, source)",
         "saving_in_place_through_a_symlink_edits_the_document_the_link_names",
+        only_on="macos",
     ),
     Mutation(
         # Let the replacement take the umask's mode. A document kept at 0600 in a
@@ -7256,6 +7258,7 @@ MUTATIONS += [
         "        #[cfg(unix)]\n        if let Ok(existing) = std::fs::metadata(out) {\n            let _ = file.set_permissions(existing.permissions());\n        }\n",
         "",
         "a_rewrite_keeps_the_documents_mode",
+        only_on="macos",
     ),
     Mutation(
         # Time the read-back out without ending the worker. The refusal is still
@@ -7269,6 +7272,7 @@ MUTATIONS += [
         "            kill_pid(pid);\n",
         "",
         "a_read_back_that_never_answers_ends_the_worker",
+        only_on="macos",
     ),
     Mutation(
         # Make the bound a thousand times longer, which is what having no bound
@@ -7282,6 +7286,7 @@ MUTATIONS += [
         "    match rx.recv_timeout(within) {",
         "    match rx.recv_timeout(within * 1000) {",
         "a_read_back_that_never_answers_ends_the_worker",
+        only_on="macos",
     ),
 ]
 
