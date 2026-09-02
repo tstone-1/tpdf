@@ -385,6 +385,27 @@ MUTATIONS = [
         red=True,
         says="THIRD-PARTY-NOTICES.md",
     ),
+    # --- the population, not the defect --------------------------------------
+    #
+    # Every other row here plants a defect in a file the gate already reads, so
+    # none of them can see a gate whose *population* shrank to nothing. This one
+    # asks the other question, and it found `check_dates.py` answering
+    # `[OK] no date ahead of 2026-09-02 in 0 tracked text files` and exiting 0 ---
+    # the count printed honestly and asserted by nothing.
+    #
+    # `GIT_INDEX_FILE` at a path that does not exist makes `git ls-files` print
+    # nothing and exit 0, which is the case the error branch cannot catch: git
+    # succeeded. No fixture and no temporary repository, so it is portable.
+    Mutation(
+        "dates: a tracked-file listing that succeeds and is empty",
+        "dates",
+        "",
+        "",
+        "",
+        red=True,
+        says="listed no file at all",
+        env={"GIT_INDEX_FILE": "/tmp/tpdf-no-such-index"},
+    ),
 ]
 
 

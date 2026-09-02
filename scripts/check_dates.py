@@ -100,6 +100,24 @@ def main() -> int:
         print(f"[FAIL] could not list tracked files: {why}")
         return 2
 
+    # **A listing that succeeds and returns nothing.** The branch above catches
+    # git failing; it does not catch git answering emptily, and until 2026-09-02
+    # this gate then printed `[OK] no date ahead of ... in 0 tracked text files`
+    # and exited 0. The population was reported honestly and asserted by nothing,
+    # which is the one shape every other gate in `scripts/` already guards.
+    #
+    # Measured rather than imagined: `GIT_INDEX_FILE=/tmp/no-such-index` makes
+    # `git ls-files` print nothing and exit 0, and that is the mutation
+    # `scripts/mutate_python.py` uses. A scan over no files agrees with a clean
+    # tree about every date in the repository.
+    if not files:
+        print(
+            "[FAIL] `git ls-files` listed no file at all, so this run scanned "
+            "nothing.\n       A green verdict here would be about an empty "
+            "population, not a clean tree."
+        )
+        return 2
+
     # Every exemption must still name something real. Checked before the scan, so
     # a stale entry is reported even on a tree that is otherwise clean.
     for (name, when), why in EXEMPT.items():
