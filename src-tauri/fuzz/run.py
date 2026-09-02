@@ -190,7 +190,21 @@ RSS_LIMIT_OVERRIDE = {"lopdf_load": 6144, "save_rewrite_update": 6144}
 # for a target that reaches a defect **we cannot fix**, because the run then
 # ends at the same place every time and everything behind it is unreachable.
 #
-# Both of these reach `docs/THREAT-MODEL.md` residual risk 21 --- `lopdf`'s
+# Every target whose subject is a **whole document** is here, and that is the
+# rule rather than a list of the ones observed to stop. Residual risk 21 records
+# that the abort is on the load path and that all five of its readers reach it,
+# "verified by feeding one file to each" --- so a target left out would be one
+# waiting to lose its run to a defect already known to be reachable from it.
+# `annots_scan` is what made the rule rather than the list: it had never filed an
+# artifact, and on 2026-09-02 it stopped at 8,051,057 executions, 14 minutes into
+# a one-hour run, on the same abort at a fifth magnitude.
+#
+# `save_rewrite_update` is deliberately **not** here even though it loads a
+# document too. Its findings are *ours*, and stopping on one is the point; it ran
+# 13,638,855 executions in a clean hour on 2026-09-02 without reaching risk 21.
+# An artifact of that shape appearing there is what would move it.
+#
+# All of these reach `docs/THREAT-MODEL.md` residual risk 21 --- `lopdf`'s
 # cross-reference parser multiplies out the field widths a document declares in
 # `/W` and asks for the product, which aborts through `handle_alloc_error` where
 # no `catch_unwind` and no guard in tpdf's own code can sit. Measured 2026-09-02
@@ -204,6 +218,9 @@ RSS_LIMIT_OVERRIDE = {"lopdf_load": 6144, "save_rewrite_update": 6144}
 MUST_FORK = {
     "lopdf_load": "reaches residual risk 21 within seconds and stops there",
     "encoding_scan": "the same abort, through its own entry point",
+    "annots_scan": "the same abort, 14 minutes in, at a fifth magnitude",
+    "links_scan": "a whole-document reader, so risk 21 is on its load path too",
+    "docinfo_scan": "as links_scan",
 }
 
 
@@ -323,7 +340,11 @@ def main() -> int:
 
     if args.list:
         for name, (length, why) in TARGETS.items():
-            print(f"  {name:<22} -max_len={length:<6} {why}")
+            # `fork` is printed because it changes what a clean run *means*
+            # --- see `verdicts` --- so a reader consulting this list must not
+            # have to open `MUST_FORK` to find out which targets it applies to.
+            mode = "fork " if name in MUST_FORK else "     "
+            print(f"  {name:<22} {mode} -max_len={length:<6} {why}")
         return 0
 
     if shutil.which("cargo-fuzz") is None:

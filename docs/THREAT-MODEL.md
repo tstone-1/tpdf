@@ -2782,7 +2782,12 @@ which is what makes it evidence rather than a milestone.
     pre-parse of the cross-reference stream's `/W` before handing the bytes over, which means
     writing a second cross-reference parser to protect the first. Neither has been done.
     Found 2026-09-01 by coverage-guided fuzzing of `lopdf` through our own entry points,
-    independently by two targets.
+    independently by **three** targets --- `lopdf_load`, `encoding_scan` and, on 2026-09-02
+    after 8,051,057 executions, `annots_scan`. Five artifacts carry it at five magnitudes,
+    from 6.7e15 to 4.6e16 bytes; the numbers differ and the defect does not. That third target
+    is why `src-tauri/fuzz/run.py` now forks **every** whole-document reader rather than the
+    ones observed to stop: this entry already says all five reach the abort, so a target left
+    unforked is one waiting to lose its run to something already known to be reachable from it.
 
 22. **A worker trusts the geometry in the plan it is given**, added 2026-09-02. Every input
     this document counted was document-shaped; a save hands the worker a second one. A `Plan`

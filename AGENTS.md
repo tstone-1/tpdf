@@ -1306,6 +1306,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Nine `cargo fuzz run` invocations queue on one build lock and print nothing
 - A generator that works around the defect it found stops looking behind it
 - A fuzz artifact that comes back clean is a hypothesis, and the control is to revert the fix
+- The revert control has to take back every guard added since, not the one you suspect
 - Repeating a flag argparse did not declare repeatable proves what the last one says
 ### Windows and portability
 - The gates had never run on the platform where they fail

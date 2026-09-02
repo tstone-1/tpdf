@@ -4728,6 +4728,20 @@ it found, taking its own subject out of every later run. **The control is to rev
 re-run** --- if the artifact goes loud again, the fix is what silenced it; if it stays quiet,
 something else did and you do not yet know what.
 
+**Revert *every* guard added since the artifact was filed, not only the one you suspect.**
+This is the half that was wrong until 2026-09-02, and getting it wrong nearly retired a real
+defect as uninterpretable. `crash-732de3ab` came back clean; reverting the fix it was filed
+against --- the unreduced `page.turns + view % 4`, which overflows `u8` from 253 up --- left it
+clean too, which reads as "some third thing silenced this and we do not know what". It was
+silent because a guard added a day *later*, the made-page bound of residual risk 22, refuses
+that plan before the turns arithmetic runs. With all three reverted together it panics at
+`save.rs:3097` with `attempt to add with overflow`, on the first run, every time.
+
+That is *a control refused by a different guard than the one it was written for*, which the trap
+index already carries twice --- and neither previous instance was about a fuzz artifact. Guards
+accumulate on a path, so an artifact's age is the thing to check first: everything merged since
+is standing between the input and the defect it was filed for.
+
 That control is what separated shapes (2) and (3) here. Three `save_rewrite_update` OOMs were
 about to be written off as sampler noise; with the fix reverted they read **207 MB**, **291 MB**
 and **6,201 MB** against a 54 MB floor. All three were the same defect at three magnitudes, and
@@ -4746,8 +4760,10 @@ finding.
 `catch_unwind` cannot see it, and in this repository it is upstream: `lopdf`'s cross-reference
 parser multiplies out the field widths a document declares in `/W` and asks for the product.
 `docs/THREAT-MODEL.md` residual risk 21 has the full account, including why no guard in tpdf's
-own code can sit in front of it. Three artifacts across two targets carry it; the numbers differ
-and the defect does not.
+own code can sit in front of it. **Five artifacts across three targets carry it, at five
+magnitudes** --- 45555555555555555, 3333333333333333332, 1844674400000000000, 40000000000000000
+and 6744073709551615 bytes, each reproduced rather than read off a filename. The numbers differ
+and the defect does not, so a sixth adds nothing: check the message, then delete it.
 
 ---
 
