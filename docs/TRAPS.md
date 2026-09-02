@@ -20509,6 +20509,47 @@ landed, so the obvious reading --- *stale, something fixed it* --- is available 
 Nothing had been fixed; the instrument had stopped asking. Deleting the `% 4` and rebuilding is
 what named `save.rs:3034` in one line of backtrace.
 
+### A fuzz artifact that comes back clean is a hypothesis, and the control is to revert the fix
+
+The entry above this one says a crash file must be re-run under the code that found it. Doing
+that is not enough on its own, and the missing half turned up the same day, triaging thirteen
+artifacts at once.
+
+Three of them re-ran clean against the current build. The available readings were *fixed
+earlier today* and *never real --- the sampler blamed the wrong input*, and this file already
+carries the second as a live hazard: libFuzzer without a sanitizer samples memory on a timer, so
+one artifact in this very directory is `oom-da39a3ee...`, the SHA-1 of the **empty string**.
+Writing all three off as sampler noise was one keystroke away and would have been wrong.
+
+**The control is to revert the fix and re-run.** With the two bounds taken back out, the three
+read **207 MB**, **291 MB** and **6,201 MB** against a 54 MB floor. They were one defect at
+three magnitudes, and only the largest had ever crossed `-rss_limit_mb` and been filed as an
+OOM. So there is a **third** shape between "real" and "misattributed", and it is the one that
+looks exactly like the second:
+
+* **Real.** Reproduces alone, loudly.
+* **Misattributed.** The sampler fired during it. The input does nothing.
+* **Real, below the threshold.** Amplifies genuinely, never past the limit. Filed only because
+  a *sibling* input crossed it, and quiet the moment the shared cause is fixed --- so it is
+  cleared by the fix and by nothing else, and cannot be told from the second shape without the
+  revert.
+
+Two things generalise:
+
+* **"Reverting made it loud again" is the only statement that attributes an artifact to a
+  fix.** A clean re-run establishes that the artifact is quiet, and nothing about why. The
+  asymmetry is worth naming: a *reproducing* artifact needs no control, because it demonstrates
+  itself; a *silent* one is a negative result, and a negative result with no control is the
+  failure this file records from a dozen directions.
+* **A defect's smaller instances are the evidence the fix generalises**, and they are the ones
+  most likely to be deleted as noise. Three inputs the fuzzer found independently, all quiet
+  against the same two bounds, is a much stronger statement than the one reproducer that was
+  triaged --- and it costs one rebuild.
+
+Read `stat::peak_rss_mb` against a size-matched corpus file and an empty input, in the same
+sitting, rather than against a floor you remember. `BUILD.md`'s fuzzing section has the
+commands.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`
