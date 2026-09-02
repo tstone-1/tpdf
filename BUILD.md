@@ -4626,6 +4626,80 @@ Each prints its own verdict and exits non-zero on failure. `text-roundtrip` and
 
 ---
 
+### Fuzzing, and how to read what it leaves behind
+
+`src-tauri/fuzz/run.py` **is** the invocation, for the reason `scripts/gates.py` is the gate
+list: three things have to be right on every run --- the toolchain, a linker flag without
+which the build does not link at all, and a per-target input bound --- and a command copied
+into prose loses one and then measures something weaker.
+
+```bash
+src-tauri/fuzz/run.py --list                                     # targets and their bounds
+src-tauri/fuzz/run.py --target save_rewrite_update --seconds 3600
+src-tauri/fuzz/run.py --build-only
+```
+
+**Serially.** Nine `cargo fuzz run` invocations started together queue on one build lock and
+print nothing, which is indistinguishable from nine fuzzers finding nothing --- the trap index
+has that one.
+
+#### Reading an artifact: three shapes, and two of them look like the third
+
+A run that stops leaves a file in `src-tauri/fuzz/artifacts/<target>/`. Both the directory and
+`corpus/` are gitignored, so **an artifact is scratch and never a regression test** --- what
+makes a finding permanent is a test in the source tree, and for the one defect that is upstream
+rather than ours, a generated fixture (`testdata/make_xref_bomb_pdf.py`).
+
+Every artifact triaged here has fallen into one of three shapes, and the filename tells you
+nothing about which:
+
+1. **A real defect.** Re-runs alone, allocates or crashes on its own.
+2. **A sampler misattribution.** libFuzzer runs without a sanitizer here, so its memory sampler
+   fires on a timer and blames whatever is executing. One artifact in this repository is
+   `oom-da39a3ee...`, which is the SHA-1 of the **empty string** --- verified with
+   `printf '' | shasum`. The empty input allocates nothing.
+3. **A real defect below the threshold.** The one that is easy to get wrong, because it reads
+   exactly like (2): the input genuinely amplifies, just not past `-rss_limit_mb`, so libFuzzer
+   only ever filed the largest instance of the same bug.
+
+The method, and each step exists because skipping it produced a wrong answer at least once:
+
+```bash
+B=src-tauri/fuzz/target/aarch64-apple-darwin/release/<target>
+"$B" -runs=1 -rss_limit_mb=6144 -print_final_stats=1 <artifact>   # does it reproduce alone?
+"$B" -runs=1 -rss_limit_mb=6144 -print_final_stats=1 <corpus file of the same size>
+: > /tmp/empty.bin                                                 # NOT /dev/null -- see below
+"$B" -runs=1 -rss_limit_mb=6144 -print_final_stats=1 /tmp/empty.bin
+```
+
+Read `stat::peak_rss_mb` against the other two, not against a number you remember. The floor is
+32--55 MB depending on the target, measured 2026-09-02.
+
+`/dev/null` does not work as the empty input and fails in a way that reads as a broken checkout:
+libFuzzer treats any argument that is not a regular file as a **directory**, so it answers
+`ERROR: The required directory "/dev/null" does not exist`. Use a real zero-byte file.
+
+**When it comes back clean, that is a hypothesis too.** This is the half that is easy to skip,
+and skipping it is how 2026-09-02 opened: an artifact that did not reproduce was read as stale,
+and the actual cause was that the fuzz target had been changed to work around the very defect
+it found, taking its own subject out of every later run. **The control is to revert the fix and
+re-run** --- if the artifact goes loud again, the fix is what silenced it; if it stays quiet,
+something else did and you do not yet know what.
+
+That control is what separated shapes (2) and (3) here. Three `save_rewrite_update` OOMs were
+about to be written off as sampler noise; with the fix reverted they read **207 MB**, **291 MB**
+and **6,201 MB** against a 54 MB floor. All three were the same defect at three magnitudes, and
+only the largest had ever been filed as an OOM.
+
+**A `crash-` whose message is `memory allocation of N bytes failed` is an abort, not a panic.**
+`catch_unwind` cannot see it, and in this repository it is upstream: `lopdf`'s cross-reference
+parser multiplies out the field widths a document declares in `/W` and asks for the product.
+`docs/THREAT-MODEL.md` residual risk 21 has the full account, including why no guard in tpdf's
+own code can sit in front of it. Three artifacts across two targets carry it; the numbers differ
+and the defect does not.
+
+---
+
 ## Cutting a release
 
 Version scheme is **CalVer `YY.M.MICRO`** (`26.8.0` = first August 2026 release). MICRO
