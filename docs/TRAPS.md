@@ -20551,6 +20551,43 @@ Read `stat::peak_rss_mb` against a size-matched corpus file and an empty input, 
 sitting, rather than against a floor you remember. `BUILD.md`'s fuzzing section has the
 commands.
 
+### The revert control has to take back every guard added since, not the one you suspect
+
+The entry above says a silent artifact is attributed by reverting the fix and re-running. That
+is right and it is not sufficient, and the shortfall showed up the next day on the one artifact
+that entry had not covered.
+
+`crash-732de3ab` re-ran clean. Reverting the fix it was filed against --- `save::rewrite_update`
+composing `page.turns + view % 4` with both operands unreduced, which overflows `u8` from 253
+up --- left it clean as well. Two controls, both negative, and the reading that follows is *some
+third thing silenced this and we do not know what*: an artifact produced by a build no longer in
+git, uninterpretable, delete it. That reading was wrong, and it was one command from being
+written down as a fourth shape.
+
+It was silent because a guard added **a day later** stood in front of the defect. The made-page
+bound of residual risk 22 refuses a plan whose page size is not a finite positive number inside
+14,400 points, and it runs before the turns arithmetic. With all three reverted together the
+artifact panics at `save.rs:3097`, `attempt to add with overflow`, on the first run and every
+run. A real defect, correctly fixed, and nearly retired as noise.
+
+This is *a control refused by a different guard than the one it was written for*, which this
+file already carries twice --- and neither instance was about a fuzz artifact, which is why it
+was not recognised here. The version that transfers:
+
+* **An artifact's age is the first thing to check, before the fix it was filed against.**
+  Everything merged since is standing between the input and the defect, and a guard on the same
+  path does not have to be related to the defect to hide it.
+* **Two negative controls are not corroboration when both share a blind spot.** Reverting fix A
+  and reverting fix B separately says nothing about a path that fix C closes; the controls agreed
+  with each other because they were the same experiment.
+* **A dated artifact is easier evidence than a dated fix.** `ls -la` on the artifact directory
+  and `git log --since` on the module is the whole lookup, and it converts "which fix do I
+  suspect" into "which fixes exist that did not then".
+
+The positive control matters as much as the finding: with the guards off, a *known* reproducer
+from the same directory read 207 MB, the figure recorded for it the day before. Without that,
+"the revert did not make it loud" and "the revert did not take effect" are the same output.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`
