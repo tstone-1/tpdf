@@ -1349,6 +1349,40 @@ MUTATIONS = [
         "a_parent_tree_written_as_kids_is_followed",
     ),
     Mutation(
+        # Step the wave at the period the quad's aspect ratio asks for. The
+        # trip count is width/half with both from a plan the writer did not
+        # build, and the fuzzer's was two hundred million -- 6.2 GB of `String`
+        # from a 2,937-byte input, in one pass. Fails fast rather than by
+        # exhausting memory: the test's fixture asks for 200,049 segments,
+        # which is large enough to cross the cap and small enough to finish.
+        "marks: step a squiggle at whatever period the quad asks for",
+        "src/save/marks.rs",
+        "        if seen.width / half > MAX_WAVE_SEGMENTS {",
+        "        if false {",
+        "a_squiggle_across_an_extreme_quad_emits_a_bounded_number_of_segments",
+    ),
+    Mutation(
+        # Accept a made page of any size that is a number. `make_blank_pages`
+        # casts to `f32` for the /MediaBox, so anything past `f32::MAX` is
+        # written as `inf` and the file is malformed with nothing saying so.
+        "save: accept a made page wider than PDF permits",
+        "src/save.rs",
+        "                        || size.width > MAX_PAGE_POINTS",
+        "                        || false",
+        "a_made_page_of_a_size_no_reader_could_have_asked_for_is_refused",
+    ),
+    Mutation(
+        # Trust the app-process guard. `edits.rs` refuses a non-finite page
+        # size where the insert command receives it -- in the app process,
+        # while this runs in the worker against a plan that may have crossed
+        # the boundary or come out of a restored session.
+        "save: trust that a made page's size is a finite number",
+        "src/save.rs",
+        "                    if !size.width.is_finite()",
+        "                    if false",
+        "a_made_page_of_a_size_no_reader_could_have_asked_for_is_refused",
+    ),
+    Mutation(
         # Leave the document's own description of itself. The words go from the
         # page and /Info /Title still says what the document is about.
         "save: leave /Info and the XMP packet on a redaction",

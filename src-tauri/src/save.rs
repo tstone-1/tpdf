@@ -95,6 +95,25 @@ const PARTIAL: &str = "tpdf-partial";
 /// somebody is fighting us for, and reporting that beats looping.
 const STAGING_ATTEMPTS: u32 = 16;
 
+/// The widest and tallest a page tpdf writes may be, in points.
+///
+/// PDF 1.7's own limit (32000-1 Annex C.2: 14,400 units each way, 200 inches),
+/// and it applies here because tpdf is the **producer** of the page this bounds
+/// --- a made page, from `PageSource::Blank`. A page in a document we were
+/// handed is the document's business and is not measured against this.
+///
+/// It is a bound on nonsense rather than on ambition. The largest page anyone
+/// asks for is A0, at 3,370 by 2,384 points; this is four times that on the
+/// long side.
+///
+/// **Enforced where the plan arrives rather than where the page is made.**
+/// `make_blank_pages` writes `size.width as f32` into the `/MediaBox`, so a
+/// value past `f32::MAX` becomes `inf` and the file is malformed with nothing
+/// saying so; and the quads of every mark on that page are mapped through those
+/// same dimensions, which is how a 2,937-byte plan reached 6.2 GB of
+/// allocation. Both of those are downstream of the number being accepted.
+const MAX_PAGE_POINTS: f64 = 14_400.0;
+
 /// Why a save was refused, and whether the file having changed is the reason.
 ///
 /// **`changed` is a field rather than a wording**, for exactly the reason
@@ -3029,7 +3048,38 @@ fn checked(
                         ))
                     })?)
                 }
-                PageSource::Blank(size) => Slot::Made(size),
+                PageSource::Blank(size) => {
+                    // **The same reasoning as the turns below, and found the
+                    // same way.** `edits.rs` refuses a non-finite page size
+                    // where the insert command receives it, and the model
+                    // refuses one enclosing no area --- both of those are in
+                    // the app process, and a plan reaches *this* function from
+                    // outside it. `fuzz_targets/save_rewrite_update.rs` sent a
+                    // made page 1.3e190 points wide; `make_blank_pages` casts
+                    // to `f32` for the `/MediaBox`, so that is written as
+                    // `inf`, and every quad on the page is mapped through those
+                    // dimensions on the way to an appearance stream.
+                    //
+                    // 14,400 is the widest and tallest page PDF 1.7 permits, in
+                    // points. tpdf is the producer of this page, so writing one
+                    // outside that is a defect of ours rather than a document
+                    // we were handed; and the number the reader would have to
+                    // have asked for to reach this is 200 inches on a side.
+                    if !size.width.is_finite()
+                        || !size.height.is_finite()
+                        || size.width <= 0.0
+                        || size.height <= 0.0
+                        || size.width > MAX_PAGE_POINTS
+                        || size.height > MAX_PAGE_POINTS
+                    {
+                        return Err(Refusal::changed(format!(
+                            "the edits ask for a page {} by {} points, which is not a page \
+                             this can write",
+                            size.width, size.height
+                        )));
+                    }
+                    Slot::Made(size)
+                }
             };
             // **Both operands are reduced, and `page.turns` is the one that
             // matters.** `PageView::turns` documents 0 to 3, and the model

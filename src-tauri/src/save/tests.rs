@@ -8052,6 +8052,125 @@ fn blend_of(kind: MarkKind, scratch: &Scratch) -> String {
     .expect("a blend mode is a name")
 }
 
+/// A squiggle steps one half-period at a time, and the step comes from the
+/// quad's *height* while the distance comes from its width --- so the trip
+/// count is a ratio of two `f32` fields of a plan the writer did not build.
+///
+/// Found by `fuzz/fuzz_targets/save_rewrite_update.rs`: a 2,937-byte input
+/// reached 6.2 GB of allocation in one pass, roughly two hundred million
+/// segments at about thirty bytes each. The guard already in `draw_wave`
+/// (`half <= 0.0 || high <= low`) could not see it --- every one of those
+/// segments was arithmetically fine.
+///
+/// **The fixture needs no page at all**, which is the point worth stating: for
+/// an unturned page `from_device` carries the quad's own width and height
+/// straight through, so an extreme aspect ratio is reachable on a perfectly
+/// legal page and bounding the page size does not close this.
+///
+/// Both directions are asserted, and the second is what stops the bound being
+/// one no correct input can reach: an ordinary squiggle must come out *below*
+/// the cap, un-clamped, while this one lands exactly on it.
+#[test]
+fn a_squiggle_across_an_extreme_quad_emits_a_bounded_number_of_segments() {
+    let scratch = Scratch::new("wave-bound-extreme");
+    // 3,600 by 0.1 points. Unbounded the half-period is 0.1 * 0.18 = 0.018,
+    // so the loop would run 3,600 / 0.018 = 200,000 times.
+    let plan = plan_of_kind(
+        MarkKind::Squiggly,
+        vec![crate::docmodel::Quad {
+            left: 0.0,
+            top: 0.0,
+            right: 3600.0,
+            bottom: 0.1,
+        }],
+    );
+    let segments = appearance_of_plan(&plan, &scratch).matches(" l\n").count();
+    assert_eq!(
+        segments, 14_400,
+        "clamped to one half-period per point, not the 200,000 the ratio asks for"
+    );
+
+    let ordinary = Scratch::new("wave-bound-ordinary");
+    // The control. 228 by 18 points is `one_quad`, a line of text a reader
+    // actually dragged over: about 70 segments, and nowhere near the cap. A
+    // bound that clamped this too would be a bound on the feature rather than
+    // on the defect.
+    let plain = plan_of_kind(MarkKind::Squiggly, one_quad());
+    let plain_segments = appearance_of_plan(&plain, &ordinary)
+        .matches(" l\n")
+        .count();
+    assert!(
+        plain_segments > 0 && plain_segments < 1_000,
+        "an ordinary squiggle is unaffected by the cap, got {plain_segments}"
+    );
+}
+
+/// A made page's size arrives in the plan, and the plan arrives from outside.
+///
+/// `edits.rs` refuses a non-finite size where the insert command receives it
+/// and the model refuses one enclosing no area, and both of those run in the
+/// app process. `rewrite_update` runs in the worker, against a plan that may
+/// have crossed the boundary, come out of a restored session, or been computed
+/// against a different revision of the file --- the same reasoning the `turns`
+/// guard beside this one carries, and the same fuzz target found both.
+///
+/// Two things are downstream of accepting the number, which is why the refusal
+/// is here rather than at either of them: `make_blank_pages` writes
+/// `size.width as f32` into the `/MediaBox`, so anything past `f32::MAX` is
+/// written as `inf` and the file is malformed with nothing saying so; and every
+/// quad on the page is mapped through those dimensions on its way to an
+/// appearance stream.
+#[test]
+fn a_made_page_of_a_size_no_reader_could_have_asked_for_is_refused() {
+    let (original, _) = document_with_a_comment_on_the_second_page();
+    let sized = |width: f64, height: f64| {
+        let mut plan = plan_of(&[0, 0]);
+        plan.pages.insert(
+            1,
+            PageView {
+                id: 99,
+                source: PageSource::Blank(crate::docmodel::Size { width, height }),
+                turns: 0,
+                crop: None,
+            },
+        );
+        rewrite_update(&original, &plan, Job::Save, None)
+    };
+
+    for (width, height, why) in [
+        (1.3e190_f64, 1.0_f64, "the width the fuzzer sent"),
+        (f64::INFINITY, 1.0, "infinite width"),
+        // **Both positions, and a mutation is what says so.** Removing the
+        // width's `is_finite` alone left this test green: `+inf` is still
+        // caught by the upper bound, so the only input that needs that clause
+        // is a `NaN` -- which fails every comparison and would otherwise pass
+        // the whole guard. A `NaN` in one field is not a test of the other.
+        (f64::NAN, 1.0, "a width that is not a number"),
+        (1.0, f64::NAN, "a height that is not a number"),
+        (f64::NEG_INFINITY, 1.0, "negatively infinite width"),
+        (0.0, 400.0, "no width at all"),
+        (200.0, -400.0, "a negative height"),
+        (14_401.0, 400.0, "one point wider than PDF permits"),
+        (200.0, 14_401.0, "one point taller than PDF permits"),
+    ] {
+        assert!(
+            sized(width, height).is_err(),
+            "{why}: {width} by {height} must be refused"
+        );
+    }
+
+    // The controls, and the second one is the one that matters: a bound at the
+    // limit rather than below it, so the largest page PDF permits still saves.
+    assert!(
+        sized(200.0, 400.0).is_ok(),
+        "an ordinary made page still saves"
+    );
+    assert!(
+        sized(14_400.0, 14_400.0).is_ok(),
+        "the largest page PDF permits is not over the limit"
+    );
+}
+
 /// The appearance stream's content for a written mark.
 fn appearance_of(kind: MarkKind, scratch: &Scratch) -> String {
     let (_, stream) = written_appearance(kind, scratch);

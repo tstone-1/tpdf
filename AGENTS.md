@@ -958,6 +958,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - Two nested `Result`s because the outer one is the pool
 - A cross-reference stream states the width of its own fields, and `lopdf` believes it
 - The bound is on what the loader expands, not on what a caller asks for afterwards
+- A guard about the arithmetic is not a guard on the trip count, and the loop between them was unbounded
 ### Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
@@ -1184,6 +1185,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
 - A gate that reads prose as code can pass for the wrong reason, and rewording a comment turns it red
 - An unbounded report crossing a bounded pipe turns a bad file into a failed check
+- A `NaN` in one field is not a test of the other, and the clause that looks redundant is the one it needs
 ### Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
