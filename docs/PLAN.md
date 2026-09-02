@@ -12878,10 +12878,30 @@ exit 0, controls leaking 14.
 **Not done:** the criterion is stated over *verification*, and `verify::scan` walks every
 object rather than the page tree --- so nesting is invisible to it by construction and these
 three fixtures exercise the **sweep**, not the scan. What no fixture yet reaches is the
-redaction path's own handling of them: `redact.rs` names `/ActualText`, `/Alt` and `/E` and
-reads `/OC` marked content, and every test for that builds its structure tree in Rust, so the
-loader has never been in the loop. That is `redact-probe`'s corpus rather than this one, and
-it is the next increment here.
+redaction path's own handling of them, and the version of that sentence written here on
+2026-09-02 named the wrong gap: it said *every test for that builds its structure tree in
+Rust, so the loader has never been in the loop*, and that is false. `text-marked.pdf` carries
+a real `/StructTreeRoot`, a `/ParentTree` and three `/StructElem`s built by
+`testdata/make_text_pdf.py`, and `redact-apply-probe` asserts all three of its markers ---
+`STRUCT-CARRIER` and `STRUCT-ANCESTOR` gone, `STRUCT-OTHER` kept --- end to end through the
+loader. **A *Not done* note is a claim about the product, and this one was refuted by a
+`grep` for its own markers.** The general form already has an entry: *A "Not done" note
+outlives the work that closes it, and it is the recommendation nobody re-checks.*
+
+What is genuinely uncovered is narrower and was measured rather than reasoned about:
+
+* **The `/Kids` half of the parent tree.** `number_tree_lookup` walks `/Kids` with `/Limits`
+  because, in its own words, a producer with many pages writes a balanced tree and reading
+  only `/Nums` "would find nothing on all of them, silently". Both fixtures in the tree that
+  carry a `/ParentTree` --- `tagged.pdf` and `text-marked.pdf` --- hold **zero** occurrences
+  of `/Limits`, so the shape the code says every real document has is exercised by one
+  Rust-built dictionary and by nothing a parser produced.
+* **Two of the three shadow-text keys.** `SHADOW_TEXT` is `/ActualText`, `/Alt` and `/E`. No
+  fixture any redaction probe opens carries `/Alt` or `/E` on a structure element;
+  `hostile-structure.pdf` carries `/Alt` and no redaction probe opens it.
+* **`/OC` marked content.** `hostile-ocg.pdf` exists and no redaction probe opens it either.
+
+That is `redact-probe`'s corpus rather than this one, and it is the next increment here.
 
 ### Phase 4 — Forms and visual signatures
 
