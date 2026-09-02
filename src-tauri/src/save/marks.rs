@@ -795,6 +795,36 @@ const SQUIGGLE_HEIGHT: f64 = 0.18;
 /// constants rather than on either.
 const SQUIGGLE_PERIOD: f64 = 2.0;
 
+/// The most half-period segments one squiggle may emit, whatever it is given.
+///
+/// **A bound on the loop rather than on its inputs, and it is here because
+/// neither input is ours.** `draw_wave` steps across the quad one half-period
+/// at a time, so its trip count is `width / half` --- and `half` comes from the
+/// quad's *height* while the width comes from the quad, both of them `f32`
+/// fields of a plan that reaches the writer from outside it. A tall thin quad
+/// on an ordinary page needs about 230 segments; the plan
+/// `fuzz/fuzz_targets/save_rewrite_update.rs` found needed roughly two hundred
+/// million, and each one appends about thirty bytes to a `String`. That is
+/// 6.2 GB of allocation from a 2,937-byte input, measured, in one pass.
+///
+/// **The guard above this one does not help**, and that is worth stating rather
+/// than discovering: `half <= 0.0 || high <= low` is about the arithmetic
+/// producing a stroke at all, and every one of those two hundred million
+/// segments was arithmetically fine.
+///
+/// 14,400 because that is the widest page PDF 1.7 permits in points, so this is
+/// one half-period per point across the widest page there can be --- a density
+/// no reader can resolve and no real annotation approaches. Exceeding it widens
+/// the period instead of refusing: a squiggle is decoration, it is still drawn
+/// in the right place, and refusing a mark that a reader can see on screen
+/// because of its aspect ratio would lose an edit to protect a memory bound.
+///
+/// **Clamping is not sufficient on its own.** `save::rewrite_update` also
+/// refuses a made page whose size no reader could have asked for, which is what
+/// stops a quad being mapped into that shape in the first place; this is the
+/// half that holds when the quad is extreme on a page that is not.
+const MAX_WAVE_SEGMENTS: f64 = 14_400.0;
+
 /// One line of text as a hex string of `/WinAnsiEncoding` bytes.
 ///
 /// **A hex string rather than a literal `(...)`, and the reason is an encoding
@@ -1624,13 +1654,28 @@ fn draw_wave(out: &mut String, quads: &[[f64; 4]], kind: MarkKind, turns: u8) {
         let (base, band) = line_rect(kind, 0.0, seen.height);
         let low = base + thickness / 2.0;
         let high = base + band - thickness / 2.0;
-        let half = band * SQUIGGLE_PERIOD / 2.0;
+        let mut half = band * SQUIGGLE_PERIOD / 2.0;
         // A quad too short to hold one climb would emit `m` and no
         // segment, which strokes nothing; a degenerate band is dropped
         // by `user_quads` long before this, and this guard is for the
         // arithmetic rather than for the data.
-        if half <= 0.0 || high <= low {
+        //
+        // **`is_finite` on both, and not for tidiness.** A `NaN` fails
+        // every comparison, so `half <= 0.0` is *false* for one and this
+        // guard would pass it through; the loop below then happens not
+        // to run, because `0.0 < NaN` is false too. Relying on that is
+        // relying on the second of two accidents, and the width arrives
+        // from a plan the writer did not build.
+        if !half.is_finite() || !seen.width.is_finite() || half <= 0.0 || high <= low {
             continue;
+        }
+        // The bound. See [`MAX_WAVE_SEGMENTS`]: widen the period rather
+        // than refuse, so the mark is still drawn where the reader put
+        // it, and do it here rather than clamping the quad, because the
+        // quad's *position* is not in question --- only how finely the
+        // wave across it is stepped.
+        if seen.width / half > MAX_WAVE_SEGMENTS {
+            half = seen.width / MAX_WAVE_SEGMENTS;
         }
         // `across` runs the way the words do and `up` measures from the
         // reader's bottom edge, which is what `line_rect` answered in.

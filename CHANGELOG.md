@@ -19,6 +19,39 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Fixed: a squiggle's own trip count, and a made page's size, were both unbounded
+
+`fuzz/fuzz_targets/save_rewrite_update.rs` reached **6.2 GB of allocation from a 2,937-byte
+input, in one pass**. Two defects, and each has its own fix and its own test because either
+alone leaves a live path.
+
+`draw_wave` steps across a quad one half-period at a time. The step comes from the quad's
+height and the distance from its width, so the trip count is a ratio of two `f32` fields of a
+plan --- and a plan reaches `save::rewrite_update` from outside the app process. An ordinary
+squiggle over a line of text emits about seventy segments; this one emitted 200,049, at roughly
+thirty bytes each. The guard already above that loop (`half <= 0.0 || high <= low`) asks
+whether the arithmetic yields a stroke at all, and every one of those segments was
+arithmetically fine. The period is now widened so the count lands on 14,400 --- one half-period
+per point across the widest page PDF permits --- rather than the mark being refused: a squiggle
+is decoration, and refusing an edit a reader can see on screen because of its aspect ratio
+would lose data to protect a memory bound.
+
+`rewrite_update` also accepted a made page 1.3e190 points wide. `edits.rs` refuses a non-finite
+page size where the insert command receives it and the model refuses one enclosing no area, and
+both of those run in the app process. Two things were downstream of accepting the number:
+`make_blank_pages` writes `size.width as f32` into the `/MediaBox`, so anything past `f32::MAX`
+was written as `inf` and the file was malformed with nothing saying so; and every quad on the
+page is mapped through those dimensions on its way to an appearance stream. A made page must
+now be finite, positive and within PDF 1.7's own 14,400-point limit, with the limit itself as a
+control so the largest page the format permits still saves.
+
+Measured, not inferred: the minimised reproducer and the original 60 KB artifact both go from
+6,201 MB to 54 MB, which is what a size-matched corpus file costs (54 MB) and what an empty
+input costs (52 MB). Three mutations are recorded and all three are caught by the test named
+for them --- and the third only after the harness found the test's own gap: disabling the
+*width's* finiteness check survived, because `+inf` is still caught by the upper bound and the
+only input needing that clause is a `NaN` width, which the table had only in the height.
+
 ### Added: the three document classes Phase 3 names and had no fixture for
 
 `docs/PLAN.md` Phase 3's exit criterion lists seven kinds of nasty document. Four had

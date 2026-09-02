@@ -20585,8 +20585,99 @@ stopped looking at the cap satisfies the first and fails the second. The fixture
 hundred over the cap rather than a round number, so an off-by-one and a cap-and-stop both show
 up in the arithmetic.
 
+### A `NaN` in one field is not a test of the other, and the clause that looks redundant is the one it needs
+
+A guard refusing a made page reads:
+
+```rust
+if !size.width.is_finite()
+    || !size.height.is_finite()
+    || size.width <= 0.0
+    || size.height <= 0.0
+    || size.width > MAX_PAGE_POINTS
+    || size.height > MAX_PAGE_POINTS
+```
+
+Six clauses, and the first pair looks like belt and braces beside the last: an infinite width is
+already greater than any limit. The test covered `f64::NAN` in the **height** and
+`f64::INFINITY` in the **width**, which reads as covering both kinds in both positions and does
+not.
+
+A mutation disabling only the width's `is_finite` **survived**. `+inf` is still caught by the
+upper bound, so the one input that needs that clause is a `NaN` width --- and a `NaN` fails
+*every* comparison, so it passes `<= 0.0` and `> MAX` alike and the whole guard lets it through.
+The clause is not redundant; it is the only thing standing between a `NaN` and the writer, and
+the test could not see that because its `NaN` was in the other field.
+
+Two habits:
+
+* **Put each pathological value in every position**, not one value per position. `NaN`, `+inf`,
+  `-inf`, zero and negative are five kinds and two fields, and a table of five rows has covered
+  one field's worth.
+* **Mutate the clause that looks redundant first.** A clause that duplicates its neighbour for
+  ordinary inputs and diverges for exactly one is invisible to a test written from the ordinary
+  ones, and "this is already covered by the line below" is the reasoning that deletes it.
+
+**The malformed mutation, because it cost a round and reads as a result.** The first attempt at
+"turn the whole guard off" replaced `if !size.width.is_finite()` with
+`if false && !size.width.is_finite()`, and it survived --- correctly. `&&` binds tighter than
+`||`, so that disables the first clause and leaves the other five standing. It is the same
+family as the entry about a mutation that ANDs with true, with precedence as the mechanism:
+**editing the first operand of an `||` chain edits one clause, however the replacement is
+spelled.** Disabling the whole condition means replacing the whole condition.
+
 The general shape: **moving work across a process boundary changes the type of its answer from
 a value into a message, and a message has a size limit that a value does not.** Anything the
 moved function builds proportionally to its input --- a list of findings, a set of names, a map
 of offsets --- needs a bound it never needed before, and the input that reaches the bound is by
 construction the input nobody has a fixture for.
+
+### A guard about the arithmetic is not a guard on the trip count, and the loop between them was unbounded
+
+`draw_wave` steps a squiggle across a quad one half-period at a time. The step comes from the
+quad's **height** and the distance from its **width**, so the trip count is a ratio --- and both
+operands are `f32` fields of a `Plan`, which reaches `save::rewrite_update` from outside the app
+process. A tall thin quad over a line of text needs about seventy segments. The plan
+`fuzz/fuzz_targets/save_rewrite_update.rs` sent needed **200,049**, at roughly thirty bytes of
+`String` each: **6.2 GB of allocation from a 2,937-byte input, in one pass.**
+
+There was a guard immediately above the loop, and reading it is what makes this worth writing
+down:
+
+```rust
+if half <= 0.0 || high <= low {
+    continue;
+}
+```
+
+That is a correct guard and it could never have helped. It asks whether the arithmetic produces
+a stroke at all --- a zero period, an inverted band --- and every one of those two hundred
+million segments was arithmetically fine. **A guard on the operands of a loop is not a guard on
+how many times it runs**, and the two read alike at the call site because they sit in the same
+`if`.
+
+Three things generalise past this one function:
+
+* **A trip count that is a ratio of two untrusted numbers is unbounded even when both are
+  sane.** Neither 3,600 points of width nor 0.1 points of height is absurd on its own; the
+  quotient is. Looking at the fields one at a time finds nothing.
+* **Bounding the container does not bound the loop.** The same input also declared a page
+  1.3e190 points wide, and refusing that page is a second fix that was also needed --- but for
+  an unturned page `from_device` carries the quad's own width and height straight through, so
+  the extreme ratio is reachable on a perfectly legal page. Two fixes, and each has its own
+  test, because either alone leaves a live path.
+* **Clamp rather than refuse when the quantity is decoration.** The period is widened so the
+  count lands on the cap; the mark is still drawn where the reader put it. Refusing an edit a
+  reader can see on screen, because of its aspect ratio, would lose data to protect a memory
+  bound.
+
+**The test has to fail fast, and that took choosing the fixture's numbers.** A mutation removing
+the clamp must redden a test rather than exhaust the machine, so the fixture asks for 200,049
+segments --- over the 14,400 cap by more than tenfold, and about 6 MB, which finishes in
+0.17 s. A fixture built to the fuzzer's own scale would have made the mutation's failure an OOM,
+which this file already records as the shape that reports a pass and a timeout in one breath.
+
+**Found only because the generator's workaround was taken out the day before.** The entry above
+about a generator that works around the defect it found is the same target: it had been reducing
+its own page turns for a day, and the run that produced this was the first with that dimension
+open.
