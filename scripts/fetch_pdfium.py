@@ -298,6 +298,39 @@ def check(key: str, dest: Path) -> int:
     archive, recorded, name = stamp
     library = dest / library_path(key)
 
+    # **`TAG` was printed and never checked**, so `--check` answered
+    # `[OK] pdfium chromium/9999 ... verified` for a tree holding 7881 ---
+    # measured 2026-09-02 by `scripts/mutate_python.py`, which is the first
+    # thing ever to ask this gate a question it could get wrong.
+    #
+    # The archive digest below does carry the real guarantee: `PINS[key]`
+    # identifies one published archive, so a tree matching it *is* the pinned
+    # build whatever this constant says. What was missing is that the two must
+    # agree with each other. The module docstring states it as a rule --- "bumping
+    # the pin means changing TAG and the whole PINS table together" --- and a rule
+    # with nothing enforcing it is one this repository has been bitten by often
+    # enough to have an entry for. Half a bump leaves the gate green and its own
+    # output naming a version the tree is not.
+    stated = dest / "VERSION.txt"
+    if not stated.is_file():
+        # An install predating the version stamp. Weaker, and it says which
+        # check it ran, for the same reason the library-digest branch below does.
+        print(
+            f"[WARN] {dest}/VERSION.txt is missing, so this run did not verify\n"
+            f"       that the installed tree is {TAG}.",
+            file=sys.stderr,
+        )
+    else:
+        installed = stated.read_text(encoding="utf-8").strip()
+        if installed != TAG:
+            print(
+                f"[FAIL] {dest} was installed from {installed}, but this script\n"
+                f"       pins {TAG}. TAG and PINS are bumped together or not at\n"
+                "       all. Run scripts/fetch_pdfium.py --force, or put TAG back.",
+                file=sys.stderr,
+            )
+            return 1
+
     if archive != PINS[key]:
         print(f"[FAIL] {dest} is not the pinned build", file=sys.stderr)
         print(f"       expected {PINS[key]} ({TAG} {key})", file=sys.stderr)

@@ -960,6 +960,8 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - A guard checked after the surgery is a true sentence about the wrong document
 - A workflow step is the one source no local gate reads, and mine named a file that cannot exist
 - A `run:` line is not a `run:` step, and the emptiness control could not tell the difference
+- A pin the gate prints and never reads, and the rule that they move together
+- Two mutations that survived because they were aimed at the exemption
 - An emptiness control written as a threshold is a measurement of the platform it was written on
 - The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
 - Two nested `Result`s because the outer one is the pool

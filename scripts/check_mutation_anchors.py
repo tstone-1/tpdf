@@ -65,6 +65,7 @@ TABLES = [
     ("scripts/mutate_rust.py", ROOT / "src-tauri"),
     ("scripts/mutate_frontend.py", ROOT),
     ("scripts/mutate_viewer.py", ROOT),
+    ("scripts/mutate_python.py", ROOT),
 ]
 
 
@@ -210,6 +211,20 @@ def main() -> int:
             continue
         intact = 0
         for mutation in table:
+            # An environment mutation has no anchor: `scripts/mutate_python.py`
+            # perturbs `RUSTUP_TOOLCHAIN` for the gate whose whole subject is
+            # that variable, and no edit to a tracked file produces it.
+            #
+            # **Guarded on `env`, not on the empty anchor.** A skip keyed on the
+            # anchor alone would silently excuse a *file* mutation whose `before`
+            # had been emptied, which is the one thing this gate exists to catch.
+            if not mutation.before:
+                if not getattr(mutation, "env", None):
+                    problems.append(
+                        f"{path}: {mutation.name} -- no anchor and no env, so this "
+                        "row perturbs nothing and cannot fail"
+                    )
+                continue
             target = base / mutation.path
             if not target.exists():
                 problems.append(f"{path}: {mutation.name} -- {mutation.path} does not exist")

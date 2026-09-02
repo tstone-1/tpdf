@@ -20629,6 +20629,62 @@ The positive control matters as much as the finding: with the guards off, a *kno
 from the same directory read 207 MB, the figure recorded for it the day before. Without that,
 "the revert did not make it loud" and "the revert did not take effect" are the same output.
 
+### A pin the gate prints and never reads, and the rule that they move together
+
+`scripts/fetch_pdfium.py --check` is the gate that makes the PDFium pin real. Asked, for the
+first time, a question it could get wrong --- `TAG` changed from `chromium/7881` to
+`chromium/9999` against a tree stamped 7881 --- it answered:
+
+```
+[OK] pdfium chromium/9999 mac-arm64 verified at .../vendor/pdfium (lib/libpdfium.dylib unaltered)
+```
+
+It printed the mutated value as the thing it had verified. `check()` compared the recorded
+archive digest against `PINS[key]`, checked the library exists, and checked the library's own
+digest. `TAG` appeared in the output and in no comparison.
+
+**The half that was already right is worth stating, because it decides how bad this is.**
+`PINS[key]` identifies one published archive, so a tree matching it *is* the pinned build
+whatever the constant says: nothing was unverified. What was missing is that the two must agree
+with each other, and the module's own docstring states it as a rule --- *"bumping the pin means
+changing TAG and the whole PINS table together"*. A rule written down with nothing enforcing it
+is one this file already carries from two other directions. Half a bump leaves the gate green
+and its own output naming a version the tree is not.
+
+The fix is four lines against `VERSION.txt`, which the installer writes and nothing read. The
+general form is narrower than "check your pins" and worth having: **a value a check prints is
+not a value a check tested**, and a printed constant is the most convincing possible evidence
+of a comparison that never happened --- it is the same string a real verification would print.
+
+### Two mutations that survived because they were aimed at the exemption
+
+Both from `scripts/mutate_python.py`'s first run, both reported SURVIVED, and neither was a gap.
+
+A doc comment planted as a second `/** */` at the top of `a11y.ts` did not turn `docs` red. It
+should not have: **the module header at line 1 is that gate's one structural exception**, since a
+file's own header is followed by the first declaration's doc comment in every well-formed module
+here. The mutation was aimed at the single position where the rule does not apply. Re-aimed
+before `elementFor`, it goes red.
+
+Renaming a step in `release.yml` did not turn `workflows` red. It should not have:
+`check_workflow_parity.py` compares the steps' `run:` bodies and says so in its docstring --- two
+step names describing one command are prose, and the defect it exists to catch is the two jobs
+doing different *work*. Re-aimed at a `run:` body, it goes red.
+
+The rule this repository already states is *a mutation that survives may be a variant, not a
+gap --- check before strengthening*. What these two add is where to look first: **read the gate's
+own stated exemptions before reading its code.** Both exemptions were written down, in the
+docstring, in the file the mutation names, and both were skipped on the way to diagnosing the
+survivor. Strengthening either gate to kill its mutation would have made it worse --- the first
+would reject every well-formed module in the tree, the second would fail on any two steps whose
+prose differs.
+
+There is a second finding sitting inside the first, and it is the reason the fixture gate's
+blindness lasted: **`check_workflow_parity.py` walks `run:` block scalars correctly and its
+sibling `check_workflow_fixtures.py` did not.** Two scripts, one directory apart, reading the
+same two files, one of them right. A correct implementation next door is not a check on the
+other one, and its existence made the wrong one look reviewed.
+
 ### macOS has no `setsid`, so a detached restart never starts
 
 A supervisor script restarted a long run with `setsid <command> &`. There is no `setsid`
