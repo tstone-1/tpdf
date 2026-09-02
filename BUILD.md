@@ -4643,6 +4643,46 @@ src-tauri/fuzz/run.py --build-only
 print nothing, which is indistinguishable from nine fuzzers finding nothing --- the trap index
 has that one.
 
+#### A target that reaches a defect we cannot fix has to fork
+
+libFuzzer stops at the **first** finding, which is the right default: a finding is the point,
+and stopping puts it in front of you. It is the wrong default for a target that reaches a defect
+nobody here can fix, because the run then ends in the same place every time and everything
+behind it is unreachable.
+
+`lopdf_load` and `encoding_scan` both reach `docs/THREAT-MODEL.md` residual risk 21 --- `lopdf`'s
+cross-reference parser multiplying out the `/W` field widths a document declares and asking for
+the product, which aborts through `handle_alloc_error` where no guard of ours can sit. Measured
+2026-09-02 on `lopdf_load`, same corpus and same binary:
+
+| mode | executions | wall | outcome |
+|---|---|---|---|
+| default | 80,269 | 21 s | stopped on the abort |
+| `-fork=1 -ignore_crashes=1` | 380,803 | 96 s | ran to time |
+
+It had been stopping like that since 2026-09-01 and nothing said so, because no campaign had
+been run to completion since. Both targets are in `run.py`'s `MUST_FORK` with that reason
+written beside them, so they fork whether or not `--fork` is given; `--fork` forces it on for
+everything.
+
+**Fork mode redefines a clean run, and this is the part to carry rather than the flag.** With
+`-ignore_crashes=1` libFuzzer answers **0** for a forked run that completed, however many
+children it buried --- so an exit code stops meaning what it means everywhere else here. A
+harness still reading it would report a target aborting every few minutes as permanently green.
+
+`run.py` therefore snapshots `artifacts/<target>/` before the run and diffs it after, in
+**both** the foreground and background paths, and a new file is a failure in either mode. The
+snapshot is taken before anything starts because the verdict is a difference and not a count:
+the directory already holds files from earlier runs. Proved both ways --- a 60 s `lopdf_load`
+run exits 0 with no new artifacts, and a file appearing mid-run turns it red, names the file
+and points here.
+
+The foreground path is worth its own sentence: a bare `--target <name>` lands there, and when
+the artifact check was first written it covered only the background branch, so the invocation
+people actually use kept the exit code as its whole answer. That is *a check bound to one
+caller covers only that caller*, and here the interpreter caught it because `run` had grown an
+argument.
+
 #### Reading an artifact: three shapes, and two of them look like the third
 
 A run that stops leaves a file in `src-tauri/fuzz/artifacts/<target>/`. Both the directory and
