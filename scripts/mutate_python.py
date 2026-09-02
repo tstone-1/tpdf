@@ -406,6 +406,73 @@ MUTATIONS = [
         says="listed no file at all",
         env={"GIT_INDEX_FILE": "/tmp/tpdf-no-such-index"},
     ),
+    # --- the emptiness controls, fired ----------------------------------------
+    #
+    # A sweep on 2026-09-02 found that fifteen of the sixteen gates already carry
+    # an `if not <population>` refusal --- `check_dates.py` was the exception and
+    # the row above closes it. Reading them is not evidence that they fire, and
+    # this repository's whole position is that a control never shown to fire is
+    # indistinguishable from one that keeps passing.
+    #
+    # These rows point a gate's population **root** at a directory that holds
+    # nothing. That is a perturbation of the checker rather than of its subject,
+    # which every other row here avoids on purpose --- and it is the right
+    # instrument for exactly this question, because the real tree cannot be
+    # emptied and "what does this answer when the scan returns nothing" is the
+    # claim under test. Each names the control's own words in `says`, so a red
+    # for any other reason is not accepted.
+    Mutation(
+        "docs: the frontend scan pointed at nothing",
+        "docs",
+        "scripts/check_doc_comments.py",
+        'SRC = ROOT / "src"',
+        'SRC = ROOT / "no-such-directory"',
+        red=True,
+        says="no .ts or .svelte files",
+    ),
+    Mutation(
+        "docs: the Rust scan pointed at nothing",
+        "docs",
+        "scripts/check_doc_comments.py",
+        'RUST = ROOT / "src-tauri" / "src"',
+        'RUST = ROOT / "no-such-directory"',
+        red=True,
+        says="no .rs files",
+    ),
+    Mutation(
+        "sinks: the frontend roots pointed at nothing",
+        "sinks",
+        "scripts/check_webview_sinks.py",
+        'ROOTS = [ROOT / "src"]',
+        'ROOTS = [ROOT / "no-such-directory"]',
+        red=True,
+        says="no `setAttribute(` call found anywhere in the frontend",
+    ),
+    Mutation(
+        "classified: the command registry pointed at nothing",
+        "classified",
+        "scripts/check_classified.py",
+        'REGISTRY = ROOT / "src" / "lib" / "appcommands.ts"',
+        'REGISTRY = ROOT / "docs" / "TRAPS.md"',
+        red=True,
+        says="no command ids found",
+    ),
+    Mutation(
+        # **Not the `if not entries` guard**, and the difference is worth the
+        # line: pointing the corpus at a file with no `### ` headings makes the
+        # index-versus-corpus set difference fire first, one message per bullet.
+        # That is still the gate refusing an empty population, and it is a
+        # different sentence, so `says` names the one that actually prints. A
+        # `says` of "[FAIL]" would have accepted either --- and accepting any
+        # failure is the generic-assertion problem this table exists to avoid.
+        "traps: the trap corpus pointed at a file with no entries in it",
+        "traps",
+        "scripts/check_trap_index.py",
+        'TRAPS = ROOT / "docs" / "TRAPS.md"',
+        'TRAPS = ROOT / "LICENSE"',
+        red=True,
+        says="in the index, no such entry",
+    ),
 ]
 
 
