@@ -158,11 +158,50 @@ jobs:
       # failure this whole fixture step exists for. `ci_fixtures.py` turns that
       # into a hard error: it asserts each artifact exists after the generator
       # returns, proved both ways before this step was written.
+      # qpdf, for the hostile corpus and the harness that reads it. Two things
+      # need it and only one is obvious: `make_hostile_pdf.py` builds
+      # `hostile-encrypted.pdf` with it, and `sanitize-rewrite` runs two of its
+      # six rewrite routes through it and checks every output with
+      # `qpdf --check`. So it is a run-time dependency of the harness as much as
+      # a build-time one of the corpus.
+      #
+      # Homebrew on macOS and the project's own release zip on Windows, which is
+      # the asymmetry `BUILD.md`'s prerequisites table already describes for a
+      # person: the winget package needs elevation and the zip needs none. The
+      # Windows side is pinned to a version and the macOS side floats, and that
+      # is deliberate rather than an oversight --- qpdf is an oracle here, and
+      # every assertion made through it is about which needles are present in
+      # its output rather than about its bytes. A version that stops agreeing
+      # with the other five routes is a finding, not a broken pin.
+      - name: Install qpdf
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -fsSL -o qpdf.zip https://github.com/qpdf/qpdf/releases/download/v12.4.1/qpdf-12.4.1-msvc64.zip
+            # Python rather than `unzip`, which Git Bash on the Windows image
+            # does not promise, and rather than PowerShell's Expand-Archive,
+            # which would mean a second shell inside a bash step. The
+            # interpreter is the one `setup-python` pinned above.
+            python -c "import sys, zipfile; zipfile.ZipFile('qpdf.zip').extractall(sys.argv[1])" "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/qpdf-12.4.1-msvc64/bin" >> "$GITHUB_PATH"
+          else
+            brew install qpdf
+          fi
+          # Proves the tool is reachable in THIS step. It is not enough on
+          # Windows, where the PATH entry above only reaches the steps that
+          # follow, so the version is printed from the directory itself there.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "$RUNNER_TEMP/qpdf-12.4.1-msvc64/bin/qpdf.exe" --version
+          else
+            qpdf --version
+          fi
+
       - name: Install pyhanko, for the signed fixtures
         run: python -m pip install --disable-pip-version-check -r scripts/fixture-tools.txt
 
       - name: Generate the test fixtures a runner can build
-        run: python -u scripts/ci_fixtures.py --signed
+        run: python -u scripts/ci_fixtures.py --signed --hostile
 
       - name: Quality gates
         run: python -u scripts/gates.py
@@ -242,6 +281,27 @@ jobs:
       # fixture-specific.
       - name: The worker boundary, including the rewrite's output channel
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example worker-probe -- testdata/text-wide.pdf
+
+      # The hostile corpus, ruled on rather than printed. `docs/PLAN.md` Phase 3
+      # states its exit criterion in terms of this harness, and until 2026-09-02
+      # the harness could not fail: it printed `LEAKS`, printed `clean, lossy`,
+      # printed the literal string `[FAIL]`, and exited 0 for all three. Nothing
+      # ran it either, so no exit code was being read. `--strict` is what makes
+      # it a check, and this step is what makes it a check somebody runs.
+      #
+      # It asserts that no collecting route keeps a needle the manifest marks
+      # `removed` or drops one marked `survives`, that no file carrying
+      # something unreadable reports clean, and --- the assertion that makes the
+      # others mean anything --- that the *non-collecting* routes leak, because
+      # every collecting route reporting nothing is the same output whether the
+      # sweep works or the corpus hides nothing at all.
+      #
+      # No fixture is named here on purpose: the harness reads
+      # `testdata/hostile-manifest.json`, which the step above writes, and a
+      # workflow that named the fifteen documents would be a second copy of a
+      # list that already lives in `scripts/ci_fixtures.py`.
+      - name: The hostile corpus, strict
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example sanitize-rewrite -- --strict
 
       # NOT a gate: it measures rather than asserting, and its exit code says
       # whether it could measure, never whether the answer was convenient. It is

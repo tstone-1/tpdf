@@ -56,11 +56,20 @@ reasoned about --- declare a surviving carrier `removed` (4 failures), unlink th
 (8), declare a clean fixture `unverifiable` (4), select only fixtures whose carriers all
 survive (1), select no fixture at all (1). The real corpus: 15 fixtures, exit 0.
 
-**It is not a gate and cannot be one.** The generator shells out to `qpdf`, which is not a
-build dependency and is on neither CI runner, so `hostile-manifest.json` exists on no fresh
-checkout --- the same reasoning that put `redact-reach-probe` in the release checklist. It is
-documented in `BUILD.md` with its invocation and its controls, to be run after anything that
-touches `sweep.rs`, `verify.rs` or the rewrite.
+It is not a `scripts/gates.py` gate: that list has to pass on a fresh checkout where
+`testdata/` is empty, and a gate that refuses on a precondition of running is red on every
+machine that is not running.
+
+**It is a CI step on both legs.** This paragraph said *"not a gate and cannot be one"*, and the
+reason it gave --- qpdf is on neither runner --- was a fact about the runners rather than about
+the work. Both workflows install qpdf now (Homebrew on macOS, the project's own pinned release
+zip on Windows), `scripts/ci_fixtures.py --hostile` builds the corpus, and the strict run
+follows the worker probe. The parity gate holds the two `gates` jobs at 16 identical steps.
+
+Two things that install buys beyond the corpus, and only one of them is obvious:
+`make_hostile_pdf.py` needs qpdf to write `hostile-encrypted.pdf`, and `sanitize-rewrite` runs
+two of its six rewrite routes *through* qpdf and checks every output with `qpdf --check` --- so
+the tool is a run-time dependency of the harness as much as a build-time one of the corpus.
 
 
 ### Fixed: a page turn outside the documented range panicked the rewrite
