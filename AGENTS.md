@@ -1276,6 +1276,7 @@ more risk than the one hop it saves. Read them as naming the trap index; the par
 - The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
 - A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
 - A PATCH that sets only the body clears the draft's tag, and publishing then attaches it to nothing
+- Renaming the changelog heading instead of opening a new one files a released version as unreleased
 - A draft release is invisible, and the tag beside it says the work shipped
 - A test that walks every prefix of a journal still could not see the snapshot rule
 - Two tests sharing a name make a mutation harness's two counts disagree

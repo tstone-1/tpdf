@@ -7959,6 +7959,32 @@ The `latest.json` asset is a separate copy of the same prose and was left alone 
 sentence, and nothing in tpdf reads that field --- the updater shows only the version. Replacing
 a signed release's asset to correct text no reader sees is the worse trade.
 
+### Renaming the changelog heading instead of opening a new one files a released version as unreleased
+
+`v26.9.0` shipped on 2026-09-01 under `## [26.9.0] - 2026-09-01`. The first commit after it,
+`c23fb36`, needed somewhere to put its entry and **renamed that heading** to
+`## [26.9.1] - Unreleased` rather than adding a section above it. Twenty more entries then
+accumulated under it.
+
+The result is wrong in two directions at once, and neither is visible from the file. There is
+no `26.9.0` section at all, so the changelog cannot say what the released version contained;
+and the next release would have published notes claiming **13 entries that shipped a day
+earlier**, on top of its own 20. Found by counting rather than by reading: the heading list
+went `26.9.1 - Unreleased` straight to `26.8.12 - 2026-08-30`, with a published `v26.9.0`
+sitting between them in `gh release list`.
+
+**Nothing catches it, and the reason is the thing that makes the heading form safe here.**
+`AGENTS.md` records that `release.yml` reads *nothing* from `CHANGELOG.md` --- its
+`releaseBody` is a literal block in the workflow --- which is why this repository can use
+`## [version] - Unreleased` where a repo whose tooling matches the heading cannot. That same
+property means a heading can say anything at all and no job will ever disagree with it.
+
+The cheap instrument is a comparison nobody was making: **every tag should have a section, and
+every dated section should have a tag.** `git tag` against `grep '^## \[' CHANGELOG.md` answers
+it in one line and would have failed the morning after the release. Renaming a heading is the
+specific move to distrust --- adding a section above one is almost always what was meant, and
+the two edits look identical in a diff that only shows the changed line.
+
 ### A draft release is invisible, and the tag beside it says the work shipped
 
 `v26.8.0` was tagged and pushed on 2026-08-03. The `Release` run went green on all four jobs

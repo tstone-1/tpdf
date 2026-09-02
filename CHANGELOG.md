@@ -471,6 +471,16 @@ provokes the refusal from the real menu with a second writer and asserts no prin
 opens; the offer buttons themselves are in the web view, which that harness cannot reach,
 and its docstring says so rather than rounding up.
 
+## [26.9.0] - 2026-09-01
+
+(The thirteen entries below this heading shipped as `v26.9.0` on 2026-09-01. They spent a
+day filed under `26.9.1 - Unreleased`, because the commit after the release **renamed** this
+heading instead of opening a new section above it -- so the changelog recorded a released
+version as unreleased, and the next release would have claimed its entries a second time.
+Nothing catches that: `release.yml` reads nothing from this file, its `releaseBody` being a
+literal block in the workflow, which is the property that makes a wrong heading here silent.
+Restored 2026-09-02.)
+
 ### Fixed: Acrobat draws a box we told it would draw nothing
 
 Phase 2's exit criterion is that a document can be marked up, saved, reopened **in Acrobat
