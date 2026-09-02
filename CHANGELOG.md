@@ -19,6 +19,42 @@ have the binary.)
 
 ## [26.9.1] - Unreleased
 
+### Tested: two thirds of the shadow-text keys, and the parent tree's `/Kids`, had never met the loader
+
+`redact.rs`'s `SHADOW_TEXT` is `/ActualText`, `/Alt` and `/E` --- three places one line of a
+page can be repeated in the tagged structure tree. Only the first had a fixture that any
+redaction probe opened; the other two were exercised by dictionaries the unit tests build in
+Rust, so no file a parser produced had ever carried them.
+
+`text-marked.pdf` carries all three now, on both the element whose line is redacted and the
+element whose line is not, and `redact-apply-probe` asserts both directions --- 48 checks to
+52, 0 failures. **What makes that worth recording is the A/B**: with `SHADOW_TEXT` truncated
+to `[b"ActualText"]`, the existing `STRUCT-CARRIER` assertion stays **green** and exactly the
+two new ones go red. The old check could not see a defect that removed two of the three keys.
+
+The markers are named `STRUCT-ALT-GONE` rather than `STRUCT-CARRIER-ALT` on purpose:
+`verify::scan` matches by substring, so a name with the old marker as a prefix would have kept
+the old assertion satisfied by surviving.
+
+The same fixture's `/ParentTree` was flat. `number_tree_lookup` reads `/Nums` and then
+descends `/Kids` honouring `/Limits`, because --- in its own words --- a producer with many
+pages writes a balanced tree and reading only `/Nums` "would find nothing on all of them,
+silently". Both fixtures in the tree with a parent tree held **zero** occurrences of
+`/Limits`. The root now holds no `/Nums` and the elements are reachable only through `/Kids`.
+
+Its first kid is a deliberate trap: `/Limits [5 9]` while its `/Nums` claims key 0 and maps it
+to the element for the line nobody redacted. That is what gives `/Limits` a failing case at
+all --- on a well-formed tree the skip is an optimisation, since searching a subtree whose
+range excludes the key finds the same answer, so only a document disagreeing with itself can
+distinguish honouring it from ignoring it. A new test asserts the fixture's shape before the
+lookup, so it cannot pass on the flat tree it replaced; two mutations are aimed at it --- the
+limits comparison slipped from `||` to `&&`, and the `/Kids` descent removed --- and both are
+caught.
+
+Closes two of the three gaps `docs/PLAN.md` Phase 3 lists as its next increment. The third,
+`/OC` marked content, is left with the measurement it waits on written down: whether PDFium
+extracts text inside an optional content group that is off.
+
 ### Fixed: a squiggle's own trip count, and a made page's size, were both unbounded
 
 `fuzz/fuzz_targets/save_rewrite_update.rs` reached **6.2 GB of allocation from a 2,937-byte

@@ -525,13 +525,26 @@ def build_marked(path: str, font_path: str) -> None:
     pdf.put(
         carrier,
         b"<< /Type /StructElem /S /P /P %d 0 R /Pg %d 0 R /K 0 "
-        b"/ActualText (%s) >>" % (ancestor, page, escape(secret + " STRUCT-CARRIER")),
+        b"/ActualText (%s) /Alt (%s) /E (%s) >>"
+        % (
+            ancestor,
+            page,
+            escape(secret + " STRUCT-CARRIER"),
+            escape(secret + " STRUCT-ALT-GONE"),
+            escape(secret + " STRUCT-E-GONE"),
+        ),
     )
     pdf.put(
         other,
         b"<< /Type /StructElem /S /P /P %d 0 R /Pg %d 0 R /K 1 "
-        b"/ActualText (%s) >>"
-        % (ancestor, page, escape(LINES[other_line] + " STRUCT-OTHER")),
+        b"/ActualText (%s) /Alt (%s) /E (%s) >>"
+        % (
+            ancestor,
+            page,
+            escape(LINES[other_line] + " STRUCT-OTHER"),
+            escape(LINES[other_line] + " STRUCT-ALT-KEPT"),
+            escape(LINES[other_line] + " STRUCT-E-KEPT"),
+        ),
     )
     pdf.put(
         ancestor,
@@ -544,8 +557,38 @@ def build_marked(path: str, font_path: str) -> None:
             escape("Section holding " + secret + " STRUCT-ANCESTOR"),
         ),
     )
-    # The number tree a consumer walks to get from an MCID back to its element.
-    parent_tree = pdf.add(b"<< /Nums [0 [%d 0 R %d 0 R]] >>" % (carrier, other))
+    # The number tree a consumer walks to get from an MCID back to its element,
+    # written in the *balanced* shape rather than the flat one.
+    #
+    # `redact.rs`'s `number_tree_lookup` reads `/Nums` and then descends `/Kids`,
+    # honouring each kid's `/Limits`, because -- in its own words -- a producer
+    # with many pages writes a balanced tree and reading only `/Nums` "would find
+    # nothing on all of them, silently". Until 2026-09-02 no fixture in the tree
+    # carried a single `/Limits`: the shape the code says every real document has
+    # was exercised by one hand-built Rust dictionary and by nothing a parser had
+    # ever produced. So the root here holds no `/Nums` at all, and the only route
+    # to the elements is through `/Kids`.
+    #
+    # **The first kid is a trap, and it is what makes `/Limits` load-bearing.**
+    # Its `/Limits` say 5 to 9, so a reader that honours them skips it; its
+    # `/Nums` nevertheless claims key 0, mapping MCID 0 to the element for the
+    # line nobody redacted. A reader that ignored `/Limits` and simply scanned
+    # every kid would therefore find the *wrong* element first and strip the
+    # shadow text off the untouched line -- which `redact-apply-probe` reads as
+    # two failures at once, STRUCT-CARRIER surviving and STRUCT-OTHER gone.
+    #
+    # Worth being exact about what that does and does not prove. On a *well
+    # formed* tree `/Limits` is an optimisation and nothing more: skipping a kid
+    # whose range excludes the key finds the same element as searching it would.
+    # A fixture can only make the skip falsifiable by disagreeing with itself,
+    # which is malformed by the specification and precisely what a hostile
+    # document does. What is pinned here is that we believe `/Limits` over
+    # `/Nums`, and that choice is only visible on input like this.
+    decoy = pdf.add(b"<< /Limits [5 9] /Nums [0 [%d 0 R]] >>" % other)
+    leaf = pdf.add(
+        b"<< /Limits [0 0] /Nums [0 [%d 0 R %d 0 R]] >>" % (carrier, other)
+    )
+    parent_tree = pdf.add(b"<< /Kids [%d 0 R %d 0 R] >>" % (decoy, leaf))
     pdf.put(
         struct_root,
         b"<< /Type /StructTreeRoot /K [%d 0 R] /ParentTree %d 0 R "
