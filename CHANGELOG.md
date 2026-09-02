@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.1] - Unreleased
+## [26.9.1] - 2026-09-02
 
 ### Tested: a redaction over text in a switched-off layer, and PDFium answered the question the other way
 

@@ -1,6 +1,6 @@
 # tpdf — Architecture and Roadmap
 
-Status: **Phase 0 closed; Phase 1 in progress; Phase 2 begun; Phase 3 started.** The viewer
+Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress.** The viewer
 runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
 session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
 change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,

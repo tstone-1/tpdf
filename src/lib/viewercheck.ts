@@ -10864,7 +10864,20 @@ async function printChecks(path: string, doc: DocumentInfo): Promise<void> {
       await invoke("print_document", { path, pages, turns });
       return "";
     } catch (e) {
-      return String(e);
+      // `describeThrown`, not `String(e)`, and that one word was the whole
+      // defect. `print_document` returns `Result<(), save::Refusal>`, so a
+      // refusal crosses as an **object** carrying `message` and `changed` ---
+      // and `String` renders it `[object Object]`, which contains none of the
+      // text the three checks below look for. Both of the assertions went red
+      // the day the print refusal grew a shape, and the harness is a step of
+      // `BUILD.md` rather than a gate, so nothing said so until the release
+      // checklist ran it.
+      //
+      // The third check passed throughout, and it is the one to look at: it
+      // asks only that the answer is non-empty and does *not* mention a missing
+      // page, and `[object Object]` satisfies both. One defect, two checks red
+      // and one green for the wrong reason.
+      return describeThrown(e);
     }
   };
 
