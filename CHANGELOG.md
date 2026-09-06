@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.2] - Unreleased
+## [26.9.2] - 2026-09-06
 
 Everything under this heading so far **shipped in 26.9.1** and was not recorded there. The
 findings come from seven commits between `v26.9.0` and `v26.9.1` that never reached this file,
@@ -631,6 +631,14 @@ every `#[tauri::command]`'s return type, and fails on any shape it cannot classi
 a named payload with a sample or an allowlisted primitive. A mirror is allowed to be a
 strict subset --- `RegionPlan` is, deliberately --- and each omitted field is named with its
 reason, with a third assertion that an excused field is one the sample really sends.
+
+### Tested: both mutation tables ran end to end for this release, and every miss was the table's
+
+669 Rust mutations (8 skipped as Windows-only) and 614 frontend mutations, all caught.
+Ten rows were wrong about themselves rather than about the code: one replacement text that
+no longer parsed after the field walker moved, one that spelled the kill loop inside the lock
+it was meant to leave, one that wrote a field the tool union had removed, and seven that named
+a test with its describe block's prefix. Each was re-spelled and re-run alone to red.
 
 ## [26.9.1] - 2026-09-02
 
