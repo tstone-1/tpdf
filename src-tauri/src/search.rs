@@ -281,9 +281,24 @@ pub struct PageMatches {
     /// This page's last characters, for the request about the next one.
     ///
     /// Absent when the query cannot span a break anyway --- see
-    /// [`carry_for`] --- so the common single-word search ships nothing extra.
+    /// [`carry_len`] --- so the common single-word search ships nothing extra.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tail: Option<Carry>,
+    /// The pages after this one, when the caller asked about a range.
+    ///
+    /// **A field rather than a second command, and a nested one rather than a
+    /// list**, because the shape a single-page caller sees has to stay exactly
+    /// what it was: `search_page` is a registered command with a window harness
+    /// entry, a README marker and mocked replies in tests, and every one of
+    /// those describes one page's answer. Empty for a single-page request, and
+    /// `skip_serializing_if` keeps it out of the JSON entirely --- so a reply to
+    /// the old request is byte-identical to the one it was before this existed.
+    ///
+    /// Never nested more than one deep: the pages here are built by
+    /// `render::run_search_range`, which fills `matches`, `tail` and `problem`
+    /// and leaves this empty.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub more: Vec<PageMatches>,
 }
 
 /// Characters left after folding, and where each came from.
@@ -369,9 +384,9 @@ impl Folded {
         Self { chars, source }
     }
 
-    fn of_page(text: &PageText, match_case: bool) -> Self {
+    fn of_page(codes: &[u32], match_case: bool) -> Self {
         Self::build(
-            text.codes
+            codes
                 .iter()
                 .enumerate()
                 .filter_map(|(index, code)| Some((index as u32, char::from_u32(*code)?))),
@@ -493,35 +508,159 @@ pub fn find_in(
     query: &str,
     options: Options,
 ) -> Result<Vec<Match>, String> {
-    let needle = Folded::of_query(query, options.match_case);
-    // A query of only whitespace is refused rather than run. The fold collapses
-    // runs, so two spaces and one space are the same query here, and the only
-    // distinction such a query could be trying to draw is exactly the one that
-    // has just been destroyed --- answering it with every gap in the document
-    // would be confidently wrong rather than merely useless.
-    //
-    // A *pattern* of only whitespace is a different thing --- `\s+` is spaces to
-    // look at and not spaces to match --- so the guard reads the query as typed
-    // in that case, which for a pattern is only empty when it is empty.
-    // An empty needle first, and on its own, because the literal walk below
-    // advances by the needle's length and would therefore **never terminate** on
-    // one. The whitespace guard beneath happens to cover that today --- `all` is
-    // true of an empty sequence --- and a termination argument that leans on
-    // another guard's implementation is one edit away from a hang. It was:
-    // deleting the whitespace guard as a mutation turned a readable red into a
-    // run with no result at all.
-    if needle.chars.is_empty() {
-        return Ok(Vec::new());
-    }
-    if options.regex {
-        if query.is_empty() {
-            return Ok(Vec::new());
-        }
-    } else if needle.chars.iter().all(|ch| *ch == ' ') {
-        return Ok(Vec::new());
+    find_in_codes(&text.codes, page, query, options)
+}
+
+/// [`find_in`] over the characters alone.
+///
+/// **Search reads `codes` and nothing else** --- not the boxes, not the page
+/// size, not the tagged runs --- which is what lets a scan be answered from a
+/// cache of four bytes a character instead of the twenty a whole [`PageText`]
+/// costs. See [`crate::textcache`], which is the caller that needs it.
+///
+/// # Errors
+///
+/// As [`find_in`].
+pub fn find_in_codes(
+    codes: &[u32],
+    page: u32,
+    query: &str,
+    options: Options,
+) -> Result<Vec<Match>, String> {
+    Ok(Prepared::new(query, options)?.find_in(codes, page))
+}
+
+/// A query compiled once, for a walk that will ask about many pages.
+///
+/// **The pattern and the folded needle are properties of the query, and a scan
+/// rebuilt both per page.** On the 775-page corpus that is 775 regex
+/// compilations of one pattern --- each bounded by `PATTERN_SIZE_LIMIT`, so the
+/// worst case is 775 times a megabyte of automaton --- to answer one question.
+/// The single-page entry points build one of these and use it once, which is
+/// what they always did; a range builds one and uses it for every page.
+pub struct Prepared {
+    /// The query, folded. Empty means nothing can match --- see [`Prepared::find_in`].
+    needle: Folded,
+    /// The compiled pattern, on the regex path only.
+    pattern: Option<regex::Regex>,
+    options: Options,
+    /// Whether a hit may straddle a page break, and how much tail that needs.
+    carry: Option<usize>,
+    /// Whether the query is one no walk can match, whatever the page says.
+    ///
+    /// Held rather than recomputed because it is two guards with different
+    /// reasons --- see [`Prepared::find_in`] --- and both are about the query.
+    barren: bool,
+}
+
+impl Prepared {
+    /// Compiles `query` once.
+    ///
+    /// # Errors
+    ///
+    /// [`Options::regex`] is set and the pattern does not compile. The message
+    /// is the one a find bar can show; see [`compile`].
+    pub fn new(query: &str, options: Options) -> Result<Self, String> {
+        let needle = Folded::of_query(query, options.match_case);
+        // A query of only whitespace is refused rather than run. The fold
+        // collapses runs, so two spaces and one space are the same query here,
+        // and the only distinction such a query could be trying to draw is
+        // exactly the one that has just been destroyed --- answering it with
+        // every gap in the document would be confidently wrong rather than
+        // merely useless.
+        //
+        // A *pattern* of only whitespace is a different thing --- `\s+` is spaces
+        // to look at and not spaces to match --- so the guard reads the query as
+        // typed in that case, which for a pattern is only empty when it is
+        // empty.
+        // An empty needle first, and on its own, because the literal walk below
+        // advances by the needle's length and would therefore **never
+        // terminate** on one. The whitespace guard beneath happens to cover that
+        // today --- `all` is true of an empty sequence --- and a termination
+        // argument that leans on another guard's implementation is one edit away
+        // from a hang. It was: deleting the whitespace guard as a mutation
+        // turned a readable red into a run with no result at all.
+        let barren = if needle.chars.is_empty() {
+            true
+        } else if options.regex {
+            query.is_empty()
+        } else {
+            needle.chars.iter().all(|ch| *ch == ' ')
+        };
+        // Compiled here, and *before* the barren shortcut is allowed to matter:
+        // a pattern that does not compile has to be reported whatever else is
+        // true of it, because the reader typing it expects to have got it wrong.
+        let pattern = if options.regex {
+            Some(compile(query, options.match_case)?)
+        } else {
+            None
+        };
+        let carry = carry_len(&needle, options);
+        Ok(Self {
+            needle,
+            pattern,
+            options,
+            carry,
+            barren,
+        })
     }
 
-    let hay = Folded::of_page(text, options.match_case);
+    /// Every non-overlapping occurrence in one page's characters.
+    #[must_use]
+    pub fn find_in(&self, codes: &[u32], page: u32) -> Vec<Match> {
+        find_prepared(self, codes, page)
+    }
+
+    /// One page's answer, and the break before it when there is a carry.
+    #[must_use]
+    pub fn search_page(&self, codes: &[u32], page: u32, carry: Option<&Carry>) -> PageMatches {
+        let tail = self.tail_of(codes, page);
+        let mut matches = self.find_in(codes, page);
+        if let Some(carry) = carry {
+            // Ahead of this page's own hits, because the walk keeps matches in
+            // the order they are found and a hit that begins on the previous
+            // page comes first in reading order.
+            let mut across = find_across(self, codes, page, carry);
+            across.append(&mut matches);
+            matches = across;
+        }
+        PageMatches {
+            page,
+            matches,
+            chars: codes.len() as u32,
+            problem: None,
+            tail,
+            more: Vec::new(),
+        }
+    }
+
+    /// The tail this page should hand to the request about the next one.
+    #[must_use]
+    pub fn tail_of(&self, codes: &[u32], page: u32) -> Option<Carry> {
+        let want = self.carry?;
+        let from = codes.len().saturating_sub(want);
+        Some(Carry {
+            page,
+            from: from as u32,
+            codes: codes[from..].to_vec(),
+        })
+    }
+}
+
+/// [`Prepared::find_in`]'s body, a free function so the walk below reads as it
+/// did when the query was rebuilt here.
+fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32) -> Vec<Match> {
+    let needle = &prepared.needle;
+    let options = prepared.options;
+    // Nothing this page can say makes a barren query match --- see
+    // [`Prepared::new`], where the three reasons a query is barren are, and why
+    // the empty needle has to be one of them rather than a consequence of the
+    // whitespace guard.
+    if prepared.barren {
+        return Vec::new();
+    }
+
+    let hay = Folded::of_page(codes, options.match_case);
 
     // Whether a hit has a word boundary at both ends. A closure rather than a
     // filter over the collected spans, because *where* the test happens is
@@ -535,8 +674,7 @@ pub fn find_in(
     // Accepted hits, as half-open indices into the folded sequence.
     let mut spans: Vec<(usize, usize)> = Vec::new();
 
-    if options.regex {
-        let pattern = compile(query, options.match_case)?;
+    if let Some(pattern) = &prepared.pattern {
         let (haystack, at_byte) = hay.as_str();
         for found in pattern.find_iter(&haystack) {
             if found.range().is_empty() {
@@ -590,16 +728,13 @@ pub fn find_in(
             start: start as u32,
             end: stop as u32,
             end_page: None,
-            before: slice_of(&text.codes, start.saturating_sub(CONTEXT_CHARS)..start),
-            hit: exact_of(&text.codes, start..stop),
-            after: slice_of(
-                &text.codes,
-                stop..(stop + CONTEXT_CHARS).min(text.codes.len()),
-            ),
+            before: slice_of(codes, start.saturating_sub(CONTEXT_CHARS)..start),
+            hit: exact_of(codes, start..stop),
+            after: slice_of(codes, stop..(stop + CONTEXT_CHARS).min(codes.len())),
         });
     }
 
-    Ok(matches)
+    matches
 }
 
 /// Whether a page break is worth looking across for this query, and how much of
@@ -612,43 +747,27 @@ pub fn find_in(
 /// - a query of one folded character, which cannot straddle anything;
 /// - a query longer than [`CARRY_LONGEST_QUERY`], where the carry could not
 ///   hold both the hit's left half and the character before it.
-fn carry_len(query: &str, options: Options) -> Option<usize> {
+fn carry_len(needle: &Folded, options: Options) -> Option<usize> {
     if options.regex {
         return None;
     }
-    let folded = Folded::of_query(query, options.match_case).chars.len();
+    let folded = needle.chars.len();
     if !(2..=CARRY_LONGEST_QUERY).contains(&folded) {
         return None;
     }
     Some(CARRY_CHARS)
 }
 
-/// The tail this page should hand to the request about the next one.
-fn carry_for(text: &PageText, page: u32, query: &str, options: Options) -> Option<Carry> {
-    let want = carry_len(query, options)?;
-    let from = text.codes.len().saturating_sub(want);
-    Some(Carry {
-        page,
-        from: from as u32,
-        codes: text.codes[from..].to_vec(),
-    })
-}
-
 /// Finds hits that begin on the carried page and finish on this one.
 ///
 /// Only those. Everything inside this page is [`find_in`]'s job and reporting it
 /// twice would double every count in the document.
-fn find_across(
-    text: &PageText,
-    page: u32,
-    carry: &Carry,
-    query: &str,
-    options: Options,
-) -> Vec<Match> {
-    let Some(_) = carry_len(query, options) else {
+fn find_across(prepared: &Prepared, codes: &[u32], page: u32, carry: &Carry) -> Vec<Match> {
+    let Some(_) = prepared.carry else {
         return Vec::new();
     };
-    let needle = Folded::of_query(query, options.match_case);
+    let needle = &prepared.needle;
+    let options = prepared.options;
     if needle.chars.is_empty() {
         return Vec::new();
     }
@@ -664,12 +783,7 @@ fn find_across(
     // sheet of paper in it --- and the fold then collapses it against any
     // whitespace either side of it, exactly as it does a line break inside a
     // page. This cost two tests to find and is the reason they exist.
-    let joined: Vec<u32> = carry
-        .codes
-        .iter()
-        .chain(text.codes.iter())
-        .copied()
-        .collect();
+    let joined: Vec<u32> = carry.codes.iter().chain(codes.iter()).copied().collect();
     let split = carry.codes.len();
     let mut items: Vec<(u32, char)> = Vec::with_capacity(joined.len() + 1);
     for (index, code) in joined.iter().enumerate() {
@@ -739,8 +853,8 @@ fn find_across(
                 exact_of(&joined, split..stop)
             ),
             after: slice_of(
-                &text.codes,
-                (stop - split)..(stop - split + CONTEXT_CHARS).min(text.codes.len()),
+                codes,
+                (stop - split)..(stop - split + CONTEXT_CHARS).min(codes.len()),
             ),
         });
         at += needle.chars.len();
@@ -760,31 +874,31 @@ pub fn search_page(
     options: Options,
     carry: Option<&Carry>,
 ) -> PageMatches {
-    let tail = carry_for(text, page, query, options);
-    match find_in(text, page, query, options) {
-        Ok(mut matches) => {
-            if let Some(carry) = carry {
-                // Ahead of this page's own hits, because the walk keeps matches
-                // in the order they are found and a hit that begins on the
-                // previous page comes first in reading order.
-                let mut across = find_across(text, page, carry, query, options);
-                across.append(&mut matches);
-                matches = across;
-            }
-            PageMatches {
-                page,
-                matches,
-                chars: text.len() as u32,
-                problem: None,
-                tail,
-            }
-        }
+    search_codes(&text.codes, page, query, options, carry)
+}
+
+/// [`search_page`] over the characters alone, compiling the query for this one
+/// page.
+///
+/// A walk that will ask about many pages should build a [`Prepared`] once and
+/// call [`Prepared::search_page`] instead; this is that, for one page.
+#[must_use]
+pub fn search_codes(
+    codes: &[u32],
+    page: u32,
+    query: &str,
+    options: Options,
+    carry: Option<&Carry>,
+) -> PageMatches {
+    match Prepared::new(query, options) {
+        Ok(prepared) => prepared.search_page(codes, page, carry),
         Err(problem) => PageMatches {
             page,
             matches: Vec::new(),
-            chars: text.len() as u32,
+            chars: codes.len() as u32,
             problem: Some(problem),
             tail: None,
+            more: Vec::new(),
         },
     }
 }

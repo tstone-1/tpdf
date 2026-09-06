@@ -38,12 +38,11 @@ bare Mach-O opens a window and never runs a line of JavaScript.
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+from harness_launch import outcome_of, report, run_app
 from live_output import stream_results
 from stray import clear_strays
 from webview_guard import require_visible_session
@@ -81,74 +80,16 @@ RECORDED_FIELDS = ("path", "page", "turns", "fit", "sidebar")
 
 
 def launch(binary: str, mode: str, session_file: Path, timeout: float) -> tuple[int, str]:
-    """Runs one phase, returning its exit code and transcript."""
+    """Runs one phase, returning its exit code and transcript.
+
+    The launch itself, the transcript reader and the verdict all live in
+    `harness_launch.py`: three scripts drive these reporters and each had its own
+    copy, differing mostly in how much of the reasoning had survived the copy.
+    What is left here is the environment one phase needs.
+    """
     env = dict(os.environ, TPDF_SESSIONCHECK=mode, TPDF_SESSION_FILE=str(session_file))
-    try:
-        done = subprocess.run(
-            [binary], env=env, capture_output=True, text=True, timeout=timeout
-        )
-    except subprocess.TimeoutExpired:
-        return 1, "[FAIL] run timed out\n"
-    return done.returncode, done.stdout + done.stderr
-
-
-SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed", re.M)
-RESULT = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+(.*)$")
-
-
-def outcome_of(out: str, name: str) -> str | None:
-    """The verdict recorded for a named check, or None when it is absent.
-
-    Found by splitting on the label and matching the rest of the line, never by
-    a fixed column. `Report` pads names to a width nobody remembers, so a
-    pattern that encodes the padding stops matching the day a name grows past it
-    -- silently, and in the direction that reads as good news. `AGENTS.md`
-    records exactly that: a mutation harness that printed SURVIVED while its own
-    summary line, four lines below in the same buffer, said a check had failed.
-    """
-    for line in out.splitlines():
-        found = RESULT.match(line)
-        if found and found.group(2).startswith(name):
-            return found.group(1)
-    return None
-
-
-def report(phase: str, code: int, out: str) -> bool:
-    """Prints a phase's transcript, and says whether it is readable and green.
-
-    Three separate facts, and it needs all three.
-
-    A run that produced no summary line is a *broken run*, not a pass: a crash,
-    a timeout and a suspended page all print nothing, which is exactly what a
-    silent success looks like.
-
-    The summary is parsed rather than trusted to the exit code. Written the
-    other way round first, and it reported `[OK] session restore verified` under
-    a phase whose own last line said `0/1 checks passed` -- because
-    `AppHandle::exit` does not set a process's exit code. One number in the
-    buffer disagreed with another and nothing compared them, which is the exact
-    defect this repository's mutation harness had.
-
-    So both are read, and a disagreement between them is itself a failure: it
-    means one of the two stopped describing the run.
-    """
-    print(f"--- {phase} ---")
-    print(out, end="" if out.endswith("\n") else "\n")
-
-    summary = SUMMARY.search(out)
-    if not summary:
-        print(f"[FAIL] {phase}: no summary line, so the run did not finish")
-        return False
-
-    passed, total = int(summary.group(1)), int(summary.group(2))
-    green = passed == total
-    if green != (code == 0):
-        print(f"[FAIL] {phase}: summary says {passed}/{total} but exit was {code}")
-        return False
-    if not green:
-        print(f"[FAIL] {phase}: {total - passed} of {total} checks failed")
-        return False
-    return True
+    done = run_app([binary], env=env, timeout=timeout)
+    return done.code, done.out
 
 
 def check_recorded_file(session_file: Path, pdf: str) -> bool:
@@ -233,7 +174,7 @@ def main() -> int:
 
         ok = True
         code, out = launch(args.binary, f"record:{pdf}", recorded, args.timeout)
-        ok &= report(PHASE_RECORD, code, out)
+        ok &= report(out, code, PHASE_RECORD)
 
         # Read before anything else is launched, because what it decides is
         # whether launching anything else can mean anything.
@@ -267,13 +208,13 @@ def main() -> int:
         ok &= check_recorded_file(recorded, pdf)
 
         code, out = launch(args.binary, f"default:{pdf}", no_default, args.timeout)
-        ok &= report(PHASE_DEFAULT, code, out)
+        ok &= report(out, code, PHASE_DEFAULT)
 
         code, out = launch(args.binary, f"verify:{pdf}", recorded, args.timeout)
-        ok &= report(PHASE_VERIFY, code, out)
+        ok &= report(out, code, PHASE_VERIFY)
 
         code, out = launch(args.binary, "empty", no_empty, args.timeout)
-        ok &= report(PHASE_EMPTY, code, out)
+        ok &= report(out, code, PHASE_EMPTY)
 
     print()
     print("[OK] session restore verified" if ok else "[FAIL] session restore is not verified")

@@ -6,9 +6,11 @@ import {
   REACHED_TOLERANCE_PT,
   allRows,
   currentId,
+  currentIdIn,
   flatten,
   isNavigable,
   openFlagOf,
+  reachOrder,
   reasonFor,
   type OutlineItem,
   type Target,
@@ -332,5 +334,101 @@ describe("isNavigable", () => {
     expect(isNavigable({ kind: "broken" })).toBe(false);
     expect(isNavigable({ kind: "none" })).toBe(false);
     expect(isNavigable({ kind: "refused", action: "launch" })).toBe(false);
+  });
+});
+
+
+describe("currentIdIn", () => {
+  /**
+   * A scrambled outline, big enough that a walk and a search differ.
+   *
+   * Scrambled on purpose: "the last navigable row at or before the reader" is
+   * the obvious rule and is wrong on an outline that jumps backwards --- an
+   * index, a foreword listed last --- and an outline in order cannot tell the
+   * two rules apart. The generator is deterministic so a failure is one anybody
+   * can reproduce.
+   */
+  function scrambled(count: number): OutlineItem[] {
+    const items: OutlineItem[] = [];
+    let seed = 12345;
+    for (let at = 0; at < count; at++) {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      const where = seed % (count * 2);
+      // Every eighth entry is unreachable, so the search has to skip the same
+      // rows the walk does rather than merely land in the same place.
+      items.push(
+        item(
+          `Entry ${at}`,
+          at % 8 === 7 ? { kind: "none" } : page(where, (seed % 800) || null),
+        ),
+      );
+    }
+    return items;
+  }
+
+  const big = allRows(scrambled(5000));
+  const order = reachOrder(big);
+
+  it("gives the same answer as the walk, everywhere", () => {
+    // A second implementation of a rule is a second thing to get wrong, so what
+    // makes this one safe is that the walk is the oracle rather than a set of
+    // hand-written expectations that would have to be right twice.
+    for (let page = 0; page < 40; page++) {
+      for (const top of [0, 199, 400, 401, 799, 5000]) {
+        expect(currentIdIn(order, page, top)).toBe(currentId(big, page, top));
+      }
+    }
+  });
+
+  it("agrees on the fixture the walk's own tests use", () => {
+    const rows = allRows(manual());
+    const small = reachOrder(rows);
+    expect(currentIdIn(small, 5, 0)).toBe("2");
+    expect(currentIdIn(small, 1, 500)).toBe("1.0");
+    expect(currentIdIn(small, 1, 395)).toBe("1.0");
+    expect(currentIdIn(small, 1, 380)).toBe("1");
+    expect(currentIdIn(reachOrder(allRows([item("Chapter", page(3))])), 1, 0)).toBeNull();
+  });
+
+  it("orders two entries on one page by where they land, not by where they are listed", () => {
+    // The fixture the big scrambled one cannot supply and the manual does not
+    // contain: three entries on one page, listed in an order that is not the
+    // order they appear down the page. Sorted by document position the search
+    // is not even searching a sorted list --- the reached/not-reached test is no
+    // longer monotone along it --- and it answers the first entry instead of
+    // the third, which is a highlight stuck at the top of a chapter the reader
+    // has scrolled through.
+    const jumbled = [
+      item("Near the top", page(1, 100)),
+      item("Near the bottom", page(1, 700)),
+      item("In the middle", page(1, 200)),
+    ];
+    const rows = allRows(jumbled);
+    expect(currentIdIn(reachOrder(rows), 1, 300)).toBe("2");
+    expect(currentIdIn(reachOrder(rows), 1, 300)).toBe(currentId(rows, 1, 300));
+  });
+
+  it("looks at a handful of entries rather than all five thousand", () => {
+    // The whole reason it exists. `sidebar.ts` asks this on every frame the
+    // rounded scroll position moves, so on a long technical manual the walk was
+    // a few thousand comparisons a frame for an answer that changes a few dozen
+    // times in a document.
+    //
+    // Counted rather than timed: a duration is a statement about this machine
+    // this afternoon, and the number of entries touched is the mechanism.
+    let reads = 0;
+    const counted = new Proxy(order, {
+      get(target, key, receiver): unknown {
+        if (typeof key === "string" && /^[0-9]+$/.test(key)) reads++;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    expect(currentIdIn(counted, 20, 300)).toBe(currentId(big, 20, 300));
+    // Two reads per step of a binary search over ~4,400 navigable entries is
+    // about 26. A walk would be one per entry.
+    expect(reads).toBeLessThan(40);
+    // The control: it did look at something, so the bound is not being met by a
+    // search that never ran.
+    expect(reads).toBeGreaterThan(0);
   });
 });

@@ -217,7 +217,7 @@ quietly not existing.
 outside review found it: every path that *writes* a document parsed it in the coordinator
 too, through `lopdf`, and each is one menu item away.
 
-- `save_document` → `save::append_bytes` or `save::stage_in_place` (`lib.rs`), on every save
+- `save_document` → `save::append_bytes` or `save::stage_in_place` (`commands/save.rs`), on every save
   over the open file.
 - `save_copy` → `save::write_copy`, on every Save a copy.
 - `extract_pages` → `save::write_copy` again, on every extraction.
@@ -316,6 +316,15 @@ thousand and counts the rest in one further line --- otherwise a file with a few
 thousand undecodable objects produces a report that will not fit down the pipe, and the reader
 meets a verification that *failed* rather than a file with a great deal wrong with it. The
 verdict is unchanged by the shortening; only the enumeration is.
+
+**The other reply the same bound has to hold is the one whose size the caller chooses.** Since
+26.9.2 a search asks about a run of pages rather than one, so the answer is the sum of several
+pages' hits and the number of pages is picked by the frontend --- which is the quantity that
+does not predict the size. `render::run_search_range` therefore stops when its answers reach
+3 MB, a tenth of `MAX_REPLY_BYTES`, and hands back a **prefix** of what was asked for; the
+caller reads how many pages came back rather than assuming the run completed, because a walk
+that advanced by the number it asked for would skip the pages the budget cut off and report no
+hits on them.
 
 What follows describes the exposure those parses had while they were here, and is kept because
 `save::Here` still has it.
@@ -915,8 +924,8 @@ and reach no worker --- the T6.2 shape exactly, and the commands that write are 
 
 **Two things the frontend cannot say, and both are deliberate.**
 
-- **The timestamp.** `edits::NewMark` has no field for it; `lib.rs` reads the clock when the
-  command arrives. What a mark claims about when it was made is the application's statement,
+- **The timestamp.** `edits::NewMark` has no field for it; `commands/edit.rs` reads the
+  clock when the command arrives. What a mark claims about when it was made is the application's statement,
   and a `made` on the wire would be one more attacker-chosen string in a file tpdf signs its
   name to.
 - **The subtype.** `MarkKind` has one variant and `save.rs` maps it with a `match`, so the
@@ -1024,12 +1033,15 @@ attacker-controlled, and three things bound it rather than one.
   `Apache-2.0`, swept over the whole tree rather than read off a README.
 
 **Reaching a signature is bounded too, and it was not until 2026-08-24.**
-`docinfo::read_signatures` walks the form's field tree, and it bounded the *depth* of that
-walk and the number of signatures it would report --- neither of which stops **fan-out**. A
+`docinfo::read_signatures` walks the form's field tree through `fields::walk`, and it
+bounded the *depth* of that walk and the number of signatures it would report --- neither of which stops **fan-out**. A
 group node carries no `/FT`, so it emits no signature and `MAX_SIGNATURES` never fires; a node
 whose `/Kids` names itself sixty-four times therefore costs 64^8 pops inside a depth bound of
-eight, on a file of a few kilobytes. `MAX_FIELD_NODES` (4,096) bounds the pops themselves,
-which is the shape `links.rs`'s `MAX_TREE_NODES` had already taken for its own tree walk.
+eight, on a file of a few kilobytes. `MAX_FIELD_NODES` (4,096) bounds the pops themselves ---
+it is the `nodes` field of the `fields::Bounds` this caller passes, and `redact::covered_fields`
+passes 20,000 through the same loop, deliberately: a field a redaction does not reach is a value
+left in a redacted document, where one the properties panel does not reach is a line missing from
+a list. That is the shape `links.rs`'s `MAX_TREE_NODES` had already taken for its own tree walk.
 Hitting it is reported through `Limits::signatures_dropped` --- the same counter the signature
 bound reports through, because to a reader they are one event: this scan stopped looking, and
 what it says about signatures is incomplete.
@@ -1329,7 +1341,10 @@ the rename instead, so the order is what makes the two platforms agree.
 
 **Two refusals, distinguished on the wire, which is unusual enough to state.**
 `SaveFailure` carries `reopen`: false means nothing was touched and the reader still has
-their document, true means it is closed whatever became of the file. The reason it is a
+their document, true means it is closed whatever became of the file. It is `failure::Failure`
+since 2026-09-06 and the wire is unchanged --- the two booleans are *derived* from one
+`failure::Action` at serialisation time, so the type and the wire cannot come to disagree about
+a refusal. The reason it is a
 field rather than a wording is the T8 reason one level down --- a frontend that decided by
 matching on message text would be parsing a string the backend is free to reword.
 
@@ -2674,7 +2689,13 @@ which is what makes it evidence rather than a milestone.
     count can only be taken where the merged document is.
 
     The coordinator's remaining part is to **read** those files, and reading is not parsing:
-    `save::concatenated` copies bytes into a buffer and never asks what they mean.
+    `save::concatenated` reads those files straight into the mapping the worker is handed
+    --- one copy rather than the two it used to make --- and never asks what they mean. It is
+    also the one place a merge's *size* is bounded: `MAX_MERGE_BYTES` (1 GiB) is checked against
+    the running total from the files' own handles before a byte is read, because the coordinator
+    holds every incoming document at once and the worker maps the same segment. A reader who
+    picks a folder of scans gets a refusal naming the limit rather than an allocation failure
+    (2026-09-06).
 
     `worker-probe` was 40 checks when this was written. Three of them are this: the coordinator and the worker
     merge a document with itself and produce byte-identical output with the same page count,

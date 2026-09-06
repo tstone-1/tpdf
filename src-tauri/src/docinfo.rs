@@ -65,6 +65,7 @@ use lopdf::{Dictionary, Document, LoadOptions, Object};
 use crate::annots::decode_text_string;
 use crate::ber;
 use crate::encoding::resolve;
+use crate::fields;
 
 use crate::encoding::MAX_DECODE;
 
@@ -503,16 +504,38 @@ pub struct Properties {
 /// indistinguishable from a document that simply has none of what is being
 /// looked for. See [`crate::progressive::RawDocument::password`].
 pub fn scan(bytes: &[u8], page_count: u32, password: Option<&str>) -> Result<Properties, String> {
-    let started = std::time::Instant::now();
-    let document = Document::load_mem_with_options(
+    scan_from(
+        &crate::encoding::load(bytes, password)?,
         bytes,
-        LoadOptions {
-            max_decompressed_size: Some(MAX_DECODE),
-            password: password.map(str::to_string),
-            ..Default::default()
-        },
+        page_count,
+        password,
     )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
+}
+
+/// [`scan`] over a document somebody else parsed. See [`crate::annots::scan_from`].
+///
+/// **The encryption is still read from the document the load produced**, which
+/// is what matters here and is unchanged: `lopdf` decrypts *at load*, so the
+/// trailer entry is already gone by the time any of this runs and the state the
+/// loader recorded is the only witness either way --- see `encryption_from_state`
+/// below. A shared parse is the same document, decrypted by the same call.
+///
+/// # Errors
+///
+/// As [`scan`], less the parse it no longer does.
+///
+/// **Still takes the bytes**, alone among the five, and that is not an oversight
+/// in the split: three of the things a reader sees here are not in the object
+/// graph at all --- the file's size, how many revisions it carries, and the
+/// appendix each signature does not cover, all of which are questions about the
+/// byte stream. What the shared parse saves is the parse.
+pub fn scan_from(
+    document: &Document,
+    bytes: &[u8],
+    page_count: u32,
+    password: Option<&str>,
+) -> Result<Properties, String> {
+    let started = std::time::Instant::now();
 
     let mut limits = Limits::default();
 
@@ -525,7 +548,7 @@ pub fn scan(bytes: &[u8], page_count: u32, password: Option<&str>) -> Result<Pro
     // authenticate; for every one it could --- including every empty-password
     // document, unprompted and encrypted --- the record `lopdf` kept is the only
     // thing left. See `encryption_from_state`.
-    let encryption = read_encryption(&document).or_else(|| encryption_from_state(&document));
+    let encryption = read_encryption(document).or_else(|| encryption_from_state(document));
 
     // **Already decrypted, or still locked --- there is no third case, and the
     // `decrypt("")` that used to stand here was the second half of the same
@@ -550,12 +573,12 @@ pub fn scan(bytes: &[u8], page_count: u32, password: Option<&str>) -> Result<Pro
     });
 
     let fields = if readable {
-        read_fields(&document, &mut limits)
+        read_fields(document, &mut limits)
     } else {
         Vec::new()
     };
     let mut signatures = if readable {
-        read_signatures(&document, bytes.len() as u64, &mut limits)
+        read_signatures(document, bytes.len() as u64, &mut limits)
     } else {
         Vec::new()
     };
@@ -583,12 +606,12 @@ pub fn scan(bytes: &[u8], page_count: u32, password: Option<&str>) -> Result<Pro
     };
     let language = catalog
         .and_then(|c| c.get(b"Lang").ok())
-        .and_then(|o| resolve(&document, o).as_str().ok())
+        .and_then(|o| resolve(document, o).as_str().ok())
         .map(decode_text_string)
         .unwrap_or_default();
 
     Ok(Properties {
-        version: version_of(&document, bytes),
+        version: version_of(document, bytes),
         bytes: bytes.len() as u64,
         pages: page_count,
         revisions: revisions_in(bytes),
@@ -597,8 +620,8 @@ pub fn scan(bytes: &[u8], page_count: u32, password: Option<&str>) -> Result<Pro
         signatures,
         tagged: catalog.map(|c| c.has(b"StructTreeRoot")),
         language,
-        attachments: catalog.map(|_| count_attachments(&document)),
-        xmp: catalog.and_then(|c| read_xmp(&document, c)),
+        attachments: catalog.map(|_| count_attachments(document)),
+        xmp: catalog.and_then(|c| read_xmp(document, c)),
         limits,
         scan_ms: started.elapsed().as_secs_f64() * 1000.0,
     })
@@ -1054,95 +1077,48 @@ fn count_attachments(document: &Document) -> usize {
 /// [`MAX_SIGNATURES`], and popped entries at [`MAX_FIELD_NODES`]. All three
 /// report through [`Limits`].
 fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<Signature> {
-    let Some(form) = document
-        .catalog()
-        .ok()
-        .and_then(|c| c.get(b"AcroForm").ok())
-        .and_then(|o| resolve(document, o).as_dict().ok())
-    else {
-        return Vec::new();
-    };
-    let Some(fields) = form
-        .get(b"Fields")
-        .ok()
-        .and_then(|o| resolve(document, o).as_array().ok())
-    else {
-        return Vec::new();
+    // The traversal is `fields.rs`; what stays here is what to do with a node.
+    // The two are separated because the same tree is walked by `redact.rs` with
+    // different bounds and a different question, and one bounded loop between
+    // them is one place for a hostile `/Kids` to be refused.
+    let bounds = fields::Bounds {
+        nodes: MAX_FIELD_NODES,
+        depth: Some(8),
+        dedup: false,
+        names: true,
+        order: fields::Order::Document,
     };
 
     let mut out: Vec<Signature> = Vec::new();
-    let mut queue: Vec<(&Object, u32, String)> =
-        fields.iter().map(|f| (f, 0u32, String::new())).collect();
-    // Reversed so the queue pops in document order, which is the order a reader
-    // sees the fields in every other application.
-    queue.reverse();
-
-    let mut budget = MAX_FIELD_NODES;
-    while let Some((entry, depth, prefix)) = queue.pop() {
-        // Charged before anything is read, so the refusal costs one pop rather
-        // than one parse. What is left in the queue is what will now not be
-        // walked, and it is reported as such: stopping in silence here would
-        // read as a form with no more signature fields in it, which is the
-        // ordinary case and therefore the reassuring one.
-        let Some(left) = budget.checked_sub(1) else {
-            limits.signatures_dropped += queue.len() + 1;
-            break;
-        };
-        budget = left;
-
+    let cut = fields::walk(document, &bounds, |node| {
+        // Charged before the dictionary is read, so the ceiling costs one pop
+        // rather than one parse -- and reported, because a form that stops
+        // yielding signatures reads exactly like one that has no more.
         if out.len() >= MAX_SIGNATURES {
             limits.signatures_dropped += 1;
-            continue;
+            return fields::Flow::Leaf;
         }
-        let Ok(field) = resolve(document, entry).as_dict() else {
+        let Some(field) = node.dict else {
             limits.unreadable += 1;
-            continue;
+            return fields::Flow::Leaf;
         };
 
-        let name = qualified_name(&prefix, &text_of(document, field, b"T"));
-
         // A node with kids is a group; a node with `/FT /Sig` is a field. Both
-        // at once is legal and means a field that also has widget children.
-        if let Ok(kids) = field
-            .get(b"Kids")
-            .ok()
-            .map_or(Err(()), |o| resolve(document, o).as_array().map_err(|_| ()))
-        {
-            // Eight is past any real form's nesting and short of anything that
-            // could cost time. A tree deeper than this is a document trying to.
-            if depth < 8 {
-                for kid in kids.iter().rev() {
-                    queue.push((kid, depth + 1, name.clone()));
-                }
-            } else {
-                limits.unreadable += 1;
-            }
+        // at once is legal and means a field that also has widget children, so
+        // this reads the field *and* descends.
+        if name_of(document, field, b"FT") == "Sig" {
+            out.push(read_signature(document, field, node.name, size, limits));
         }
+        fields::Flow::Descend
+    });
 
-        if name_of(document, field, b"FT") != "Sig" {
-            continue;
-        }
-
-        out.push(read_signature(document, field, name, size, limits));
-    }
+    // What the walk itself could not do. Both are additions rather than
+    // assignments: the closure above has already counted what it met, and these
+    // are the two refusals only the walk can see.
+    limits.signatures_dropped += cut.dropped;
+    limits.unreadable += cut.too_deep;
 
     out
-}
-
-/// A field's fully qualified name: its ancestors' partial names and its own,
-/// joined with a period --- PDF 32000-1 §12.7.3.2.
-///
-/// A node with no `/T` contributes nothing and is **not** a level in the name,
-/// which is what the specification says and is not merely tidier: a widget
-/// annotation merged into its field is such a node, and so is the group a
-/// document uses purely to hold kids together. Skipping them is what makes the
-/// name Acrobat shows and the name reported here the same string.
-fn qualified_name(prefix: &str, partial: &str) -> String {
-    match (prefix.is_empty(), partial.is_empty()) {
-        (_, true) => prefix.to_string(),
-        (true, false) => partial.to_string(),
-        (false, false) => format!("{prefix}.{partial}"),
-    }
 }
 
 /// Reads one signature field.
@@ -1190,10 +1166,17 @@ fn read_signature(
             .collect();
         // Pairs of (offset, length). An odd count is malformed, and the last
         // half-pair is dropped rather than read as an offset with no length.
+        // **Saturating, because these are the document's numbers and nothing
+        // says they add up.** Three lengths of `i64::MAX` are a legal array and
+        // a five-line file to write; `.sum()` on them overflows `u64`, which is
+        // a panic under `cargo test`'s debug assertions and a wrapped total in
+        // the shipped build --- a signature reported as covering eight bytes of
+        // a 900-byte file. Saturating says "more than there is", which is what
+        // the panel then compares against the file's size and refuses.
         out.covered_bytes = numbers
             .chunks_exact(2)
             .map(|pair| u64::try_from(pair[1]).unwrap_or_default())
-            .sum();
+            .fold(0_u64, u64::saturating_add);
         // Where the covered bytes stop. Everything past it was written after
         // this signature was made, which is the one part of `size -
         // covered_bytes` that is evidence of anything: the rest is the hole the
@@ -2883,6 +2866,40 @@ mod tests {
         let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
         assert_eq!(read[0].covered_bytes, 0);
         assert!(!read[0].covers_whole_file);
+    }
+
+    /// Lengths that cannot be added are saturated, not summed.
+    ///
+    /// `/ByteRange` is the document's own array, so its numbers are the
+    /// attacker's: three lengths of `i64::MAX` fit in a five-line PDF and their
+    /// `u64` sum does not exist. Adding them plainly panicked under debug
+    /// assertions --- every `cargo test` and every developer build --- and
+    /// wrapped in release, which is the worse half: a coverage figure of eight
+    /// bytes for a file the range claims to cover twice over, printed in the
+    /// panel as fact.
+    #[test]
+    fn byte_range_lengths_that_cannot_be_added_saturate_rather_than_wrap() {
+        let bytes = document_signed(dictionary! {
+            "Type" => "Sig",
+            "ByteRange" => vec![
+                0.into(),
+                i64::MAX.into(),
+                0.into(),
+                i64::MAX.into(),
+                0.into(),
+                i64::MAX.into(),
+            ],
+        });
+        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        assert_eq!(
+            read[0].covered_bytes,
+            u64::MAX,
+            "the total has to be reported as larger than any file, not wrapped"
+        );
+        assert!(
+            !read[0].covers_whole_file,
+            "and a range that cannot be added up has not been shown to cover the file"
+        );
     }
 
     /// An odd number of offsets is malformed, and the half pair is dropped.

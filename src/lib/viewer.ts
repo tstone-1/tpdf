@@ -109,6 +109,7 @@ import { DESTINATION_MARGIN_PT } from "./outline";
 import {
   markWalk,
   PageMap,
+  quarterTurns,
   stampWord,
   unedited,
   type MarkKind,
@@ -617,6 +618,18 @@ const ARROW_STEP = 60;
 const PAGE_OVERLAP = 0.9;
 
 /**
+ * Milliseconds a pinch or a window drag must be still before tiles are asked
+ * for.
+ *
+ * Long enough that a gesture arriving at display cadence never reaches the
+ * renderer mid-way --- 100 ms is six frames at 60 Hz --- and short enough that
+ * a reader who has stopped does not notice waiting for the page to sharpen. Not
+ * measured against a preference; it is the usual figure for a settle and the
+ * cost of being wrong either way is a fraction of a second.
+ */
+const ZOOM_SETTLE_MS = 100;
+
+/**
  * Pages a copy asks for at once.
  *
  * Small enough that a tile the reader is waiting for never queues behind more
@@ -901,6 +914,62 @@ function release(element: HTMLElement, pointerId: number): void {
   }
 }
 
+/**
+ * The tool a reader armed, or `{ kind: "none" }` when a press means what it
+ * always did.
+ *
+ * **A mode, in an application whose stated principle is contextual actions
+ * rather than modes** (`docs/PLAN.md` §8), so it is worth saying why there is no
+ * alternative. Every existing gesture on a page reads a point and acts on what
+ * is under it; drawing reads two points and acts on the paper between them, and
+ * nothing in a press can distinguish "select this text" from "draw a box here"
+ * without being told first.
+ *
+ * What the principle *does* decide is that every tool but the eraser is
+ * **one-shot**: armed by a command, spent by one rectangle, and dropped by
+ * Escape or by the document closing. A reader can never be stuck in one and
+ * never has to find the way out, which is the failure the principle is actually
+ * about. A tool that stays armed is the obvious next step and is a decision, not
+ * an oversight.
+ *
+ * **One field rather than four, and the reason is the invariant.** The crop, the
+ * redaction, the eraser and the drawing kinds are mutually exclusive --- one
+ * hand, one tool --- and while each had a field of its own that rule lived in
+ * four arming methods, each clearing the other three, and in a comment saying no
+ * two could be set. Every gesture then had to ask which of them meant it, and
+ * the state where two are live was expressible and merely never written. Here it
+ * is not expressible: arming is one assignment and the invariant is the type.
+ *
+ * The stamp rides in the `draw` variant for the same reason. There is no stamp
+ * tool without a stamp, so the two describe one arming and are spent together;
+ * held beside the kind they were a second piece of state that could disagree
+ * with it about which tool was armed.
+ *
+ * **`crop` and `redact` are two variants and not one with a destination**, even
+ * though the two gestures are the same drag over the same clamp and share a
+ * `PointerDrag`. What a drag *commits* is the whole difference between them ---
+ * a crop hides part of a page and a redaction is a step towards destroying it
+ * --- so one variant with the outcome read from somewhere else is one bug away
+ * from cropping when the reader asked to redact.
+ *
+ * `erase` is not a `MarkKind` for the mirror of that reason: nothing it does
+ * creates a mark, so it is not a kind of one.
+ */
+export type ArmedTool =
+  | { kind: "none" }
+  | { kind: "draw"; mark: MarkKind; stamp: StampName | null }
+  | { kind: "erase" }
+  | { kind: "crop" }
+  | { kind: "redact" };
+
+/**
+ * Nothing armed.
+ *
+ * A shared value rather than an object per disarm: it is immutable, every reader
+ * of it only ever asks its `kind`, and one constant is one thing to grep for.
+ */
+const NO_TOOL: ArmedTool = { kind: "none" };
+
 export class Viewer {
   private readonly root: HTMLElement;
   private readonly opts: ViewerOptions;
@@ -1035,27 +1104,20 @@ export class Viewer {
   private readonly markNote: MarkPopup;
 
   /**
-   * The tool a reader armed, or `null` when a press means what it always did.
+   * The tool a reader armed. See {@link ArmedTool}, which carries the reasoning.
    *
-   * **A mode, in an application whose stated principle is contextual actions
-   * rather than modes** (`docs/PLAN.md` §8), so it is worth saying why there is
-   * no alternative. Every existing gesture on a page reads a point and acts on
-   * what is under it; drawing reads two points and acts on the paper between
-   * them, and nothing in a press can distinguish "select this text" from "draw
-   * a box here" without being told first.
-   *
-   * What the principle *does* decide is that it is **one-shot**: armed by a
-   * command, spent by one rectangle, and dropped by Escape or by the document
-   * closing. A reader can never be stuck in it and never has to find the way
-   * out, which is the failure the principle is actually about. A tool that
-   * stays armed is the obvious next step and is a decision, not an oversight.
+   * Read through {@link drawArmed}, {@link cropArmed}, {@link redactArmed} and
+   * {@link eraseArmed} wherever a value rather than a discriminant is wanted, so
+   * that the window harness and this file ask the same question of the same
+   * field.
    */
-  private drawKind: MarkKind | null = null;
+  private tool: ArmedTool = NO_TOOL;
+
   /**
    * How thick the next drawing is, in points.
    *
    * **A setting rather than part of an arming**, which is where it parts company
-   * with {@link drawStamp} beside it. A stamp is chosen *as* the tool --- there
+   * with the stamp in {@link ArmedTool}. A stamp is chosen *as* the tool --- there
    * is no stamp tool without one --- so it is spent when the drag commits. A nib
    * outlives the pen: a reader who picks "broad" and then puts the pen away and
    * takes it out again is still drawing broad, which is what a pen is.
@@ -1065,12 +1127,10 @@ export class Viewer {
    * carries it out on {@link Drawn.width}, so the line a reader watches and the
    * line they get are one number. A copy in the caller would be a second piece
    * of state that could disagree with the one the preview drew from --- the same
-   * argument {@link drawStamp} makes, applied to a setting instead of to a
+   * argument the armed stamp makes, applied to a setting instead of to a
    * tool.
    */
   private nib: number = INK_WIDTH;
-  /** Which stamp an armed stamp tool will place. `null` for every other kind. */
-  private drawStamp: StampName | null = null;
   /**
    * The finished strokes of the drawing in progress, and the page they are on.
    *
@@ -1088,17 +1148,6 @@ export class Viewer {
    * next page down is not part of this mark. It is refused rather than moved.
    */
   private inking: { slot: number; strokes: Point[][] } | null = null;
-
-  /**
-   * Whether the eraser is the armed tool.
-   *
-   * Separate from {@link drawKind} rather than a seventh `MarkKind`, because it
-   * is not a kind of mark: nothing it does creates one. Arming either closes the
-   * other, so the two are never both set --- which is asserted by the window
-   * check rather than by a type, since the states live in one object nobody
-   * constructs by hand.
-   */
-  private erasing = false;
 
   /**
    * What the sweep in progress has touched: strokes by mark id, and whole marks.
@@ -1160,33 +1209,6 @@ export class Viewer {
      */
     points: Point[];
   } | null = null;
-
-  /**
-   * Whether the crop tool is armed: the next drag on a page crops it.
-   *
-   * A boolean and not a {@link MarkKind}, for {@link erasing}'s reason --- it
-   * makes no mark. Arming it puts any drawing tool away and vice versa, so at
-   * most one of the three is live and no gesture has to ask which meant it.
-   */
-  private cropping = false;
-
-  /**
-   * Whether the redaction tool is armed: the next drag marks a region for
-   * removal.
-   *
-   * **Beside {@link cropping} rather than sharing it**, even though the two
-   * gestures are the same drag over the same clamp. What a drag *commits* is
-   * the whole difference between them --- a crop hides part of a page and a
-   * redaction is a step towards destroying it --- so a single flag with a
-   * destination read from somewhere else is one bug away from cropping when the
-   * reader asked to redact. Both are cleared by every arming method, so at most
-   * one is ever live.
-   *
-   * The drag itself is shared, which is the other half of the same reasoning:
-   * `armDraw`'s note says a second method would be a second copy of the whole
-   * gesture, and that argument does not stop at the third tool.
-   */
-  private redacting = false;
 
   /**
    * The rectangle being dragged for a crop, in the slot's laid-out space.
@@ -1308,6 +1330,11 @@ export class Viewer {
 
   private lastStatus = "";
   private readonly observer: ResizeObserver;
+  /**
+   * The surface's size as it was last measured, or `null` before it ever has
+   * been. See {@link viewportSize} for why this is held rather than read.
+   */
+  private viewport: { width: number; height: number } | null = null;
   private dragOffset: number | null = null;
 
   constructor(root: HTMLElement, opts: ViewerOptions) {
@@ -1501,7 +1528,7 @@ export class Viewer {
     // no equivalent of ink's several strokes.
     this.cropDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
-        if (!this.cropping && !this.redacting) return false;
+        if (this.tool.kind !== "crop" && this.tool.kind !== "redact") return false;
         const { page, x, y } = this.pageAndPoint(at);
         this.cropDrawing = { slot: page, from: { x, y }, to: { x, y } };
         this.wake();
@@ -1526,8 +1553,9 @@ export class Viewer {
           // Cancelled. The tool goes with it, because Escape means "stop" and
           // `cancelDraw` has already cleared it --- this is the browser's own
           // `pointercancel` arriving by the same door.
-          this.cropping = false;
-          this.redacting = false;
+          if (this.tool.kind === "crop" || this.tool.kind === "redact") {
+            this.tool = NO_TOOL;
+          }
           this.showCursor();
           return;
         }
@@ -1551,9 +1579,10 @@ export class Viewer {
         // Which of the two was armed, read before either is cleared. Both are
         // spent here and cleared *before* the callback for `onDrawn`'s reason:
         // a caller that arms something again must not be undone by these lines.
-        const marking = this.redacting;
-        this.cropping = false;
-        this.redacting = false;
+        const marking = this.tool.kind === "redact";
+        if (this.tool.kind === "crop" || this.tool.kind === "redact") {
+          this.tool = NO_TOOL;
+        }
         this.showCursor();
         // The same display rectangle either way, and the callbacks part company
         // there: `onCropped`'s caller turns it into a crop box, which needs the
@@ -1567,9 +1596,9 @@ export class Viewer {
 
     this.drawDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
-        if (!this.drawKind && !this.erasing) return false;
+        if (this.tool.kind !== "draw" && this.tool.kind !== "erase") return false;
         const { page, x, y } = this.pageAndPoint(at);
-        if (this.erasing) {
+        if (this.tool.kind === "erase") {
           // The page the sweep started on, and it does not move --- the same
           // rule the box's drag states below, for the same reason: a mark
           // belongs to one page, so a sweep that wanders onto the next one
@@ -1677,14 +1706,14 @@ export class Viewer {
           return;
         }
         const live = this.drawing;
-        const kind = this.drawKind;
+        const kind = this.drawArmed;
         this.drawing = null;
         this.wake();
         if (!committed || !live || !kind) {
           // Cancelled. The tool goes with it, because Escape means "stop", and
           // `cancelDraw` has already cleared it --- this is the browser's own
           // `pointercancel` arriving by the same door.
-          this.drawKind = null;
+          if (this.tool.kind === "draw") this.tool = NO_TOOL;
           this.showCursor();
           return;
         }
@@ -1737,11 +1766,10 @@ export class Viewer {
         }
         // Spent, and cleared *before* the callback so that an `onDrawn` which
         // arms it again is not undone by this line. The stamp is read out first
-        // for the same reason and cleared with the kind: the two describe one
-        // armed tool and must be spent together.
-        const stamp = this.drawStamp;
-        this.drawKind = null;
-        this.drawStamp = null;
+        // because it rides in the same variant: disarming takes it with the
+        // kind, which is what makes the two one arming rather than two.
+        const stamp = this.tool.kind === "draw" ? this.tool.stamp : null;
+        if (this.tool.kind === "draw") this.tool = NO_TOOL;
         this.showCursor();
         this.opts.onDrawn?.(
           kind,
@@ -1918,12 +1946,19 @@ export class Viewer {
     // away by the correction that follows it.
     this.learnGeometry();
     const stats = this.scroller.frame(this.scrollTop, now);
-    this.prefetchText();
-    this.syncAccessibleText();
-    this.syncComment();
-    this.syncMark();
+    // Read once and handed down. Every one of the calls below wants the same
+    // list, `visiblePages` walks the page tops and allocates an array each
+    // time, and it was being asked about ten times a frame for an answer that
+    // cannot change between them --- nothing here scrolls or relays out. Taken
+    // after `learnGeometry`, which is the one thing in the frame that can move
+    // the layout, and before anything reads it.
+    const visible = this.scroller.visiblePages();
+    this.prefetchText(visible);
+    this.syncAccessibleText(visible);
+    this.syncComment(visible);
+    this.syncMark(visible);
     if (this.focusedLink) this.placeRing();
-    this.paintOverlay();
+    this.paintOverlay(visible);
     this.paintThumb();
     this.report(stats);
     const where = this.position;
@@ -1974,7 +2009,10 @@ export class Viewer {
         ? (this.scrollTop - this.scroller.pageTopOf(anchor)) / pitch
         : 0;
 
-    let moved = false;
+    // Collected and applied in one pass. Each correction relays the whole
+    // document out, and on the frames after a lazy open there is a screenful of
+    // them --- every one but the last undone before anything was drawn.
+    const learnt: { page: number; size: PageSize }[] = [];
     for (const page of this.scroller.visiblePages()) {
       if (this.scroller.knowsPageSize(page)) continue;
       const text = this.textOn(page);
@@ -1988,16 +2026,12 @@ export class Viewer {
       // page turned before it had ever been on screen learned its size
       // transposed, 800x600 for a 600x800 page, and kept it.
       const shown = { width_pt: text.width_pt, height_pt: text.height_pt };
-      if (
-        this.scroller.notePageSize(
-          page,
-          displayedSize(shown, -this.scroller.effectiveTurns(page)),
-        )
-      ) {
-        moved = true;
-      }
+      learnt.push({
+        page,
+        size: displayedSize(shown, -this.scroller.effectiveTurns(page)),
+      });
     }
-    if (!moved) return;
+    if (!this.scroller.notePageSizes(learnt)) return;
 
     // The fit follows the page being read, so a page that has just turned out to
     // be A3 is refitted rather than left at the previous page's scale. Before
@@ -2059,12 +2093,12 @@ export class Viewer {
       // The crop and the redaction first, because none of the three can be set
       // together --- every arming method clears the other two --- so the order
       // is a statement about which is checked, not about which wins.
-      armed: this.redacting
+      armed: this.tool.kind === "redact"
         ? "redact"
-        : this.cropping
+        : this.tool.kind === "crop"
           ? "crop"
           : this.drawnStrokes === null
-            ? this.drawKind
+            ? this.drawArmed
             : null,
       search: this.searchStatus(),
     };
@@ -2111,7 +2145,41 @@ export class Viewer {
     this.opts.onStatus?.(status);
   }
 
+  /**
+   * The surface's size in CSS pixels, from the last measurement.
+   *
+   * **Cached, and the frame loop is why.** `clientWidth` and `clientHeight` are
+   * layout reads: asking for one after a style has been written in the same
+   * frame makes the engine flush the layout before it can answer. The tick
+   * writes styles --- the scrollbar thumb, an open note, the link ring --- and
+   * then asks this about a dozen times, so every frame paid for a forced
+   * synchronous layout that the answer never depended on.
+   *
+   * What changes the answer is the element being resized, and the observer
+   * already hears about that. So the reading is taken there, in
+   * {@link onResize}, and everything on the frame path reads what it left.
+   *
+   * The fallback measures once and keeps it. `ResizeObserver` fires on
+   * `observe`, so in a browser the cache is filled before the first frame ---
+   * but the constructor needs a size before the observer exists at all, and the
+   * fake DOM the tests run against has an observer that never calls back.
+   * Falling back to a live read rather than to a guess means the untested path
+   * and the tested one give the same answer.
+   *
+   * Pointer handlers still read the element directly, through
+   * `getBoundingClientRect`: they need where the surface *is*, not only how big
+   * it is, and they run one per event rather than a dozen per frame.
+   */
   private viewportSize(): { width: number; height: number } {
+    const known = this.viewport;
+    if (known) return known;
+    const measured = this.measureViewport();
+    this.viewport = measured;
+    return measured;
+  }
+
+  /** Reads the surface's size out of the element. See {@link viewportSize}. */
+  private measureViewport(): { width: number; height: number } {
     return {
       width: Math.max(1, this.root.clientWidth - SCROLLBAR_WIDTH),
       height: Math.max(1, this.root.clientHeight),
@@ -2178,9 +2246,9 @@ export class Viewer {
    * computed themselves, so the anchoring is discarded there rather than
    * fighting them, and they need no separate path.
    */
-  private applyFit(): void {
+  private applyFit(settle = false): void {
     if (this.fit === "none") return;
-    this.setZoom(this.zoomFor(this.fit));
+    this.setZoom(this.zoomFor(this.fit), settle);
   }
 
   private scrollBy(delta: number): void {
@@ -2201,14 +2269,21 @@ export class Viewer {
    * like magnification instead of a jump: the scroll offset is in CSS pixels
    * and the whole document just changed length underneath it.
    */
-  setZoom(zoom: number): void {
+  setZoom(zoom: number, settle = false): void {
     const next = clampZoom(zoom);
     if (next === this.zoom) return;
 
     const half = this.viewportSize().height / 2;
     const anchor = (this.scrollTop + half) / this.zoom;
     this.zoom = next;
-    this.scroller.setZoom(next);
+    // `settle` is set by the two zooms that arrive as a stream of events rather
+    // than as one: a trackpad pinch, which is a wheel event per frame, and a
+    // window drag, which is a resize per frame. The zoom itself is applied at
+    // once --- the geometry and the stretched placeholder follow the gesture ---
+    // and only the sharp tiles wait, because rendering a screenful of them at a
+    // scale the reader has already left is work nobody ever sees. See
+    // `Scroller.quieten`.
+    this.scroller.setZoom(next, settle ? ZOOM_SETTLE_MS : 0);
     this.scrollTop = Math.max(
       0,
       Math.min(anchor * next - half, this.scroller.maxScroll),
@@ -2227,9 +2302,9 @@ export class Viewer {
   }
 
   /** Sets a zoom that stays put: the fit stops following the window. */
-  setZoomFixed(zoom: number): void {
+  setZoomFixed(zoom: number, settle = false): void {
     this.fit = "none";
-    this.setZoom(zoom);
+    this.setZoom(zoom, settle);
     this.wake();
   }
 
@@ -2341,7 +2416,7 @@ export class Viewer {
    * a page operation, and belongs with the ones that write.
    */
   rotateBy(delta: number): void {
-    const next = (((this.turns + delta) % 4) + 4) % 4;
+    const next = quarterTurns(this.turns + delta);
     if (next === this.turns) return;
 
     const page = this.currentPage();
@@ -2410,7 +2485,7 @@ export class Viewer {
    */
   setPageTurns(page: number, turns: number): void {
     if (page < 0 || page >= this.opts.pageCount) return;
-    if (this.scroller.pageExtraTurns(page) === (((turns % 4) + 4) % 4)) return;
+    if (this.scroller.pageExtraTurns(page) === quarterTurns(turns)) return;
 
     const anchor = this.currentPage();
     const before = this.scroller.pagePitchOf(anchor);
@@ -2481,6 +2556,9 @@ export class Viewer {
     const before = this.pages;
     const after = new PageMap(views);
     this.pages = after;
+    // The marks have not changed and every one of them may have moved: the
+    // index is by slot, and a deletion renumbers every slot after the gap.
+    this.markIndex = null;
 
     // Before either branch below, because a crop can change without the order
     // changing --- which is the common case, since cropping one page moves no
@@ -2560,7 +2638,7 @@ export class Viewer {
     fit: FitMode;
     turns: number;
   }): void {
-    this.applyTurns(((place.turns % 4) + 4) % 4);
+    this.applyTurns(quarterTurns(place.turns));
 
     this.fit = place.fit;
     // The remembered zoom is used only when nothing was being followed. Under a
@@ -2700,10 +2778,15 @@ export class Viewer {
   }
 
   private onResize(): void {
-    const viewport = this.viewportSize();
+    // The one place the element is measured on purpose: this is the event that
+    // says the answer has changed, and everything else reads what is left here.
+    this.viewport = this.measureViewport();
+    const viewport = this.viewport;
     this.scroller.resize(viewport);
     this.sizeOverlay();
-    this.applyFit();
+    // A window drag delivers one of these per frame, so the fit it recomputes is
+    // the same stream of zooms a pinch is --- see {@link setZoom}.
+    this.applyFit(true);
     this.scrollTo(Math.min(this.scrollTop, this.scroller.maxScroll));
     this.wake();
   }
@@ -2716,7 +2799,7 @@ export class Viewer {
     // A trackpad pinch arrives as a wheel event with `ctrlKey` set --- there is
     // no separate gesture event here --- and Cmd-wheel is the mouse equivalent.
     if (event.ctrlKey || event.metaKey) {
-      this.setZoomFixed(this.zoom * Math.exp(-event.deltaY / 300));
+      this.setZoomFixed(this.zoom * Math.exp(-event.deltaY / 300), true);
       return;
     }
 
@@ -2785,7 +2868,7 @@ export class Viewer {
       this.prevMatch();
     } else if (matches("find.next", event)) {
       this.nextMatch();
-    } else if (event.key === "Enter" && this.drawKind === "note") {
+    } else if (event.key === "Enter" && this.drawArmed === "note") {
       // **The comment tool's keyboard route, and it is not a convenience.** The
       // tool is armed by a command a reader can reach from the palette and the
       // menu bar with no pointer at all, and its gesture is a press on the page
@@ -2794,8 +2877,8 @@ export class Viewer {
       // puts a comment nobody pointed at: the top-left of what is on screen.
       //
       // Above the ink arm rather than below it, and the two cannot both be
-      // live: `armDraw` is what sets `drawKind`, and it is `inking`'s own
-      // finisher that clears it. The order is stated for the reason the Escape
+      // live: `armDraw` is what arms a drawing kind, and it is `inking`'s own
+      // finisher that puts the tool away. The order is stated for the reason the Escape
       // ladder below states its own --- it costs a comparison and stays right if
       // that ever changes.
       this.placeComment();
@@ -2849,10 +2932,11 @@ export class Viewer {
       // stays correct if a later change *does* make the two co-exist, and the
       // alternative is a reader stuck in a mode --- which is the one failure the
       // one-shot design exists to rule out.
-      // The eraser is in this list too. It stays armed between sweeps, so it is
+      // The eraser is covered here too. It stays armed between sweeps, so it is
       // a mode a reader can be in with nothing on screen but the cursor --- the
       // exact state Escape exists for, and the one a guard listing only the
-      // pen's fields leaves them stuck in.
+      // pen's fields left them stuck in. It is covered by construction now
+      // rather than by being remembered: every tool is one field.
       if (this.moving) {
         // **First, and this one *is* load-bearing where the ordering below is
         // defensive.** A move is live only while the pointer is down and a note
@@ -2860,14 +2944,26 @@ export class Viewer {
         // genuinely reach two things --- and the mark springing back to where it
         // was is what the reader pressed it for.
         this.moveDrag.cancel();
+      // **The first term below is not a list of tools any more.** This was one
+      // arm per field --- the pen, the crop, the redaction, the eraser --- and
+      // every tool added had to be remembered here, with the reader left stuck
+      // in the one that was forgotten. `kind` covers all of them because they
+      // are one field.
+      //
+      // The four gestures are asked about separately because a drag outlives
+      // its arming: a tool armed mid-drag by a command from the palette
+      // replaces the one the hand is using, and the strokes, the sweep or the
+      // half-dragged rectangle are still on screen with a *different* tool
+      // named in `kind`. Escape has to reach those too.
+      //
+      // Written flat, with no comment between the operands: a comment inside a
+      // condition makes any pair of its terms a search string no mutation can
+      // aim at.
       } else if (
-        this.drawKind !== null ||
+        this.tool.kind !== "none" ||
         this.drawing ||
         this.inking ||
-        this.erasing ||
         this.doomed ||
-        this.cropping ||
-        this.redacting ||
         this.cropDrawing
       ) {
         this.cancelDraw();
@@ -3596,7 +3692,7 @@ export class Viewer {
     slot: number,
     want: { dx: number; dy: number },
   ): { dx: number; dy: number } {
-    const mark = this.marks.find((item) => item.id === id);
+    const mark = this.markById(id);
     const placed = mark ? this.viewQuadsOf(mark) : null;
     if (!placed || placed.quads.length === 0) return want;
     let left = Infinity;
@@ -3668,7 +3764,7 @@ export class Viewer {
    * argues about for a single style write.
    */
   private trackArmed(event: { clientX: number; clientY: number }): void {
-    if (this.drawKind === null) {
+    if (this.tool.kind !== "draw") {
       if (this.armedAt === null) return;
       this.armedAt = null;
       this.wake();
@@ -3689,15 +3785,64 @@ export class Viewer {
    * closed rather than pinned to the edge: at that point it is a floating box of
    * text with nothing to attribute it to.
    */
-  private syncComment(): void {
+  private syncComment(visible: readonly number[]): void {
     const id = this.popup.openId;
     if (id === null) return;
     const comment = this.commentItems.find((item) => item.id === id);
-    if (!comment || !this.scroller.visiblePages().includes(comment.page)) {
+    if (!comment || !visible.includes(comment.page)) {
       this.closeComment();
       return;
     }
     this.popup.place(this.anchorFor(comment));
+  }
+
+  /**
+   * The mark index, built if it is not there. See {@link markIndex}.
+   *
+   * A mark whose page is in no slot --- one frame of an undone page deletion ---
+   * is in `byId` and in no slot's list, which is the same "not drawn, not
+   * clickable" the placement check gave before there was an index.
+   */
+  private marksIndexed(): {
+    bySlot: Map<number, MarkView[]>;
+    byId: Map<number, MarkView>;
+  } {
+    const held = this.markIndex;
+    if (held) return held;
+    const bySlot = new Map<number, MarkView[]>();
+    const byId = new Map<number, MarkView>();
+    for (const mark of this.marks) {
+      byId.set(mark.id, mark);
+      const slot = this.pages.slotOfId(mark.page);
+      if (slot === undefined) continue;
+      const on = bySlot.get(slot);
+      if (on) on.push(mark);
+      else bySlot.set(slot, [mark]);
+    }
+    const built = { bySlot, byId };
+    this.markIndex = built;
+    return built;
+  }
+
+  /** One of the reader's marks by id, or `undefined`. */
+  private markById(id: number): MarkView | undefined {
+    return this.marksIndexed().byId.get(id);
+  }
+
+  /** The marks on one slot, in the order the model lists them. */
+  private marksOn(slot: number): readonly MarkView[] {
+    return this.marksIndexed().bySlot.get(slot) ?? [];
+  }
+
+  /** Every mark on any of these slots, each with the slot it sits on. */
+  private marksAcross(
+    slots: readonly number[],
+  ): { slot: number; mark: MarkView }[] {
+    const found: { slot: number; mark: MarkView }[] = [];
+    for (const slot of slots) {
+      for (const mark of this.marksOn(slot)) found.push({ slot, mark });
+    }
+    return found;
   }
 
   /**
@@ -3715,6 +3860,19 @@ export class Viewer {
   private viewQuadsOf(mark: MarkView): { slot: number; quads: Quad[] } | null {
     const slot = this.pages.slotOfId(mark.page);
     if (slot === undefined) return null;
+    return { slot, quads: this.viewQuadsOn(slot, mark) };
+  }
+
+  /**
+   * {@link viewQuadsOf} for a caller that already knows the slot.
+   *
+   * The paint path takes the visible slots and the marks on each of them out of
+   * the index, so looking the slot up again per mark would be the scan the
+   * index exists to remove --- and a second placement rule written beside this
+   * one is what `docs/TRAPS.md` records as two copies of a distinction drifting,
+   * so both go through the same body.
+   */
+  private viewQuadsOn(slot: number, mark: MarkView): Quad[] {
     // Through {@link turnsOn}, which comments and links also place their
     // rectangles with. This held its own copy of the same two lines until
     // 2026-08-18, and a copy of a distinction is what lets one of them drift ---
@@ -3737,7 +3895,7 @@ export class Viewer {
         ]),
       );
     }
-    return { slot, quads };
+    return quads;
   }
 
   /**
@@ -3787,15 +3945,20 @@ export class Viewer {
     const { page, x, y } = this.pageAndPoint(event);
     const here: { page: number; rect: [number, number, number, number]; mark: MarkView }[] =
       [];
-    for (const mark of this.marks) {
-      const placed = this.viewQuadsOf(mark);
-      if (!placed) continue;
-      for (const quad of placed.quads) {
-        // Labelled with the slot the mark is *on*, not the one under the
-        // pointer, so `hitTest` does the page match rather than a filter here
-        // agreeing with it --- two page tests are two chances to disagree.
+    // Only the marks on the page under the pointer. `hitTest` compares the page
+    // itself and would reject the rest, so this changes what is *offered* to it
+    // and not what it answers --- and it takes the whole-document placement off
+    // a path that runs on every hover.
+    for (const mark of this.marksOn(page)) {
+      const quads = this.viewQuadsOn(page, mark);
+      for (const quad of quads) {
+        // The slot is the mark's own and the pointer's at once, which is why
+        // there is one number here rather than two: the index answered by
+        // slot, so a mark reaching this loop is on the page under the pointer
+        // by construction. `hitTest` still compares it, and that comparison is
+        // now what says the two agree rather than a second chance to disagree.
         here.push({
-          page: placed.slot,
+          page,
           rect: [quad.left, quad.top, quad.right, quad.bottom],
           mark,
         });
@@ -3918,17 +4081,15 @@ export class Viewer {
   armDraw(kind: MarkKind, stamp: StampName | null = null): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
-    // Two tools, one hand. Arming a pen puts the eraser and the crop away, so
-    // no two of the three can be set and no gesture has to ask which meant it.
-    this.erasing = false;
-    this.cropping = false;
-    this.redacting = false;
-    this.drawKind = kind;
-    // Held beside the kind rather than in the caller, so that what a drag
-    // commits comes from one place. A second copy in `App.svelte` would be a
-    // piece of state that can disagree with `drawKind` about which tool is
+    // Two tools, one hand. One assignment puts the eraser, the crop and the
+    // redaction away, because they are the same field --- no two can be set and
+    // no gesture has to ask which meant it.
+    //
+    // The stamp is held in the variant rather than in the caller, so that what a
+    // drag commits comes from one place. A second copy in `App.svelte` would be
+    // a piece of state that can disagree with the kind about which tool is
     // armed.
-    this.drawStamp = stamp;
+    this.tool = { kind: "draw", mark: kind, stamp };
     this.showCursor();
     this.wake();
   }
@@ -3977,12 +4138,8 @@ export class Viewer {
   armCrop(): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
-    this.drawKind = null;
-    this.drawStamp = null;
     this.inking = null;
-    this.erasing = false;
-    this.redacting = false;
-    this.cropping = true;
+    this.tool = { kind: "crop" };
     this.showCursor();
     this.wake();
   }
@@ -4011,12 +4168,8 @@ export class Viewer {
   armRedact(): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
-    this.drawKind = null;
-    this.drawStamp = null;
     this.inking = null;
-    this.erasing = false;
-    this.cropping = false;
-    this.redacting = true;
+    this.tool = { kind: "redact" };
     this.showCursor();
     this.wake();
   }
@@ -4062,11 +4215,8 @@ export class Viewer {
   armErase(): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
-    this.drawKind = null;
     this.inking = null;
-    this.cropping = false;
-    this.redacting = false;
-    this.erasing = true;
+    this.tool = { kind: "erase" };
     this.showCursor();
     this.wake();
   }
@@ -4127,7 +4277,7 @@ export class Viewer {
 
   /** Whether the eraser is armed. For the menu's enablement and the harness. */
   get eraseArmed(): boolean {
-    return this.erasing;
+    return this.tool.kind === "erase";
   }
 
   /**
@@ -4142,7 +4292,7 @@ export class Viewer {
    * loud.
    */
   get swept(): { strokes: number; marks: number } | null {
-    if (!this.erasing) return null;
+    if (this.tool.kind !== "erase") return null;
     let strokes = 0;
     for (const taken of this.doomed?.marks.values() ?? []) strokes += taken.size;
     return { strokes, marks: this.doomed?.whole.size ?? 0 };
@@ -4157,24 +4307,22 @@ export class Viewer {
    */
   cancelDraw(): void {
     this.drawDrag.cancel();
-    // The crop goes with it. This method is "drop whatever tool is armed" ---
-    // which is what Escape means and what every caller wants --- so a third
-    // named method would only leave Escape asking which of three was live.
+    // The crop's drag goes with it. This method is "drop whatever tool is
+    // armed" --- which is what Escape means and what every caller wants --- so a
+    // third named method would only leave Escape asking which of three was live.
     this.cropDrag.cancel();
-    this.cropping = false;
-    this.redacting = false;
+    // Whichever of the tools was armed, in one assignment: the crop, the
+    // redaction, the eraser and every drawing kind are one field, so there is
+    // nothing here to forget. The eraser is in that list deliberately --- it
+    // stays armed between sweeps, so it is the one a reader can be left in.
+    this.tool = NO_TOOL;
     this.cropDrawing = null;
-    this.drawKind = null;
     this.drawing = null;
     // Everything drawn goes with it. Escape means "abandon this" and it has
     // meant that here since the box, so a drawing of six strokes is discarded
     // by it exactly as a half-dragged rectangle is --- which is why the finish
     // gesture had to be a *different* key rather than a second Escape.
     this.inking = null;
-    // The eraser goes with it. This method is "drop whatever tool is armed",
-    // which is what Escape means and what every caller wants; a separate
-    // `cancelErase` would leave Escape asking which of the two was live.
-    this.erasing = false;
     this.doomed = null;
     this.showCursor();
     this.wake();
@@ -4196,7 +4344,7 @@ export class Viewer {
    */
   private placeComment(): void {
     const where = this.commentAt(null);
-    this.drawKind = null;
+    if (this.tool.kind === "draw") this.tool = NO_TOOL;
     this.showCursor();
     this.wake();
     if (!where) return;
@@ -4229,7 +4377,7 @@ export class Viewer {
     if (!made || made.strokes.length === 0) return;
     const id = this.pages.idOf(made.slot);
     this.inking = null;
-    this.drawKind = null;
+    if (this.tool.kind === "draw") this.tool = NO_TOOL;
     this.showCursor();
     this.wake();
     // A page that went while the drawing was being made --- deleted from under
@@ -4274,17 +4422,17 @@ export class Viewer {
    */
   get drawnStrokes(): number | null {
     if (this.inking) return this.inking.strokes.length;
-    return this.drawKind === "ink" ? 0 : null;
+    return this.drawArmed === "ink" ? 0 : null;
   }
 
   /** The armed tool, or `null`. For the menu's enablement and the harness. */
   get drawArmed(): MarkKind | null {
-    return this.drawKind;
+    return this.tool.kind === "draw" ? this.tool.mark : null;
   }
 
   /** Whether the crop tool is armed. For the status line and the harness. */
   get cropArmed(): boolean {
-    return this.cropping;
+    return this.tool.kind === "crop";
   }
 
   /**
@@ -4296,7 +4444,7 @@ export class Viewer {
    * most plausibly confuse.
    */
   get redactArmed(): boolean {
-    return this.redacting;
+    return this.tool.kind === "redact";
   }
 
   /**
@@ -4326,7 +4474,7 @@ export class Viewer {
    */
   private showCursor(): void {
     // **The ghost is dropped here, and here is the only place that can be
-    // trusted to do it.** Five sites clear `drawKind` --- arming, cancelling,
+    // trusted to do it.** Five sites disarm the tool --- arming, cancelling,
     // finishing a drawing, spending a one-shot tool, and a `pointercancel` ---
     // and every one of them calls this, because every one of them changes what
     // the pointer means. Clearing at each instead would be five copies of one
@@ -4338,7 +4486,7 @@ export class Viewer {
     // would blank the ghost for a frame every time the reader passed over a
     // link. A stale position cannot survive a disarm, since a disarm is what
     // this branch runs on.
-    if (this.drawKind === null) this.armedAt = null;
+    if (this.tool.kind !== "draw") this.armedAt = null;
     this.surfaceHost.style.cursor = this.panFrom
       ? // **First, and it outranks an armed tool deliberately.** A middle-drag
         // is happening *now* and the tool is a statement about what the next
@@ -4346,7 +4494,9 @@ export class Viewer {
         // describe a gesture the reader is not making. It is also the only one
         // of the four that ends by itself, on the button coming up.
         "grabbing"
-      : this.drawKind || this.cropping || this.redacting
+      : this.tool.kind === "draw" ||
+          this.tool.kind === "crop" ||
+          this.tool.kind === "redact"
         ? "crosshair"
         : this.overLink
           ? "pointer"
@@ -4363,7 +4513,7 @@ export class Viewer {
    * turn, which is the drift this repository has a trap about.
    */
   markAnchor(id: number): Anchor | null {
-    const mark = this.marks.find((item) => item.id === id);
+    const mark = this.markById(id);
     return mark ? this.anchorForMark(mark) : null;
   }
 
@@ -4406,7 +4556,7 @@ export class Viewer {
    * means the next press of the walk key would go to the field and do nothing.
    */
   showMark(id: number, focus = true): void {
-    const mark = this.marks.find((item) => item.id === id);
+    const mark = this.markById(id);
     if (!mark) return;
     const where = this.anchorForMark(mark);
     if (!where) return;
@@ -4522,7 +4672,7 @@ export class Viewer {
   recolorOpenMark(color: MarkColor | null): boolean {
     const id = this.markNote.openId;
     if (id === null) return false;
-    const mark = this.marks.find((held) => held.id === id);
+    const mark = this.markById(id);
     if (!mark) return false;
     const want = colorFor(mark.kind, color);
     if (sameColor(mark.color, want)) return false;
@@ -4549,17 +4699,20 @@ export class Viewer {
    * what was typed would be refused by the model, and the reader would see an
    * error for a highlight they took off themselves.
    */
-  private syncMark(): void {
+  private syncMark(visible: readonly number[]): void {
     const id = this.markNote.openId;
     if (id === null) return;
-    const mark = this.marks.find((item) => item.id === id);
+    // Through the index rather than a scan of the whole list: this runs every
+    // frame a note is open, and the same lookup is what the note's own
+    // callbacks make.
+    const mark = this.markById(id);
     if (!mark) {
       this.markNote.hide(false);
       this.root.focus();
       return;
     }
     const at = this.anchorForMark(mark);
-    if (!at || !this.scroller.visiblePages().includes(this.pages.slotOfId(mark.page) ?? -1)) {
+    if (!at || !visible.includes(this.pages.slotOfId(mark.page) ?? -1)) {
       this.closeMark();
       return;
     }
@@ -5088,6 +5241,21 @@ export class Viewer {
   }
 
   /**
+   * Whether {@link selectedText} would be anything, without building it.
+   *
+   * For a menu guard. `refreshMenu` runs from the frame loop, so asking through
+   * `selectedText` concatenated the whole selection every frame to compare it
+   * with the empty string --- on a select-all over a long document, that is the
+   * document. Same answer, and `Selection.hasText` says why the odd case is the
+   * odd case in both.
+   */
+  get hasSelection(): boolean {
+    return this.selection
+      ? this.selection.hasText((page) => this.textOn(page))
+      : false;
+  }
+
+  /**
    * The marks the model last reported, in page order.
    *
    * Held rather than derived: they arrive with an edit state, which is the one
@@ -5095,6 +5263,24 @@ export class Viewer {
    * {@link PageMap.slotOfId}.
    */
   private marks: readonly MarkView[] = [];
+  /**
+   * The marks grouped by the slot they sit on, and looked up by id.
+   *
+   * Built on demand and thrown away by {@link setMarks} and {@link setPages},
+   * which are the only two things that can move a mark between slots.
+   *
+   * **Why it exists.** Every frame painted the overlay by walking the whole
+   * list and asking {@link viewQuadsOf} where each mark was, which is a linear
+   * scan of the page order per mark, and only *then* testing whether the page
+   * was on screen. So a document with a few hundred marks paid for placing all
+   * of them to draw the handful in front of the reader, sixty times a second.
+   * The visible slots are what the frame path actually has, so this is the
+   * index that answers from them.
+   */
+  private markIndex: {
+    bySlot: Map<number, MarkView[]>;
+    byId: Map<number, MarkView>;
+  } | null = null;
 
   /**
    * Every region marked for removal, as the model reports them.
@@ -5162,6 +5348,15 @@ export class Viewer {
       const at = await pageGeometry(this.opts.doc, source, want).catch(
         () => null,
       );
+      // The reply is for the document as it was when the question went out, and
+      // a slot belongs to whatever has moved into it since. `setPages` replaces
+      // the map and starts a walk of its own over the new one, so the whole of
+      // the rest of this run --- the size, the invalidation and the pruning
+      // below --- is that walk's to do. Without this, a reorder while the
+      // geometry was in flight recorded the cropped page's dimensions against
+      // the page that had taken its slot, which lays an uncropped page out at
+      // another page's size and looks like a rendering fault.
+      if (this.pages !== pages) return;
       if (!at) continue;
       this.crops.set(view.id, at);
       this.scroller.notePageSize(slot, {
@@ -5188,6 +5383,7 @@ export class Viewer {
    */
   setMarks(marks: readonly MarkView[]): void {
     this.marks = marks;
+    this.markIndex = null;
     // `wake` rather than a repaint: the overlay is drawn from the frame loop,
     // which may be idle when a mark is made from the menu bar with nothing
     // scrolling. Painting here as well would draw the same rectangles twice.
@@ -5292,7 +5488,7 @@ export class Viewer {
   }
 
   /** Draws the marks, the search highlights and the selection. */
-  private paintOverlay(): void {
+  private paintOverlay(visible: readonly number[]): void {
     const ctx = this.overlayCtx;
     if (!ctx) return;
 
@@ -5314,15 +5510,15 @@ export class Viewer {
     // kinds, and marks go first deliberately: a search hit and a selection are
     // washes, and a reader dragging across a struck-out line has to see the
     // selection over it rather than under it.
-    this.paintMarks(ctx, dpr);
-    this.paintMatches(ctx, dpr);
-    this.paintSelection(ctx, dpr);
+    this.paintMarks(ctx, dpr, visible);
+    this.paintMatches(ctx, dpr, visible);
+    this.paintSelection(ctx, dpr, visible);
     // Over the marks, the hits and the selection, and under the live gesture.
     // A pending redaction is the most consequential thing on the page --- it
     // names content that is about to stop existing --- so nothing the reader is
     // merely looking through may sit on top of it. The hand still wins, because
     // what the hand is doing is the only thing more current.
-    this.paintRedactions(ctx, dpr);
+    this.paintRedactions(ctx, dpr, visible);
     // Last, and over everything: it is the thing the reader's hand is on.
     this.paintDrawing(ctx, dpr);
     ctx.globalCompositeOperation = "source-over";
@@ -5342,10 +5538,14 @@ export class Viewer {
    * and it has to keep a definite edge over paper as well as over text so an
    * over-selection is visible against the margin.
    */
-  private paintRedactions(ctx: CanvasRenderingContext2D, dpr: number): void {
+  private paintRedactions(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    onScreen: readonly number[],
+  ): void {
     if (this.redactions.length === 0) return;
 
-    const visible = new Set(this.scroller.visiblePages());
+    const visible = new Set(onScreen);
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = REDACT_FILL;
@@ -5378,13 +5578,21 @@ export class Viewer {
    * `scroller.effectiveTurns` is the one place that adds. The page size handed
    * in is the *document's*, before either turn, which is what `turnQuad` takes.
    */
-  private paintMarks(ctx: CanvasRenderingContext2D, dpr: number): void {
+  private paintMarks(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    visible: readonly number[],
+  ): void {
     if (this.marks.length === 0) return;
 
-    const visible = new Set(this.scroller.visiblePages());
-    for (const mark of this.marks) {
-      const placed = this.viewQuadsOf(mark);
-      if (!placed || !visible.has(placed.slot)) continue;
+    // Over the slots on screen rather than over every mark in the document.
+    // Placing a mark is what tells you which page it is on, so the list-first
+    // order paid for placing all of them in order to draw the few in front of
+    // the reader. The order within a page is the model's, which is the z-order
+    // the blend modes below assume; two marks on different pages cannot
+    // overlap, so nothing depends on the order across them.
+    for (const { slot, mark } of this.marksAcross(visible)) {
+      const placed = { slot, quads: this.viewQuadsOn(slot, mark) };
       // **The preview is the absence**, which is what the stroke loop below
       // says for a drawing coming apart. A mark the sweep has taken whole is
       // simply not drawn, so the reader watches it go under the nib and there
@@ -5609,7 +5817,7 @@ export class Viewer {
     this.paintCropPreview(ctx, dpr);
 
     const live = this.drawing;
-    if (!live || this.drawKind === "ink") return;
+    if (!live || this.drawArmed === "ink") return;
     const origin = this.scroller.pageOrigin(live.slot);
     const left = Math.min(live.from.x, live.to.x);
     const top = Math.min(live.from.y, live.to.y);
@@ -5629,7 +5837,7 @@ export class Viewer {
     const py = (origin.top + top * this.zoom - this.scrollTop) * dpr;
     const pw = (right - left) * this.zoom * dpr;
     const ph = (bottom - top) * this.zoom * dpr;
-    if (this.drawKind === "ellipse") {
+    if (this.drawArmed === "ellipse") {
       traceEllipse(ctx, px, py, pw, ph);
       ctx.stroke();
     } else ctx.strokeRect(px, py, pw, ph);
@@ -5664,7 +5872,7 @@ export class Viewer {
     // reader with no way to tell from the screen which tool is armed. The scrim
     // marks what goes: outside the rectangle for a crop, inside it for a
     // redaction.
-    const marking = this.redacting;
+    const marking = this.tool.kind === "redact";
     const origin = this.scroller.pageOrigin(live.slot);
     const size = this.laidSize(live.slot);
     // The page's own rectangle on screen, which the scrim is bounded by.
@@ -5733,7 +5941,7 @@ export class Viewer {
    * be a second bubble in a place the mark is not going.
    */
   private paintCommentGhost(ctx: CanvasRenderingContext2D, dpr: number): void {
-    if (this.drawKind !== "note" || this.drawing) return;
+    if (this.drawArmed !== "note" || this.drawing) return;
     const at = this.armedAt;
     if (!at) return;
     if (!this.scroller.visiblePages().includes(at.slot)) return;
@@ -5779,7 +5987,7 @@ export class Viewer {
    */
   private paintInkPreview(ctx: CanvasRenderingContext2D, dpr: number): void {
     const pending = this.inking;
-    const live = this.drawKind === "ink" ? this.drawing : null;
+    const live = this.drawArmed === "ink" ? this.drawing : null;
     if (!pending && !live) return;
     const slot = pending?.slot ?? live?.slot;
     if (slot === undefined) return;
@@ -5815,11 +6023,15 @@ export class Viewer {
     }
   }
 
-  private paintSelection(ctx: CanvasRenderingContext2D, dpr: number): void {
+  private paintSelection(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    visible: readonly number[],
+  ): void {
     if (!this.selection) return;
     ctx.fillStyle = SELECTION_FILL;
 
-    for (const page of this.scroller.visiblePages()) {
+    for (const page of visible) {
       const origin = this.scroller.pageOrigin(page);
       for (const quad of this.selection.quadsOn(page, (at) => this.textOn(at))) {
         const left = (origin.left + quad.left * this.zoom) * dpr;
@@ -6059,11 +6271,15 @@ export class Viewer {
    * nothing next to the rest of a frame, and the alternative is a page-keyed
    * index that has to be kept in step with a list that is still growing.
    */
-  private paintMatches(ctx: CanvasRenderingContext2D, dpr: number): void {
+  private paintMatches(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    onScreen: readonly number[],
+  ): void {
     const matches = this.searcher.matches;
     if (matches.length === 0) return;
 
-    const visible = new Set(this.scroller.visiblePages());
+    const visible = new Set(onScreen);
     for (let index = 0; index < matches.length; index++) {
       const match = matches[index];
       if (!match) continue;
@@ -6111,7 +6327,7 @@ export class Viewer {
    * present is not touched, which is the property that keeps a reading cursor
    * alive across a scroll. See `a11y.ts`.
    */
-  private syncAccessibleText(): void {
+  private syncAccessibleText(visible: readonly number[]): void {
     // Asked for here because a screen-reader user may never search, and is the
     // reader least able to tell that what they are being read is nonsense.
     //
@@ -6122,7 +6338,7 @@ export class Viewer {
     // matter, since warm startup has ~25 ms of margin against its target.
     this.searcher.ensureMapping();
     this.a11y.sync(
-      this.scroller.visiblePages(),
+      visible,
       (slot) => this.textOn(slot),
       (slot) => {
         const source = this.pages.sourceOf(slot);
@@ -6166,13 +6382,20 @@ export class Viewer {
    * eagerly at open: on a 775-page document, asking for all of it up front would
    * put a minute of extraction in front of the first tile.
    */
-  private prefetchText(): void {
-    for (const page of this.scroller.visiblePages()) this.requestText(page);
+  private prefetchText(visible: readonly number[]): void {
+    for (const page of visible) this.requestText(page);
   }
 
   /** Geometry of the scrollbar thumb, in CSS pixels within the track. */
   private thumbRect(): { top: number; height: number } {
-    const trackHeight = this.root.clientHeight;
+    // The track spans the surface, so its height *is* the viewport's --- read
+    // from the cached measurement rather than off the element, because this
+    // runs from the frame loop after the thumb's own style has been written,
+    // which is exactly the sequence that forces a synchronous layout. See
+    // {@link viewportSize}. The two differ only for a root of zero height,
+    // where the cache floors at one pixel and the thumb is invisible either
+    // way.
+    const trackHeight = this.viewportSize().height;
     const { maxScroll } = this.scroller;
     const documentHeight = this.scroller.documentHeight;
     const height = Math.max(

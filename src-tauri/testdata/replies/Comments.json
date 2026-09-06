@@ -1,0 +1,70 @@
+{
+  "items": [
+    {
+      "id": 12,
+      "page": 0,
+      "kind": "text",
+      "author": "A. Reader",
+      "body": "the first note",
+      "subject": "a subject",
+      "date": "2026-01-02T03:04:05Z",
+      "rect": [
+        10.0,
+        20.0,
+        110.0,
+        60.0
+      ],
+      "quads": [
+        10.0,
+        20.0,
+        110.0,
+        20.0,
+        10.0,
+        60.0,
+        110.0,
+        60.0
+      ],
+      "reply_to": 11,
+      "hidden": false,
+      "color": [
+        1.0,
+        0.9,
+        0.2
+      ],
+      "object": [
+        7,
+        0
+      ]
+    },
+    {
+      "id": 13,
+      "page": 1,
+      "kind": "highlight",
+      "author": "",
+      "body": "the second note",
+      "subject": "",
+      "date": null,
+      "rect": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "quads": [],
+      "reply_to": null,
+      "hidden": true,
+      "color": null,
+      "object": null
+    }
+  ],
+  "limits": {
+    "crowded_pages": 1,
+    "over_budget": true,
+    "bodies_clipped": 2,
+    "unknown_kinds": 3,
+    "unreadable": 4,
+    "cycles": 5,
+    "pages_missed": 6
+  },
+  "scan_ms": 1.5
+}

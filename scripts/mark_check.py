@@ -31,17 +31,14 @@ a suspended WebKit page does not run the check slowly, it does not run it at all
 
 import argparse
 import os
-import re
-import subprocess
 import sys
 from pathlib import Path
 
+import harness_launch
+from harness_launch import outcome_of, run_app
 from live_output import stream_results
 from stray import clear_strays
 from webview_guard import require_visible_session
-
-SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed", re.M)
-RESULT = re.compile(r"^\[(OK|FAIL|SKIP)\]\s+(.*)$")
 
 #: The check whose absence means the run never got a document, by name.
 #:
@@ -59,81 +56,55 @@ PRECONDITION = "a document is open to put a mark on"
 KEYSTONE = "and it is recorded on the page it was pressed on"
 
 
-def outcome_of(out: str, name: str) -> str | None:
-    """The verdict recorded for a named check, or None when it is absent.
-
-    Split on the label rather than read from a fixed column, for the reason
-    `session_check.py` gives: `Report` pads names to a width nobody remembers,
-    so a pattern encoding that padding stops matching the day a name grows past
-    it --- silently, and in the direction that reads as good news.
-    """
-    for line in out.splitlines():
-        found = RESULT.match(line)
-        if found and found.group(2).startswith(name):
-            return found.group(1)
-    return None
-
-
 def launch(binary: str, pdf: str, timeout: float) -> tuple[int, str]:
-    """Runs the check once, returning its exit code and transcript."""
+    """Runs the check once, returning its exit code and transcript.
+
+    The launch and the transcript reader are `harness_launch.py`'s; what is left
+    here is the one environment variable this check needs.
+    """
     env = dict(os.environ, TPDF_MARKCHECK="1")
-    try:
-        done = subprocess.run(
-            [binary, pdf], env=env, capture_output=True, text=True, timeout=timeout
-        )
-    except subprocess.TimeoutExpired:
-        return 1, "[FAIL] run timed out\n"
-    return done.returncode, done.stdout + done.stderr
+    done = run_app([binary, pdf], env=env, timeout=timeout)
+    return done.code, done.out
+
+
+def named_checks(out: str) -> "str | None":
+    """The two checks this harness will not call a run green without.
+
+    Read after the summary and the exit code have been compared and before the
+    count of failures is reported, which is what `harness_launch.report`'s
+    `extra` seam is for --- reporting "3 of 7 checks failed" here would point at
+    the code when the fixture is what is wrong.
+
+    The precondition is read rather than assumed. Without a document every check
+    below it skips, and a transcript of skips with a green summary is exactly
+    what a fixture problem looks like -- so it is named as one instead of being
+    reported as a pass.
+
+    And the keystone is the one assertion the harness exists for. A skip there is
+    a legitimate outcome of the code path -- no mark was made, so there is no
+    page to compare -- and it is not a legitimate outcome of a *run*: it means
+    the thing this was built to check did not get checked.
+    """
+    got = outcome_of(out, PRECONDITION)
+    if got != "OK":
+        return f"the run never opened a document ({PRECONDITION!r}: {got})"
+    keystone = outcome_of(out, KEYSTONE)
+    if keystone != "OK":
+        return f"the page-identity check did not run green ({keystone})"
+    return None
 
 
 def report(code: int, out: str) -> bool:
     """Prints the transcript, and says whether it is readable and green.
 
-    Three separate facts, and all three are needed --- the argument is
-    `session_check.py`'s and is worth restating because it was learned the hard
-    way there. A run that produced no summary line is a *broken* run, not a
-    pass: a crash, a timeout and a suspended page all print nothing, which is
-    what a silent success looks like too. And the summary is parsed rather than
-    inferred from the exit code, because `AppHandle::exit` does not set one ---
-    so a disagreement between the two numbers is itself a failure, meaning one
-    of them has stopped describing the run.
+    The three grounds a run is refused on whatever it printed --- no summary
+    line, a summary disagreeing with the exit code, a summary that is not all
+    green --- are `harness_launch.report`'s, and the argument for each is written
+    out there. This adds the two checks read by name, and the passing count on
+    the way out: one run, one line, where a multi-phase script prints its own
+    summary instead.
     """
-    print(out, end="" if out.endswith("\n") else "\n")
-
-    summary = SUMMARY.search(out)
-    if not summary:
-        print("[FAIL] no summary line, so the run did not finish")
-        return False
-
-    passed, total = int(summary.group(1)), int(summary.group(2))
-    green = passed == total
-    if green != (code == 0):
-        print(f"[FAIL] summary says {passed}/{total} but exit was {code}")
-        return False
-
-    # The precondition, read rather than assumed. Without a document every check
-    # below it skips, and a transcript of skips with a green summary is exactly
-    # what a fixture problem looks like -- so it is named as one here instead of
-    # being reported as a pass.
-    got = outcome_of(out, PRECONDITION)
-    if got != "OK":
-        print(f"[FAIL] the run never opened a document ({PRECONDITION!r}: {got})")
-        return False
-
-    # And the one assertion the harness exists for. A skip here is a legitimate
-    # outcome of the code path -- no mark was made, so there is no page to
-    # compare -- and it is not a legitimate outcome of a *run*: it means the
-    # thing this was built to check did not get checked.
-    keystone = outcome_of(out, KEYSTONE)
-    if keystone != "OK":
-        print(f"[FAIL] the page-identity check did not run green ({keystone})")
-        return False
-
-    if not green:
-        print(f"[FAIL] {total - passed} of {total} checks failed")
-        return False
-    print(f"[OK] {passed}/{total} checks passed")
-    return True
+    return harness_launch.report(out, code, extra=named_checks, announce=True)
 
 
 #: A transcript of a clean run, as `Report` prints one. The self-test's control.

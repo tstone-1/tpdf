@@ -28,7 +28,7 @@
 //! boxes in display space too. So everything in this module is display space,
 //! and the regions used are the reader's own rather than the file-space ones
 //! `render::redaction_plans_of` derives. That is safe because
-//! [`crate::redact::overlaps`] is preserved by the map between them --- quarter
+//! [`crate::objects::overlaps`] is preserved by the map between them --- quarter
 //! turns and a flip take an axis-aligned rectangle to an axis-aligned rectangle
 //! --- and it is worth having because the render, the crop and the character
 //! boxes then agree without a conversion anywhere.
@@ -177,7 +177,7 @@ pub fn surviving(words: &[ControlWord], regions: &[[f32; 4]], taking: &str) -> V
     words
         .iter()
         .filter(|w| {
-            regions.iter().any(|r| crate::redact::overlaps(w.rect, *r))
+            regions.iter().any(|r| crate::objects::overlaps(w.rect, *r))
                 || !gone.iter().any(|g| *g == w.text)
         })
         .cloned()

@@ -94,11 +94,48 @@ ROOT = Path(__file__).resolve().parent.parent
 #: Bumped when the shape below changes. An older file is discarded rather than
 #: read hopefully -- a half-understood record is worse than none, and the only
 #: thing it could give back is a verdict.
-VERSION = 2
+VERSION = 3
 
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def write_newer(target: Path, data: bytes) -> None:
+    """Put `data` on disk over `target`, byte for byte, and leave it newer.
+
+    Three traps meet in these four lines, and every harness here used to carry
+    its own version of them.
+
+    **Bytes, never text.** `write_text` encodes with the locale codec, which is
+    cp1252 on Windows, and the files these harnesses edit hold `\u0130` and
+    `\ufb01` for the case-folding tests. A text-mode round trip through that
+    codec does not mangle them, it *cannot read them*: the restore raises, and
+    what it raises inside is a `finally`.
+
+    **Newer, and by writing rather than copying.** Every build system here
+    decides staleness by timestamp. `shutil.copy2`, `shutil.move`, `cp -p` and
+    `tar -x` all carry the source's mtime, so a restore done with one leaves the
+    file *older* than the artifact cargo just built from the mutation -- nothing
+    rebuilds, and the next run tests the mutation while `git diff` reads clean.
+    A write stamps the current time, which is what makes it the right primitive.
+
+    **And the stamp is checked rather than assumed.** A filesystem whose mtime
+    resolution is coarser than the time one mutation takes can hand back the
+    same value, which is the same defect arriving through the clock instead of
+    through the copy. If the stamp did not move, it is moved by hand. The bump
+    is a millisecond: enough for any build system's comparison, and small enough
+    that it cannot be mistaken for a real edit made later.
+    """
+    target = Path(target)
+    try:
+        was = target.stat().st_mtime_ns
+    except OSError:
+        was = 0
+    target.write_bytes(data)
+    if target.stat().st_mtime_ns <= was:
+        stamp = was + 1_000_000
+        os.utime(target, ns=(stamp, stamp))
 
 
 def key_of(mutation) -> str:
@@ -127,20 +164,42 @@ def tree_fingerprint(root: Path = ROOT, also: "list[Path] | None" = None) -> "st
     verdict meaningful. Every caller treats it as a refusal to reuse.
     """
     parts: "list[str]" = [f"v{VERSION}"]
-    for cmd in (
-        ["git", "rev-parse", "HEAD"],
+    listed = ""
+    for cmd, decode in (
+        (["git", "rev-parse", "HEAD"], True),
         # `--binary` because the plain diff renders a changed `.pdf` as the
         # sentence "Binary files ... differ", which is the same sentence for
         # every possible change to it. `src-tauri/src/warm.pdf` is tracked and
         # is compiled into the shipped binary.
-        ["git", "diff", "HEAD", "--binary"],
-        ["git", "ls-files", "--others", "--exclude-standard"],
+        #
+        # **And its bytes are hashed, never decoded.** A diff of a text file git
+        # has not called binary carries that file's bytes verbatim, so an edit
+        # holding 0x81 or 0x90 -- undefined in cp1252, and equally undecodable as
+        # UTF-8 -- made `text=True` raise inside subprocess's own reader thread.
+        # That happens *before any mutation runs*, in a function every harness
+        # calls unconditionally on the way in, so one dirty file could stop a
+        # four-hour table from starting with a traceback about a codec. Bytes
+        # are what this needs anyway: the fingerprint asks whether the tree
+        # moved, and a hash answers that without reading a word of it.
+        (["git", "diff", "HEAD", "--binary"], False),
+        (["git", "ls-files", "--others", "--exclude-standard"], True),
     ):
-        done = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+        done = subprocess.run(cmd, cwd=root, capture_output=True)
         if done.returncode != 0:
             return None
-        parts.append(done.stdout)
-    untracked = [line.strip() for line in parts[-1].splitlines() if line.strip()]
+        if decode:
+            # A path outside ASCII when `core.quotePath` is off, and a commit
+            # hash. `errors="replace"` keeps a name this cannot spell from
+            # taking the run down; two names that differ only in a byte the
+            # replacement swallows would collide, and a collision here costs a
+            # reused verdict, which the whole-tree guard makes vanishingly
+            # unlikely to matter.
+            text = done.stdout.decode("utf-8", errors="replace")
+            parts.append(text)
+            listed = text
+        else:
+            parts.append(digest(done.stdout))
+    untracked = [line.strip() for line in listed.splitlines() if line.strip()]
     for path in sorted(untracked) + [str(p) for p in sorted(also or [])]:
         full = root / path
         parts.append(path)
@@ -161,8 +220,16 @@ class Resume:
     """The state file for one harness, and the three things it is asked.
 
     `recover()` before anything else and unconditionally; `open()` once the tree
-    is the tree the run will use; then `done()`, `begin()` and `record()` around
-    each mutation.
+    is the tree the run will use; then `done()`, `apply()`, `restore()` and
+    `record()` around each mutation.
+
+    **Writing the mutation and taking it off again are this object's job, not
+    the caller's.** Each of the three harnesses used to do it itself, and the
+    three copies had already drifted: two wrote the bytes back and one held the
+    original in a local, one verified the restore and two did not, and the mtime
+    rule that keeps a build system from serving the mutation was written into
+    two of them. Since the state file that survives a kill lives here anyway,
+    the file the state describes is written from here too.
     """
 
     def __init__(self, harness: str, reuse: bool, root: Path = ROOT,
@@ -175,6 +242,11 @@ class Resume:
         self.backup = self.dir / f"{harness}.bak"
         self.state = self._load()
         self.reused: "dict[str, Verdict]" = {}
+        #: The mutation currently on the tree, as `begin` recorded it. Kept in
+        #: memory as well as in the file because `record` clears the file's copy
+        #: as soon as a verdict is filed, and a caller may legitimately do that
+        #: before restoring -- see `restore`.
+        self.inflight: "dict | None" = None
         self.ran = 0
         self.fingerprint: "str | None" = None
 
@@ -201,6 +273,121 @@ class Resume:
         temp.write_text(json.dumps(self.state, indent=1), encoding="utf-8")
         os.replace(temp, self.path)
 
+    # --- putting the file back, wherever the run got to ------------------
+
+    def _put_back(self, pending: dict) -> str:
+        """Return the file named by `pending` to the bytes the run started from.
+
+        One ladder, asked by two callers: `restore()` while the run is still
+        going, and `recover()` when a later process finds a record a killed one
+        left behind. The states are the same either way and only the wording
+        differs, so the *decision* lives here and each caller says what it means.
+        Written as two copies first, and this repository has an entry about what
+        happens next to two copies of one rule.
+
+        Every step answers by digest and never by assumption:
+
+          * `missing` -- the file is gone, and nothing here invents one.
+          * `clean` -- already the bytes the run started from. A kill between
+            recording the intent and writing the mutation lands here, and so
+            does a restore something else performed.
+          * `edited` -- neither the clean file nor the mutation this record
+            names, so somebody has changed it. Refused rather than clobbered:
+            undoing a repair made by hand is a worse outcome than the mutation
+            it would undo.
+          * `nobackup` / `badbackup` -- the bytes to write are not available, or
+            are not the bytes claimed. Restoring from either is guessing.
+          * `restored` -- written back, byte for byte and with a newer mtime.
+
+        The record is cleared on `clean` and `restored`, and kept on everything
+        else, so a refusal is still there for the next process to refuse again.
+        """
+        target = self.root / pending["path"]
+        if not target.is_file():
+            return "missing"
+        now = digest(target.read_bytes())
+        if now == pending["clean"]:
+            self._clear()
+            return "clean"
+        if now != pending["mutated"]:
+            return "edited"
+        if not self.backup.is_file():
+            return "nobackup"
+        original = self.backup.read_bytes()
+        if digest(original) != pending["clean"]:
+            return "badbackup"
+        # The backup's own digest is checked against `clean` immediately above,
+        # and `write_newer` raises rather than truncating, so a readback here
+        # could not fail: a mutation deleting it reddened nothing, which makes it
+        # decoration rather than a guard. The check that does the work is the one
+        # on the backup, and a mutation dropping *that* reddens three.
+        write_newer(target, original)
+        self._clear()
+        return "restored"
+
+    def _clear(self) -> None:
+        """Forget the in-flight mutation, in memory and on disk."""
+        self.inflight = None
+        self.state.pop("pending", None)
+        self._save()
+
+    def apply(self, mutation, target: Path, clean: bytes, mutated: bytes) -> None:
+        """Record the mutation and write it, in that order and in one call.
+
+        The order is the whole point and it is not the caller's to get right.
+        Recording after the write leaves a window in which a kill puts a mutation
+        in the tree that no record names, which is the one state `recover()`
+        cannot answer -- and the three harnesses that each wrote these two lines
+        themselves are three places for that order to be got wrong.
+        """
+        self.begin(mutation, target, clean, mutated)
+        write_newer(Path(target), mutated)
+
+    def restore(self) -> "tuple[bool, list[str]]":
+        """Take the applied mutation back off the tree. Whether it worked, and lines.
+
+        Call it in a `finally`, unconditionally: it does nothing when no mutation
+        is in flight, so the paths that fail before `apply()` cost nothing.
+
+        **It reads the record this object holds in memory, not the one in the
+        file**, because `record()` clears the file's copy as soon as a verdict is
+        filed --- and a caller that files its verdict before restoring would then
+        find nothing to put back and leave the mutation in the tree. That
+        ordering is legitimate (a verdict must reach the file before anything can
+        kill the run), so this is made not to care about it.
+
+        `False` means the tree is not the tree the run started from and this
+        could not fix it. Every caller stops there: continuing would test the
+        next mutation against a file holding the last one.
+        """
+        pending = self.inflight
+        if not pending:
+            return True, []
+        what = self._put_back(pending)
+        path = pending["path"]
+        if what == "restored" or what == "clean":
+            return True, []
+        if what == "missing":
+            return False, [
+                f"[FAIL] {path} held the mutation {pending['name']!r} and is now missing "
+                "entirely -- nothing here can put it back"
+            ]
+        if what == "edited":
+            return False, [
+                f"[FAIL] {path} is neither the file this run started from nor the mutation "
+                f"it wrote ({pending['name']}), so something changed it while the checks "
+                "ran -- refusing to touch it"
+            ]
+        return False, [
+            f"[FAIL] {path} still holds the mutation {pending['name']!r} and the backup "
+            + (
+                "beside it is gone"
+                if what == "nobackup"
+                else "is not the file this run started from"
+            )
+            + f" -- `git checkout -- {path}` if it is tracked and unmodified otherwise"
+        ]
+
     # --- recovery, which is not optional --------------------------------
 
     def recover(self) -> "tuple[int, list[str]]":
@@ -212,50 +399,38 @@ class Resume:
         pending = self.state.get("pending")
         if not pending:
             return 0, []
-        target = self.root / pending["path"]
-        if not target.is_file():
+        what = self._put_back(pending)
+        if what == "missing":
             return 1, [
                 f"[FAIL] {pending['path']} was mutated by a run that did not finish and is "
                 "now missing entirely -- restore it before running anything here"
             ]
-        now = digest(target.read_bytes())
-        if now == pending["clean"]:
+        if what == "clean":
             # The kill landed between recording the intent and writing the
             # bytes. Nothing to undo, and saying so is worth a line: silence
             # here is indistinguishable from this module not having run.
-            self.state.pop("pending", None)
-            self._save()
             return 0, [
                 f"[OK]   a run of this harness did not finish, and {pending['path']} was "
                 "not left mutated"
             ]
-        if now != pending["mutated"]:
+        if what == "edited":
             return 1, [
                 f"[FAIL] {pending['path']} is neither the file the killed run started from "
                 f"nor the mutation it wrote ({pending['name']}), so somebody has edited it "
                 "since -- refusing to touch it. Check it, then delete "
                 f"{self.path.relative_to(self.root)}"
             ]
-        if not self.backup.is_file():
+        if what == "nobackup":
             return 1, [
                 f"[FAIL] {pending['path']} still holds the mutation {pending['name']!r} and "
                 f"the backup beside it is gone -- `git checkout -- {pending['path']}` if it "
                 "is tracked and unmodified otherwise"
             ]
-        original = self.backup.read_bytes()
-        if digest(original) != pending["clean"]:
+        if what == "badbackup":
             return 1, [
                 f"[FAIL] the backup for {pending['path']} is not the file the run started "
                 "from, so restoring from it would put back something else"
             ]
-        # The backup's own digest is checked against `clean` above, and
-        # `write_bytes` raises rather than truncating, so a readback here could
-        # not fail: a mutation deleting it reddened nothing, which makes it
-        # decoration rather than a guard. The check that does the work is the
-        # one on the backup, and a mutation dropping *that* reddens three.
-        target.write_bytes(original)
-        self.state.pop("pending", None)
-        self._save()
         return 0, [
             f"[OK]   restored {pending['path']}, left mutated by a run that did not finish "
             f"({pending['name']})"
@@ -345,16 +520,19 @@ class Resume:
         """Record the mutation as in flight. Call BEFORE writing `mutated`.
 
         The other order leaves a window in which the tree holds a mutation no
-        record names, which is the state recovery cannot answer.
+        record names, which is the state recovery cannot answer. `apply()` is
+        the two calls together and is what a harness should reach for; this is
+        the half of it that survives the process.
         """
         self.dir.mkdir(parents=True, exist_ok=True)
         self.backup.write_bytes(clean)
-        self.state["pending"] = {
+        self.inflight = {
             "name": mutation.name,
             "path": str(Path(target).resolve().relative_to(self.root.resolve())).replace("\\", "/"),
             "clean": digest(clean),
             "mutated": digest(mutated),
         }
+        self.state["pending"] = self.inflight
         self._save()
 
     def record(self, mutation, ok: bool, line: str, outcome: str = "") -> None:
@@ -585,6 +763,123 @@ def self_test() -> int:
         check("an `also` file changes the fingerprint", before != after, True)
         check("and a gitignored file the caller did not name does not",
               tree_fingerprint(root), tree_fingerprint(root))
+
+        # 12. A tracked file carrying a byte that decodes as nothing.
+        #
+        # Git calls a file with no NUL in its first block *text*, so those bytes
+        # reach `git diff HEAD --binary` verbatim rather than as base85 --- and
+        # decoding them killed the fingerprint before a single mutation ran.
+        # 0x81, 0x8D, 0x90 and 0x9D are undefined in cp1252 and are not valid
+        # UTF-8 either, so this case fails on both platforms rather than on
+        # Windows alone, which is what makes it worth having here.
+        #
+        # Caught rather than allowed to propagate: a raise in a self-test names
+        # no check, so the run that finds the defect would print a stack and the
+        # reader would learn nothing. Same reasoning as `_state` above.
+        odd = root / "src" / "odd.txt"
+        odd.write_bytes(b"a\x81\x8d\x90\x9d b\n")
+        for cmd in (
+            ["git", "add", "-A"],
+            ["git", "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-qm", "odd"],
+        ):
+            subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+        pristine = tree_fingerprint(root)
+        odd.write_bytes(b"a\x81\x8d\x90\x9d c\n")   # dirty, so it is in the diff
+
+        def taken() -> "str | None":
+            try:
+                return tree_fingerprint(root)
+            except UnicodeDecodeError as why:
+                print(f"[note] tree_fingerprint raised: {why}", flush=True)
+                return None
+
+        dirty = taken()
+        check("a byte no codec can decode still fingerprints", isinstance(dirty, str), True)
+        check("and the edit it sits in changes the tree", dirty != pristine, True)
+
+        # 13. Applying and taking back off, which is the loop every harness runs.
+        #
+        # These four cases replaced the copy each of the three harnesses kept of
+        # this, so they are the only thing standing behind it now. Each was
+        # watched fail before being trusted; `BUILD.md` lists the one-line edits.
+        target.write_bytes(clean)
+        loop = Resume("t", reuse=False, root=root)
+        loop.open([mutation])
+        loop.apply(mutation, target, clean, mutated)
+        check("apply puts the mutation on the tree", target.read_bytes(), mutated)
+        # What this can see is that the record reached the file, not that it
+        # got there first: from outside the call both orders leave the same two
+        # artifacts. The ordering is exactly why `apply` exists -- one place to
+        # read it rather than the three that each wrote the two lines out.
+        check("and records what it wrote, so a kill here is recoverable",
+              _state(root).get("pending", {}).get("mutated"), digest(mutated))
+        ok, lines = loop.restore()
+        check("restore succeeds", (ok, lines), (True, []))
+        check("and puts the file back byte for byte", target.read_bytes(), clean)
+        check("and a second restore has nothing left to do", loop.restore(), (True, []))
+        check("and leaves nothing for the next process to recover",
+              Resume("t", reuse=False, root=root).recover(), (0, []))
+
+        # 14. The restored file must be NEWER than the mutation was.
+        #
+        # Every build system here decides staleness by timestamp, so a restore
+        # that carries an older stamp -- which `shutil.copy2` and `shutil.move`
+        # both do -- leaves cargo serving the mutation while `git diff` reads
+        # clean. The mutated file's stamp is pushed forward here rather than
+        # taken as it falls: a restore written either of the wrong ways then
+        # fails on every filesystem, instead of only on one whose clock is
+        # coarse enough to hand back the same value twice.
+        stamped = Resume("t", reuse=False, root=root)
+        stamped.open([mutation])
+        stamped.apply(mutation, target, clean, mutated)
+        ahead = time.time() + 5
+        os.utime(target, (ahead, ahead))
+        was = target.stat().st_mtime_ns
+        stamped.restore()
+        check("the restored file is newer than the mutation it replaced",
+              target.stat().st_mtime_ns > was, True)
+        check("and is still the bytes the run started from", target.read_bytes(), clean)
+
+        # 15. A file that is neither the clean bytes nor the mutation is refused.
+        #
+        # Something changed it while the checks ran -- a formatter, an editor, a
+        # hand repair. Writing the backup over it would undo that, and the
+        # backup is not evidence about a file it no longer describes.
+        meddled = Resume("t", reuse=False, root=root)
+        meddled.open([mutation])
+        meddled.apply(mutation, target, clean, mutated)
+        target.write_bytes(b"let x = 99;  // changed while the checks ran\n")
+        ok, lines = meddled.restore()
+        check("a file that is neither is refused", ok, False)
+        check("and is left exactly as it was",
+              target.read_bytes(), b"let x = 99;  // changed while the checks ran\n")
+        check("and the refusal names the file", any("src/a.rs" in line for line in lines), True)
+        # The record survives a refusal, so the next process refuses too rather
+        # than finding a clean slate and a mutated tree.
+        check("and the record is kept for the next process",
+              Resume("t", reuse=False, root=root).recover()[0], 1)
+        target.write_bytes(clean)
+        (root / ".mutations" / "t.json").unlink(missing_ok=True)
+
+        # 16. Restoring after the verdict has already been filed.
+        #
+        # `record` clears the file's copy of the in-flight record, and one of the
+        # three harnesses files a verdict for a mutation that would not build
+        # *before* its `finally` runs. Reading the file's copy there would find
+        # nothing to put back and leave the mutation in the tree -- so `restore`
+        # reads the copy this object holds, and this is what says so.
+        filed = Resume("t", reuse=False, root=root)
+        filed.open([mutation])
+        filed.apply(mutation, target, clean, mutated)
+        filed.record(mutation, False, "[BROKEN] a: one does not build", outcome="unreadable")
+        ok, _ = filed.restore()
+        check("a verdict filed before the restore does not strand the mutation",
+              (ok, target.read_bytes()), (True, clean))
+
+        # And a restore with nothing applied is a no-op, which is what the paths
+        # that fail before `apply` rely on.
+        check("restoring without having applied anything does nothing",
+              Resume("t", reuse=False, root=root).restore(), (True, []))
 
     for line in failures:
         print(line)

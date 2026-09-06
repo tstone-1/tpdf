@@ -81,6 +81,7 @@ Usage:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import shutil
 import subprocess
@@ -100,7 +101,17 @@ PAGE_MENU = 5
 
 def osa(script: str, timeout: float = 120) -> str:
     done = subprocess.run(
-        ["osascript", "-e", script], capture_output=True, text=True, timeout=timeout
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        # `text=True` alone decodes with the locale codec, and what comes back
+        # here is interface text: a window title, which is the document's file
+        # name. A name with a character the locale codec cannot map kills the
+        # reader thread with UnicodeDecodeError and `.stdout` arrives as None,
+        # so the check reports a traceback rather than a verdict.
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
     )
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip())
@@ -108,7 +119,14 @@ def osa(script: str, timeout: float = 120) -> str:
 
 
 def screen_is_locked() -> bool:
-    out = subprocess.run(["ioreg", "-n", "Root", "-d1"], capture_output=True, text=True)
+    # Same reason as `osa` above: decoded explicitly, never by the locale codec.
+    out = subprocess.run(
+        ["ioreg", "-n", "Root", "-d1"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     return "CGSSessionScreenIsLocked" in out.stdout and "Yes" in "".join(
         line for line in out.stdout.splitlines() if "CGSSessionScreenIsLocked" in line
     )
@@ -210,7 +228,13 @@ def qpdf_ok(path: Path) -> tuple[bool, str]:
     if shutil.which("qpdf") is None:
         return True, "[SKIP] qpdf is not installed, so the saved file was not read back"
     done = subprocess.run(
-        ["qpdf", "--check", str(path)], capture_output=True, text=True
+        ["qpdf", "--check", str(path)],
+        capture_output=True,
+        text=True,
+        # qpdf quotes the document's own strings back in its report, so this is
+        # document text like every other transcript here.
+        encoding="utf-8",
+        errors="replace",
     )
     # A warning is exit 3 and is not a failure: the fixtures are generated and
     # several carry structures qpdf comments on. Exit 2 is a file it cannot read.
@@ -236,7 +260,23 @@ def main() -> int:
         return 2
 
     problems = 0
-    work = Path(tempfile.mkdtemp(prefix="tpdf-save-check-"))
+    # `mkdtemp` hands back a directory and forgets it. This one holds a copy of
+    # the fixture that every phase below writes to, so a run that ends anywhere
+    # after this line --- and six of them return before the end --- used to leave
+    # a PDF in the system temp directory for good. `TemporaryDirectory` owns it
+    # instead, and `ignore_cleanup_errors` is there for the same reason
+    # `open_check.py` passes it: on Windows the child can still hold the file
+    # open a moment after it exits, and a `PermissionError` while tidying up
+    # must not fail a run whose phases were all green.
+    #
+    # Registered with `atexit` rather than wrapped in a `with`, because the body
+    # it would have to wrap returns from six places and one of them is inside a
+    # `finally` that quits the application.
+    scratch = tempfile.TemporaryDirectory(
+        prefix="tpdf-save-check-", ignore_cleanup_errors=True
+    )
+    atexit.register(scratch.cleanup)
+    work = Path(scratch.name)
     target = work / fixture.name
     shutil.copy2(fixture, target)
     before = digest(target)

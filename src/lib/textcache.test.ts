@@ -296,6 +296,72 @@ describe("TextCache crops", () => {
     cache.setPageCrop(fp(0), undefined);
     expect(cache.cachedPages).toBe(0);
   });
+
+  it("throws away a reply for the crop that was in force when it was sent", async () => {
+    // The half a crop drop cannot reach by clearing maps: an extraction already
+    // on the wire was measured under the old box, and its continuation runs
+    // whatever has happened meanwhile. Stored, it would be served as the new
+    // crop's answer --- boxes measured from a corner the page no longer has,
+    // which is not a stale cache but a wrong coordinate system, and the caret
+    // lands a crop's worth away from the glyph under the pointer.
+    const cache = new TextCache(1);
+    let answer: (text: PageText) => void = () => {};
+    core.invoke.mockImplementationOnce(
+      () =>
+        new Promise<PageText>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const inFlight = cache.load(fp(0));
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    answer(page(SMALL));
+    expect(await inFlight).toBeNull();
+    expect(cache.cachedPages).toBe(0);
+    expect(cache.peek(fp(0))).toBeNull();
+  });
+
+  it("does not serve a request issued under the old crop to the next caller", async () => {
+    // `worthAsking` is the frame loop's question, and while the dropped request
+    // was still counted as pending the answer was "already asked" --- so the
+    // page under the new box was never fetched at all until something else
+    // happened to disturb the cache.
+    const cache = new TextCache(1);
+    core.invoke.mockImplementationOnce(() => new Promise<PageText>(() => {}));
+    void cache.load(fp(0));
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    expect(cache.worthAsking(fp(0))).toBe(true);
+    void cache.load(fp(0));
+    expect(core.invoke).toHaveBeenCalledTimes(2);
+    expect(core.invoke.mock.calls[1]?.[1]).toEqual({
+      doc: 1,
+      page: 0,
+      crop: [10, 20, 300, 400],
+    });
+  });
+
+  it("leaves the newer request pending when the older one settles", async () => {
+    // The bookkeeping the drop above depends on. `pending` is cleared in a
+    // `finally`, and the abandoned request's own `finally` runs after the
+    // replacement has been recorded --- so a delete that does not check which
+    // request it is deleting takes the live one out of the map, and every
+    // caller after it issues a duplicate extraction for a page already on the
+    // wire.
+    const cache = new TextCache(1);
+    let answer: (text: PageText) => void = () => {};
+    core.invoke.mockImplementationOnce(
+      () =>
+        new Promise<PageText>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const abandoned = cache.load(fp(0));
+    cache.setPageCrop(fp(0), [10, 20, 300, 400]);
+    core.invoke.mockImplementationOnce(() => new Promise<PageText>(() => {}));
+    void cache.load(fp(0));
+    answer(page(SMALL));
+    await abandoned;
+    expect(cache.worthAsking(fp(0))).toBe(false);
+  });
 });
 
 /**

@@ -67,11 +67,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::encoding::resolve;
-
-use crate::encoding::MAX_DECODE;
 
 /// Deepest the `/MediaBox` and `/Rotate` inheritance walk will follow `/Parent`.
 const MAX_INHERIT: usize = 32;
@@ -372,16 +370,20 @@ pub struct Comments {
 /// indistinguishable from a document that simply has none of what is being
 /// looked for. See [`crate::progressive::RawDocument::password`].
 pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<Comments, String> {
+    scan_from(&crate::encoding::load(bytes, password)?, page_count)
+}
+
+/// [`scan`] over a document somebody else parsed.
+///
+/// The graph holds one parse for all five of its readers --- see
+/// [`crate::docgraph::DocumentGraph`]. The load options and the password stay in
+/// [`crate::encoding::load`], which is the only place they are written.
+///
+/// # Errors
+///
+/// As [`scan`], less the parse it no longer does.
+pub fn scan_from(document: &Document, page_count: usize) -> Result<Comments, String> {
     let started = std::time::Instant::now();
-    let document = Document::load_mem_with_options(
-        bytes,
-        LoadOptions {
-            max_decompressed_size: Some(MAX_DECODE),
-            password: password.map(str::to_string),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
 
     let mut limits = Limits::default();
     let mut items: Vec<Comment> = Vec::new();
@@ -400,7 +402,7 @@ pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<C
             break;
         }
         read_page(
-            &document,
+            document,
             *page,
             index as u32,
             &mut items,
@@ -712,7 +714,7 @@ fn page_geometry(document: &Document, page: ObjectId) -> (f32, f32, u8, f32, f32
 
     let turns = inherited(document, page, b"Rotate")
         .and_then(|object| resolve(document, &object).as_i64().ok())
-        .map(|degrees| (((degrees / 90) % 4 + 4) % 4) as u8)
+        .map(crate::pagetree::turns_of_degrees)
         .unwrap_or(0);
 
     let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);

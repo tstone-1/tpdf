@@ -319,6 +319,17 @@ export interface Commands {
     args: {
       doc: number;
       page: FilePage;
+      /**
+       * The whole run to answer, in walk order, `page` being its first entry.
+       *
+       * Omitted is the single-page request this command has always been, and
+       * the reply is then byte-identical to what it was. With a run, the pages
+       * after the first arrive in {@link PageMatches.more} --- and there may be
+       * **fewer of them than were asked for**, because a reply is bounded: read
+       * how many came back rather than assuming the run was completed. See
+       * `render::run_search_range`.
+       */
+      pages?: FilePage[] | undefined;
       query: string;
       options: SearchOptions;
       carry?: Carry | undefined;

@@ -1,0 +1,67 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "page": 0,
+      "rect": [
+        10.0,
+        20.0,
+        110.0,
+        60.0
+      ],
+      "target": {
+        "kind": "page",
+        "page": 2,
+        "top_pt": 700.0
+      }
+    },
+    {
+      "id": 2,
+      "page": 0,
+      "rect": [
+        0.0,
+        0.0,
+        10.0,
+        10.0
+      ],
+      "target": {
+        "kind": "broken"
+      }
+    },
+    {
+      "id": 3,
+      "page": 1,
+      "rect": [
+        0.0,
+        0.0,
+        10.0,
+        10.0
+      ],
+      "target": {
+        "kind": "refused",
+        "action": "Launch"
+      }
+    },
+    {
+      "id": 4,
+      "page": 1,
+      "rect": [
+        0.0,
+        0.0,
+        10.0,
+        10.0
+      ],
+      "target": {
+        "kind": "none"
+      }
+    }
+  ],
+  "limits": {
+    "crowded_pages": 1,
+    "over_budget": true,
+    "unreadable": 2,
+    "unresolved_names": 3,
+    "pages_missed": 4
+  },
+  "scan_ms": 2.25
+}

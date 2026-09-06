@@ -498,7 +498,7 @@ mod tests {
             "there is nothing to save --- this document has no unsaved changes"
         );
         assert!(
-            !why.reopen,
+            !why.reopen(),
             "nothing was closed, so nothing is to be reopened"
         );
         assert_eq!(
@@ -624,10 +624,10 @@ mod tests {
 
         assert_eq!(why.message, "the file changed under you");
         assert!(
-            !why.reopen,
+            !why.reopen(),
             "nothing was closed, so the document is still open"
         );
-        assert!(why.changed, "the window offers Reload off this field");
+        assert!(why.changed(), "the window offers Reload off this field");
         let entries = entries(&log);
         assert!(
             !entries.iter().any(|step| step.starts_with("close")),
@@ -657,10 +657,13 @@ mod tests {
             why.message,
             "the file moved between the staging and the rename"
         );
-        assert!(why.reopen, "the model is gone, whatever became of the file");
         assert!(
-            why.changed,
-            "the refusal's own field survives the composition"
+            why.reopen(),
+            "the model is gone, whatever became of the file"
+        );
+        assert!(
+            why.changed(),
+            "the refusal's own answer survives the composition"
         );
     }
 
@@ -732,7 +735,7 @@ mod tests {
         .expect_err("a pool that failed is not a save");
 
         assert_eq!(why.message, "the save did not finish");
-        assert!(why.reopen);
+        assert!(why.reopen());
     }
 
     /// The reader's key is asked once and reaches both the rewrite and the landing.

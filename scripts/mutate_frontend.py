@@ -32,7 +32,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -128,7 +127,8 @@ MUTATIONS = [
         "viewer: rank an armed tool's cursor above a pan in progress",
         "src/lib/viewer.ts",
         "    this.surfaceHost.style.cursor = this.panFrom",
-        "    this.surfaceHost.style.cursor = this.panFrom && !this.drawKind",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '    this.surfaceHost.style.cursor = this.panFrom && this.tool.kind !== "draw"',
         "outranks an armed tool's cursor while the button is down",
     ),
     Mutation(
@@ -466,8 +466,10 @@ MUTATIONS = [
         # did not ask to stay in.
         "viewer: keep the box tool armed after a box is drawn",
         "src/lib/viewer.ts",
-        "        this.drawKind = null;\n        this.drawStamp = null;\n        this.showCursor();",
-        "        this.drawStamp = null;\n        this.showCursor();",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '        if (this.tool.kind === "draw") this.tool = NO_TOOL;\n'
+        "        this.showCursor();",
+        "        this.showCursor();",
         "is spent by one box",
     ),
     Mutation(
@@ -1856,6 +1858,73 @@ MUTATIONS = [
         "describes the plain search as neither option",
     ),
     Mutation(
+        # A run has to be contiguous in slots, or the walk's own carry rule
+        # (`carried.page === page - 1`) does not hold inside one -- and an
+        # unscoped scan wraps, so page 774 is followed by page 0.
+        "search: run across a gap in the slots",
+        "src/lib/search.ts",
+        "    if (last !== undefined && entry.page !== last + 1) break;",
+        "    if (false) break;",
+        "runFrom > stops at a gap in the slots",
+    ),
+    Mutation(
+        # The second vocabulary, and the one an unedited document cannot show:
+        # slots and file pages are the same sequence until a page is deleted, and
+        # the backend chains the carry between pages *it* sees as neighbours.
+        "search: run across a gap in the file pages",
+        "src/lib/search.ts",
+        "    if (previousSource !== undefined && source !== previousSource + 1) break;",
+        "    if (false) break;",
+        "runFrom > stops where the file pages are not consecutive either",
+    ),
+    Mutation(
+        # Ask about the whole plan in one request. The render thread is FIFO, so
+        # this is a second and a half in front of every tile on the dense corpus.
+        "search: ignore the run bound",
+        "src/lib/search.ts",
+        "  for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {",
+        "  for (let step = at; step < plan.length; step++) {",
+        "runFrom > takes a whole run of consecutive pages, bounded by RUN_PAGES",
+    ),
+    Mutation(
+        # Start every run at the beginning of the plan. The walk would re-ask
+        # about the pages it has and never reach the ones it does not.
+        "search: start a run at the beginning of the plan",
+        "src/lib/search.ts",
+        "  for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {",
+        "  for (let step = 0; step < plan.length && run.length < RUN_PAGES; step++) {",
+        "runFrom > starts where it is asked to and not at the beginning",
+    ),
+    Mutation(
+        # Pair every slot the run asked about, whatever came back. The backend
+        # answers a prefix -- a reply is bounded -- so this puts page 3's hits on
+        # slot 6 and counts the pages in between as searched.
+        "search: pair every slot whatever came back",
+        "src/lib/search.ts",
+        "  for (const [step, answer] of answers.entries()) {\n    const slot = slots[step];\n    if (slot === undefined) break;",
+        "  for (const [step, answer] of slots.entries()) {\n    const answer = answers[step] ?? reply;\n    void step;",
+        "runAnswers > pairs a full run with the slots it was asked about",
+    ),
+    Mutation(
+        # Read only the first page of a run's reply. Fifteen pages in sixteen
+        # would go unsearched and the walk would still advance past them, which
+        # is a search that quietly covers a sixteenth of the document.
+        "search: ignore the run and file only the first page",
+        "src/lib/search.ts",
+        "  const answers = [reply, ...(reply.more ?? [])];",
+        "  const answers = [reply];",
+        "runAnswers > pairs a full run with the slots it was asked about",
+    ),
+    Mutation(
+        # The first-entry case, which is the only one that isolates the missing
+        # slot guard from the file-page guard beside it.
+        "search: include a slot with no page behind it",
+        "src/lib/search.ts",
+        "    if (source === undefined) break;\n    const last = run[run.length - 1];",
+        "    const last = run[run.length - 1];",
+        "runFrom > stops at once when the first slot has no page behind it",
+    ),
+    Mutation(
         "recents: show only the basename, whatever collides",
         "src/lib/recents.ts",
         "        if ((depth[index] ?? 1) < (longest[index] ?? 1)) {\n          depth[index] = (depth[index] ?? 1) + 1;\n          grew = true;\n        }",
@@ -3005,12 +3074,63 @@ MUTATIONS = [
         # region and then dragged to scroll would mark a second.
         "viewer: leave the redaction tool armed after a region",
         "src/lib/viewer.ts",
-        "        const marking = this.redacting;\n"
-        "        this.cropping = false;\n"
-        "        this.redacting = false;",
-        "        const marking = this.redacting;\n"
-        "        this.cropping = false;",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '        const marking = this.tool.kind === "redact";\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        "          this.tool = NO_TOOL;\n"
+        "        }",
+        '        const marking = this.tool.kind === "redact";\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        '          this.tool = { kind: "redact" };\n'
+        "        }",
         "is spent by one region, like the crop and unlike the eraser",
+    ),
+    # The four below replace five rows deleted 2026-09-06. Each of those mutated
+    # one arming method's clearing of the other tools' flags, and there are no
+    # other flags: arming is one assignment over one `tool` field, so the state
+    # they produced --- two tools live at once --- is not expressible and the
+    # mutation would be a permanent red line. `docs/TRAPS.md` records the rule
+    # under *A guard the type system already makes unexpressible has no mutation
+    # to write*. What replaces them is the strongest edit the type still permits:
+    # arming the WRONG tool, one row per arming method.
+    Mutation(
+        # Arm the redaction tool when the reader asked for a crop. The two
+        # share a `PointerDrag` and differ only in what a released rectangle
+        # commits, so this is the confusion that destroys a page the reader
+        # meant to hide part of.
+        "viewer: let armCrop arm the redaction tool instead",
+        "src/lib/viewer.ts",
+        '    this.inking = null;\n    this.tool = { kind: "crop" };',
+        '    this.inking = null;\n    this.tool = { kind: "redact" };',
+        "arming crop leaves every other tool disarmed",
+    ),
+    Mutation(
+        # The mirror, and the direction that loses work rather than hiding it:
+        # a reader marking a region for removal gets a crop.
+        "viewer: let armRedact arm the crop instead",
+        "src/lib/viewer.ts",
+        '    this.inking = null;\n    this.tool = { kind: "redact" };',
+        '    this.inking = null;\n    this.tool = { kind: "crop" };',
+        "arming redact leaves every other tool disarmed",
+    ),
+    Mutation(
+        # Take up the eraser when a drawing tool was chosen. The next press
+        # rubs out what it crosses instead of drawing.
+        "viewer: let armDraw arm the eraser instead",
+        "src/lib/viewer.ts",
+        '    this.tool = { kind: "draw", mark: kind, stamp };',
+        '    this.tool = { kind: "erase" };',
+        "arming draw leaves every other tool disarmed",
+    ),
+    Mutation(
+        # And the eraser arming a pen, which is the one that stays armed: a
+        # reader who reached for the eraser draws a box on every press until
+        # they press Escape.
+        "viewer: let armErase arm a drawing tool instead",
+        "src/lib/viewer.ts",
+        '    this.inking = null;\n    this.tool = { kind: "erase" };',
+        '    this.inking = null;\n    this.tool = { kind: "draw", mark: "square", stamp: null };',
+        "arming erase leaves every other tool disarmed",
     ),
     Mutation(
         # Send a dragged region to the crop instead. The two tools share one
@@ -3023,32 +3143,6 @@ MUTATIONS = [
         "        else this.opts.onCropped?.(id, rect);",
         "        this.opts.onCropped?.(id, rect);",
         "sends a dragged region to the redaction callback and not the crop's",
-    ),
-    Mutation(
-        # Arm the crop without putting the redaction tool away. Both flags are
-        # then set, the shared drag reads `redacting` first, and a reader who
-        # armed a redaction and changed their mind to a crop redacts instead.
-        "viewer: let the crop tool leave the redaction tool armed",
-        "src/lib/viewer.ts",
-        "    this.erasing = false;\n"
-        "    this.redacting = false;\n"
-        "    this.cropping = true;",
-        "    this.erasing = false;\n"
-        "    this.cropping = true;",
-        "and the crop tool each put the other away",
-    ),
-    Mutation(
-        # The same for a drawing tool, which is the pair that is easy to forget:
-        # `armDraw` was written when there were two region tools to clear and
-        # now there are three.
-        "viewer: let a drawing tool leave the redaction tool armed",
-        "src/lib/viewer.ts",
-        "    this.cropping = false;\n"
-        "    this.redacting = false;\n"
-        "    this.drawKind = kind;",
-        "    this.cropping = false;\n"
-        "    this.drawKind = kind;",
-        "and the crop tool each put the other away",
     ),
     Mutation(
         # Shade the same area for both tools. The gesture still works and the
@@ -3274,8 +3368,8 @@ MUTATIONS = [
         # the life of the document.
         "viewer: learn a turned page's size without removing its turn",
         "src/lib/viewer.ts",
-        "          displayedSize(shown, -this.scroller.effectiveTurns(page)),",
-        "          displayedSize(shown, -this.turns),",
+        "        size: displayedSize(shown, -this.scroller.effectiveTurns(page)),",
+        "        size: displayedSize(shown, -this.turns),",
         "learns a page's size in the document's space, not the turned view's",
     ),
     Mutation(
@@ -3747,25 +3841,23 @@ MUTATIONS += [
         "reports the strokes in order however the hand crossed them",
     ),
     Mutation(
-        # Leave the pen armed when the eraser is taken up. Two tools are then
-        # live at once and the next press has to guess which one the reader
-        # meant -- and it guesses the eraser, because that branch is first.
-        "viewer: arm the eraser without putting the pen away",
-        "src/lib/viewer.ts",
-        "    this.drawKind = null;\n    this.inking = null;\n"
-        "    this.cropping = false;\n    this.redacting = false;\n"
-        "    this.erasing = true;",
-        "    this.erasing = true;",
-        "puts the pen away, and the pen puts it away",
-    ),
-    Mutation(
         # Escape reaches only the pen's states, which is what it did when the
         # eraser was written: a reader with the eraser armed and nothing on
         # screen but a cursor cannot get out of the mode.
         "viewer: let Escape past an armed eraser",
         "src/lib/viewer.ts",
-        "        this.erasing ||\n        this.doomed",
-        "        false",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        # The eraser's terms are no longer adjacent, so the whole flattened
+        # condition is the anchor and the after drops every state but the pen's.
+        '        this.tool.kind !== "none" ||\n'
+        "        this.drawing ||\n"
+        "        this.inking ||\n"
+        "        this.doomed ||\n"
+        "        this.cropDrawing",
+        '        this.tool.kind === "draw" ||\n'
+        "        this.drawing ||\n"
+        "        this.inking ||\n"
+        "        this.cropDrawing",
         "sends nothing when Escape ends the sweep",
     ),
     Mutation(
@@ -3970,7 +4062,7 @@ MUTATIONS += [
         "src/lib/viewer.ts",
         "    const id = this.markNote.openId;\n"
         "    if (id === null) return false;\n"
-        "    const mark = this.marks.find((held) => held.id === id);\n"
+        "    const mark = this.markById(id);\n"
         "    if (!mark) return false;",
         "    const mark = this.marks[0];\n"
         "    if (!mark) return false;\n"
@@ -5141,6 +5233,13 @@ TEST_FILES = [
     # same day: two mutations now aim at `sidebar.ts`, which is what that
     # table's entry said had never been true.
     "src/lib/redactlist.test.ts",
+    # Added 2026-09-06 with the outline's destination order, in the same edit as
+    # its mutation. `outline.ts` had been in the exclusion table below since
+    # nothing was aimed at it; a search over the destinations is the first
+    # decision in that module that can be wrong in a way the walk beside it
+    # cannot, so it earned one. The tenth time this list has needed growing, and
+    # the gate said so before the run rather than after it.
+    "src/lib/outline.test.ts",
     "src/lib/sidebar.test.ts",
     # Added 2026-08-30 with the slot-versus-page mutations, in the same edit.
     # Eleventh time, and for once the list was grown by the person who wrote the
@@ -5192,7 +5291,6 @@ UNMUTATED = {
     "src/lib/contextmenu.test.ts": "no mutation aims at src/lib/contextmenu.ts",
     "src/lib/degraded.test.ts": "no mutation aims at src/lib/degraded.ts",
     "src/lib/lifetime.test.ts": "no mutation aims at src/lib/lifetime.ts",
-    "src/lib/outline.test.ts": "no mutation aims at src/lib/outline.ts",
     "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
     "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
     "src/lib/session.test.ts": "no mutation aims at src/lib/session.ts",
@@ -5217,6 +5315,16 @@ UNMUTATED = {
     # that the side it reads comes back empty, and the registry regex widened
     # past the macro's own name so that what it captures is not identifiers.
     "src/lib/ipc.test.ts": "reads two source texts, which no source mutation of a module changes",
+    # `ipc.test.ts`'s shape, one level down: what this suite reads is the JSON
+    # `src-tauri/src/replies.rs` writes, held against the mirror types. Nothing
+    # a mutation could do to a `.ts` module's behaviour changes either side, and
+    # the two checks that could be wrong are the compiler's (`satisfies`) and a
+    # key comparison against files Rust produced. Proved able to go red by hand
+    # instead, and by the mechanism it exists to catch: renaming one Rust field
+    # on the wire (`#[serde(rename)]` on `docinfo::Properties::language`) and
+    # regenerating turned `tsc` red on the missing key, and both key checks red
+    # on the missing name and on the new one.
+    "src/lib/replyshapes.test.ts": "reads JSON written by the Rust side, which no source mutation of a module changes",
 }
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
@@ -5759,8 +5867,9 @@ MUTATIONS += [
         # keystroke the reader meant for something else.
         "comment: place a mark on Enter whatever tool is armed",
         "src/lib/viewer.ts",
-        '    } else if (event.key === "Enter" && this.drawKind === "note") {',
-        '    } else if (event.key === "Enter" && this.drawKind !== null) {',
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '    } else if (event.key === "Enter" && this.drawArmed === "note") {',
+        '    } else if (event.key === "Enter" && this.drawArmed !== null) {',
         "takes Enter only for the comment tool",
     ),
     Mutation(
@@ -5768,12 +5877,13 @@ MUTATIONS += [
         # press --- on a link, on a word --- becomes another bubble.
         "comment: keep the tool armed after a bubble is placed",
         "src/lib/viewer.ts",
-        "        // armed tool and must be spent together.\n"
-        "        const stamp = this.drawStamp;\n"
-        "        this.drawKind = null;",
-        "        // Spent, and cleared *before* the callback so that an `onDrawn` which\n"
-        "        // arms it again is not undone by this line.\n"
-        '        if (kind !== "note") this.drawKind = null;',
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        # Code only now: the comment above these lines was reworded by that
+        # change, and an anchor carrying prose is re-aimed by every rewording.
+        '        const stamp = this.tool.kind === "draw" ? this.tool.stamp : null;\n'
+        '        if (this.tool.kind === "draw") this.tool = NO_TOOL;',
+        '        const stamp = this.tool.kind === "draw" ? this.tool.stamp : null;\n'
+        '        if (kind !== "note" && this.tool.kind === "draw") this.tool = NO_TOOL;',
         "spends the tool on that press, and takes no second comment",
     ),
     Mutation(
@@ -5798,19 +5908,19 @@ MUTATIONS += [
         # Re-aimed 2026-08-23 when the crop joined this expression. It stays a
         # mutation about ink -- the crop's ternary is kept so that the only thing
         # removed is `drawnStrokes`, which is what decides ink's own line.
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        '      armed: this.redacting\n'
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '      armed: this.tool.kind === "redact"\n'
         '        ? "redact"\n'
-        '        : this.cropping\n'
+        '        : this.tool.kind === "crop"\n'
         '          ? "crop"\n'
-        '          : this.drawnStrokes === null\n'
-        '            ? this.drawKind\n'
-        '            : null,',
-        '      armed: this.redacting\n'
+        "          : this.drawnStrokes === null\n"
+        "            ? this.drawArmed\n"
+        "            : null,",
+        '      armed: this.tool.kind === "redact"\n'
         '        ? "redact"\n'
-        '        : this.cropping\n'
+        '        : this.tool.kind === "crop"\n'
         '          ? "crop"\n'
-        '          : this.drawKind,',
+        "          : this.drawArmed,",
         "names a drawing in one field, not two",
     ),
     Mutation(
@@ -5915,8 +6025,8 @@ MUTATIONS += [
         # has, because a crop removes something the reader can see.
         "crop: start the crop drag whether or not the tool is armed",
         "src/lib/viewer.ts",
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        "        if (!this.cropping && !this.redacting) return false;",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact") return false;',
         "        if (false) return false;",
         "reports nothing until the tool is armed",
     ),
@@ -5940,12 +6050,15 @@ MUTATIONS += [
         # who did not notice it was still armed loses the crop they just made.
         "crop: leave the crop tool armed after a rectangle",
         "src/lib/viewer.ts",
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        "        const marking = this.redacting;\n"
-        "        this.cropping = false;\n"
-        "        this.redacting = false;",
-        "        const marking = this.redacting;\n"
-        "        this.redacting = false;",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '        const marking = this.tool.kind === "redact";\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        "          this.tool = NO_TOOL;\n"
+        "        }",
+        '        const marking = this.tool.kind === "redact";\n'
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        '          this.tool = { kind: "crop" };\n'
+        "        }",
         "is spent by one rectangle",
     ),
     Mutation(
@@ -5954,9 +6067,19 @@ MUTATIONS += [
         # watches the rectangle stay and then commits it by letting go.
         "crop: leave the crop out of what Escape can reach",
         "src/lib/viewer.ts",
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        "        this.doomed ||\n        this.cropping ||\n"
-        "        this.redacting ||\n        this.cropDrawing",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        # The crop's two states are the `crop` variant and `cropDrawing`, and
+        # the after keeps every other tool's reach so that only the crop's goes.
+        '        this.tool.kind !== "none" ||\n'
+        "        this.drawing ||\n"
+        "        this.inking ||\n"
+        "        this.doomed ||\n"
+        "        this.cropDrawing",
+        '        this.tool.kind === "draw" ||\n'
+        '        this.tool.kind === "erase" ||\n'
+        '        this.tool.kind === "redact" ||\n'
+        "        this.drawing ||\n"
+        "        this.inking ||\n"
         "        this.doomed",
         "is dropped by Escape mid-drag, without cropping",
     ),
@@ -5996,19 +6119,6 @@ MUTATIONS += [
         "orders the corners whichever way the drag went",
     ),
     Mutation(
-        # Arm a drawing tool without putting the crop away. Both are then set,
-        # and `onSelectStart` asks the crop drag first -- so choosing the box
-        # tool crops the page instead.
-        "crop: let armDraw leave the crop tool armed",
-        "src/lib/viewer.ts",
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        "    this.erasing = false;\n    this.cropping = false;\n"
-        "    this.redacting = false;\n    this.drawKind = kind;",
-        "    this.erasing = false;\n"
-        "    this.redacting = false;\n    this.drawKind = kind;",
-        "puts the drawing tool away, and the drawing tool puts it away",
-    ),
-    Mutation(
         # Fill `armed` from the drawing tool alone, which is what it did before
         # the crop existed. The reader arms the crop from the palette, gets a
         # crosshair and no words, and has nothing telling them what their next
@@ -6017,33 +6127,20 @@ MUTATIONS += [
         # status can see it.
         "crop: leave the armed crop out of the status the window reads",
         "src/lib/viewer.ts",
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        '      armed: this.redacting\n'
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '      armed: this.tool.kind === "redact"\n'
         '        ? "redact"\n'
-        '        : this.cropping\n'
+        '        : this.tool.kind === "crop"\n'
         '          ? "crop"\n'
-        '          : this.drawnStrokes === null\n'
-        '            ? this.drawKind\n'
-        '            : null,',
-        '      armed: this.redacting\n'
+        "          : this.drawnStrokes === null\n"
+        "            ? this.drawArmed\n"
+        "            : null,",
+        '      armed: this.tool.kind === "redact"\n'
         '        ? "redact"\n'
-        '        : this.drawnStrokes === null\n'
-        '          ? this.drawKind\n'
-        '          : null,',
+        "        : this.drawnStrokes === null\n"
+        "          ? this.drawArmed\n"
+        "          : null,",
         "names the armed crop, which is not a mark kind",
-    ),
-    Mutation(
-        # The mirror: arm the crop without putting the drawing tool away. The
-        # crop drag wins the press, so the drawing tool is armed, invisible and
-        # unreachable until the reader presses Escape."""
-        "crop: let armCrop leave the drawing tool armed",
-        "src/lib/viewer.ts",
-        # Re-aimed 2026-08-26 when the redaction tool joined this expression.
-        "    this.drawKind = null;\n    this.drawStamp = null;\n    this.inking = null;\n"
-        "    this.erasing = false;\n    this.redacting = false;\n    this.cropping = true;",
-        "    this.inking = null;\n    this.erasing = false;\n"
-        "    this.redacting = false;\n    this.cropping = true;",
-        "puts the drawing tool away, and the drawing tool puts it away",
     ),
     Mutation(
         # Join a rewrite onto every comment rather than onto the one it names.
@@ -6483,127 +6580,129 @@ def main() -> int:
         return tally(ok)
 
     problems = 0
-    with tempfile.TemporaryDirectory(prefix="tpdf-mutate-") as scratch:
-        for mutation in chosen:
-            stored = resume.done(mutation)
-            if stored is not None:
-                # Marked, because a reused verdict and one taken just now are
-                # the same claim about the tree and not the same run, and a
-                # transcript that cannot tell them apart is where somebody reads
-                # "all caught" for a table that was never executed here.
-                print(f"{stored.line}   [reused]", flush=True)
-                problems += tally(stored.ok)
-                continue
-            target = ROOT / mutation.path
-            # Copied aside and written *back*, never moved: a move replaces
-            # the file the tooling may already be watching, and docs/TRAPS.md
-            # records a restore-by-move that left the mutated build in place.
-            #
-            # And written back rather than copied back: `shutil.copy2` preserves
-            # the backup's mtime, which is enough to make a build system believe
-            # the mutated artifact is current. It bit `mutate_rust.py`, where
-            # cargo then served the last mutation to every later run.
-            backup = Path(scratch) / f"{len(list(Path(scratch).iterdir()))}.bak"
-            shutil.copy2(target, backup)
-            try:
-                # Bytes, decoded explicitly: `read_text` uses the locale codec,
-                # which is cp1252 on Windows, and an anchor holding a glyph like
-                # the Option sign then matches nothing -- reported as "the
-                # mutation is not the one described", which reads as drift in
-                # the source rather than in this harness.
-                #
-                # Its newline translation was doing real work, though, and
-                # removing it alone took three failures to twelve, because every
-                # anchor here is written with "\n" and the checkout was CRLF. So
-                # normalise for matching and put the file's own convention back,
-                # leaving the mutation as the only difference on disk.
-                #
-                # **The checkout is no longer CRLF**: `.gitattributes` has pinned
-                # `* text=auto eol=lf` since 2026-08-26. Kept regardless, because
-                # a checkout is not the only thing that writes a file -- see the
-                # longer note in `mutate_rust.py`.
-                raw = target.read_bytes().decode("utf-8")
-                crlf = "\r\n" in raw
-                source = raw.replace("\r\n", "\n") if crlf else raw
-                if source.count(mutation.before) != 1:
-                    problems += say(
-                        mutation,
-                        False,
-                        f"[FAIL] {mutation.name}: its anchor appears "
-                        f"{source.count(mutation.before)} times, so the mutation is not the "
-                        "one described",
-                    )
-                    continue
-                mutated = source.replace(mutation.before, mutation.after)
-                if crlf:
-                    mutated = mutated.replace("\n", "\r\n")
-                payload = mutated.encode("utf-8")
-                # Recorded BEFORE the bytes land. The other order leaves a
-                # window in which a kill puts a mutation in the tree that no
-                # record names, which is the one state recovery cannot answer.
-                resume.begin(mutation, target, backup.read_bytes(), payload)
-                target.write_bytes(payload)
-                # The file holding the test this mutation names, and only it.
-                # Nearly every mutation is caught there, and running the other
-                # nineteen files to find that out cost 5.8 s a time -- 31
-                # minutes over this table, measured 2026-08-21 before this.
-                aimed = sorted(
-                    {
-                        file
-                        for name, files in known.items()
-                        if mutation.expect in name
-                        for file in files
-                    }
-                )
-                names, counted, red_lines, out = run_tests(aimed or None)
-                narrow = bool(aimed)
-                if counted is not None and not names and narrow:
-                    # Nothing in that file noticed. Whether anything else did is
-                    # exactly the question, so now every file runs.
-                    names, counted, red_lines, out = run_tests()
-                    narrow = False
-            finally:
-                target.write_bytes(backup.read_bytes())
-
-            if counted is None:
-                problems += say(
-                    mutation,
-                    False,
-                    f"[FAIL] {mutation.name}: no summary line -- the run did not finish",
-                )
-                continue
-            # The cross-check: the reporter's per-test lines and its own count
-            # must agree, or one of the two has stopped describing the run. It
-            # counts LINES rather than distinct names -- see `run_tests`.
-            if red_lines != counted:
-                problems += say(
-                    mutation,
-                    False,
-                    f"[FAIL] {mutation.name}: {red_lines} failing test lines but the summary "
-                    f"says {counted} -- this harness cannot read its own output",
-                )
-                continue
-            if not names:
-                problems += say(
-                    mutation, False, f"[FAIL] {mutation.name}: SURVIVED -- no test noticed"
-                )
-                continue
-            hit = any(mutation.expect in name for name in names)
-            mark = "[OK]  " if hit else "[FAIL]"
-            # Which files were run, because `1 red` out of one file and `1 red`
-            # out of twenty are not the same statement.
-            scope = (
-                ", ".join(Path(f).name for f in aimed)
-                if narrow
-                else f"{len(TEST_FILES)} files"
+    for mutation in chosen:
+        stored = resume.done(mutation)
+        if stored is not None:
+            # Marked, because a reused verdict and one taken just now are
+            # the same claim about the tree and not the same run, and a
+            # transcript that cannot tell them apart is where somebody reads
+            # "all caught" for a table that was never executed here.
+            print(f"{stored.line}   [reused]", flush=True)
+            problems += tally(stored.ok)
+            continue
+        target = ROOT / mutation.path
+        # Bytes, decoded explicitly: `read_text` uses the locale codec,
+        # which is cp1252 on Windows, and an anchor holding a glyph like
+        # the Option sign then matches nothing -- reported as "the
+        # mutation is not the one described", which reads as drift in
+        # the source rather than in this harness.
+        #
+        # Its newline translation was doing real work, though, and
+        # removing it alone took three failures to twelve, because every
+        # anchor here is written with "\n" and the checkout was CRLF. So
+        # normalise for matching and put the file's own convention back,
+        # leaving the mutation as the only difference on disk.
+        #
+        # **The checkout is no longer CRLF**: `.gitattributes` has pinned
+        # `* text=auto eol=lf` since 2026-08-26. Kept regardless, because
+        # a checkout is not the only thing that writes a file -- see the
+        # longer note in `mutate_rust.py`.
+        clean = target.read_bytes()
+        raw = clean.decode("utf-8")
+        crlf = "\r\n" in raw
+        source = raw.replace("\r\n", "\n") if crlf else raw
+        if source.count(mutation.before) != 1:
+            problems += say(
+                mutation,
+                False,
+                f"[FAIL] {mutation.name}: its anchor appears "
+                f"{source.count(mutation.before)} times, so the mutation is not the "
+                "one described",
             )
-            verdict = [
-                f"{mark} {mutation.name}: {counted} red in {scope}"
-                + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
-            ]
-            if not hit:
-                verdict.append(f"         red instead: {sorted(names)}")
-            problems += say(mutation, hit, *verdict)
+            continue
+        mutated = source.replace(mutation.before, mutation.after)
+        if crlf:
+            mutated = mutated.replace("\n", "\r\n")
+        payload = mutated.encode("utf-8")
+        # Applied and taken off again by `mutation_resume.py`, which holds
+        # the backup that outlives this process and enforces the rules the
+        # three harnesses each used to carry their own copy of: the record
+        # is written before the bytes, the restore writes bytes rather than
+        # moving or copying a file over them -- a move replaces the file the
+        # tooling may already be watching, and a copy carries the backup's
+        # older mtime -- and the restored file is left newer than the
+        # mutation, so nothing that decides staleness by timestamp goes on
+        # serving it. `docs/TRAPS.md` has each of them.
+        resume.apply(mutation, target, clean, payload)
+        try:
+            # The file holding the test this mutation names, and only it.
+            # Nearly every mutation is caught there, and running the other
+            # nineteen files to find that out cost 5.8 s a time -- 31
+            # minutes over this table, measured 2026-08-21 before this.
+            aimed = sorted(
+                {
+                    file
+                    for name, files in known.items()
+                    if mutation.expect in name
+                    for file in files
+                }
+            )
+            names, counted, red_lines, out = run_tests(aimed or None)
+            narrow = bool(aimed)
+            if counted is not None and not names and narrow:
+                # Nothing in that file noticed. Whether anything else did is
+                # exactly the question, so now every file runs.
+                names, counted, red_lines, out = run_tests()
+                narrow = False
+        finally:
+            put_back, notes = resume.restore()
+        # A restore that could not put the file back stops the run. Carrying
+        # on would test every later mutation against a file still holding
+        # this one, and the verdicts would be about a tree nobody described.
+        if not put_back:
+            for line in notes:
+                print(line, flush=True)
+            return 1
+
+        if counted is None:
+            problems += say(
+                mutation,
+                False,
+                f"[FAIL] {mutation.name}: no summary line -- the run did not finish",
+            )
+            continue
+        # The cross-check: the reporter's per-test lines and its own count
+        # must agree, or one of the two has stopped describing the run. It
+        # counts LINES rather than distinct names -- see `run_tests`.
+        if red_lines != counted:
+            problems += say(
+                mutation,
+                False,
+                f"[FAIL] {mutation.name}: {red_lines} failing test lines but the summary "
+                f"says {counted} -- this harness cannot read its own output",
+            )
+            continue
+        if not names:
+            problems += say(
+                mutation, False, f"[FAIL] {mutation.name}: SURVIVED -- no test noticed"
+            )
+            continue
+        hit = any(mutation.expect in name for name in names)
+        mark = "[OK]  " if hit else "[FAIL]"
+        # Which files were run, because `1 red` out of one file and `1 red`
+        # out of twenty are not the same statement.
+        scope = (
+            ", ".join(Path(f).name for f in aimed)
+            if narrow
+            else f"{len(TEST_FILES)} files"
+        )
+        verdict = [
+            f"{mark} {mutation.name}: {counted} red in {scope}"
+            + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
+        ]
+        if not hit:
+            verdict.append(f"         red instead: {sorted(names)}")
+        problems += say(mutation, hit, *verdict)
 
     print()
     for line in resume.closing():
@@ -6764,8 +6863,12 @@ MUTATIONS += [
         # default for every one after it.
         "viewer: spend the nib when the armed tool is spent",
         "src/lib/viewer.ts",
-        "        this.drawStamp = null;\n        this.showCursor();",
-        "        this.drawStamp = null;\n        this.nib = INK_WIDTH;\n        this.showCursor();",
+        # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
+        '        if (this.tool.kind === "draw") this.tool = NO_TOOL;\n'
+        "        this.showCursor();",
+        '        if (this.tool.kind === "draw") this.tool = NO_TOOL;\n'
+        "        this.nib = INK_WIDTH;\n"
+        "        this.showCursor();",
         "keeps the nib across arming, because a pen outlives a drag",
     ),
     Mutation(
@@ -6906,6 +7009,175 @@ MUTATIONS += [
         "  async unmark(mark: number, sweep = 0): Promise<EditState> {",
         "  async unmark(mark: number, sweep = 0): Promise<EditState> {\n    sweep = 0;",
         "carries the gesture a sweep gave it, on both of its commands",
+    ),
+]
+
+#: The guards added on 2026-09-06, when the frame path and four continuations
+#: that outlive their subject were gone over. Every one of them is a reply, an
+#: index or a cache that can be about a document the reader has already changed.
+MUTATIONS += [
+    Mutation(
+        # Keep a page's extraction even though its crop moved while the request
+        # was in flight. Character boxes are measured from the displayed page's
+        # corner, so the reply is not stale, it is in another space --- and the
+        # caret then lands a crop's width from the glyph under the pointer.
+        "text: store an extraction issued under the crop the page has left",
+        "src/lib/text.ts",
+        "        if (stale()) return null;\n        this.remember(page, text);",
+        "        this.remember(page, text);",
+        "throws away a reply for the crop that was in force when it was sent",
+    ),
+    Mutation(
+        # Delete the pending entry whichever request is settling. The abandoned
+        # one settles after its replacement was recorded, so this takes the live
+        # request out of the map and every caller after it issues a duplicate.
+        "text: drop the pending entry without checking whose it is",
+        "src/lib/text.ts",
+        "        if (this.pending.get(page) === request) this.pending.delete(page);",
+        "        this.pending.delete(page);",
+        "leaves the newer request pending when the older one settles",
+    ),
+    Mutation(
+        # Select the next region to read by page rather than by region. One
+        # extraction does answer every region on a page, which is why the walk
+        # answers them together --- and a second region drawn on a page already
+        # read is then never selected, so its row says "reading" for ever.
+        "redactlist: pick the next region by page rather than by region",
+        "src/lib/redactlist.ts",
+        "  return regions.find((region) => !words.has(region.id));",
+        "  return regions.find(\n"
+        "    (region) =>\n"
+        "      !regions.some((other) => other.page === region.page && words.has(other.id)),\n"
+        "  );",
+        "picks the second region on a page whose text has already been read",
+    ),
+    Mutation(
+        # Write a crop's geometry into the slot the page was in when the round
+        # trip went out. A reorder in the meantime records the cropped page's
+        # dimensions against whatever moved into that slot.
+        "viewer: adopt a crop into a page order that has been replaced",
+        "src/lib/viewer.ts",
+        "      if (this.pages !== pages) return;\n      if (!at) continue;",
+        "      if (!at) continue;",
+        "does not write the geometry into the slot the page has left",
+    ),
+    Mutation(
+        # Record a withdrawn request's failure against the row. `failed` is
+        # cleared only by a change of orientation or order, so the row is never
+        # asked for again and stays blank for the life of the document.
+        "thumbnails: blame the row for a request the strip itself withdrew",
+        "src/lib/thumbnails.ts",
+        "        if (generation !== this.generation) {\n"
+        "          this.pump();\n"
+        "          return;\n"
+        "        }\n",
+        "",
+        "does not give up on a row because a withdrawn request came back an error",
+    ),
+    Mutation(
+        # Keep the mark index across a change of page order. It is keyed by
+        # slot, and a deletion renumbers every slot after the gap, so a mark is
+        # drawn and hit-tested where it no longer is.
+        "viewer: keep the mark index when the page order changes",
+        "src/lib/viewer.ts",
+        "    // The marks have not changed and every one of them may have moved: the\n"
+        "    // index is by slot, and a deletion renumbers every slot after the gap.\n"
+        "    this.markIndex = null;\n",
+        "",
+        "finds a mark under the pointer after its page has moved",
+    ),
+    Mutation(
+        # The same index across a change of marks, which is every undo.
+        "viewer: keep the mark index when the marks change",
+        "src/lib/viewer.ts",
+        "    this.marks = marks;\n    this.markIndex = null;",
+        "    this.marks = marks;",
+        "forgets a mark the model has taken away",
+    ),
+    Mutation(
+        # Place every mark in the document each frame, then test visibility.
+        # Placing a mark is what says which page it is on, so this pays for the
+        # whole document to draw what is in front of the reader.
+        "viewer: place every mark in the document on every frame",
+        "src/lib/viewer.ts",
+        "    for (const { slot, mark } of this.marksAcross(visible)) {",
+        "    for (const { slot, mark } of this.marksAcross(\n"
+        "      this.marksIndexed().bySlot.keys().toArray(),\n"
+        "    )) {",
+        "places only the marks on the slots the frame says are on screen",
+    ),
+    Mutation(
+        # Measure the element instead of reading the cached size. The tick has
+        # already written styles by then, so every ask flushes the layout.
+        "viewer: measure the surface on every frame",
+        "src/lib/viewer.ts",
+        "    const known = this.viewport;\n"
+        "    if (known) return known;\n"
+        "    const measured = this.measureViewport();\n"
+        "    this.viewport = measured;\n"
+        "    return measured;",
+        "    return this.measureViewport();",
+        "does not measure the surface while drawing a frame",
+    ),
+    Mutation(
+        # Ask the scroller again rather than sharing the frame's own reading.
+        "viewer: read the visible pages again inside the frame",
+        "src/lib/viewer.ts",
+        "    this.paintOverlay(visible);",
+        "    this.paintOverlay(this.scroller.visiblePages());",
+        "asks the scroller for the visible pages twice a frame, not a dozen times",
+    ),
+    Mutation(
+        # Lay the document out once per learnt size again. Every pass but the
+        # last is undone before the frame ends.
+        "scroller: lay out once per learnt size rather than once per batch",
+        "src/lib/scroller.ts",
+        "      if (this.recordSize(page, size)) learnt = true;\n"
+        "    }\n"
+        "    return learnt ? this.applySizes() : false;",
+        "      if (this.notePageSize(page, size)) learnt = true;\n"
+        "    }\n"
+        "    return learnt;",
+        "lays the document out once for a screenful of learnt sizes",
+    ),
+    Mutation(
+        # Ask for sharp tiles at every scale a pinch passes through. What
+        # reaches the renderer is a screenful a frame, none of it ever drawn.
+        "scroller: ask for tiles while the zoom is still moving",
+        "src/lib/scroller.ts",
+        "      this.requestPlaceholder(page, now);\n      if (settling) continue;",
+        "      this.requestPlaceholder(page, now);",
+        "asks for no sharp tile while the zoom is still moving",
+    ),
+    Mutation(
+        # Hold the placeholders back too, which leaves the page grey for the
+        # length of the gesture rather than stretching what is already drawn.
+        "scroller: hold back placeholders during the settle as well",
+        "src/lib/scroller.ts",
+        "      this.requestPlaceholder(page, now);\n      if (settling) continue;",
+        "      if (settling) continue;\n      this.requestPlaceholder(page, now);",
+        "still asks for placeholders during the settle",
+    ),
+    Mutation(
+        # Sort the outline's destinations by document order rather than by
+        # where they land. The reached test is then not monotone along the
+        # list, so the search is not searching a sorted list at all.
+        "outline: order the destinations by the tree rather than by the page",
+        "src/lib/outline.ts",
+        "  reached.sort((a, b) => a.page - b.page || a.top - b.top || a.at - b.at);",
+        "  reached.sort((a, b) => a.page - b.page || a.at - b.at);",
+        "orders two entries on one page by where they land, not by where they are listed",
+    ),
+    Mutation(
+        # Build the whole selection to ask whether it is empty, which is what a
+        # menu guard on the frame loop was doing.
+        "selection: build every page to answer whether anything is selected",
+        "src/lib/selection.ts",
+        "  hasText(look: TextLookup): boolean {\n    const { start, end } = this.ordered;",
+        "  hasText(look: TextLookup): boolean {\n"
+        "    return this.text(look) !== \"\";\n"
+        "    const { start, end } = this.ordered;",
+        "stops at the first page that contributes",
     ),
 ]
 

@@ -28,7 +28,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::sweep;
 
@@ -69,6 +69,34 @@ fn inherited(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Object> {
     None
 }
 
+/// Every page's quarter-turns, in page order.
+///
+/// **The same table [`displayed_page`] builds, exposed for a caller that wants
+/// only the turn**, which is not a second reading of `/Rotate`: the formula in
+/// there is PDFium's own --- truncating division by 90, then modulo 4, then the
+/// wrap for a negative --- and the inheritance walk is the one this module
+/// already does for `/MediaBox`.
+///
+/// It exists because the outline walk had no way to ask. `FPDFPage_GetRotation`
+/// needs an `FPDF_PAGE`, so a bookmark naming coordinates cost an
+/// `FPDF_LoadPage` --- 44 ms on a complex page --- and an outline over four
+/// hundred pages paid it four hundred times, at open, before a reader had
+/// clicked anything. Read through `docgraph::DocumentGraph`, which parses the
+/// document once for this and four other questions.
+///
+/// # Errors
+///
+/// The page tree and the renderer disagreeing about how many pages there are,
+/// which makes every index below mean something different from what the caller
+/// means by it. Refused rather than answered short: a caller reading turn `n`
+/// from a table that is missing page 3 gets a plausible wrong answer.
+pub fn rotations_from(document: &Document, page_count: usize) -> Result<Vec<u8>, String> {
+    Ok(pages_of(document, page_count)?
+        .into_iter()
+        .map(|id| displayed_page(document, id).turns)
+        .collect())
+}
+
 /// A page's `/Rotate` including anything it inherits.
 ///
 /// Absent means "ask the parent", and only a page with no ancestor carrying one
@@ -79,6 +107,31 @@ pub fn effective_rotation(doc: &Document, page: ObjectId) -> i64 {
     inherited(doc, page, b"Rotate")
         .and_then(|value| value.as_i64().ok())
         .unwrap_or(0)
+}
+
+/// Quarter turns clockwise for a `/Rotate` value in degrees.
+///
+/// The division comes **before** the modulus, which is what decides a value
+/// §7.7.3.3 does not allow: `/Rotate 135` truncates towards zero to one quarter
+/// turn and `/Rotate 45` to none. The specification requires a multiple of 90
+/// and a hostile file is under no obligation to write one, so this answers for
+/// every `i64` rather than refusing --- a page whose rotation cannot be read is
+/// a page shown the way it was written, not a document that will not open.
+///
+/// The `+ 4` before the second modulus is load-bearing. Rust's `%` takes the
+/// dividend's sign, so `-90 / 90 % 4` is `-1`, and a page the document says to
+/// show turned three quarters clockwise would come back as a turn count that
+/// does not exist. `/Rotate -90` is ordinary; scanners write it.
+///
+/// One function rather than the expression twice. `annots.rs` and
+/// [`displayed_page`] both need it and had a copy each, which is the drift this
+/// module's own note is about --- and note this collapses only the arithmetic:
+/// the two page-box readings stay separate on purpose, so
+/// `links::tests::both_scans_agree_about_a_rotated_page` still compares two
+/// answers rather than one answer with itself.
+#[must_use]
+pub fn turns_of_degrees(degrees: i64) -> u8 {
+    (((degrees / 90) % 4 + 4) % 4) as u8
 }
 
 /// A page's displayed size, its rotation, and where its own space starts.
@@ -204,7 +257,7 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
         media
     };
 
-    let turns = (((effective_rotation(doc, page) / 90) % 4 + 4) % 4) as u8;
+    let turns = turns_of_degrees(effective_rotation(doc, page));
     let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);
     DisplayedPage {
         width: if turns % 2 == 1 { height } else { width },
@@ -213,8 +266,6 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
         origin: (shown[0], shown[1]),
     }
 }
-
-use crate::encoding::MAX_DECODE;
 
 /// The box every page is displayed from, in page order.
 ///
@@ -239,16 +290,39 @@ pub fn displayed_boxes(
     page_count: usize,
     password: Option<&str>,
 ) -> Result<Vec<[f32; 4]>, String> {
-    let document = Document::load_mem_with_options(
-        bytes,
-        LoadOptions {
-            max_decompressed_size: Some(MAX_DECODE),
-            password: password.map(str::to_string),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
+    displayed_boxes_from(&crate::encoding::load(bytes, password)?, page_count)
+}
 
+/// [`displayed_boxes`] over a document somebody else parsed.
+///
+/// See [`crate::annots::scan_from`]. This one is on the path that loads a page,
+/// so the parse it no longer makes for itself is a parse a reader was waiting on.
+///
+/// # Errors
+///
+/// As [`displayed_boxes`], less the parse it no longer does.
+pub fn displayed_boxes_from(
+    document: &Document,
+    page_count: usize,
+) -> Result<Vec<[f32; 4]>, String> {
+    Ok(pages_of(document, page_count)?
+        .into_iter()
+        .map(|id| displayed_page(document, id).box_pt())
+        .collect())
+}
+
+/// The page objects in page order, refusing a tree the renderer disagrees with.
+///
+/// **One guard for both tables**, and not only to avoid the copy: the two
+/// answers are indexed positionally by the same caller, so a rule that held for
+/// the boxes and not for the rotations would be a document where page 5's box
+/// and page 4's turn describe one page --- each plausible, and nothing anywhere
+/// disagreeing. Refused rather than answered short, for the same reason.
+///
+/// # Errors
+///
+/// The page tree and the renderer counting different numbers of pages.
+fn pages_of(document: &Document, page_count: usize) -> Result<Vec<ObjectId>, String> {
     let pages = document.get_pages();
     if pages.len() != page_count {
         return Err(format!(
@@ -256,10 +330,7 @@ pub fn displayed_boxes(
             pages.len()
         ));
     }
-    Ok(pages
-        .values()
-        .map(|&id| displayed_page(&document, id).box_pt())
-        .collect())
+    Ok(pages.values().copied().collect())
 }
 
 /// `count` numbers out of an object that may be an array or a reference to one.
@@ -501,8 +572,21 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
         let mut at = parent_of(doc, id);
         // Same `/Parent`-cycle bound as `inherited`, same reason: this runs on
         // input we did not write.
+        //
+        // **The bound alone stops the walk and not the damage**, which is why
+        // there is a visited set beside it. A `/Parent` chain that loops --- two
+        // `Pages` nodes naming each other, which is four lines of a file we did
+        // not write --- yields the same two nodes thirty-two times each, and
+        // every one of them is pushed here and decrements a `/Count` below. A
+        // three-page tree came out claiming -61 pages, from deleting one page.
+        // Each ancestor is counted once per page NUMBER, which is what the
+        // paragraph above is about; a cycle is not a second ancestor.
+        let mut seen: HashSet<ObjectId> = HashSet::new();
         for _ in 0..MAX_PARENTS {
             let Some(parent) = at else { break };
+            if !seen.insert(parent) {
+                break;
+            }
             decrements.push(parent);
             at = parent_of(doc, parent);
         }
@@ -510,7 +594,13 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
     for parent in decrements {
         if let Ok(tree) = doc.get_object_mut(parent).and_then(Object::as_dict_mut) {
             if let Ok(count) = tree.get(b"Count").and_then(Object::as_i64) {
-                tree.set("Count", count - 1);
+                // Saturating, because the count is the document's number and
+                // `/Count -9223372036854775808` is as writable as any other:
+                // `count - 1` on it panics under debug assertions and wraps to
+                // the largest positive count there is in the shipped build,
+                // which is a document that reports 9.2 quintillion pages after
+                // one was deleted.
+                tree.set("Count", count.saturating_sub(1));
             }
         }
     }
@@ -908,6 +998,98 @@ mod tests {
         assert!(
             has_outline(&doc),
             "a move removes no page object, so every destination still names one"
+        );
+    }
+
+    /// A three-page tree whose root hangs under a node that hangs under it.
+    ///
+    /// Four lines of a file nobody sane writes, and nothing refuses it: `/Kids`
+    /// is a tree and `/Parent` is a separate back-pointer, so a loop in the
+    /// second is invisible to every walk of the first --- `get_pages` returns
+    /// three pages from this document exactly as it does from a healthy one.
+    fn three_pages_under_a_parent_loop(root_count: i64) -> (Document, ObjectId, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+        let root_id = doc.new_object_id();
+        let above_id = doc.new_object_id();
+        let kids: Vec<ObjectId> = (0..3)
+            .map(|_| doc.add_object(dictionary! { "Type" => "Page", "Parent" => root_id }))
+            .collect();
+        doc.objects.insert(
+            root_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => above_id,
+                "Kids" => kids.iter().map(|id| (*id).into()).collect::<Vec<Object>>(),
+                "Count" => root_count,
+            }),
+        );
+        doc.objects.insert(
+            above_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => vec![Object::Reference(root_id)],
+                "Count" => 3,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => root_id });
+        doc.trailer.set("Root", catalog);
+        (doc, root_id, above_id)
+    }
+
+    fn count_of(doc: &Document, node: ObjectId) -> i64 {
+        doc.get_object(node)
+            .and_then(Object::as_dict)
+            .expect("a node")
+            .get(b"Count")
+            .and_then(Object::as_i64)
+            .expect("a count")
+    }
+
+    /// One deleted page is one decrement per ancestor, cycle or no cycle.
+    ///
+    /// The `/Parent` walk was bounded and had no visited set, so a loop handed
+    /// it the same two nodes until the bound ran out --- thirty-two decrements
+    /// each for one deleted page. The bound stopped the walk and did nothing at
+    /// all about the damage, which is the shape worth remembering: a loop guard
+    /// written as a trip count is not a loop guard on what the trips do.
+    #[test]
+    fn a_cyclic_parent_chain_decrements_each_ancestor_once() {
+        let (mut doc, root, above) = three_pages_under_a_parent_loop(3);
+        assert_eq!(doc.get_pages().len(), 3, "the fixture reads as three pages");
+
+        drop_pages(&mut doc, &[2]).expect("the deletion itself is unremarkable");
+
+        assert_eq!(doc.get_pages().len(), 2, "one page went");
+        assert_eq!(
+            count_of(&doc, root),
+            2,
+            "and the root lost exactly one from its count"
+        );
+        assert_eq!(
+            count_of(&doc, above),
+            2,
+            "as did the node above it, once rather than once per lap"
+        );
+    }
+
+    /// A count that cannot be decremented saturates rather than wrapping.
+    ///
+    /// `/Count -9223372036854775808` is as writable as any other number, and
+    /// `count - 1` on it is a panic under debug assertions --- so a document
+    /// crafted this way took down whichever process was doing the deleting ---
+    /// and in the shipped build wraps to the largest count there is, which is a
+    /// document reporting 9.2 quintillion pages after one was removed.
+    #[test]
+    fn a_count_at_the_bottom_of_its_range_saturates_rather_than_wrapping() {
+        let (mut doc, root, _) = three_pages_under_a_parent_loop(i64::MIN);
+
+        drop_pages(&mut doc, &[2]).expect("the deletion itself is unremarkable");
+
+        assert_eq!(
+            count_of(&doc, root),
+            i64::MIN,
+            "there is nowhere below this to go, and the answer must not be positive"
         );
     }
 
@@ -1371,6 +1553,52 @@ mod tests {
             stated(&doc, b).and_then(|o| o.as_i64().ok()),
             Some(180),
             "the turned page states the composed value: the inherited 90 plus a quarter"
+        );
+    }
+
+    /// Every quarter turn, both wraps, and the values the specification forbids.
+    ///
+    /// The table is the point: 360 and 0 are the same page and -90 and 270 are
+    /// the same page, and an implementation that gets the second pair wrong is
+    /// correct on every document that never writes a negative rotation --- which
+    /// is most of them, and not the scanned ones.
+    #[test]
+    fn a_rotation_in_degrees_becomes_quarter_turns_clockwise() {
+        for (degrees, want) in [
+            (0, 0u8),
+            (90, 1),
+            (180, 2),
+            (270, 3),
+            (360, 0),
+            (450, 1),
+            (-90, 3),
+            (-180, 2),
+            (-360, 0),
+        ] {
+            assert_eq!(
+                turns_of_degrees(degrees),
+                want,
+                "/Rotate {degrees} is {want} quarter turn(s) clockwise"
+            );
+        }
+    }
+
+    /// A rotation the specification does not allow still has to answer.
+    ///
+    /// Truncation towards zero, which is what the existing arithmetic did and
+    /// what this pins: 135 is *one* quarter turn rather than two, and 45 is
+    /// none. Nothing here rounds, so a document that writes 89 is shown
+    /// upright rather than sideways.
+    #[test]
+    fn a_rotation_that_is_not_a_multiple_of_ninety_truncates_towards_zero() {
+        assert_eq!(turns_of_degrees(45), 0, "45 does not reach a quarter turn");
+        assert_eq!(turns_of_degrees(89), 0, "89 does not reach a quarter turn");
+        assert_eq!(turns_of_degrees(135), 1, "135 truncates to one, not two");
+        assert_eq!(turns_of_degrees(-45), 0, "-45 truncates towards zero");
+        assert_eq!(
+            turns_of_degrees(-135),
+            3,
+            "-135 is -1 quarter turn, wrapped"
         );
     }
 }

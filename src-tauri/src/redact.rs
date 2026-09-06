@@ -66,116 +66,22 @@ use std::collections::HashSet;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
+/// The page-object vocabulary, re-exported from where the objects are read.
+///
+/// [`crate::objects`] enumerates a page through PDFium and builds these;
+/// everything below decides what a region covers, with no library loaded and
+/// no document open. The types sit beside the code that produces them so that
+/// module does not have to import from this one --- but they are re-exported
+/// here because a redaction *is* what they are for, and `redact-probe` and
+/// `redact-apply-probe` name `redact::Rect` and `redact::PageObject`.
+pub use crate::objects::{overlaps, FormObject, FormOther, FormText, PageObject, Rect};
+
 /// Ceiling on a decoded content stream.
 ///
 /// `AGENTS.md` requires every `lopdf` decode to be bounded, and a content stream
 /// is attacker-chosen like everything else in the file. The same value spike 0.3
 /// used.
 pub const MAX_CONTENT_BYTES: usize = 64 * 1024 * 1024;
-
-/// A rectangle in PDF page space --- `[left, bottom, right, top]`, y upwards.
-///
-/// PDFium's own convention for object bounds, which is what the caller has when
-/// it builds one of these, so nothing is converted on the way in. Note this is
-/// **not** the display space `text::to_device` produces: a page with `/Rotate
-/// 90` reports object bounds here unrotated, and a caller holding a reader's
-/// selection has to map it back. `docs/TRAPS.md` has that entry more than once.
-pub type Rect = [f32; 4];
-
-/// One object PDFium found on the page, in the order it enumerated them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PageObject {
-    /// Its bounding box, as PDFium reports it.
-    pub bounds: Rect,
-    /// What PDFium calls it: `text`, `image`, `path`, or anything else.
-    ///
-    /// A string rather than an enum because the only two questions asked of it
-    /// are "is this text" and "what do I call it in a refusal", and an enum here
-    /// would be a second vocabulary to keep in step with PDFium's.
-    pub kind: String,
-}
-
-/// A text object drawn inside a Form XObject.
-///
-/// PDFium enumerates a form as **one** page object, so the text inside it is not
-/// in the page's text-object list and [`remove_shows`] cannot address it. It is
-/// the largest carrier a redaction cannot take that is made of ordinary text ---
-/// `docs/PLAN.md` §6 measured 9,310 of 154,095 realistic regions across 41 real
-/// documents, three times the image count.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormText {
-    /// Its box **in page space**, so it can be compared with a region directly.
-    ///
-    /// PDFium reports a form child's bounds in the *form's* own space --- measured
-    /// on `form-xobject.pdf`, where a form placed at (60, 600) reports a child at
-    /// (0.9, 19.9) --- so whoever builds one of these has already applied the
-    /// form's matrix. Doing it here rather than in the comparison keeps
-    /// [`covered`] free of a second coordinate system.
-    pub bounds: Rect,
-    /// What it draws, for the same reason [`crate::objects::PageObjects::text`]
-    /// carries it: a caller has to be able to say what a removal would take.
-    pub draws: String,
-}
-
-/// One Form XObject on a page, and the text inside it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormObject {
-    /// Where the form itself sits in PDFium's enumeration of the page's objects.
-    ///
-    /// The same index [`Unhandled::at`] carries, and the index that identifies
-    /// *which* form a removal is aimed at --- `remove_form_shows` finds the
-    /// form's stream by counting `Do` operations in the page's content, and this
-    /// is the position it counts to.
-    pub at: usize,
-    /// Its text objects, in PDFium's order --- which is the order the show
-    /// operators appear in the form's own content stream, and the order a
-    /// removal addresses them by.
-    pub text: Vec<FormText>,
-    /// What else is inside that this does not reach.
-    ///
-    /// **A nested form is the case that matters**: descending one level is a
-    /// decision, and text a level further down has to be reported rather than
-    /// silently missed. An image or a path inside a form is the same refusal the
-    /// page level already makes, one level down.
-    ///
-    /// **"The same refusal" is what that last sentence claimed and not what the
-    /// code did**, and it is kept because it names the defect exactly: the page
-    /// level refuses an object *the region covers*, and this level refused every
-    /// child of a form the region touched, wherever on the sheet it sat. A form
-    /// is routinely a whole-page container --- a letterhead, a header band, a
-    /// chart --- so a region over one line inside one reported every picture in
-    /// the document's furniture. Measured over 40 real documents at 2,893
-    /// word-sized regions: form children were 636 of the 1,131 refusals, 56%,
-    /// and **every image refusal in the corpus** was one --- of which **174,
-    /// 15.4% of all refusals, were about objects the region does not cover**.
-    /// Each carries its box now, and [`covered`] asks the same question of it
-    /// that it asks of a page object.
-    pub unreachable: Vec<FormOther>,
-}
-
-/// One thing inside a Form XObject that a removal cannot address.
-///
-/// Separate from [`Unhandled`] rather than a widening of it, because the two
-/// carry different things for different readers: `Unhandled` crosses the IPC
-/// boundary and says *what* a region could not take, and a box is no use to the
-/// panel that renders that sentence. This is the placement fact [`covered`]
-/// needs in order to decide whether to report it at all, and it never leaves
-/// the worker.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormOther {
-    /// Its box in the **page's** own space, the form's matrix already applied.
-    ///
-    /// [`FormText::bounds`]'s convention exactly, and for that field's reason:
-    /// PDFium answers in the form's space, and applying the matrix there rather
-    /// than here keeps [`covered`] free of a second coordinate system.
-    ///
-    /// A child PDFium enumerated and would not hand over is unmeasurable, which
-    /// overlaps every region --- so an object that cannot be placed cannot be
-    /// excluded either, and the destructive direction stays the default.
-    pub bounds: Rect,
-    /// What it is, in [`Unhandled::kind`]'s vocabulary.
-    pub kind: String,
-}
 
 /// What removing a region from one page would take, and what it would miss.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -479,44 +385,6 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
         }
     }
     plan
-}
-
-/// A rectangle with its corners the way round the comparison below assumes.
-///
-/// PDFium reports `[left, bottom, right, top]`, and a caller's region may arrive
-/// with either pair the other way --- a drag upwards and to the left produces
-/// exactly that --- which would otherwise make an ordinary rectangle overlap
-/// nothing at all and redact nothing while reporting success.
-///
-/// One function rather than the same `min`/`max` pair written out twice: two
-/// near-copies is the shape that drifts, and it drifted here first. The mutation
-/// aimed at one copy survived, because the test that was meant to catch it
-/// reversed *both* axes and the other copy rescued it.
-#[must_use]
-fn normalised(rect: Rect) -> Rect {
-    [
-        rect[0].min(rect[2]),
-        rect[1].min(rect[3]),
-        rect[0].max(rect[2]),
-        rect[1].max(rect[3]),
-    ]
-}
-
-/// Whether two page-space rectangles share any area.
-///
-/// Strict comparisons throughout: two rectangles sharing only an edge do not
-/// overlap, so a region drawn flush against a line of text does not eat it.
-///
-/// `pub` for [`crate::ocr::control_from_page`], which has to ask the same
-/// question of the same page: which words a region covers decides what the
-/// removal takes *and* which words are left to read a control back from. Two
-/// answers to that would let the gate certify against a word the removal was
-/// supposed to have taken.
-#[must_use]
-pub fn overlaps(a: Rect, b: Rect) -> bool {
-    let a = normalised(a);
-    let b = normalised(b);
-    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
 /// Which of a page's annotations a set of regions covers.
@@ -2079,45 +1947,29 @@ pub fn has_xfa(doc: &Document) -> bool {
 /// taken*, and that is not answerable until it has.
 #[must_use]
 pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>) -> Vec<ObjectId> {
-    let Some(form) = doc
-        .catalog()
-        .ok()
-        .and_then(|catalog| catalog.get(b"AcroForm").ok())
-        .and_then(|object| doc.dereference(object).map(|(_, object)| object).ok())
-        .and_then(|object| object.as_dict().ok().cloned())
-    else {
-        return Vec::new();
-    };
-    let Ok(fields) = form
-        .get(b"Fields")
-        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-        .and_then(Object::as_array)
-    else {
-        return Vec::new();
-    };
     let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
 
+    // The traversal is `fields.rs`; the two rules below are what stays here.
+    // **No depth bound, deliberately**, and that is the one place these bounds
+    // differ from `docinfo::read_signatures`'s in a direction worth stating: a
+    // field this walk declines to reach is a value left in a redacted document,
+    // where a field the properties panel declines to reach is a line missing
+    // from a list. The node budget bounds the work either way.
+    let bounds = crate::fields::Bounds {
+        nodes: MAX_FIELD_NODES,
+        depth: None,
+        dedup: true,
+        names: false,
+        order: crate::fields::Order::Queue,
+    };
+
     let mut doomed: Vec<ObjectId> = Vec::new();
-    let mut seen: Vec<ObjectId> = Vec::new();
-    let mut queue: Vec<ObjectId> = fields
-        .iter()
-        .filter_map(|entry| entry.as_reference().ok())
-        .collect();
-    let mut budget = MAX_FIELD_NODES;
-    while let Some(id) = queue.pop() {
-        // Charged before anything is read, so a refusal costs one pop rather
-        // than one parse --- `docinfo::read_signatures` bounds the same walk the
-        // same way and for the same reason.
-        let Some(left) = budget.checked_sub(1) else {
-            break;
-        };
-        budget = left;
-        if seen.contains(&id) {
-            continue;
-        }
-        seen.push(id);
-        let Ok(field) = doc.get_dictionary(id) else {
-            continue;
+    crate::fields::walk(doc, &bounds, |node| {
+        // An entry written out in place rather than referenced cannot be
+        // removed --- there is no object to forget --- so it is not walked
+        // either, which is what this loop did before the traversal moved.
+        let (Some(id), Some(field)) = (node.id, node.dict) else {
+            return crate::fields::Flow::Leaf;
         };
 
         let kids: Vec<ObjectId> = field
@@ -2131,7 +1983,6 @@ pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>
                     .collect()
             })
             .unwrap_or_default();
-        queue.extend(kids.iter().copied());
 
         // Rule one. `has(b"Kids")` rather than `!kids.is_empty()`: a field whose
         // array `forget` has emptied still has the key, and that emptiness is
@@ -2159,48 +2010,43 @@ pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>
         if orphaned || carries {
             doomed.push(id);
         }
-    }
+        crate::fields::Flow::Descend
+    });
 
     // The subtrees, so a field taken by its value takes its widgets with it.
+    //
+    // `all` is the dedup rather than the walk's own, because it spans the roots:
+    // a node already collected under an earlier root is not descended into
+    // twice, which is what keeps a shared subtree from spending the budget of
+    // every root that reaches it.
     let mut all: Vec<ObjectId> = Vec::new();
     for id in doomed {
-        collect_field_subtree(doc, id, &mut all);
+        crate::fields::descend(doc, &[id], &bounds, |node| {
+            let Some(at) = node.id else {
+                return crate::fields::Flow::Leaf;
+            };
+            if all.contains(&at) {
+                return crate::fields::Flow::Leaf;
+            }
+            all.push(at);
+            crate::fields::Flow::Descend
+        });
     }
     all
 }
 
 /// How many field-tree nodes to walk before giving up.
 ///
-/// `docinfo.rs` bounds its own walk of the same tree at the same number and for
-/// the same reason: the tree is the document's to shape, and a `/Kids` naming an
-/// ancestor is one dictionary away.
+/// A bound on the work rather than on the tree: the tree is the document's to
+/// shape, and a `/Kids` naming an ancestor is one dictionary away.
+///
+/// **Five times `docinfo.rs`'s bound on the same tree, which this said was the
+/// same number until the two walks were put side by side in `fields.rs`.** The
+/// asymmetry is the right way round and worth keeping deliberate: a node this
+/// walk does not reach is a form value left in a document somebody redacted,
+/// and a node the properties panel does not reach is a line missing from a
+/// list.
 const MAX_FIELD_NODES: usize = 20_000;
-
-/// Adds `id` and every `/Kids` descendant to `into`, once each.
-fn collect_field_subtree(doc: &Document, id: ObjectId, into: &mut Vec<ObjectId>) {
-    let mut stack = vec![id];
-    let mut visits = 0usize;
-    while let Some(at) = stack.pop() {
-        visits += 1;
-        if visits > MAX_FIELD_NODES {
-            return;
-        }
-        if into.contains(&at) {
-            continue;
-        }
-        into.push(at);
-        let Ok(field) = doc.get_dictionary(at) else {
-            continue;
-        };
-        if let Ok(kids) = field
-            .get(b"Kids")
-            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-            .and_then(Object::as_array)
-        {
-            stack.extend(kids.iter().filter_map(|kid| kid.as_reference().ok()));
-        }
-    }
-}
 
 /// Removes form fields, and the `/AcroForm` when nothing is left in it.
 ///

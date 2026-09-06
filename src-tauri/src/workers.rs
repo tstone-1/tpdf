@@ -343,6 +343,58 @@ impl SpareSlot {
     }
 }
 
+/// Which worker is serving `rid`, if the in-flight table knows.
+///
+/// A free function over the slice rather than a method on [`Workers`], for the
+/// reason `progressive::box_to_use` is one: the decision is what a test can
+/// reach, and inside the lock it is reachable only by a running pool.
+fn holder_of(calls: &[InFlight], rid: u64) -> Option<u32> {
+    // Zero is not a withdrawable request, and every non-tile call records it ---
+    // so without this guard a withdrawal of rid 0 would be "addressed" to
+    // whichever `Text` or `Open` happened to be running. See [`InFlight::rid`].
+    if rid == 0 {
+        return None;
+    }
+    calls
+        .iter()
+        .find(|call| call.rid == rid)
+        .map(|call| call.pid)
+}
+
+/// The senders a withdrawal goes to: the one that took it, or all of them.
+///
+/// Generic over what a sender is so the choice can be tested without a pipe to
+/// a child process. `taken_by` naming a pid the pool no longer has --- a worker
+/// that died between the two reads --- falls back to every sender rather than to
+/// none: an empty answer here is a withdrawal that reaches nobody, which is the
+/// one outcome worse than sending too many.
+fn withdraw_to<S>(taken_by: Option<u32>, senders: impl Iterator<Item = (u32, S)>) -> Vec<S> {
+    let all: Vec<(u32, S)> = senders.collect();
+    if let Some(pid) = taken_by {
+        // Collected rather than searched for, because the fallback below needs
+        // the whole list anyway and a sender is not `Clone` here by contract ---
+        // only whatever the caller hands in is.
+        let mut addressed: Vec<S> = Vec::new();
+        let mut rest: Vec<S> = Vec::new();
+        for (owner, sender) in all {
+            if owner == pid {
+                addressed.push(sender);
+            } else {
+                rest.push(sender);
+            }
+        }
+        if !addressed.is_empty() {
+            return addressed;
+        }
+        // The pid named a worker this pool no longer has, so put the list back
+        // together and shout. Returning `addressed` here would be an empty
+        // answer, and a withdrawal that reaches nobody leaves the render running
+        // to completion --- the one outcome worse than sending too many.
+        return rest;
+    }
+    all.into_iter().map(|(_, sender)| sender).collect()
+}
+
 /// A request currently inside a worker, and since when.
 ///
 /// The pid is the whole point: the thread that made this entry is blocked in a
@@ -363,24 +415,43 @@ impl SpareSlot {
 /// signal a reaped pid --- which names something else only if the pid space wraps
 /// inside that window.
 ///
-/// The second is on the other side of the same entry, and it is the one the
-/// lifetime argument reads as impossible. [`Workers::kill_overdue`] marks
-/// `killed` under the `calls` lock and signals *outside* it. A reply already in
+/// The second was on the other side of the same entry, and it is the one the
+/// lifetime argument reads as impossible. [`Workers::kill_overdue`] used to mark
+/// `killed` under the `calls` lock and signal *outside* it. A reply already in
 /// the pipe arrives intact --- `Ok` and "killed" is a reachable pair, which
-/// [`Workers::watched`] says out loud --- so the blocked thread can finish, take
-/// this entry and hand its worker to [`Workers::discard`], which kills and reaps
-/// it, all before the signal is sent. From there the number is free for the same
-/// microseconds and by the same mitigation.
+/// [`Workers::watched`] says out loud --- so the blocked thread could finish,
+/// take this entry and hand its worker to [`Workers::discard`], which kills and
+/// reaps it, all before the signal went out. From there the number is free, and
+/// Windows reissues a pid immediately.
 ///
-/// Neither is closed here, and the reason is a trade rather than an oversight.
-/// Re-checking membership just before the signal only moves the window: the
-/// entry can go between the re-check and the syscall exactly as it can now.
-/// Closing it means holding `calls` *across* the signal --- and across the
-/// `diag::note` that names the kill, which writes a file --- on a lock every
-/// request start and end contends on. That is a larger thing to be wrong about
-/// than a window a pid space would have to wrap inside.
+/// **That one is closed: the signal now goes out inside the same critical
+/// section that sets `killed`.** While the entry is here the blocked thread has
+/// not taken it, so it still owns the `Worker` and the child is unreaped --- and
+/// re-checking membership just before an unlocked signal would not have done it,
+/// because the entry can go between the re-check and the syscall exactly as it
+/// could before. Holding the lock across the signal is affordable because both
+/// signals are non-blocking; what stays outside it is the `diag::note` naming
+/// the kill, which writes a file, on a lock every request start and end
+/// contends on.
+///
+/// The first is not closed, and there the trade stands: it is inside the call,
+/// where there is no entry to hold anything by, and the mitigation is that the
+/// pid space would have to wrap inside those microseconds.
 struct InFlight {
     pid: u32,
+    /// The withdrawable request this worker is serving, or 0.
+    ///
+    /// **What makes a withdrawal addressable.** A `rid` is unique for the life
+    /// of the process, so a broadcast is *correct* --- every worker that has not
+    /// seen it ignores it. It is not cheap: a withdrawal wrote one line down the
+    /// pipe of every worker of every open document, and those pipes belong to
+    /// children that are inside a render, which is exactly when a write can
+    /// block. A fast scroll withdraws a tile per frame.
+    ///
+    /// Zero is "not a withdrawable request", which is the same convention
+    /// `worker_proto::Request::Tile::rid` states, so `Text`, `Open` and the rest
+    /// carry it without needing a second field to say they are not tiles.
+    rid: u64,
     /// When the request was handed over.
     since: Instant,
     /// Set by [`Workers::kill_overdue`] just before it signals.
@@ -497,6 +568,10 @@ pub(crate) struct Workers {
     /// sandbox floor and the ~7.4 ms system-font walk. What it cannot remove is
     /// the page parse --- the A0 sheet still costs 48 ms of its 56.
     spare: Spare,
+    /// How many workers came out of [`Workers::adopt_or_spawn`] adopted.
+    ///
+    /// See [`Workers::adopted`], which is why it is counted at all.
+    adopted: std::sync::atomic::AtomicU64,
     /// How long a worker may sit idle before [`Workers::retire_idle`] kills it.
     ///
     /// Held rather than read from the environment where it is used, so that a
@@ -529,6 +604,7 @@ impl Workers {
     ) -> Self {
         Self {
             spare: Spare::default(),
+            adopted: std::sync::atomic::AtomicU64::new(0),
             library_dir,
             docs: Mutex::new(Vec::new()),
             returned: Condvar::new(),
@@ -561,6 +637,9 @@ impl Workers {
         // and the `Engine` methods can keep taking `&self`.
         let slot = self.spare.clone();
         let library_dir = self.library_dir.clone();
+        // The pool's own deadline, read here because the thread below has the
+        // slot and a library path and nothing else.
+        let deadline = self.deadline;
         std::thread::Builder::new()
             .name("tpdf-prewarm".into())
             .spawn(move || {
@@ -598,14 +677,41 @@ impl Workers {
                 // Warmed here rather than at the point of use. Waiting on this
                 // thread is free; waiting on the reader's thread is precisely the
                 // cost being avoided.
-                let warmed = pre.wait_warm();
+                //
+                // **On a thread of its own, so the wait can be bounded.**
+                // `wait_warm` blocks in a read on the child's pipe and nothing
+                // can interrupt one, so a child that starts and then says
+                // nothing --- sandboxed, hung inside dyld, stopped --- held this
+                // thread for ever with `warming` still set. That is not one lost
+                // spare: [`Workers::prewarm`] returns early whenever `warming`
+                // is set, so no spare is ever started again for the life of the
+                // process and every open from then on pays the ~6.6 ms link and
+                // the ~7.4 ms font walk on the reader's thread.
+                let pid = pre.pid();
+                let (tx, rx) = std::sync::mpsc::channel();
+                let waiting =
+                    std::thread::Builder::new()
+                        .name("tpdf-warm".into())
+                        .spawn(move || {
+                            let _ = tx.send(pre.wait_warm());
+                        });
+                // A thread that could not be started drops the sender with the
+                // `PreWorker` inside it, so the wait below ends at once with
+                // nothing --- which is the same outcome as a silent child and
+                // takes the same path.
+                drop(waiting);
+                let warmed = settled(&slot, &rx, deadline, pid);
                 let mut spare = slot.lock().unwrap_or_else(|e| e.into_inner());
-                spare.warming = None;
                 match warmed {
                     // A second spare arriving while one is already published is
                     // dropped rather than kept, and dropping it kills it ---
                     // `Worker`'s own `Drop`, reached through `WarmWorker`.
-                    Ok(worker) if spare.ready.is_none() => spare.ready = Some(worker),
+                    Some(Ok(worker)) if spare.ready.is_none() => spare.ready = Some(worker),
+                    // Everything else: a worker that failed to warm, one that
+                    // arrived after a spare was already published, and the
+                    // timeout --- for which `settled` has already given the claim
+                    // back and ended the process, so a late answer arrives at a
+                    // dropped receiver and the `WarmWorker` in it goes with it.
                     _ => {}
                 }
             })
@@ -653,6 +759,60 @@ impl Workers {
             .unwrap_or_else(|e| e.into_inner())
             .ready
             .take()
+    }
+
+    /// A worker holding `bytes`: the warmed spare where one is waiting, else a
+    /// fresh process.
+    ///
+    /// **Growth adopts too, and until this only `open` did.** A spare has
+    /// already paid the ~6.6 ms link, the sandbox and the ~7.4 ms font walk, so
+    /// what is left is this document's parse --- 0.3 ms on a small file against
+    /// 15.7 ms cold. Pool growth is the second and every later worker for a
+    /// document, and it happens on the thread of a reader whose tile is waiting:
+    /// exactly the place the saving is worth most, and the one place it was
+    /// never taken. The slot was refilled after an open and then sat full until
+    /// the next document was opened.
+    ///
+    /// [`Workers::prewarm`] is called again here rather than by the caller,
+    /// because emptying the slot and refilling it belong together --- and it is
+    /// safe to call at any time: it returns at once whenever a spare is ready,
+    /// warming, or being forked.
+    fn adopt_or_spawn(&self, bytes: Arc<Shm>) -> Result<Worker, String> {
+        if let Some(pre) = self.take_spare() {
+            match pre.adopt(bytes.clone()) {
+                Ok(worker) => {
+                    self.adopted
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    mark("worker adopted");
+                    self.prewarm();
+                    return Ok(worker);
+                }
+                // Not fatal. A spare can die while it waits -- it is a process
+                // like any other -- and falling back is the difference between a
+                // slower open and a document that refuses to open at all. The
+                // reason is said out loud because a spare that dies every time
+                // would otherwise show up only as the saving quietly vanishing.
+                Err(e) => {
+                    crate::diag::note(&format!(
+                        "[render] a pre-spawned worker could not take the document: {e}"
+                    ));
+                }
+            }
+        }
+        let worker = Worker::spawn_shared(bytes, &self.library_dir)?;
+        mark("worker spawned");
+        Ok(worker)
+    }
+
+    /// How many workers have been adopted from the spare slot rather than
+    /// spawned cold.
+    ///
+    /// **An accounting observable**, and it exists because the saving has no
+    /// other symptom: an adopted worker and a spawned one serve identically and
+    /// differ by about 15 ms nobody is timing. Read by `backend-probe`, which is
+    /// the only thing that can drive a pool into growing.
+    pub(crate) fn adopted(&self) -> u64 {
+        self.adopted.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Takes a worker out of a document's pool, growing or waiting as needed.
@@ -770,7 +930,7 @@ impl Workers {
     ) -> Result<Worker, String> {
         // Outside the lock: a spawn is ~12 ms, and holding the table for that
         // would stall every other document as well as this one's other threads.
-        let mut worker = match Worker::spawn_shared(bytes, &self.library_dir) {
+        let mut worker = match self.adopt_or_spawn(bytes) {
             Ok(worker) => worker,
             Err(e) => {
                 // Give the reservation back, or the pool shrinks by one every
@@ -907,12 +1067,21 @@ impl Workers {
         count
     }
 
-    /// Sends a withdrawal to every worker of every open document.
+    /// Sends a withdrawal to the worker serving `rid`, or to all of them.
     ///
-    /// Broadcast rather than addressed, because a `rid` is unique for the life
-    /// of the process and a worker that has never seen one ignores it. With a
-    /// pool that is more useful than before rather than less: the parent does
-    /// not know which of a document's workers took the request.
+    /// **Addressed where the in-flight table can say who took it, and a
+    /// broadcast otherwise**, which is the honest split: the entry exists only
+    /// between the send and the reply, so a request still queued for a free
+    /// worker is in flight nowhere and there is no pid to aim at. Answering that
+    /// case with a broadcast keeps the old behaviour exactly where the old
+    /// behaviour was the only thing that could work.
+    ///
+    /// It was a broadcast in every case, and correct: a `rid` is unique for the
+    /// life of the process and a worker that has never seen one ignores it. What
+    /// it cost is a line down the pipe of every worker of *every open document*
+    /// per withdrawal, and a fast scroll withdraws a tile per frame --- against
+    /// children that are inside a render, which is the one moment a write to
+    /// them can block.
     ///
     /// The senders are cloned under the lock and written to outside it. A
     /// `WorkerSender` is a pipe to a child that is *inside a render*, which is
@@ -922,12 +1091,19 @@ impl Workers {
     /// bump per worker, and the module note above claims every critical section
     /// here is bookkeeping; this is what keeps that true.
     pub(crate) fn broadcast_withdraw(&self, rid: u64) {
+        // Read before the document table is locked, and never both at once: the
+        // two mutexes are taken in this order nowhere else, so taking them
+        // together here would be the only place an ordering could exist to
+        // invert.
+        let taken_by = holder_of(&self.calls(), rid);
         let senders: Vec<WorkerSender> = {
             let docs = self.lock();
-            docs.iter()
-                .flatten()
-                .flat_map(|held| held.senders.iter().map(|(_, sender)| sender.clone()))
-                .collect()
+            let all = docs.iter().flatten().flat_map(|held| {
+                held.senders
+                    .iter()
+                    .map(|(pid, sender)| (*pid, sender.clone()))
+            });
+            withdraw_to(taken_by, all)
         };
         for sender in senders {
             // A dead worker is not this call's problem: whichever thread is
@@ -959,7 +1135,17 @@ impl Workers {
         worker: &mut Worker,
         exchange: impl FnOnce(&mut Worker) -> Result<T, String>,
     ) -> (Result<T, String>, bool) {
-        let watch = CallWatch::start(self, worker.pid());
+        self.watched_for(worker, 0, exchange)
+    }
+
+    /// As [`Workers::watched`], recording which withdrawable request this is.
+    fn watched_for<T>(
+        &self,
+        worker: &mut Worker,
+        rid: u64,
+        exchange: impl FnOnce(&mut Worker) -> Result<T, String>,
+    ) -> (Result<T, String>, bool) {
+        let watch = CallWatch::start(self, worker.pid(), rid);
         let outcome = exchange(worker);
         (outcome, watch.end())
     }
@@ -976,15 +1162,45 @@ impl Workers {
     /// Collected under the lock and signalled outside it, as every other kill
     /// here is. Returns how many were killed, for a caller that wants to say so.
     fn kill_overdue(&self) -> usize {
-        let now = Instant::now();
+        self.kill_overdue_at(Instant::now(), &kill_pid)
+    }
+
+    /// [`Workers::kill_overdue`] with the clock and the signal supplied.
+    ///
+    /// `now` is a parameter for [`overdue`]'s reason --- a supervisor testable
+    /// only by hanging a real worker is a check whose failure mode is a wait ---
+    /// and `kill` is one so that *when* the signal goes out can be asserted at
+    /// all. What has to be true of it is not which pid it names but that the
+    /// in-flight table is still held when it happens, and that is not a
+    /// property any caller of `kill_overdue` can see.
+    fn kill_overdue_at(&self, now: Instant, kill: &dyn Fn(u32)) -> usize {
         let overdue = {
             let mut calls = self.calls();
             let overdue = overdue(&calls, self.deadline, now);
             // Marked before the signal, and this is what the waiting thread
             // reads: a killed worker cannot be recognised by looking at the
             // process. See [`CallWatch::end`].
-            for call in calls.iter_mut() {
-                call.killed |= overdue.contains(&call.pid);
+            //
+            // **Signalled in the same critical section that marks it**, which
+            // closes the second of the two windows [`InFlight`] names. Marking
+            // under the lock and signalling outside it leaves a gap in which an
+            // overdue reply can arrive: the blocked thread reads `killed`, takes
+            // this entry, and hands its worker to [`Workers::discard`], which
+            // kills and reaps the child --- all before the signal is sent. The
+            // number is then free, and on Windows a pid is reissued immediately,
+            // so the signal lands on whatever now holds it. While the entry is
+            // still here the thread has not taken it, so it still owns the
+            // `Worker` and the child is unreaped: the pid names what it named
+            // when the decision was made.
+            //
+            // Affordable because both signals are non-blocking --- `kill(2)` is
+            // a few microseconds and `TerminateProcess` returns without waiting
+            // for the target to die. It is why the `diag::note` below stays
+            // *outside*: that one writes a file, and this lock is contended by
+            // every request start and end.
+            for call in calls.iter_mut().filter(|call| overdue.contains(&call.pid)) {
+                call.killed = true;
+                kill(call.pid);
             }
             overdue
         };
@@ -998,7 +1214,6 @@ impl Workers {
                 "[render] worker {pid}: no reply in {:.0} s; killing it",
                 self.deadline.as_secs_f64()
             ));
-            kill_pid(*pid);
         }
         overdue.len()
     }
@@ -1029,6 +1244,20 @@ impl Workers {
         doc: u32,
         exchange: impl Fn(&mut Worker) -> Result<T, String>,
     ) -> Result<T, String> {
+        self.with_worker_for(doc, 0, exchange)
+    }
+
+    /// As [`Workers::with_worker`], naming the withdrawable request this is.
+    ///
+    /// The `rid` reaches the in-flight table, which is what lets a withdrawal be
+    /// addressed to the one worker serving it rather than written down every
+    /// worker's pipe. See [`Workers::broadcast_withdraw`] and [`InFlight::rid`].
+    fn with_worker_for<T>(
+        &self,
+        doc: u32,
+        rid: u64,
+        exchange: impl Fn(&mut Worker) -> Result<T, String>,
+    ) -> Result<T, String> {
         let mut worker = self.checkout(doc)?;
         // The flag is consulted before anything is decided, because **a deadline
         // kill cannot be recognised by looking at the process.** A child's pipe
@@ -1038,7 +1267,7 @@ impl Workers {
         // read exactly that for a process the supervisor had just killed.
         // Believing it would put the corpse back in the pool, where it would
         // fail somebody else's request instead of this one.
-        let (outcome, killed) = self.watched(&mut worker, &exchange);
+        let (outcome, killed) = self.watched_for(&mut worker, rid, &exchange);
 
         let error = match outcome {
             Ok(value) if !killed => {
@@ -1111,7 +1340,7 @@ impl Workers {
         // is that it does not wait, because the thread holding the failed request
         // is the one that just made room.
         let mut replacement = self.checkout(doc).map_err(|e| format!("{error} --- {e}"))?;
-        let (second, killed) = self.watched(&mut replacement, &exchange);
+        let (second, killed) = self.watched_for(&mut replacement, rid, &exchange);
         // Same rule as above, for the same reason: a worker the supervisor
         // killed does not go back into the pool, whatever it managed to answer
         // on its way out.
@@ -1143,7 +1372,10 @@ impl Workers {
 
     /// Renders through a worker, having already claimed the request.
     fn render(&self, request: &TileRequest, token: &CancelToken) -> Result<TileOutcome, String> {
-        self.with_worker(request.doc, |worker| {
+        // The rid, so that the withdrawal this render exists to be interruptible
+        // by can be addressed at the worker holding it rather than shouted at
+        // every worker of every open document.
+        self.with_worker_for(request.doc, request.rid, |worker| {
             let response = worker.call(&Request::Tile {
                 rid: request.rid,
                 page: request.page,
@@ -1201,10 +1433,15 @@ struct CallWatch<'a> {
 }
 
 impl<'a> CallWatch<'a> {
-    /// Starts the clock on a request to `pid`.
-    fn start(workers: &'a Workers, pid: u32) -> Self {
+    /// Starts the clock on a request to `pid`, naming the request.
+    ///
+    /// `rid` is 0 for everything that is not a withdrawable tile, which is what
+    /// [`Workers::watched`] passes on behalf of the six callers that have no rid
+    /// to give. See [`InFlight::rid`].
+    fn start(workers: &'a Workers, pid: u32, rid: u64) -> Self {
         workers.calls().push(InFlight {
             pid,
+            rid,
             since: Instant::now(),
             killed: false,
         });
@@ -1240,6 +1477,44 @@ impl Drop for CallWatch<'_> {
     fn drop(&mut self) {
         self.take();
     }
+}
+
+/// Waits for a spare to warm, and gives up on it if it never does.
+///
+/// Returns what the warming thread sent, or `None` when nothing arrived within
+/// `within` --- in which case the process is ended, so the thread blocked
+/// reading its pipe reaches EOF, drops the `PreWorker` and exits. Neither a
+/// process nor a thread is leaked by the timeout.
+///
+/// **The claim is given back in both branches, and that is the half this exists
+/// for.** [`Workers::prewarm`] returns early whenever `warming` is set, so a
+/// spare that never answers used to cost every subsequent open its head start,
+/// silently and for the life of the process. Clearing it here rather than at
+/// the call site is what makes the two branches impossible to write
+/// differently.
+///
+/// `within` and the receiver are parameters for [`overdue`]'s reason: a check
+/// whose only failure mode is a wait cannot be exercised, so the decision has to
+/// be reachable without hanging anything.
+fn settled<T>(
+    slot: &Spare,
+    rx: &std::sync::mpsc::Receiver<T>,
+    within: Duration,
+    pid: u32,
+) -> Option<T> {
+    let answered = rx.recv_timeout(within).ok();
+    slot.lock().unwrap_or_else(|e| e.into_inner()).warming = None;
+    if answered.is_none() {
+        kill_pid(pid);
+        // Said out loud: a machine where this fires every time has spares that
+        // never arrive, and the only other symptom is opens that are quietly
+        // 14 ms slower than they should be.
+        crate::diag::note(&format!(
+            "[render] a pre-spawned worker did not warm within {:.0} s; ending it",
+            within.as_secs_f64()
+        ));
+    }
+    answered
 }
 
 /// Which outstanding calls have outrun the deadline.
@@ -1396,6 +1671,7 @@ impl Engine for Workers {
     fn open(
         &self,
         path: &Path,
+        file: Option<std::fs::File>,
         lazy_geometry: bool,
         password: Option<&str>,
     ) -> Result<DocumentInfo, Refusal> {
@@ -1403,38 +1679,37 @@ impl Engine for Workers {
         // Mapped here rather than inside the spawn, because this is the copy
         // every later worker for this document will be handed. The file is read
         // once, at open, and never again.
-        let doc = Arc::new(Shm::map_file(path)?);
+        //
+        // **From the caller's handle where there is one, and by name only where
+        // there is not.** The app opens the document once and fingerprints that
+        // same handle, so mapping it here is what makes the fingerprint a record
+        // of the bytes the reader is looking at rather than of whatever had that
+        // name a moment later --- a replacement with the same page count is
+        // invisible to every other check. `Shm::map_open_file` duplicates the
+        // handle, so the caller's copy goes on being theirs.
+        let doc = Arc::new(match file {
+            Some(file) => {
+                let len = file
+                    .metadata()
+                    .map_err(|e| format!("could not measure {path:?}: {e}"))?
+                    .len();
+                if len == 0 {
+                    return Err(format!("{path:?} is empty").into());
+                }
+                let len = usize::try_from(len)
+                    .map_err(|_| format!("{path:?} is larger than this machine can map"))?;
+                Shm::map_open_file(&file, len)?
+            }
+            None => Shm::map_file(path)?,
+        });
         // A spare, if one warmed in time. It has already paid the link, the
         // sandbox and the font walk, so what remains is the parse of this
         // document -- 0.3 ms on a small file against 15.7 ms cold.
-        let mut worker = match self.take_spare() {
-            Some(pre) => match pre.adopt(doc.clone()) {
-                Ok(worker) => {
-                    mark("worker adopted");
-                    worker
-                }
-                // Not fatal. A spare can die while it waits -- it is a process
-                // like any other -- and falling back is the difference between a
-                // slower open and a document that refuses to open at all. The
-                // reason is said out loud because a spare that dies every time
-                // would otherwise show up only as the saving quietly vanishing.
-                Err(e) => {
-                    crate::diag::note(&format!(
-                        "[render] a pre-spawned worker could not take the document: {e}"
-                    ));
-                    let worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
-                    mark("worker spawned");
-                    worker
-                }
-            },
-            None => {
-                let worker = Worker::spawn_shared(doc.clone(), &self.library_dir)?;
-                mark("worker spawned");
-                worker
-            }
-        };
+        let mut worker = self.adopt_or_spawn(doc.clone())?;
         // Started before the reply is waited for, so the next document's spare is
-        // warming while this one is still parsing.
+        // warming while this one is still parsing. Redundant after an adoption,
+        // which re-arms the slot itself, and not after a cold spawn --- which is
+        // the case this still covers.
         self.prewarm();
 
         // Watched like every pooled request, and this one most of all: the
@@ -1563,12 +1838,14 @@ impl Engine for Workers {
         &self,
         doc: u32,
         page: u32,
+        pages: &[u32],
         query: &str,
         options: crate::search::Options,
         carry: Option<&crate::search::Carry>,
     ) -> Result<PageMatches, String> {
         let request = Request::Search {
             page,
+            pages: pages.to_vec(),
             query: query.to_string(),
             options,
             carry: carry.cloned(),
@@ -1883,6 +2160,14 @@ mod tests {
         overdue, payload_length, shrunk, CallWatch, Held, InFlight, Workers, DEFAULT_IDLE,
         OUTLIVED_MARK,
     };
+    // The two prewarm-timeout tests are `#[cfg(unix)]` -- they stand a real
+    // `/bin/sleep` in for the spare, because "it was ended" is the half a fake
+    // cannot answer -- so on Windows these three names are imported by nothing
+    // and `-D warnings` refuses the build. Gated rather than deleted:
+    // `docs/TRAPS.md` records a pass that took a Windows warning list at face
+    // value and deleted the imports the *other* platform needed.
+    #[cfg(unix)]
+    use super::{settled, Spare, SpareSlot};
     use crate::queue::SharedQueue;
     use crate::render::{Engine, TileFormat, TileRequest};
     use crate::worker::Response;
@@ -1945,15 +2230,251 @@ mod tests {
         (dir, held)
     }
 
+    /// A withdrawal reaches only the worker that took the request.
+    ///
+    /// The whole point of the addressing: a fast scroll withdraws a tile per
+    /// frame, and before this each one wrote a line down the pipe of every
+    /// worker of *every open document* --- pipes belonging to children that are
+    /// inside a render, which is the one moment a write to them can block.
+    #[test]
+    fn a_withdrawal_goes_to_the_worker_holding_the_request() {
+        let calls = [busy(11, 7), busy(22, 9)];
+        let senders = [(11u32, "eleven"), (22u32, "twenty-two"), (33u32, "idle")];
+
+        assert_eq!(
+            super::withdraw_to(super::holder_of(&calls, 9), senders.iter().copied()),
+            vec!["twenty-two"],
+            "rid 9 is inside worker 22 and nobody else needs telling"
+        );
+    }
+
+    /// A request nobody has started yet is still shouted at everybody.
+    ///
+    /// The in-flight entry exists only between the send and the reply, so a
+    /// request queued for a free worker is in flight nowhere --- there is no pid
+    /// to aim at, and the withdrawal has to reach whichever worker eventually
+    /// takes it. This is the case the old broadcast was the only thing that
+    /// could serve, and it is kept rather than narrowed away.
+    #[test]
+    fn a_request_in_flight_nowhere_is_still_broadcast() {
+        let calls = [busy(11, 7)];
+        let senders = [(11u32, "eleven"), (22u32, "twenty-two")];
+
+        assert_eq!(
+            super::withdraw_to(super::holder_of(&calls, 404), senders.iter().copied()),
+            vec!["eleven", "twenty-two"],
+            "nothing holds rid 404, so every worker has to hear about it"
+        );
+    }
+
+    /// Rid zero is not a request, so it addresses nothing.
+    ///
+    /// Every non-tile call records zero, so without the guard a withdrawal of
+    /// rid 0 would be delivered to whichever `Text` or `Open` happened to be
+    /// running --- a real pid, a plausible answer, and the wrong one.
+    #[test]
+    fn rid_zero_names_no_worker() {
+        let calls = [busy(11, 0), busy(22, 0)];
+        assert_eq!(super::holder_of(&calls, 0), None);
+        assert_eq!(
+            super::withdraw_to(
+                super::holder_of(&calls, 0),
+                [(11u32, "a"), (22u32, "b")].into_iter()
+            ),
+            vec!["a", "b"]
+        );
+    }
+
+    /// A worker that died between the two reads does not swallow the withdrawal.
+    ///
+    /// The table and the sender list are read under different locks, so the pid
+    /// can name a worker the pool has already discarded. Falling back to every
+    /// sender is the safe direction: an empty answer is a withdrawal that
+    /// reaches nobody, and the render goes on to completion.
+    #[test]
+    fn a_holder_the_pool_no_longer_has_falls_back_to_everyone() {
+        let calls = [busy(99, 5)];
+        let senders = [(11u32, "eleven"), (22u32, "twenty-two")];
+        assert_eq!(
+            super::withdraw_to(super::holder_of(&calls, 5), senders.iter().copied()),
+            vec!["eleven", "twenty-two"]
+        );
+    }
+
+    /// An entry for `pid` serving withdrawable request `rid`.
+    fn busy(pid: u32, rid: u64) -> InFlight {
+        InFlight {
+            pid,
+            rid,
+            since: Instant::now(),
+            killed: false,
+        }
+    }
+
     /// An entry that has been outstanding for `age`.
     fn call(pid: u32, age: Duration) -> InFlight {
         InFlight {
             pid,
+            rid: 0,
             since: Instant::now()
                 .checked_sub(age)
                 .expect("the clock has not been running that briefly"),
             killed: false,
         }
+    }
+
+    /// The signal goes out while the overdue call's entry is still held.
+    ///
+    /// Marking under the lock and signalling outside it leaves a gap the reply
+    /// can arrive in: the blocked thread reads `killed`, takes the entry and
+    /// hands its worker to `discard`, which kills and reaps the child --- and
+    /// the number is free before the signal is sent. Windows reissues a pid
+    /// immediately, so the signal then lands on something else entirely.
+    ///
+    /// What is asserted is *when*, not *which*: `try_lock` from a thread that
+    /// already holds the mutex answers `WouldBlock`, so a signal sent with the
+    /// table released is visible here and nowhere else.
+    #[test]
+    fn an_overdue_worker_is_signalled_while_its_entry_is_still_held() {
+        let workers = supervisor(Duration::from_millis(10));
+        workers.calls().push(call(4242, Duration::from_secs(1)));
+
+        let seen: std::sync::Mutex<Vec<(u32, bool)>> = std::sync::Mutex::new(Vec::new());
+        let killed = workers.kill_overdue_at(Instant::now(), &|pid| {
+            let held = workers.calls.try_lock().is_err();
+            seen.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((pid, held));
+        });
+
+        assert_eq!(
+            killed, 1,
+            "the call is a second past a ten-millisecond deadline"
+        );
+        let seen = seen.into_inner().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(seen.len(), 1, "one signal for one overdue call");
+        assert_eq!(seen[0].0, 4242, "and it names the worker that is overdue");
+        assert!(
+            seen[0].1,
+            "the in-flight table has to still be held when the signal goes out --- while the \
+             entry is there, the blocked thread has not taken it and the child is unreaped"
+        );
+    }
+
+    /// The control: a call inside its deadline is not signalled at all.
+    ///
+    /// Without it a `kill_overdue_at` that signalled unconditionally passes the
+    /// test above, and every request would have its worker killed.
+    #[test]
+    fn a_call_inside_its_deadline_is_not_signalled() {
+        let workers = supervisor(Duration::from_secs(30));
+        workers.calls().push(call(4243, Duration::from_millis(5)));
+
+        let seen: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+        let killed = workers.kill_overdue_at(Instant::now(), &|pid| {
+            seen.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
+        });
+
+        assert_eq!(killed, 0);
+        assert!(seen
+            .into_inner()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty());
+        assert!(
+            !workers.calls()[0].killed,
+            "and the entry must not be marked either"
+        );
+    }
+
+    /// A spare that never warms gives the slot back, and is ended.
+    ///
+    /// `PreWorker::wait_warm` blocks in a read on the child's pipe, so a child
+    /// that starts and then says nothing held the prewarm thread for ever ---
+    /// with `warming` still set. `prewarm` returns early whenever it is set, so
+    /// the cost is not one lost spare: no spare is started again for the life of
+    /// the process, and every open from then on pays the link and the font walk
+    /// on the reader's thread. Nothing about that is visible except opens that
+    /// are quietly slower than they should be.
+    ///
+    /// A real process stands in for the worker, because the timeout has to end
+    /// one and "it was ended" is the half a fake cannot answer.
+    #[test]
+    #[cfg(unix)]
+    fn a_spare_that_never_warms_gives_the_slot_back() {
+        let slot: Spare = std::sync::Arc::new(std::sync::Mutex::new(SpareSlot::default()));
+        let mut victim = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a stand-in spare");
+        let pid = victim.id();
+        slot.lock().expect("the slot").warming = Some(pid);
+        // Nobody ever sends. `_tx` is held so the channel is not simply closed,
+        // which would be a different outcome from silence.
+        let (_tx, rx) = std::sync::mpsc::channel::<u8>();
+
+        let began = Instant::now();
+        let within = Duration::from_millis(150);
+        assert!(
+            settled(&slot, &rx, within, pid).is_none(),
+            "a wait that gets no answer must not report a warm spare"
+        );
+        let waited = began.elapsed();
+        assert!(waited >= within, "it waited its deadline: {waited:?}");
+        // The upper bound is the half with teeth: a lower bound alone is
+        // satisfied by any longer wait, including one that never ends.
+        assert!(
+            waited < within * 20,
+            "and the wait is about the deadline it was given: {waited:?}"
+        );
+        assert!(
+            slot.lock().expect("the slot").warming.is_none(),
+            "the claim has to be given back, or no spare is ever started again"
+        );
+
+        let mut gone = false;
+        for _ in 0..200 {
+            if victim.try_wait().expect("wait").is_some() {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = victim.kill();
+        let _ = victim.wait();
+        assert!(
+            gone,
+            "and the process has to be ended, or the timeout leaks it and the thread reading \
+             its pipe"
+        );
+    }
+
+    /// The control: a spare that warms in time keeps its process.
+    #[test]
+    #[cfg(unix)]
+    fn a_spare_that_warms_in_time_keeps_its_process() {
+        let slot: Spare = std::sync::Arc::new(std::sync::Mutex::new(SpareSlot::default()));
+        let mut victim = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn a stand-in spare");
+        let pid = victim.id();
+        slot.lock().expect("the slot").warming = Some(pid);
+        let (tx, rx) = std::sync::mpsc::channel::<u8>();
+        tx.send(9).expect("send the readiness");
+
+        assert_eq!(settled(&slot, &rx, Duration::from_secs(5), pid), Some(9));
+        assert!(
+            slot.lock().expect("the slot").warming.is_none(),
+            "the claim is given back either way --- the caller publishes into `ready`"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        let still_there = victim.try_wait().expect("wait").is_none();
+        let _ = victim.kill();
+        let _ = victim.wait();
+        assert!(
+            still_there,
+            "a spare that answered in time must not be killed"
+        );
     }
 
     /// Only a file that lost bytes is a diagnosis, and "cannot tell" is not one.
@@ -2190,6 +2711,7 @@ mod tests {
         let now = Instant::now();
         let calls = [InFlight {
             pid: 11,
+            rid: 0,
             since: now,
             killed: false,
         }];
@@ -2205,7 +2727,7 @@ mod tests {
         let workers = supervisor(Duration::from_secs(30));
         assert_eq!(workers.calls().len(), 0);
         {
-            let _watch = CallWatch::start(&workers, 4711);
+            let _watch = CallWatch::start(&workers, 4711, 0);
             assert_eq!(workers.calls().len(), 1, "the call was never registered");
         }
         assert_eq!(workers.calls().len(), 0, "the entry outlived its call");
@@ -2280,7 +2802,7 @@ mod tests {
     fn the_supervisor_kills_the_process_holding_an_overdue_call() {
         let workers = supervisor(Duration::from_millis(1));
         let mut child = sleeper();
-        let _watch = CallWatch::start(&workers, child.id());
+        let _watch = CallWatch::start(&workers, child.id(), 0);
         // Past a 1 ms deadline by a margin that no scheduling delay can close
         // from the wrong side.
         std::thread::sleep(Duration::from_millis(50));
@@ -2318,7 +2840,7 @@ mod tests {
         let workers = supervisor(Duration::from_millis(1));
         let mut child = sleeper();
         let pid = child.id();
-        let _watch = CallWatch::start(&workers, pid);
+        let _watch = CallWatch::start(&workers, pid, 0);
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(workers.kill_overdue(), 1, "nothing was found to kill");
         child.wait().expect("the child can be reaped");
@@ -2345,7 +2867,7 @@ mod tests {
         // process goes on rendering. The kill needs its own assertion, and has one.
         let workers = supervisor(Duration::from_millis(1));
         let mut child = sleeper();
-        let watch = CallWatch::start(&workers, child.id());
+        let watch = CallWatch::start(&workers, child.id(), 0);
         std::thread::sleep(Duration::from_millis(50));
 
         assert_eq!(workers.kill_overdue(), 1);
@@ -2363,7 +2885,7 @@ mod tests {
         // and answers the caller with a deadline error it never hit. No process
         // here, because nothing is signalled --- which is the assertion.
         let workers = supervisor(Duration::from_secs(3600));
-        let watch = CallWatch::start(&workers, 4711);
+        let watch = CallWatch::start(&workers, 4711, 0);
         assert_eq!(workers.kill_overdue(), 0);
         assert!(!watch.end());
     }
@@ -2375,7 +2897,7 @@ mod tests {
         // having no deadline at all and is far worse than a wedge.
         let workers = supervisor(Duration::from_secs(3600));
         let mut child = sleeper();
-        let _watch = CallWatch::start(&workers, child.id());
+        let _watch = CallWatch::start(&workers, child.id(), 0);
 
         assert_eq!(workers.kill_overdue(), 0);
         assert!(

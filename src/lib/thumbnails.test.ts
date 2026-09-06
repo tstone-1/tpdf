@@ -440,6 +440,35 @@ describe("Thumbnails lifetime", () => {
     warn.mockRestore();
   });
 
+  it("keeps the record of a newer request when an older one's chain throws", async () => {
+    // The reply handler nulls the record and pumps, so a throw out of it lands
+    // in the catch with the *next* request already recorded --- `fetchTile`
+    // failing where it is called is the route, which is what a bridge that is
+    // not there does. Clearing the record there forgets a request that is
+    // outstanding, and the strip then asks for the same page a second time with
+    // nothing expecting either reply.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    tiles.fetchTile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    tiles.fetchTile.mockImplementationOnce(() => {
+      throw new Error("bridge is gone");
+    });
+    const pages = strip();
+    pages.setActive(true);
+    deliver(render(() => {}));
+    await settle();
+
+    // Two calls, so the second request really was recorded before the throw.
+    expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
+    expect(pages.outstanding).toBe(true);
+    pages.destroy();
+    warn.mockRestore();
+  });
+
   it("asks for the next one while it is alive", async () => {
     // The control. A strip that stopped pumping on every settling reply would
     // pass the test above and never draw a second thumbnail.
@@ -577,6 +606,41 @@ describe("Thumbnails orientation", () => {
 
     pages.setViewerBusy(true);
     expect(pages.yieldCount).toBe(1);
+
+    pages.destroy();
+  });
+
+  it("does not give up on a row because a withdrawn request came back an error", async () => {
+    // The third path onto the same race, and the one without a guard. A reply
+    // that *succeeds* after the order changed is dropped by the generation
+    // check; a reply that *fails* went straight into `failed`, which is the one
+    // set nothing clears again --- so the row the withdrawn request belonged to
+    // was never asked for a second time and stayed blank for the life of the
+    // document, with a warning in the console blaming the renderer for a
+    // request the strip had itself cancelled.
+    let fail: (reason: unknown) => void = () => {};
+    tiles.fetchTile.mockImplementation(
+      () =>
+        new Promise((resolve, reject) => {
+          deliver = resolve;
+          fail = reject;
+        }),
+    );
+    const pages = makeStrip(dom);
+    pages.setActive(true);
+    const asked = lastRequest();
+
+    // A move: the same page count, every row about to show a different page.
+    pages.setPages(40);
+    fail(new Error("withdrawn"));
+    await settle();
+
+    // Asked again, which is the whole of it: the row is wanted, and the only
+    // thing that had been said about it was the cancellation's own error.
+    expect(lastRequest()).toMatchObject({ page: asked.page });
+    deliver(render(() => {}));
+    await settle();
+    expect(pages.rendered).toContain(asked.page);
 
     pages.destroy();
   });

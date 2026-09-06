@@ -1590,8 +1590,9 @@ would catch waits for that reader to look.
 
 **The mode decides, and there is only one that can work.** `lopdf`'s full serialiser writes
 every object in the clear and drops the `/Encrypt` dictionary, so a rewrite of an encrypted
-document is refused --- through this writer it always will be, and QPDF is the candidate in
-the stack table for the day that matters. An append never rewrites the previous revision:
+document ~~is refused --- through this writer it always will be, and QPDF is the candidate in
+the stack table for the day that matters~~ was refused until 2026-08-28; `Document::encrypt`
+puts the encryption back as the rewrite's last step (see the strike-through below). An append never rewrites the previous revision:
 `IncrementalDocument::save_to` encrypts each appended object with the state the load
 recorded and puts `/Encrypt` back in the appended trailer. So `save::mode_for` already
 routes this correctly, and a plan that only adds marks goes through while anything else
@@ -2489,7 +2490,7 @@ report; the difference is the writer, and it is the whole difference, because th
 original left afterwards.
 
 **The Ask step is one function serving both**, which is why this increment is small.
-`lib.rs`'s `ask_redactions` is the loop that turns each page's regions into ordinals against
+`commands/redact.rs`'s `ask_redactions` is the loop that turns each page's regions into ordinals against
 PDFium's own object list; a second copy would go on agreeing about the ordinals and
 eventually disagree about which objects the reader was warned about, which is the drift this
 repository records under two copies of a distinction.
@@ -4523,7 +4524,9 @@ annotations, on the same reasoning that moved *Reading comments* up.
 same measurement: `FPDFLink_*` all need an `FPDF_PAGE`, `FPDF_LoadPage` re-parses at up to
 44 ms a page (§4), and the question is about the whole document. One `lopdf` parse answers
 it — 3.3 ms on the fixture — and links live in the `/Annots` array the comment scan already
-walks.
+walks. Since 26.9.2 that is the *same* parse: `docgraph::DocumentGraph` holds one
+`lopdf::Document` and six readers share it, where each used to open the file for itself at
+5.8 ms on the 775-page document and 11.9 ms on the 337 MB scan.
 
 **Two things are resolved that PDFium would have hidden.** A named destination can live in
 either of two places — the PDF 1.1 `/Dests` dictionary or the 1.2 `/Names` tree — and both
@@ -5444,17 +5447,25 @@ characters the query did not contain; none is guessed at. A query of only whites
 refused rather than run, because the fold has already destroyed the only distinction such
 a query could be drawing.
 
-**One page per request, sequentially.** The render thread is FIFO and shared with tiles, so
-a single job that scanned the document would hold it and every tile behind it would wait.
-At page granularity a search interleaves, and cancellation is not asking for the next page
-— there is nothing to withdraw. A generation counter drops replies belonging to a query
-that has been superseded.
+**One page per request, sequentially --- sixteen since 26.9.2.** The render thread is FIFO
+and shared with tiles, so a single job that scanned the document would hold it and every tile
+behind it would wait. At page granularity a search interleaves, and cancellation is not asking
+for the next page — there is nothing to withdraw. A generation counter drops replies belonging
+to a query that has been superseded. The granularity is now a **run of up to sixteen
+consecutive pages** per request, which is 49 round trips over the 775-page corpus rather than
+775; the reply is bounded, so the worker answers a *prefix* of the run and the walk continues
+from the first page it was not given an answer for. The single-page request is unchanged and
+is still what a wrapped walk's last step and a non-contiguous scope use.
 
 **What it costs.** A whole-document scan of the 775-page corpus for a word that is not in
-it — the worst case, since nothing can stop early — takes **843 ms**, about 1.1 ms per
-page. That is the extraction measured above, not the matching. The first hit appears in the
-time it takes to reach the page it is on, which for a search from where the reader is
-standing is the first request.
+it — the worst case, since nothing can stop early — took **843 ms**, about 1.1 ms per
+page, when every page was extracted afresh for every query. That is the extraction measured
+above, not the matching. Since 26.9.2 the characters are kept in a per-document store and the
+query is compiled once for the walk rather than once per page, which is 587.7 ms to 13.3 ms
+on the same corpus for a query that does hit --- measured interleaved by `search-probe --mode
+scan`, and the first query still pays the extraction, because it is the one that fills the
+store. The first hit appears in the time it takes to reach the page it is on, which for a
+search from where the reader is standing is the first request.
 
 **Checked, then broken on purpose.** Thirteen unit tests over the fold and the index
 mapping, plus five viewer checks in a real webview. The load-bearing one is that a match's
@@ -6238,7 +6249,9 @@ scanner reporting clean on a carrier it could not decode.
 - **Enumerating page sizes for the destinations is cheap if you do not load the pages.**
   A destination's `/XYZ` y arrives in page space and has to be flipped against the page's
   height. `FPDF_LoadPage` costs 44 ms on a complex page and an outline can name hundreds;
-  `FPDF_GetPageSizeByIndexF` reads the page dictionary's boxes instead. The whole walk of
+  `FPDF_GetPageSizeByIndexF` reads the page dictionary's boxes instead, and since 26.9.2 the
+  rotation comes out of the page tree rather than out of a loaded page, so the walk loads none
+  at all --- which `outline-probe` asserts by reading `RawDocument::page_loads`. The whole walk of
   the ordinary fixture is **0.17 ms**, and of the hostile one — 44 entries, two cycles, a
   50,000-character title — **1.6 ms**.
 
@@ -6429,13 +6442,20 @@ joining one block per character. The grouping axis now comes from the page's rot
 honest limit: this fixes the whole-page case only, and a rotated *run* inside an upright page
 is still split character by character, as before.
 
-**Reading the rotation is not free, and the schedule changed because of it.**
-`FPDFPage_GetRotation` needs a loaded page, while the rest of the outline walk reads the page
-dictionary. Measured on `outline-simple`, interleaved: **0.17 ms → 7.5 ms** steady state,
-45.7 ms on a cold first run, about 1 ms per distinct page named with coordinates. A
-three-hundred-entry table of contents is a third of a second of the render thread, which is
-FIFO — so the outline is now asked for after the first screen is up rather than at open,
-with a one-second grace so a document whose first page is slow still gets one.
+**Reading the rotation cost a page load until 26.9.2, and the schedule still carries the
+mark of it.** `FPDFPage_GetRotation` needs a loaded page, while the rest of the outline walk
+reads the page dictionary --- measured on `outline-simple`, interleaved: **0.17 ms -> 7.5 ms**
+steady state, 45.7 ms on a cold first run, about 1 ms per distinct page named with
+coordinates. A three-hundred-entry table of contents was a third of a second of the render
+thread, which is FIFO, so the outline was moved to after the first screen is up rather than at
+open, with a one-second grace so a document whose first page is slow still gets one.
+
+The load is gone: `pagetree::rotations_from` reads `/Rotate` through the same inheritance walk
+and the same formula the displayed-box table already used, and `docgraph::DocumentGraph` holds
+one parse for it and five other questions. **The deferral was kept anyway** --- the walk is not
+the only thing on that thread, and re-measuring it is a smaller job than deciding again --- so
+this paragraph is the record of why the schedule looks the way it does, not a live measurement
+of it. The new steady state has not been re-measured, which is why no number is quoted for it.
 
 State that last change for what it is: **scheduling, and the only thing here with no
 automated check behind it.** The viewer check invokes `document_outline` directly rather than
@@ -9226,7 +9246,7 @@ only one of them says so.
 
 **One order is right on both, and it is what the code now enforces by shape.**
 `save.rs`'s single write became `stage_in_place` and `commit_in_place`, and
-`lib.rs`'s `save_document` is the only thing that holds them together: stage,
+`commands/save.rs`'s `save_document` is the only thing that holds them together: stage,
 close, commit. Every guard `planned_bytes` states --- an encrypted document, a
 file whose page count no longer matches the baseline, a plan that names a page
 that is not there --- runs during the staging, which is the half where nothing
@@ -10981,9 +11001,12 @@ signatures by different signers, each blob carrying its leaf and the one root ab
 signatures**, which is the mistake that would otherwise look like a working reader.
 
 It pays immediately. `signature-probe --mode agree` runs 13 comparisons on it, and deleting
-the one `queue.reverse()` in `read_signatures` --- which makes every fact about every signature
-correct and only which signature it belongs to wrong --- reddens **4 of the 13**. Nothing in
-the corpus could see that before.
+the one `queue.reverse()` the walk makes for `fields::Order::Document` --- which makes every
+fact about every signature correct and only which signature it belongs to wrong --- reddens
+**4 of the 13**. Nothing in the corpus could see that before. It lives in `fields.rs` since the
+two field-tree walks were put on one loop, and `redact::covered_fields` passes `Order::Queue`
+past it, so the reversal is now a thing one caller asks for rather than a line in its own
+function.
 
 **And it exposed a limit of the differential that reading it would not have.** Replacing the
 signer match with `certificates[0]` leaves the probe at **13 of 13**, because both sides of the
@@ -12574,7 +12597,10 @@ Two things to do, and they are separable:
    the rename, not a hash.) `prepared` is consumed
    rather than borrowed, which is what lets it cross into the closure, and the
    two error shapes are kept by having the closure return
-   `Result<(), SaveFailure>` rather than a bare message.
+   `Result<(), SaveFailure>` rather than a bare message --- and `SaveFailure` is
+   `failure::Failure`, which `docmodel::Refusal` converts into, so an edit
+   command that wants to answer a model refusal no longer has to flatten it to a
+   sentence first.
 
    **One behaviour changed with it, deliberately.** The rewrite's first refusal
    used to leave through `?` and skip the "and the document did not close

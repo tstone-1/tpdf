@@ -122,6 +122,40 @@ export class Selection {
   }
 
   /**
+   * Whether {@link text} would return anything, without building it.
+   *
+   * The question a menu guard asks, and it is asked on the frame loop: the
+   * scope toggle is enabled on there being something to scope to. Through
+   * {@link text} that was the whole selection concatenated --- every page's
+   * characters put in reading order and joined --- sixty times a second, to
+   * compare the result with the empty string. A reader who has pressed
+   * select-all on a long document was paying for the document.
+   *
+   * **Exactly what `text(look) !== ""` answers, including the odd case.** Two
+   * pages that each contribute nothing still join to a newline, so a selection
+   * running from the last character of one page to the first of the next is
+   * non-empty by this measure even though it holds no letters. That is the
+   * behaviour the guard had; changing it is a separate decision from making it
+   * cheap, and quietly folding the two together is how a performance change
+   * turns into a behaviour change nobody looked for.
+   */
+  hasText(look: TextLookup): boolean {
+    const { start, end } = this.ordered;
+    let empties = 0;
+    for (let page = start.page; page <= end.page; page++) {
+      const text = look(page);
+      if (!text) continue;
+      const part = this.textFrom(page, text);
+      if (part === null) continue;
+      if (part !== "") return true;
+      // The separator `text` would insert between this part and the next one.
+      empties++;
+      if (empties > 1) return true;
+    }
+    return false;
+  }
+
+  /**
    * What one page contributes, given that page's own text.
    *
    * Takes the text rather than the cache, which is what lets a caller holding a

@@ -1,0 +1,15 @@
+{
+  "places": [
+    {
+      "path": "/tmp/one.pdf",
+      "page": 3,
+      "top_pt": 120.5,
+      "zoom": 1.25,
+      "fit": "page",
+      "turns": 2,
+      "sidebar": true,
+      "page_count": 40
+    }
+  ],
+  "invert_pages": true
+}

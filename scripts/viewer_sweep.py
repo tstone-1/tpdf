@@ -50,6 +50,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stray import clear_leftover_app  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 TESTDATA = ROOT / "testdata"
 
@@ -258,33 +261,6 @@ def classify() -> tuple[list[str], list[str], list[str]]:
     return corpora, excluded, missing
 
 
-def _kill_leftovers() -> None:
-    """Kills any tpdf still running, on whichever platform this is.
-
-    **This was `pkill` unconditionally, and on Windows that is not a program.**
-    `subprocess.run(..., check=False)` swallows a non-zero exit and not a
-    `FileNotFoundError`, so the sweep died on its first corpus with a traceback
-    --- and the shell reported exit 0, because the traceback goes to stderr. A
-    harness that dies while looking like one that ran is the failure this
-    repository has an entry about. This one was at least loud: it printed a
-    traceback and no table.
-
-    Failure is ignored on purpose. "There was nothing to kill" is the ordinary
-    case, and both tools report it with a non-zero exit.
-    """
-    if sys.platform == "win32":
-        command = ["taskkill", "/F", "/IM", "tpdf.exe"]
-    else:
-        command = ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"]
-    try:
-        subprocess.run(command, check=False, capture_output=True)
-    except OSError:
-        # No such tool on this machine. A leftover is a slow run or a swallowed
-        # launch rather than a wrong answer, and both are visible in the check
-        # output, so this is not worth refusing over.
-        pass
-
-
 def run_one(app: Path, stem: str, timeout: int, raise_window: bool) -> dict[str, object]:
     """One fixture through the harness, returning what the table needs.
 
@@ -319,7 +295,7 @@ def run_one(app: Path, stem: str, timeout: int, raise_window: bool) -> dict[str,
     # `tauri-plugin-single-instance` makes a new process forward its argv to the
     # old one and exit, so the run reports one line and no checks at all.
     # Measured on 2026-08-19, against three stray `tauri dev` processes.
-    _kill_leftovers()
+    clear_leftover_app()
     result = subprocess.run(
         [
             sys.executable,

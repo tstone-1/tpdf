@@ -124,6 +124,15 @@ class Mutation:
 #: three tests.
 CI_BLOCK = "            brew install qpdf\n"
 
+#: The table-of-contents bullet in `docs/TRAPS.md` the two `traps` rows edit.
+#: Written out here because both name it and the trailing newline is part of the
+#: anchor --- deleting the line is one of the two mutations.
+BULLET = "- A `run:` line is not a `run:` step, and the emptiness control could not tell the difference\n"
+
+#: The one `FIXTURES` entry every workflow probe step runs against. Written out
+#: here so the row below can comment it out with one anchor and no ambiguity.
+ENTRY = '    ("testdata/text-wide.pdf", ["testdata/make_wide_pdf.py", "testdata"]),'
+
 MUTATIONS = [
     # --- the fixture gate, and the blindness that started this file ----------
     Mutation(
@@ -159,12 +168,33 @@ MUTATIONS = [
         red=False,
         says="all 6 workflow fixture path(s)",
     ),
+    Mutation(
+        # The generated list read from the module's tables rather than from its
+        # text. Commenting an entry out stops `ci_fixtures.py` writing that
+        # file, and six workflow steps run against it -- so the gate must go red
+        # naming it. Read as text, the commented line still matches the path
+        # pattern, the fixture reads as generated, and this row reports
+        # SURVIVED: prose about a fixture and a fixture were the same thing to
+        # this gate, on a checker whose other half already scans what executes.
+        "fixtures: a fixture the table no longer generates, still named in prose",
+        "fixtures",
+        "scripts/ci_fixtures.py",
+        ENTRY,
+        "    # " + ENTRY.strip(),
+        red=True,
+        says="testdata/text-wide.pdf",
+    ),
     # --- the trap index, in both directions ----------------------------------
+    # **Both rows aimed at `AGENTS.md` until 2026-09-06**, which is where the
+    # index lived. It is now a table of contents at the top of `docs/TRAPS.md`,
+    # so the diff runs inside one file and these anchors moved with it. An
+    # anchor left behind is invisible in `git status` and only speaks when the
+    # harness reaches the row, which is why the `anchors` gate exists.
     Mutation(
         "traps: an entry in docs/TRAPS.md that nothing in the index points at",
         "traps",
-        "AGENTS.md",
-        "- A `run:` line is not a `run:` step, and the emptiness control could not tell the difference\n",
+        "docs/TRAPS.md",
+        BULLET,
         "",
         red=True,
         says="run:",
@@ -172,8 +202,8 @@ MUTATIONS = [
     Mutation(
         "traps: an index bullet naming an entry that does not exist",
         "traps",
-        "AGENTS.md",
-        "- A `run:` line is not a `run:` step, and the emptiness control could not tell the difference\n",
+        "docs/TRAPS.md",
+        BULLET,
         "- A trap entry nobody ever wrote, which docs/TRAPS.md cannot possibly hold\n",
         red=True,
         says="A trap entry nobody ever wrote",
@@ -458,20 +488,23 @@ MUTATIONS = [
         says="no command ids found",
     ),
     Mutation(
-        # **Not the `if not entries` guard**, and the difference is worth the
-        # line: pointing the corpus at a file with no `### ` headings makes the
-        # index-versus-corpus set difference fire first, one message per bullet.
-        # That is still the gate refusing an empty population, and it is a
-        # different sentence, so `says` names the one that actually prints. A
-        # `says` of "[FAIL]" would have accepted either --- and accepting any
-        # failure is the generic-assertion problem this table exists to avoid.
+        # The message this names has changed twice, and `says` is the whole
+        # reason that mattered rather than passing unnoticed: a red for the
+        # wrong reason satisfies an exit-code test exactly as well as a red for
+        # the planted one, so a `says` of "[FAIL]" would have accepted either.
+        #
+        # While the index lived in `AGENTS.md` the index-versus-corpus set
+        # difference fired first, one message per bullet, and the entries guard
+        # never spoke. Both populations now come out of the file this points at,
+        # so pointing it at `LICENSE` empties both and the emptiness control is
+        # what prints --- which is the refusal this row was always about.
         "traps: the trap corpus pointed at a file with no entries in it",
         "traps",
         "scripts/check_trap_index.py",
         'TRAPS = ROOT / "docs" / "TRAPS.md"',
         'TRAPS = ROOT / "LICENSE"',
         red=True,
-        says="in the index, no such entry",
+        says="entries found in LICENSE",
     ),
 ]
 
@@ -486,6 +519,13 @@ def gate(name: str, env: "dict[str, str] | None" = None) -> tuple[int, str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        # A gate quotes the tree back at you -- trap titles, licence texts, a
+        # crate's copyright line -- and `text=True` alone decodes that with the
+        # locale codec. On Windows that is cp1252, which cannot map every byte
+        # a UTF-8 source file holds, and the harness would then die on the
+        # gate's *output* rather than report what the gate said.
+        encoding="utf-8",
+        errors="replace",
         env=environ,
     )
     return done.returncode, done.stdout + done.stderr

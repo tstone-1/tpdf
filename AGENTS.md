@@ -194,15 +194,15 @@ sources.** The bundler enumerates that directory and registers the first entry n
 `path =` claims; a `.rs` file is always claimed, a *subdirectory* never is. So
 `src/bin/backend_probe/`, which existed only to hold `imp.rs`, became a phantom binary named
 `backend_probe`, colliding with the component id WiX derives from the real `backend-probe.exe`
-and failing `light.exe`. The two `imp.rs` bodies now live in `src/probes/`, reached by
+and failing `light.exe`. The two bodies now live in `src/probes/` under their own names, reached by
 `#[path]`, which leaves module parentage and every `super::` in them unchanged.
 
 **And it no longer ships the spikes.** Until 2026-07-31 the installer carried all 17 probe and
 benchmark executables --- a sandbox prober and a hostile-document harness among them --- because
 they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets now: cargo builds
 and links them exactly as before, the `bins` gate keeps covering them through `--examples`, and
-the bundler does not see them, so the MSI payload is three files (`tpdf.exe`, `tpdf_lib.dll`,
-`pdfium.dll`) and about half the size it was. The invocations moved with them: `--example <name>`,
+the bundler does not see them, so the MSI payload is three files --- listed in `BUILD.md`'s *Measured against the
+shipped MSI* table, since a local build tree emits a fourth --- and about half the size it was. The invocations moved with them: `--example <name>`,
 and built artifacts sit in `target/release/examples/`. **That gate flag is load-bearing, and was
 proved so rather than assumed** --- without `--examples` the `bins` gate covers only the app, and
 an undefined extern called from one example's `main` is what turns it red with `LNK2019`.
@@ -377,7 +377,9 @@ anything was written --- but every one of them needs an `FPDF_PAGE`, and `FPDF_L
 re-parses each time at up to 44 ms on a complex page. The panel's question is about the whole
 document, so through PDFium it is a page load per page; through the object graph it is one
 parse the file already needs for `encoding.rs`, at 0.1 ms on a small document and 11.9 ms on
-the 337 MB scan. `pdfium-render` also does not expose `/IRT` at all, so a reply arrives there
+the 337 MB scan. Since 26.9.2 it is one parse in fact as well as in cost:
+`docgraph::DocumentGraph` holds it and six readers share it, and `DocumentGraph::parses` is
+the observable that says so. `pdfium-render` also does not expose `/IRT` at all, so a reply arrives there
 as an unrelated second note by another author.
 
 **Links take the same route, and it costs a second destination resolver** ---
@@ -464,9 +466,9 @@ editing stack where there is none.
   structural sanitation, signature creation, paragraph layout, or font-subset extension.
 - **lopdf is a low-level syntax layer.** It gives the object graph and decoded content
   operators; PDF *semantics* are left entirely to us.
-- **QPDF** is the strongest candidate for the redaction rewrite path specifically, because
-  it does hardened structural rewriting with garbage collection of unreachable objects ---
-  precisely the guarantee a full rewrite needs and neither of the other two offers.
+- **QPDF** was the candidate for the redaction rewrite path because it does hardened
+  structural rewriting with garbage collection of unreachable objects. That garbage collection
+  is now `sweep.rs`, so what remains for QPDF is object streams, as the stack table says.
 
 The honest consequence: **tpdf is building most of an editor engine itself.** These
 libraries remove the rendering and parsing problem, not the editing problem. Plan
@@ -549,8 +551,8 @@ a hypothetical: it was true for sixteen commits until a rehearsal tag for `26.8.
 runner legs red on `examples/print_probe.rs`. A Mac compiler never parses a `#[cfg(windows)]`
 line, so `print_win.rs`, the two Windows probes and the Windows halves of `worker*.rs` sit
 outside everything the list covers. `scripts/check_windows.py` closes it ---
-`cargo check --target x86_64-pc-windows-msvc --all-targets`, which does not link and so needs
-headers rather than a linker. **It costs 1 s warm and over ten minutes cold**, measured
+`cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings`, which does not link
+and so needs headers rather than a linker. **It costs 1 s warm and over ten minutes cold**, measured
 2026-09-02 on the same tree an hour apart; this said "about 8 s" flat, which is the warm figure
 for the `check` alone and describes neither run anyone actually makes. The whole cost is
 building every dependency for a second target, so the number you get is decided by whether
@@ -569,10 +571,12 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   CI action installing its own toolchain may set.
 - `pdfium` --- the pin was checked against a digest the installer wrote, and the only fact it
   had about the tree was that *something* named `*pdfium*` existed.
-- `traps` --- `docs/TRAPS.md` and this file's index, diffed as sets both ways, because a tally
-  can be right while the index is three entries short. Since 2026-08-31 it also holds a bullet
-  to its title and this file to a size ceiling: the diff cannot see a bullet's tail, and 323 of
-  them took the file past the limit at which it stops being loaded at all.
+- `traps` --- `docs/TRAPS.md`'s table of contents against its own `### ` entries, diffed as
+  sets both ways, because a tally can be right while the index is three entries short. Since
+  2026-08-31 it also holds a bullet to its title, since 2026-09-06 the thirteen group names
+  here to the `## ` groups there, and throughout this file to a size ceiling: the diff cannot
+  see a bullet's tail, and 323 of them took the file past the limit at which it stops being
+  loaded at all.
 - `workflows` --- `release.yml`'s `gates` job was copied from `ci.yml` and dropped a whole step,
   so the release gate was weaker than the gate it exists to satisfy. It also asserts what
   authority that job holds, which comparing steps was blind to.
@@ -596,7 +600,7 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   them are *one* comment, so nothing is lost and the whole thing documents the wrong item ---
   three live instances, one of them introduced while fixing the other two.
 - `wiring` also covers `ScrollerOptions` and `ThumbnailOptions` as of 2026-08-28, which with
-  `ViewerOptions` is every optional `on*` callback the frontend declares --- 19 of them.
+  `ViewerOptions` is every optional `on*` callback the frontend declares; the script prints the count.
   `AppActions`' 51 members are deliberately **not** here: they are required, so `npm run check`
   refuses a missing one, and a gate over them would have no reachable subject.
 - `classified` --- every registered command is in the window harness's `probes` or its
@@ -624,7 +628,7 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   shipped.
 
 **`save.rs` is a directory module since 2026-09-01**, and the reason to know that before
-editing it is `scripts/mutate_rust.py`: 54 mutation anchors name `src/save/marks.rs` rather than
+editing it is `scripts/mutate_rust.py`: dozens of mutation anchors name `src/save/marks.rs` rather than
 `src/save.rs`, and both new files are submodules of `save` on purpose, so the harness's
 `save::` filter still reaches their tests. The file went from 14,844 lines to 3,988 --- 61% of it
 was its own test module --- with `save/tests.rs` and `save/marks.rs` beside it.
@@ -649,6 +653,14 @@ command, and every registered command is named in a `<!-- built: -->` marker or 
 test's `UNLISTED` table with a reason. What it does not check is the prose beside the markers ---
 `BUILD.md`'s release checklist carries that half, and is a checklist rather than a check on
 purpose.
+
+**Reply shapes are checked too, since 2026-09-06**, by `src-tauri/src/replies.rs` --- which
+writes a committed sample of each reply under `src-tauri/testdata/replies/` --- and
+`src/lib/replyshapes.test.ts`, which holds the TypeScript mirrors against those bytes. What
+it covers is the seventeen named `Ok` payloads, compared key set for key set at the top
+level, so a field the mirror has lost and a field no mirror declares are both findings. What
+it does not cover is the `Err` payloads, and the key sets of the shapes nested inside a
+payload.
 
 **The Rust toolchain is pinned in `rust-toolchain.toml`** as of 2026-08-02, and the pin is
 enforced by `scripts/check_toolchain.py` rather than assumed. `RUSTUP_TOOLCHAIN` overrides
@@ -720,7 +732,7 @@ checklist has the habit as step 10.
 > ⚠ **Every Windows measurement below was taken from a process the harness gave a stderr to,
 > and on 2026-08-19 that turned out to hide a defect that made the installed application
 > unable to open any document at all --- by any route.** `viewer_check.py`, `open_check.py`
-> and `session_check.py` all launch with `stderr=subprocess.PIPE`, because the transcript
+> and `session_check.py` all hand the app a stderr (`PIPE` or `capture_output`), because the transcript
 > they read *is* the app's output; Python implements that with `STARTF_USESTDHANDLES`, so the
 > app always had a valid stderr. A GUI-subsystem binary started by a person has none, and the
 > worker spawn treated that as an error and refused. A terminal does not help --- measured, by
@@ -768,703 +780,67 @@ The account behind this section --- what was measured, what it cost, and which e
 Things already paid for once, or verified before writing code. Add to the list rather
 than rediscovering.
 
-**The entries themselves are in [`docs/TRAPS.md`](docs/TRAPS.md)**, under these exact titles.
-Only the titles are here, because the full text was 93% of this file --- an instruction budget
-spent on the several hundred traps that are not the one in front of you. What the index has to
-preserve is knowing that a trap *exists*; the paragraphs matter once you are in that area.
+**The traps and the index of them both live in [`docs/TRAPS.md`](docs/TRAPS.md).** The table
+of contents at the top of that file names every entry by title, grouped by area; the entries
+themselves follow, in the order they were written. Open that table of contents before working
+in any area named below, and then read the entry --- **a title is a claim, not the lesson**.
+Several of them are the opposite of what they sound like, which is why they were written down.
 
-So: **before working in any area named below, read its entry.** A title is a claim, not the
-lesson --- several of them are the opposite of what they sound like, which is why they were
-written down. Grep the title in `docs/TRAPS.md`.
+The thirteen groups, and when each is worth opening:
 
-New traps go in `docs/TRAPS.md` with a line added here, in the same commit. That rule has a gate
-behind it: `traps` in `scripts/gates.py` diffs the two as **sets**, both ways, and fails on
-either side having something the other lacks.
+- **PDFium: rendering, mutation and page state** --- calling the render engine, or editing the
+  objects on a page.
+- **PDFium: text, coordinates and outlines** --- extracting text, converting between a page's
+  coordinate systems, or resolving a destination.
+- **Text matching, and scripts that are not English** --- search, case folding, and any
+  document whose text is not plain ASCII.
+- **The worker boundary, the sandbox and the pool** --- anything crossing into a worker
+  process, or deciding what one is allowed to do.
+- **The document model: saving, structure, signatures** --- writing a document: appends,
+  rewrites, encryption, the page tree, annotations, signatures.
+- **Tauri, the webview and startup** --- the shell, the window, the menu, and anything about
+  cold start.
+- **Rust and macOS** --- language and platform behaviour that surprised us, with no PDF in it.
+- **Measuring: what a number can and cannot say** --- before quoting any benchmark, delta,
+  rate or coverage figure, including one already written down.
+- **Writing a check that can fail** --- adding or changing any test, control or assertion.
+  The largest group, and the one most often the real answer.
+- **Harnesses: running checks and reading what they print** --- running the mutation
+  harnesses, the window checks or the gate runner, and reading what comes back.
+- **Windows and portability** --- anything under `#[cfg(windows)]`, and anything a gate
+  running on a Mac structurally cannot see.
+- **Fixtures** --- generating or extending a corpus under `testdata/`.
+- **Documents as controls** --- editing this file, `docs/PLAN.md`, `BUILD.md`, `CHANGELOG.md`
+  or the threat model, where the prose is itself a control something else is checked against.
 
-**A bullet is the entry's title and nothing else, and that half now has a gate too.** It was a
-rule with nothing enforcing it, and the set diff is structurally blind to a bullet's tail: by
-2026-08-31, **323** of 588 bullets carried a parenthetical gloss, 62,440 characters, and this
-file went over the 150,000-character limit at which it stops being loaded whole. Every one of
-those tails was audited against the entry it points at; exactly one carried a fact the entry did
-not, and that fact was merged into the entry. So a parenthetical now needs a named exemption in
-`ALLOWED_PARENTHETICAL`, which holds one title --- the one that is actively wrong about its own
-subject. A gloss that restates the entry does not qualify: the warning that a title can mislead
-is two paragraphs up, where it covers every entry at no cost per entry.
+New traps go in `docs/TRAPS.md` in one commit: the entry under a `### ` heading, and its title
+verbatim as a bullet under the matching `## ` group in that file's table of contents. That rule
+has a gate behind it: `traps` in `scripts/gates.py` diffs the two as **sets**, both ways, and
+fails on either side having something the other lacks. It also refuses a bullet that carries a
+parenthetical gloss --- a bullet is the title and nothing else, unless the title is named in
+the checker's `ALLOWED_PARENTHETICAL`, which holds one, the title that is actively wrong about
+its own subject. A gloss that restates the entry does not qualify: the warning that a title can
+mislead is three paragraphs up, where it covers every entry at no cost per entry. And it holds
+the thirteen group names above against the `## ` groups over there, both ways, so a group
+cannot be added on one side alone.
 
-The same gate holds this file to a **130,000-character ceiling**, because the bullet rule bounds
-what an entry may cost and not how many there are: titles average 76 characters and the corpus
-went from 116 traps to 588 between 2026-07-29 and 2026-08-31, so the index floor climbs about
-1.3 KB a day on its own.
-When the ceiling fires, the fix is to move a section out to a file this one points at --- what
+**The index moved out of this file on 2026-09-06, and the arithmetic is the whole reason.** It
+had reached 639 bullets --- about 51 KB of a file that is loaded whole before every task, spent
+on the several hundred traps that are not the one in front of you. `AGENTS.md` was 112,084
+characters against the 130,000-character ceiling the same gate enforces, and the corpus had
+been growing about 130 entries a week for three weeks, which put the ceiling two to three weeks
+away. Nothing else on the table bought more than a fortnight. The index costs thirteen lines
+here now and grows by nothing when a trap is added, and it sits in the file it describes, so
+adding an entry and listing it are one edit in one place rather than two files that drift. The
+ceiling stays, because the other sections grow too; when it fires again the fix is the same one
+it was this time --- move a section out to a file this one points at, which is what
 `docs/TRAPS.md` and `docs/RATIONALE.md` already are.
 
-**Code comments and the other documents say "`AGENTS.md` records ..." in about a hundred places,
-and those references are still good** --- they were written when the entries lived here, and they
-were left alone rather than rewritten, because a hundred-file mechanical diff over prose carries
-more risk than the one hop it saves. Read them as naming the trap index; the paragraph is in
-`docs/TRAPS.md` under the title.
-
-### PDFium: rendering, mutation and page state
-- PDFium: removed objects come back unless you regenerate the content stream
-- Destroying an object removed from a page segfaults
-- PDFium mutations regenerate page content wholesale
-- `set_text()` silently draws `.notdef` when a glyph is outside the subset
-- PDFium pays a large fixed cost *per render call*, not per page open
-- PDFium parses a document lazily --- but enumerating pages is not lazy
-- PDFium rendering *is* interruptible --- via the progressive API
-- PDFium decides how often it can be interrupted, and the slice does not change it
-- `FPDF_LoadPage` re-parses every time, and on a complex page that is 44 ms
-- `PdfiumLibraryBindingsAlreadyInitialized` — a helper that binds its own library works alone and fails in company
-- A wash that reads as zero everywhere: PDFium's buffer is RGBA, not BGRA
-- PDFium's render rotation composes with `/Rotate`, and wants the turned size
-- A rotated page whose box it inherited comes back `width x width`
-- PDFium accepting a file is not evidence the file is well formed
-- An error message that names no cause is not vague, it is a wrong diagnosis
-- A fallback is in the coordinate system of whoever wrote it
-- Two handles to one cached page are aliases, and a reading taken after a change describes the change
-- PDFium answers the same error for no password and for the wrong one
-
-
-### PDFium: text, coordinates and outlines
-- A byte scan cannot verify a document with a Type0 font
-- The page break is whitespace, and concatenating two pages loses it
-- A pattern over folded text has no lines, so `^` means the page
-- `FPDFText_GetText` drops characters, so it cannot be indexed alongside boxes
-- A page carries `/Rotate`, and PDFium answers in two coordinate systems at once
-- PDFium lays a page out from its `/CropBox`, and everything else here read `/MediaBox`
-- A line-grouping rule assumes an axis, and the axis is not always vertical
-- Two rotation tables, disagreeing at every turn but zero
-- PDFium's character order is not the page's line order
-- A dense page of uniform lines cannot detect a y-flip
-- A comma opens a line of its own, and every space on the line joins it
-- A loop that re-attaches to the previous item drops a leading orphan
-- A font can float a space's box clear of its own line, and overlap banding drops it
-- An absolute epsilon refuses a page whose every glyph is that thin
-- A paragraph is one mark and several text objects, and the gap between them belongs to neither
-- `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
-- `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every other fit lands at the page top
-- Two resolvers agreeing with themselves is not two resolvers agreeing
-- `FPDFBookmark_GetDest` cannot tell a heading from a damaged link
-- A differential that needs a manifest is a differential over one document
-- A destination's offset belongs to the page it lands on, not the page it left
-- An outline can be infinite, and PDFium says so in its own documentation
-- PDFium cannot create digital signatures
-- PDFium's signature enumeration does not walk the field tree, and ours does
-- PDFium draws a comment's icon in its own colour, and the file is not wrong
-- PDFium synthesises an appearance for `/Text` and not for `/Stamp`
-- A form's text is on the page's text layer, and the page's object list cannot reach it
-- A form drawn twice on one page is one reference in the object graph
-- Removing the `Do` stops the page drawing the picture, and leaves every byte of it in the file
-- A comment saying two rules are the same is not a check that they are
-- Filtering the engine's answer is weaker than not showing it the pixels
-- The gate reads a band of rows, so a region narrower than its line is judged with its neighbours
-
-### Text matching, and scripts that are not English
-- `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
-- A content stream has no bidi, so logical order draws right-to-left text backwards
-- PDFium maps Arabic presentation forms to base letters, which was assumed to be false
-- `ß` does not lowercase to `ss`, and the doc comment saying so stood for days
-- A combining mark does not touch its own line, and a word with an ascender hides it
-- With no `/ToUnicode`, PDFium returns plausible garbage rather than nothing
-- A pattern was compiled case-sensitively against a haystack the fold had lowercased
-- Two broken `/ToUnicode` entries can decode to one valid astral character
-- A change predicted to fix three things fixed two, and the third was never the same problem
-- PDFium normalises ligatures too, so the cost of case folding was smaller than stated
-- A body's newlines live below the table that decodes it
-
-### The worker boundary, the sandbox and the pool
-- macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
-- Printing maps a PDF parser into the app process, on both platforms
-- `thread_safe` does not serialize PDFium --- there is no mutex, and threads crash
-- A worker process is nearly free; the webview boundary is not
-- macOS has no memory rlimit, and `RLIMIT_CPU` is a lifetime budget
-- Polling a child's footprint bounds a leak, not a burst
-- `proc_pid_rusage` takes the struct's address, not a pointer to it
-- The vendored PDFium has no JavaScript engine and no XFA --- verify it, do not assume it
-- The no-V8 property is one word in a URL, so the fetch asserts it
-- A symbol scan needs symbols, and the Windows PDFium has none
-- PDFium ships its loadable library in a different directory on Windows
-- A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
-- The linker's image table is an observable; a milestone of ours is a claim
-- Where the parse runs is not observable from a unit test
-- A Rust process absorbs the first SIGSEGV you send it
-- A released id must leave a hole, because removing it renumbers the rest
-- Forgetting a node in a linked list is not removing it from the list
-- A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets
-- Two copies of a distinction drift, and a mutation of one survives
-- Dropping the owner does not close a pipe something else has cloned
-- A descriptor without `FD_CLOEXEC` leaks into every later child, and keeps it alive
-- Two mechanisms with the same limit make one of them untestable
-- FIFO dequeue is not FIFO completion
-- A worker killed a moment ago still says it is running
-- A pre-spawned worker outlived its parent, and the claim that it cannot is untested by design
-- The cleanup after an fd shuffle can close what it just installed
-- A per-page invalidation counter is not the same as a generation
-- State keyed by a slot belongs to whatever moves into that slot
-- `(deny file-write*)` does not deny a write through a descriptor you were handed
-- A child cannot tell a descriptor it was handed from whatever is open at that number
-- A refusal flattened to a string across a process boundary loses the action that answers it
-- A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
-- A rename over a mapped file succeeds, and the mapping goes on serving the file that is gone
-- A pool that replaces a dead worker with the same bytes faults again, forever
-- A diagnosis placed after a liveness check inherits that check's race
-- A valid in-place rewrite is served silently, and a length check cannot see it
-- The check that could not exist while one function did both halves
-- A field documented as the caller's last look, and read by nobody
-- A guard that looks a pathname up again is not a guard on the file you are writing
-- One temporary name for every save, written with a call that truncates
-- Writing a page's rotation "for completeness" flattens what a bounded walk could not read
-- Two page numbers can be one page object, and the second turn composes on the first
-- A page number is a position, and deleting a page renumbers every one after it
-- Removing one of two page numbers that name one page cannot be done by removing objects
-- Dropping a reference out of a destination array leaves a destination with no page
-- Flattening a page tree loses what a page inherited from the node it hung under
-- A permutation and a subset are the same document to every reader, and not the same file
-- A quirk documented as harmless becomes a defect the day its precondition is wired
-- The order a model inserts into is not the order its caller is looking at
-- An id and a slot are both `number`, so a mark drawn on the last page vanished
-- Moving a mark is a re-inking of it, and reusing the command beat adding one
-- A password that unlocks the first worker unlocks nothing else
-- Wrapping stdin in a `BufReader` eats the first request of the session
-- One untyped reply carrier, and the two ways serde refuses to replace it
-
-
-### The document model: saving, structure, signatures
-- Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
-- Digital signatures constrain what may be edited at all
-- Whether `/Annots` is an indirect array decides how large an annotation edit is
-- Embedded fonts are subsetted
-- `lopdf`'s object collection is quadratic, but the algorithm is not
-- Removing a refusal removes it for every caller, including the one that never had a guard of its own
-- `lopdf` silently drops encryption on save
-- An incremental save is cheap on disk, not in memory --- and its cost is the parse
-- An object a prior revision overwrote is reachable by no parser
-- A signature blob is trimmed by trailing zero, and BER ends in zeros
-- Asking for fewer pages made the walk reach more, because the bound was a property of taking all of them
-- A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
-- A shortcut can produce the right answer and lose the report
-- An empty answer from a whole-document scan cannot say whether it looked
-- A cited instance can be half right, and the wrong half is the one doing the work
-- JSON refuses `NaN`, which is what made an unchecked `f32` look safe
-- A mutation that survives every check because nothing reads the field
-- A panel that lists a hidden comment must not let the page open it
-- `/F` is a bit field, and the flag every real link sets is not the one you are testing
-- One predicate answering three questions is right until a second kind makes them disagree
-- Padding a rectangle to make one refusal legal disables the check that refusal was doing
-- A byte grep cannot see inside an object stream, and it returns enough hits to look like it worked
-- `lopdf::decrypt` removes the entry that says the document is encrypted
-- The guard that could not fire, because the library removes the evidence first
-- A field with no reachable `true`, guarded by a comment about the wrong call
-- The same silent decryption, on the path whose output a reader keeps
-- A mark's rectangle survives a quarter turn and everything drawn inside it does not
-- Twelve tests for marks and not one of them turned a page
-- The uncovered bytes are mostly the signature's own container, and reporting the total reads as an accusation
-- A field added to a shared plan is read by one writer, and nothing says which
-- A guard checked after the surgery is a true sentence about the wrong document
-- A workflow step is the one source no local gate reads, and mine named a file that cannot exist
-- A `run:` line is not a `run:` step, and the emptiness control could not tell the difference
-- A pin the gate prints and never reads, and the rule that they move together
-- Two mutations that survived because they were aimed at the exemption
-- A green gate run and the commit after it are about different trees
-- The count was printed and asserted by nothing, and git can answer emptily
-- The step that blocks the release was written for a shell the machine does not run
-- An emptiness control written as a threshold is a measurement of the platform it was written on
-- The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
-- Two nested `Result`s because the outer one is the pool
-- A cross-reference stream states the width of its own fields, and `lopdf` believes it
-- The bound is on what the loader expands, not on what a caller asks for afterwards
-- A guard about the arithmetic is not a guard on the trip count, and the loop between them was unbounded
-### Tauri, the webview and startup
-- `AppHandle::exit` does not set the process's exit code
-- `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
-- A raw `cargo build` binary runs no webview content at all
-- A page that never ran looks exactly like one that ran slowly
-- WKWebView presents at 59 Hz on a 120 Hz display
-- `performance.now()` is clamped to 1 ms — average, do not take a median
-- Never benchmark through `tauri dev` without `--release`
-- Startup has three regimes, and two of them are the OS, not us
-- The shell floor is ~250 ms, and no lever on our side moves it
-- A webview's first custom-protocol request costs ~45 ms, whichever request it is
-- Tauri creates config windows *before* the setup hook, hiding the webview's cost
-- A page whose window is not visible is suspended --- so a JS watchdog cannot fire either
-- A refusal in the setup hook cannot speak, so it must happen before the event loop
-- Turning on updater artifacts makes every build demand the signing key
-- A status element that comes and goes rearranges the toolbar it sits beside
-- A menu item is a global key claim, not a label
-- A menu item's greying is a snapshot, so a guard that moves without an edit is stale for ever
-- A one-shot tool armed from the palette says nothing, and the reader is not stuck but lost
-- A page's own turn is not the view's, and a rectangle drawn by one was found by the other
-- A size is learned once, so a page turned before it was seen keeps a transposed one
-- A framework can abort your whole test binary, and 470 passing tests report nothing
-- A synthetic right-click posted to the window server never reaches the web view
-- A Control+click is the primary button, so a guard on the button number missed the commonest right-click on macOS
-- A key handler is only as safe as the newest element inside it
-- A label the platform writes is compared against a label we write by nothing
-- The second copy of a gated list is the one that drifts, and only it
-- A title that is a strict prefix of another ties, and registration order decides
-
-### Rust and macOS
-- A locked macOS session cannot be unlocked from a script, so it must be prevented
-- `Instant` on Apple Silicon ticks at 41.67 ns, so "elapsed == 0" is reachable
-- `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
-- A mechanical insert before a declaration can land between an attribute and its item
-- A `Decode<'static>` bound is satisfiable by leaking, and nothing goes red
-- `trim_text` trims each event, and a value with an entity in it arrives as several
-- A stale binary answered for a source file that was never written
-- A guard whose neighbour refuses the same input cannot be tested by it
-- Putting a guard in front of a parser disarms the parser's own guard, and the test still passes
-- macOS has no `setsid`, so a detached restart never starts
-### Measuring: what a number can and cannot say
-- A documented count that is one sample of a race makes an honest run look like a defect
-- The harness prints the count so nobody has to derive it, and it was derived anyway
-- Two counts from two commits are not a platform difference
-- A baseline that skips the expensive step leaves its noise in the answer
-- A difference is only a measurement when the operands make it one
-- A clamped delta turned "the baseline moved" into "this cost nothing"
-- The edit that moved a copy and reported it as removing one
-- A difference assertion is satisfied by any difference, including the one the defect produces
-- A probe reading one edge of a box cannot see a mutation that clips the other three
-- A check on the sign of a noisy quantity fires only when the noise falls one way
-- The append was 8.2x in the spike and 1.1x in the application, and the difference is a hash
-- A round trip is a composition, so it is blind to a symmetric error
-- A mean cannot test a claim about a minimum
-- A guard that reads the whole file does not belong on the path a reader waits on
-- A check that defers to a cheaper one it supersedes cannot be tested, and refuses what it should forgive
-- A guard's last look should compare against the moment of the first look, not the moment of the open
-- One refusal message, two moments, and it told the reader to do something they no longer could
-- A poll for something to appear has no control, so six clean absences meant the walk was broken
-- A synthetic click from System Events does not reach the web view, and the pointer was 120 points off
-- A wait built on a program the machine does not have returns instantly, and every check after it reads as a pass
-- Two runs failing different checks is variance; the same check twice is a defect
-- A test that changes the working directory silences every other test that reads a relative path
-- A refusal that names a fallback has to keep the fallback open, and this one closed it
-- A message set before the operation that clears the message area is a message nobody sees
-- A frame-rate pass means nothing without a coverage number beside it
-- A rate whose sample size is also an input to the mechanism does not travel, and 40 regions a page is not a reader
-- The engine that certifies a redaction is more permissive on one platform, and it both certifies more and alarms less
-- A rate argument carries the engine that produced it, and this one reversed on the other platform
-- Interleaving controls for drift, not for what the last variant left behind
-- Three similarity metrics in a row, each unable to see its own failure
-- A timer that starts after the setup measures the wrong thing, and reports it
-- `cargo test` is a debug build, and a debug number in a doc comment is a lie
-- PDFKit reports an annotation's bounds rotated and renders the page unrotated
-- Reading the code predicted four call sites, and there were eleven
-- The delta was the wrong term, because the mapping was already absent from both numbers
-- A multiplied mark's coverage is a reading about the page, not only about the mark
-- Interleaving controls for drift between the arms, not for a machine that is slow for both
-- Process RSS is a high-water mark, so two oversized seeds look exactly like a leak
-### Writing a check that can fail
-- Break the code on purpose, or the test suite is decoration
-- There was no check on the overlay at all, and that is why a reader found the underline defect
-- A feature can be inert in the application while three layers of tests pass
-- A control that is easier than the check certifies nothing
-- A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault
-- A count of failures bucketed by a property is not evidence about that property, and the numerator alone reads as a finding
-- Two marginals bound an overlap and cannot measure it, and the bound reads like a finding
-- When the remedy is a constant, compute what it would take before you write it
-- An intervention outranks a stratified observation, and a bucket four points wide did not break the tie
-- Two variables a corpus cannot separate, because on an ordinary page one forces the other
-- A sweep that pads with `resize` is not the change it stands in for, and the difference set the next increment
-- An OCR engine's bounding box is a detection, not a measurement
-- A property that holds by construction cannot test the thing it resembles
-- Four assertions became unfalsifiable without being touched
-- A fixture the library itself wrote cannot tell a passthrough from a rewrite
-- An oracle more forgiving than the thing it stands in for cannot fail
-- A writer and its own reader agree about a document that is wrong
-- A reply parsed as the wrong shape reads as absence, and absence is the reassuring branch
-- A canvas round trip cannot read back what a renderer produced
-- A dependency that refuses your test input makes your own guard look redundant
-- Two constants in different units, and the comment comparing them was false at every zoom a reader uses
-- PDFKit synthesises an appearance for an annotation that has none
-- A defect that switches off a check's precondition is not caught by that check
-- An "already have it" cache needs an in-flight set, not just the cache
-- A text comparison cannot see a property that is not about text
-- A selector naming one element stops reading the page when the layer gains another
-- A test whose precondition is already satisfied never runs
-- A check that borrows a neighbour's precondition passes wherever the neighbour ran
-- A catch-all arm that was right for two variants is wrong for the third
-- A crash test that compiles away proves containment of a crash that never happened
-- A test for an atomic write must plant the intermediate it is meant to prove
-- A control can be contaminated by the phase that ran before it
-- A check that derives its inputs from the thing it is testing cannot fail
-- A closure and a direct read of the same variable disagreed, and it is unexplained
-- A hit-test slack that rescues a small target hands the click to its neighbour
-- The nib was tested where it was, not where it had been
-- Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
-- A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
-- A synchroniser is not a fix, and the entry above called the arrows fixed anyway
-- The fourth copy carried the explanation and not the fix
-- A page fitted to the element's own width is measured under the scrollbar
-- Fit-width rescales every page when one of them becomes the widest
-- A synthetic heading that does not reach the second column tests nothing
-- Two tests naming their scratch directory the same string delete each other's
-- Whatever a fixture is meant to discriminate, it needs two of
-- A fixture where the right rule and the wrong rule agree cannot tell them apart
-- `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one
-- Reading a decision back out of the DOM makes the test double part of the logic
-- The fake DOM supports what has been needed before, and nothing else
-- A leak no behaviour can see needs an accounting observable, not a cleverer assertion
-- The window reads the status and the tests read the viewer, so the copy between them is untested
-- A bound stops discriminating when the behaviour around it changes, and its test keeps passing
-- Four checks that say where the ink is, and none that says how long it is
-- A check that measures along the axis it is policing shrinks its expectation with its measurement
-- A bound no correct input can reach makes a check that cannot pass, and a manual-only harness is where that survives
-- Two mechanisms for one rule, and it took two survivors to see it
-- Two mechanisms, one outcome, and deleting either one would have been the defect
-- A check no gate runs is a check nobody runs, and two commands shipped past it
-- A harness printed `[FAIL]` and exited 0, under a criterion that names it
-- A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships
-- A readings table outlived the code that produced it, and every document still agreed
-- An accounting observable nobody reads is the same as not having one
-- The same assumption, quiet in one mode and loud in its neighbour
-- Borrowing the writer's own table to avoid drift made the check unable to fail
-- Two readers of one file cannot catch the writer that moved it
-- An outcome two mechanisms can produce cannot test either one
-- A length bound cannot be tested by the verdict it produces
-- A check nested inside a lookup for the thing under test disappears with it
-- A lower bound on a wait is satisfied by any longer wait, including a broken one
-- A check whose failure mode is a wait cannot fail
-- A test whose failure is a hang reports a pass and a timeout in one breath
-- A check that cannot run is not a check, and a locked screen is enough to stop one
-- An unreachable guard is worth keeping if the type can carry it instead
-- A fixture that aborts its parser cannot live in a directory something sweeps
-- A risk and a gate both keyed on writing cannot see the path that only reads
-- A guard the type system already makes unexpressible has no mutation to write
-- A guard whose only reachable input is one the model forbids
-- An Escape ordering that no reachable input can distinguish
-- A label rendered only from real ids cannot be tested on a combination none of them uses
-- A post-destroy guard that returns early leaks what it declined to take
-- A print check that counts pages cannot see a blank page
-- A page count read too early is 0, and 0 is not a count
-- A DIB pixel is not a device unit, and every page printed at half size while a check passed
-- A tolerated gap in the input becomes a hole in the output
-- A test cannot see the direction of an attachment it puts in index order
-- A guard for "more than one page" is not a guard for "a page that can be reached"
-- A wrap is correct when there is nothing ahead, so the check cannot fire
-- A check with no precondition reports a sparse fixture as a defect
-- A test that refuses an empty fixture set is what makes CI's absence visible
-- A feature made a standing check false, and the only corpus that could tell had never been opened
-- A negative assertion needs an observable saying the question was asked
-- A class used with `instanceof` must not live in a module the tests mock wholesale
-- A command deliberately left out of the window harness still has to be classified
-- A refusal that carries a `NaN` is not equal to itself, and both sides print the same
-- Testing a rule is not testing that the rule is used
-- A margin above a destination lands on the previous page, and the tolerance that compensates for it can only reach within a page
-- A guard asking how long the document is cannot answer how far the jump went
-- A size-driven invalidation cannot see a half turn
-- Every statement about a turned page is also true of a rotated view
-- An exclusion keyed on a prefix grows on its own
-- `instanceof` against a constructor the runner does not have throws, it does not answer no
-- A page count cannot see a move, and every deletion check is built on the page count
-- A duplicate key in an object literal is legal JavaScript, so the suite stayed green
-- A tolerance around one value is satisfied by an estimate that replaced every value
-- The natural place to press is the one place the defect has no effect
-- A feature reached only through an optional callback is invisible to a harness that omits it
-- Pressing a row navigates, and navigating scrolls the list out from under the drag
-- A break recorded as a position in a list the callee does not own
-- A caller that validates first cannot reach the guard beneath it
-- A coverage figure over the union of several quads measures the line spacing
-- A control refused by a different guard than the one it was written for
-- A count taken from the input, asserted against the output --- red on a clean tree
-- A control refused by a different guard than the one it was written for, again --- and the verdict was green
-- A differential between two readers cannot tell you which mechanisms ran
-- A denominator that is constant in one dimension cannot compare areas
-- A band check can pass by two hundredths of a point, and a passing run does not say so
-- A probe that writes one colour cannot measure a mark drawn in another
-- A single-entry cache is evicted by the grid scan that was about to test it
-- A cross-check that type-checks the other platform does not lint it
-- A reading in fractions of a rectangle cannot test something that is a fixed size
-- A count of the tabs cannot see that one of them is clipped out of the panel
-- Two synthetic marks addressed by page land on top of each other on a one-page corpus
-- A getter that answers from the rows it was handed cannot see a panel that drew one
-- Two writers for one document, and the printer got the older one
-- Removing the second copy is what made the differential unable to fail
-- A differential's most important check was hard-coded to pass when both readers failed
-- A test helper that builds its fixture with the encoder under test
-- A mock's default return value decides whether a mutation fails or hangs
-- `String(e)` on a structured refusal is `[object Object]`, and one of the three checks stayed green
-- A check reported `[OK]` with the reason it should have failed printed beside it
-- A check read the palette's rendered rows, which are capped at 64
-- A correction that changed the direction of a movement that was never happening
-- Before widening a check to another language, ask whether that language admits the defect
-- A bound written against its own constant cannot see the constant move
-- A control token spanning a whole line is read back only when the engine returns the line in one piece
-- A control chosen from the document's own text is worth nothing when the text layer does not say what the page draws
-- A framework you link is mapped whether you call it or not, so an absent image cannot be the evidence
-- Two strips butted together make the engine misread both, and the control is what pays
-- The words are still in the file, and the redaction is correct
-- An ordering asserted over a `HashMap` fails a third of the time, which reads as flake
-- A widened type enumerates its readers, and is blind to the ones that already had a fallback
-- A skip in a reply-driven queue stops the queue, and "nothing was requested" is what a stall looks like
-- A cache keyed by the page of the file, and every caller holding the slot
-- A record of what has been asked for, kept where it cannot see the answer being thrown away
-- The status line showed the selection and the copy refused it, over a page with nothing on it
-- One refusal, three callers, one string --- and the string named one of them
-- A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
-- A gate that reads prose as code can pass for the wrong reason, and rewording a comment turns it red
-- An unbounded report crossing a bounded pipe turns a bad file into a failed check
-- A `NaN` in one field is not a test of the other, and the clause that looks redundant is the one it needs
-### Harnesses: running checks and reading what they print
-- A mutation harness needs the same control as the thing it is testing
-- A timeout that discards the transcript recreates the failure it was added to diagnose
-- Restoring a mutated file by *moving* a backup over it tests the mutated binary (the title names the wrong mechanism --- see the entry below it)
-- Piping the gate runner through `tail` ate the exit code and the evidence, about fifteen times
-- A harness that prints only at the end cannot say where it stopped
-- A harness that prints as it goes writes nothing until it exits, under a redirect
-- A `pgrep -f` wait loop is defeated by the command that checks on it
-- A wait built on `pgrep -f` outlives the job, and every later check agrees with it
-- A mutation harness that dies leaves the mutation in the tree
-- A design that wiped the state on every ordinary run was useless in the workflow it was for
-- The check aimed at the mutation is the one that raised, and a traceback names no check
-- An earlier case emptied the store the later case reads, so neither lookup ever happened
-- A filtered test run is only as good as the names, and mine excluded the check I wrote
-- An over-removal control cannot be proved by a mutation that under-removes
-- Running a repo's formatter over files it does not format
-- A mutation aimed at deleted code is refused far too late to matter
-- A refactor orphans mutations nobody can see, and the gate is what finds them
-- A cross-check that counts names against a count of tests is wrong wherever two tests share a name
-- A refactor moved three callers away, and the mutation kept its anchor and lost its meaning
-- A mutation harness knows only the tests it was told to run
-- A verification chained after a failed edit reports success for work that is not there
-- A restored file with its original timestamp leaves the build serving the mutation
-- The gates rebuild debug and the probes run release, so a green suite says nothing about the binary you are about to run
-- Three mechanisms, no checks: measure what a commit's tests can actually see
-- A verdict that reads a timeout as "no result" throws away the finding
-- A mutation naming a test the harness cannot run reports SURVIVED
-- A mutation that survives may be a variant, not a gap --- check before strengthening
-- A mutation that survived, a comment that claimed a behaviour, and no test to add
-- A check written because a mutation survived has to inherit that mutation's expectation
-- A leaner data structure turned a wrong edit into a no-op
-- A harness that prints stderr only on failure hides what a passing run said
-- A wrapper's own verdicts are on the other stream, in the same shape as a check's
-- A mutation aimed at a check that skips reports SURVIVED
-- A timeout whose failure path has no timeout is not a bound
-- A mutation caught by an access violation produces no test results at all
-- An unguarded `invoke` for a command that is not registered ends the run, and the harness calls it SURVIVED
-- A guard that also guarantees termination fails as a hang, not as a red test
-- A comment claimed an ordering mattered, and the mutation that should have hurt did not
-- Three ways to be wrong about whether your own build is still running
-- `caffeinate <utility>` becomes a child of the utility, so a child count counts it
-- Repeating a race inside one process re-runs the first round, not the race
-- A precondition that names the cause still lets the symptom print
-- A text-mode restore is not a byte restore, and the locale codec cannot even read the file
-- A gate's static reason turned a crash into a wrong diagnosis, twice over
-- A sweep that names one cause for a symptom several produce sends you to rebuild what is current
-- A decoder told to replace what it cannot read does, and the result ships
-- A harness that synthesises input must reset the input's own state machine
-- The last page cannot reach the top of the viewport
-- An expected error line beside a passing suite makes a green run unreadable
-- A harness that cannot read a script skips, and blames the fixture
-- A check name that is a prefix of another cannot be aimed at
-- A check named by its position in a list is renamed by whatever is appended to that list
-- A global text replace with a "one or more" assertion rewrote four unrelated checks
-- A mutation aimed at code no fixture reaches survives, and the fix is not a new corpus
-- A harness sliced a code-point index with `String.prototype.slice`
-- A measured string transcribed off a terminal loses what the terminal does not draw
-- A mutation aimed at one branch when the fixture only reaches the other
-- A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded
-- A snapshot taken after the first mutation restores the mutation, and verifies itself clean
-- A `|` in the data split my own mutation in half, and the run reported a pass
-- Three near-copies of a command made an existing mutation's anchor ambiguous
-- The mutation that proves a guard is the one that performs the write it prevents
-- `--only "text: "` runs every `context:` mutation too
-- A rewritten line leaves a mutation aimed at nothing, and only the harness says so
-- A stream split done for the failing direction leaves the passing one where it was
-- Two budgets for one run, and the one that was raised is not the one that decides
-- A workflow copied from CI can lose a whole step, and then the release gate is the weaker one
-- A parity check that compares steps is blind to the authority they run with
-- A step that signs before anything imports the certificate fails with the masked secret as its error
-- The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
-- A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
-- A PATCH that sets only the body clears the draft's tag, and publishing then attaches it to nothing
-- Renaming the changelog heading instead of opening a new one files a released version as unreleased
-- A draft release is invisible, and the tag beside it says the work shipped
-- A test that walks every prefix of a journal still could not see the snapshot rule
-- Two tests sharing a name make a mutation harness's two counts disagree
-- A mutation that inserts rather than moves runs the code twice, and the second run overwrites the first
-- The sweep shelled out to `pkill`, which is not a program on Windows
-- `subprocess.run(text=True)` decodes with the locale codec, and the multilingual corpus is the one that breaks it
-- An escape sequence written into a mutation table through a shell never arrives as an escape
-- An event without the modifier fields a matcher tests reads as no match at all
-- A probe copied from its neighbour inherits a starting point that may not apply
-- The gate guarding the anchors reads the file differently from the harness that uses them
-- A mutation written on one platform names a test the other platform does not compile
-- Adding a third drag made five existing mutations aim at nothing, or at two things
-- A new test can make an existing mutation's anchor ambiguous, and the anchor never moved
-- A new command turns the mutation harness's control red, one layer from where it reads
-- A new kind that is a near-twin inherits a predicate written when it had no twin
-- A test named for the population it covers is renamed by every kind you add
-- A predicate named after the population it covers is renamed by every kind you add
-- A mutation that ANDs with true has changed nothing, and SURVIVED is then correct
-- A mechanical edit keyed on a field name hits every occurrence of that name
-- An AppleScript loop over a property list iterates a reference, and every menu reads as empty
-- A harness that edits source files pays for the editor watching them
-- A harness that prints its first three failures reads exactly like one that prints all of them
-- A harness's cost expired because the code grew, and nothing goes red about that
-- A `tauri dev` watcher recompiles the crate you are gating, and rustc's own OOM reads as a failed test
-- A harness written on a locked screen is a harness that has never run
-- A documented cost measured warm is the wrong number for the run you are about to make
-- A mutation block below the `__main__` guard is counted by the gate and run by nothing
-- Narrowing a run made a shape the output parser had assumed away
-- A capability nobody could use is invisible to every check, including the mutation harness
-- An option whose value is optional swallows the next argument, and `vitest list --json` overwrote a test file
-- A wrapper that exits zero on a run that ran nothing, while both its callers guard themselves
-- A rule written for the job a review named stops at that job, and the job next door had the most to lose
-- A module split renames the harness's filter without moving one anchor
-- A security gate keyed on where a call is written decides where that call may move
-- A mutation that leaks a file poisons the absolute-count check written to catch that leak
-- A count over a directory the whole suite shares is not an observable while the suite runs in parallel
-- A filtered `cargo test --exact` that matches nothing prints `test result: ok`
-- A link flag that makes the build succeed and the binary unable to start
-- Without a sanitizer, libFuzzer blames whichever input was current when its sampler fired
-- Nine `cargo fuzz run` invocations queue on one build lock and print nothing
-- A generator that works around the defect it found stops looking behind it
-- A fuzz artifact that comes back clean is a hypothesis, and the control is to revert the fix
-- The revert control has to take back every guard added since, not the one you suspect
-- Repeating a flag argparse did not declare repeatable proves what the last one says
-### Windows and portability
-- The gates had never run on the platform where they fail
-- A document meant to cover both platforms was generated from platform-specific inputs
-- A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
-- An uninhabited type carries its impossibility into every caller
-- A `null` that means "inferred" is not a `null` that means "unknown"
-- A directory that exists is not the library you need
-- A wedged compile and a slow one look identical, and CPU time is the only thing that separates them
-- A stale Windows resource artifact disables the cross-check and reads as a broken checkout
-- The comment naming the grep that would have caught it, four times running
-- A list of documented blockers can be wrong in the direction that looks thorough
-- A gate list that never links a binary cannot see a link error
-- A pin that nothing verifies is indistinguishable from no pin
-- A toolchain pin can match on version and still be the wrong ABI
-- A custom URI scheme is not spelled the same way on every platform
-- One constant standing for two platform distinctions breaks the moment they diverge
-- A release build is not a production build; a cargo *feature* decides that
-- A test cannot see a change to a profile it does not run under
-- A guard that degrades to a no-op off its platform stops being a guard
-- Reaching for a constant *because* it is portable, and picking the one that is absent
-- The same platform refusal, a result in one scenario and a failure in the next
-- `CreateProcessAsUser` waives a privilege only for a token it still recognises
-- A restricting SID stops the loader, and the code never runs
-- One failing rung cannot say which ingredient failed
-- A verdict that takes the last row that worked recommends the weakest one
-- A refusal that exists because nobody wrote the code is not a guarantee
-- The kernel refuses a writable mapping of a read-only file, on both platforms
-- "Inherit nothing" cannot be spelled as an empty handle list
-- A safe function taking a raw `HANDLE` has an unstated contract, and clippy says so
-- `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
-- A bound documented as "not load-bearing", measured under the only load it will meet
-- A pipe reaches EOF before the process it belonged to is signalled
-- `eprintln!` is not one write, and every worker shares the parent's stderr
-- A test whose child never answers cannot see the pipes being crossed
-- A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
-- A check that wins a race on one platform has not been shown to pass on it
-- Single-instance turns a stray process into a launch that succeeds and does nothing
-- A `DataWriter` closes the stream it was created over, so a helper that returns the stream returns a closed one
-- WinRT reports a PDF page's size in DIPs, not points
-- A BMP's DIB header is never 4-byte aligned, so reading it in place is undefined behaviour
-- A print DPI relative to the page is the wrong quantity, and A4 is the example that hides it
-- The OS's PDF rasteriser is not fast, and a raster print path inherits that
-- A directory under `src/bin/` becomes a phantom binary in the Windows installer
-- A trailing slash in a Tauri resource map is a rename on macOS, not a directory
-- An interpolated status label is two columns narrower when it passes
-- A green gate list can sit beside a distributable that cannot be built
-- A bundled app that finds its library in the dev tree proves nothing about the bundle
-- A GUI process has no stderr, and every Windows check launched the app from a shell
-- A refusal the reader needs, reported on a channel that does not exist
-- Three ways to look for a macOS recent-documents list, and all three say nothing is there
-- Moving a binary out of the installer moves it out of the gate that links it
-- The same trailing slash on the other platform, left there by a prediction that it was survivable
-- A silent installer skips the file it cannot write, and exits 0
-- `cargo fmt` was blamed for mangling a string, and it was innocent
-- A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it
-- An unused-import warning on one platform is not an unused import
-- A gate that refuses on a precondition of running is red on every machine that is not running
-- One unguarded call to an external program made eleven fixtures that need nothing unbuildable
-- Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong
-- `$?` read in the same word as a command substitution is the substitution's status
-- A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work
-- `git` reports forward slashes on every platform, so a path key built with `Path` matches nothing on Windows
-- A guard that answers by refusing the whole run turns two blocked mutations into 178
-- An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
-- A `[SKIP]` whose stated reason is true can be the check you most need
-- A capability absent through a struct default has no defect to find
-- A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary
-- A platform gate widened in one of three copies, and the two left behind blamed the engine
-- A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
-
-### Fixtures
-- The test fixtures are generated, not committed
-- A fixture whose origin is zero makes an offset term unfalsifiable
-- A stand-in glyph with a degenerate box measures the wrong rule
-- A fixture's self-check forbade its own finding
-- A square fixture cannot tell a rotation from an identity
-- A bound in the code hides everything after it in the fixture
-- A test pinned a random value out of a generated fixture, and both places it runs hid that
-- A test whose oracle is the heuristic the code replaced fails once in 256 runs, on correct code
-- A `-manifest.json` sidecar enrols a fixture in a check it never claimed
-- A `/Text` annotation's rectangle is advisory, and PDFKit replaces it
-- The second reader substitutes the same icon and centres it, where the first anchored it
-- A rotated page makes a document mixed-size, and two checks assume it is not
-- A new corpus has to satisfy the sample points every existing check hardcodes
-- An empty transcript is what a *running* viewer check looks like
-- A probe fixture swept as a corpus, against the file that already said not to
-- Three crop-box mutations in one module and one in its twin, for code written twice
-- A rule about names, enforced by the one harness that discovers it last
-- The tool written to catch a missing check reported agreement about the wrong set
-- A control that cannot discriminate is not a failure, and calling it one made a documented command red
-- A guard written inline with an FFI call is reachable by nothing
-- Two predicates decide whether a save removes anything, and neither mentions removal
-- An empty warning line and no warning line are the same string
-- The containment rule that makes a highlight readable makes a redaction dishonest
-- An "already asked" set keyed by a slot is renumbered by the next deletion
-- Four answers, because a review panel may not say "nothing here" when it means "not yet"
-- A request still in flight is not re-issued, so a mid-flight invalidation looks broken
-- A fixture no script writes gated ten guards, and the tests that skipped passed
-- A test helper that reads through a parser that could not read
-- A control that turns the page in the plan turns nothing the writer reads
-- Two correct rules deciding every subject make each other unfalsifiable
-- The guard the type checker asked for made the loop bound untestable
-
-### Documents as controls
-- A mitigation present and disclaimed is quieter than one claimed and absent
-- A mitigation that moved half a path reads exactly like one that moved the path
-- A checklist step nothing can perform, and a comment promising a mechanism that does not exist
-- The plan said the words had to be extracted, and the model had never let them be lost
-- A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
-- The only document nobody re-reads is the one strangers read
-- The half of a check that could only ever agree with its own guess
-- A gate over claimed absences only catches the name the claim guessed
-- A regex over the source could not see eleven of the seventy-seven commands, four of them the ones the check was written for
-- A refusal a reader could answer, reported on a channel with no answer in it
-- An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing
-- Two `///` runs with no blank line are one comment, and it documents the wrong item
-- A comment defending a name can become an argument for the opposite name, with no word of it changing
-- A comment defending a design, with every number in it stale
-- A comment argued for an ordering the code did not have, and the file's own measurement had made it pointless
-- A *Not done* note can describe a route with no reader in it
-- Two open questions joined by a word, and the smaller one had no choice in it
-- A module header that says "and nothing more", under a `use` block that says otherwise
-- The obvious name for the new type was already taken, and the error count climbed instead of falling
-- A document's spelling of an em dash is not a string's, and the comment above the line legitimises it
-- A disclosed risk names the operation you had in mind, and the path it describes keeps acquiring callers
-- Nothing in this process catches the defect step 5 exists for, and the obvious repair condemned a healthy file
-- PDFKit's first call costs 39 seconds in a debug build and 51 milliseconds in release, and the file it gets looks guilty
-- Three structural rules, three over-refusals on correct files, and the third would have been unreachable anyway
-- A comment's stated reason was checkable and false, and the next feature copied it
-- 486 lines of the viewer never run under vitest, and the fix is a seam rather than a harness
-- A tripwire that promised to go red could not, because three carriers answer one needle
-- A fixed point is invisible when the fixture is written in dependency order
-- A refusal promised in the plan and never built emits nothing to grep for
-- A paragraph that names its own failure mode reads as coverage, and the count went stale three more times
-- A sweep that stays inside one drawing really is one undo, and four files said that meant every sweep was
-- The unchecked clause of a two-sided decision was the one carrying the cost, and checking it inverted the answer
-- The checker tolerated the thing the rule forbade, and the index grew until nothing loaded it
-- A claim about somebody else's program has no gate here, and this one was false for months
-- A handover telling a person what to expect is a second implementation, and mine was wrong
-- "The one copy" acquired a second copy the day after the sentence, and its comment cited an import as the definition
-- An allowlist for a tool that is not installed reads exactly like a control
-- The decision was right, its cost basis had doubled, and the share was the half that had not moved
-- A YAML comment binds to nothing, so an inserted step can steal the one below it
+**Code comments and the other documents say "`AGENTS.md` records ..." in about a hundred
+places, and those references are still good** --- they were written when the entries lived
+here, and they were left alone rather than rewritten, because a hundred-file mechanical diff
+over prose carries more risk than the one hop it saves. Read them as naming a trap entry; the
+paragraph is in `docs/TRAPS.md`, findable through the table of contents at the top of it.
 
 ## Repository facts
 

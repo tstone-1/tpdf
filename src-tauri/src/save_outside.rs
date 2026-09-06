@@ -71,6 +71,49 @@ fn awaited<T>(
     }
 }
 
+/// Runs one exchange on a thread of its own, and **releases the worker before
+/// the answer is sent**.
+///
+/// The ordering is the whole reason this is a function rather than four copies
+/// of a `thread::spawn`. Every caller here hands its worker a mapping of the
+/// file the coordinator is about to act on: `Reread::pages` maps the file an
+/// append has just written, and each `Rewriter` method maps the document being
+/// rewritten. The coordinator's answer to a bad read-back is
+/// `save::append_through`'s roll-back, which is `set_len` on that same file ---
+/// and on Windows a file with a section object open on it cannot be resized at
+/// all. `SetFileInformationByHandle` fails with `ERROR_USER_MAPPED_FILE`
+/// (1224), so the reader was told *"the saved file could not be read back ---
+/// and it could not be put back"* and kept the update the re-read had just
+/// refused, on the platform this cannot be tested from.
+///
+/// Sending last is what makes the release *observable* to the waiter: a `drop`
+/// written after the `send` runs at some unrelated moment on a thread nobody is
+/// watching, so "the mapping is gone by the time the answer arrives" was true
+/// only by luck. Here it is true by construction, and
+/// `a_worker_is_released_before_its_answer_is_sent` is what pins it.
+///
+/// Generic over what is being released rather than over `Worker`, so a test can
+/// hand it something whose `Drop` is visible --- there is no way to observe a
+/// real worker's death from inside a `cargo test`.
+fn asked_on_a_thread<R, T>(
+    resource: R,
+    ask: impl FnOnce(&mut R) -> T + Send + 'static,
+) -> std::sync::mpsc::Receiver<T>
+where
+    R: Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut resource = resource;
+        let answer = ask(&mut resource);
+        // Before the send, never after. See the note above.
+        drop(resource);
+        let _ = tx.send(answer);
+    });
+    rx
+}
+
 impl Reread for InWorker {
     fn pages(
         &self,
@@ -88,11 +131,7 @@ impl Reread for InWorker {
         // this thread no longer owns the worker.
         let pid = worker.pid();
         let key = password.map(str::to_string);
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask(&mut worker, key.as_deref()));
-        });
+        let rx = asked_on_a_thread(worker, move |worker| Self::ask(worker, key.as_deref()));
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
 }
@@ -155,10 +194,8 @@ impl Verifier for InWorker {
         let pid = worker.pid();
         let key = password.map(str::to_string);
         let asked = needles.to_vec();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask_scan(&mut worker, &asked, key.as_deref()));
+        let rx = asked_on_a_thread(worker, move |worker| {
+            Self::ask_scan(worker, &asked, key.as_deref())
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
@@ -237,10 +274,8 @@ impl Rewriter for InWorker {
         let pid = worker.pid();
         let key = password.map(str::to_string);
         let plan = plan.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask_rewrite(&mut worker, &plan, job, key.as_deref()));
+        let rx = asked_on_a_thread(worker, move |worker| {
+            Self::ask_rewrite(worker, &plan, job, key.as_deref())
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
@@ -258,12 +293,16 @@ impl Rewriter for InWorker {
         // `write_range` hand the worker one document and a file to write; this
         // hands it the files the reader chose as well, concatenated and
         // read-only. See `crate::worker::IN_FD`.
+        //
+        // The segment is the caller's --- `crate::save::concatenated` reads the
+        // files straight into it --- and is handed on rather than copied. It was
+        // copied into a fresh `Shm` here, which was a second full copy of every
+        // incoming document in this process, on top of the `Vec` the reads went
+        // into first.
         let mapped = Shm::map_open_file(source, len)?;
-        let mut carried = Shm::create(inputs.whole.len().max(1))?;
-        carried.as_mut_slice()[..inputs.whole.len()].copy_from_slice(inputs.whole);
         let worker = Worker::spawn_merging(
             std::sync::Arc::new(mapped),
-            &carried,
+            inputs.whole,
             out,
             &self.library_dir,
         )?;
@@ -272,23 +311,15 @@ impl Rewriter for InWorker {
         let key = password.map(str::to_string);
         let plan = plan.clone();
         let incoming = inputs.each.to_vec();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask_merge(
-                &mut worker,
-                &plan,
-                &incoming,
-                key.as_deref(),
-            ));
+        let rx = asked_on_a_thread(worker, move |worker| {
+            Self::ask_merge(worker, &plan, &incoming, key.as_deref())
         });
-        // **`carried` outlives the wait**, which the binding rather than a
-        // comment is what guarantees: dropping the mapping here would unmap the
-        // pages the child is reading, and the child would take a fault on a
-        // document that is perfectly good.
-        let answered = awaited(&rx, DEFAULT_DEADLINE, pid)?;
-        drop(carried);
-        answered
+        // **The incoming segment outlives the wait**, which the borrow rather
+        // than a comment is what guarantees now: `inputs` is the caller's and
+        // `crate::save::write_merged` holds it across this call. Unmapping those
+        // pages while the child is reading them would fault it on a document
+        // that is perfectly good.
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
 
     fn write_range(
@@ -307,11 +338,7 @@ impl Rewriter for InWorker {
 
         let pid = worker.pid();
         let job = job.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut worker = worker;
-            let _ = tx.send(Self::ask_print_range(&mut worker, &job));
-        });
+        let rx = asked_on_a_thread(worker, move |worker| Self::ask_print_range(worker, &job));
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
 }
@@ -461,6 +488,107 @@ mod tests {
     // purpose: a Mac compiler never parses the arms the other platform keeps.
     #[cfg(unix)]
     use super::awaited;
+    // Not gated: the ordering it exercises is the same on both platforms, and
+    // the platform it was written for is the one that cannot run it.
+    use super::asked_on_a_thread;
+
+    /// The worker is released before its answer is sent, never after.
+    ///
+    /// What the worker owns is an `Arc<Shm>` mapping the file the coordinator is
+    /// about to act on, and the coordinator's first act on a bad answer is
+    /// `set_len` on that file. On Windows a file with a section object open on it
+    /// cannot be resized: the roll-back fails with `ERROR_USER_MAPPED_FILE`, and
+    /// the reader is told the file could not be put back while keeping an update
+    /// that was just refused.
+    ///
+    /// A stand-in stands in for the worker because a `cargo test` cannot spawn a
+    /// real one --- and because what has to be observed is a *drop*, which a real
+    /// worker gives no way to see. The sleep inside it is deliberate: with the
+    /// send first, the waiter wins this race every time, so the pre-fix ordering
+    /// fails this test on every run rather than on one in ten.
+    #[test]
+    fn a_worker_is_released_before_its_answer_is_sent() {
+        use std::sync::{Arc, Mutex};
+
+        struct Mapping(Arc<Mutex<Vec<&'static str>>>);
+        impl Drop for Mapping {
+            fn drop(&mut self) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                note(&self.0, "released");
+            }
+        }
+        fn note(order: &Arc<Mutex<Vec<&'static str>>>, what: &'static str) {
+            order.lock().unwrap_or_else(|e| e.into_inner()).push(what);
+        }
+
+        let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let rx = asked_on_a_thread(Mapping(Arc::clone(&order)), |_| 7_usize);
+        assert_eq!(rx.recv().expect("the answer arrives"), 7);
+        note(&order, "answered");
+
+        // Both entries are waited for, so that a pre-fix run is judged on the
+        // order and not on whether the other thread had got round to it.
+        for _ in 0..200 {
+            if order.lock().unwrap_or_else(|e| e.into_inner()).len() == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let order = order.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            order.as_slice(),
+            ["released", "answered"],
+            "the mapping has to be gone by the time the coordinator can act on the answer"
+        );
+    }
+
+    /// Why the ordering above is load-bearing, in the platform's own terms.
+    ///
+    /// Windows refuses to resize a file while a section object is open on it, so
+    /// `save::append_through`'s roll-back --- a `set_len` back to the length the
+    /// file had before the update --- fails outright while the worker still
+    /// holds its mapping. Both directions are asserted: the refusal while it is
+    /// mapped is what makes the success after the drop mean something.
+    ///
+    /// Cannot run on macOS, where `ftruncate` succeeds either way. The
+    /// consequence it describes is Windows-only for exactly that reason.
+    #[test]
+    #[cfg(windows)]
+    fn a_mapped_file_cannot_be_cut_back_until_the_mapping_is_released() {
+        use crate::worker_shm::Shm;
+
+        let dir = std::env::temp_dir().join(format!("tpdf-mapped-cut-back-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let at = dir.join("doc.pdf");
+        std::fs::write(&at, vec![b'x'; 2_048]).expect("write the subject");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&at)
+            .expect("open it as the save does");
+
+        let mapped = Shm::map_open_file(&file, 2_048).expect("map it as a worker would");
+        let refused = file.set_len(1_024);
+        assert!(
+            refused.is_err(),
+            "a file with a section open on it must not resize, or this test is measuring nothing"
+        );
+        // ERROR_USER_MAPPED_FILE. Named as a number because that is what the
+        // reader sees in the refusal, and what a search for this failure finds.
+        assert_eq!(
+            refused.unwrap_err().raw_os_error(),
+            Some(1224),
+            "and the reason is the mapping, not permissions"
+        );
+
+        drop(mapped);
+        file.set_len(1_024)
+            .expect("with the mapping released the roll-back is an ordinary truncation");
+
+        drop(file);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A read-back that never answers must end its worker, not wait for ever.
     ///

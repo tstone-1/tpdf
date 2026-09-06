@@ -1,0 +1,120 @@
+{
+  "pages": [
+    {
+      "id": 1,
+      "source": {
+        "baseline": 0
+      },
+      "turns": 1,
+      "crop": [
+        10.0,
+        20.0,
+        300.0,
+        400.0
+      ]
+    },
+    {
+      "id": 2,
+      "source": {
+        "blank": {
+          "width": 595.0,
+          "height": 842.0
+        }
+      },
+      "turns": 0
+    }
+  ],
+  "can_undo": true,
+  "can_redo": false,
+  "marks": [
+    {
+      "id": 3,
+      "kind": "highlight",
+      "page": 1,
+      "quads": [
+        10.0,
+        20.0,
+        110.0,
+        20.0,
+        10.0,
+        60.0,
+        110.0,
+        60.0
+      ],
+      "strokes": [],
+      "stamp": null,
+      "color": [
+        1.0,
+        0.9,
+        0.2
+      ],
+      "width": 1.0,
+      "note": "a note on the mark",
+      "lines": [
+        "the line under it"
+      ]
+    },
+    {
+      "id": 4,
+      "kind": "stamp",
+      "page": 2,
+      "quads": [
+        0.0,
+        0.0,
+        100.0,
+        40.0
+      ],
+      "strokes": [
+        [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      ],
+      "stamp": "draft",
+      "color": [
+        0.8,
+        0.1,
+        0.1
+      ],
+      "width": 2.5,
+      "note": "",
+      "lines": []
+    }
+  ],
+  "redactions": [
+    {
+      "id": 5,
+      "page": 1,
+      "area": [
+        1.0,
+        2.0,
+        3.0,
+        4.0
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "object": [
+        9,
+        0
+      ],
+      "page": 1,
+      "body": "the rewritten body",
+      "made": "2026-01-02T03:04:05Z",
+      "shown": "2026-01-02T03:04:05Z"
+    }
+  ],
+  "discards": [
+    {
+      "object": [
+        10,
+        0
+      ],
+      "page": 2
+    }
+  ],
+  "dirty": true
+}

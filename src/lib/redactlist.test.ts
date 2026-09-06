@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RedactList, noticeFor, rowLineFor, takesFor, warningFor } from "./redactlist";
+import {
+  RedactList,
+  nextUnreadRegion,
+  noticeFor,
+  rowLineFor,
+  takesFor,
+  warningFor,
+} from "./redactlist";
 import {
   PageMap,
   pageId,
@@ -20,6 +27,44 @@ function region(over: Partial<RedactionView> & { id: number }): RedactionView {
     ...over,
   };
 }
+
+describe("nextUnreadRegion", () => {
+  it("picks a region nobody has answered", () => {
+    const regions = [region({ id: 10 }), region({ id: 11, page: pageId(2) })];
+    const words = new Map<number, string | null>();
+    expect(nextUnreadRegion(regions, words)?.id).toBe(10);
+  });
+
+  it("picks the second region on a page whose text has already been read", () => {
+    // The defect this rule was changed for. One extraction answers every region
+    // on a page, so the walk answered them all at once and recorded the *page*;
+    // a region drawn on that page afterwards was then never selected, its entry
+    // stayed absent, and its row said "reading" for the rest of the session.
+    const regions = [
+      region({ id: 10, page: pageId(7) }),
+      region({ id: 11, page: pageId(7) }),
+    ];
+    const words = new Map<number, string | null>([[10, "already read"]]);
+    expect(nextUnreadRegion(regions, words)?.id).toBe(11);
+  });
+
+  it("does not pick a region whose page could not be read", () => {
+    // `null` is an answer, and the one that stops the walk asking for ever about
+    // a page the worker cannot extract --- the job the page set used to do.
+    const regions = [region({ id: 10 }), region({ id: 11, page: pageId(2) })];
+    const words = new Map<number, string | null>([
+      [10, null],
+      [11, null],
+    ]);
+    expect(nextUnreadRegion(regions, words)).toBeUndefined();
+  });
+
+  it("answers nothing when every region has words", () => {
+    const regions = [region({ id: 10 })];
+    const words = new Map<number, string | null>([[10, "here"]]);
+    expect(nextUnreadRegion(regions, words)).toBeUndefined();
+  });
+});
 
 describe("redactionRows", () => {
   it("lists regions down the document, not in the order they were dragged", () => {

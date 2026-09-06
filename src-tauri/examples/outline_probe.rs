@@ -96,15 +96,50 @@ fn main() {
 fn run(args: &Args) -> Result<bool, String> {
     let bindings = bind(&args.library)?;
     let document = OpenDocument::open(bindings, &args.file, None)?;
+    // Before the walk, so the delta below is the walk's and not the open's.
+    let loads_before = document.pdfium().page_loads();
     let outline = outline::read(&document);
+    let loads = document.pdfium().page_loads() - loads_before;
 
     match args.mode {
         Mode::Read => {
             read(&outline);
             Ok(true)
         }
-        Mode::Check => check(args, &outline),
+        Mode::Check => check(args, &document, &outline, loads),
     }
+}
+
+/// The page tree's rotations against PDFium's, page by page.
+///
+/// **The check that keeps `turns_of` from being a second rotation table.** It
+/// reads `/Rotate` through `pagetree`, and PDFium reads it through
+/// `FPDFPage_GetRotation` on a loaded page; the two agree at zero however wrong
+/// either is, so nothing short of a page-by-page comparison over a corpus with
+/// turned pages in it can tell them apart. `docs/TRAPS.md` records what that
+/// costs --- *two rotation tables, disagreeing at every turn but zero*.
+///
+/// Returns the pages that disagreed, with both readings, so a failure names the
+/// page rather than the count.
+fn rotation_disagreements(document: &OpenDocument) -> Vec<String> {
+    let pages = document.page_count();
+    let mut wrong = Vec::new();
+    for page in 0..pages {
+        let tree = document.graph().rotation(page, pages as usize);
+        let Ok(loaded) = document.page(page) else {
+            continue;
+        };
+        let pdfium = loaded.quarter_turns();
+        // `None` is the page tree declining to answer --- it would not parse, or
+        // it counts a different number of pages --- which is a fallback rather
+        // than a disagreement: `turns_of` asks PDFium in exactly that case.
+        if let Some(tree) = tree {
+            if tree != pdfium {
+                wrong.push(format!("page {page}: tree {tree}, pdfium {pdfium}"));
+            }
+        }
+    }
+    wrong
 }
 
 fn bind(library: &Path) -> Result<progressive::Bindings, String> {
@@ -204,7 +239,12 @@ impl Report {
     }
 }
 
-fn check(args: &Args, outline: &Outline) -> Result<bool, String> {
+fn check(
+    args: &Args,
+    document: &OpenDocument,
+    outline: &Outline,
+    loads: usize,
+) -> Result<bool, String> {
     let text = std::fs::read_to_string(&args.manifest)
         .map_err(|e| format!("could not read {}: {e}", args.manifest.display()))?;
     let manifest: serde_json::Value =
@@ -244,6 +284,32 @@ fn check(args: &Args, outline: &Outline) -> Result<bool, String> {
         outline.total > 0,
         "the walk terminated and found entries",
         &format!("{} entries", outline.total),
+    );
+
+    // The whole reason the rotation moved out of a loaded page. An outline over
+    // four hundred pages named with coordinates loaded four hundred of them, at
+    // up to 44 ms each, at open. Zero rather than "fewer": the fallback path
+    // still loads a page, so any load at all means the page tree declined and
+    // the saving is gone on this document.
+    report.check(
+        loads == 0,
+        "reading the outline loads no page",
+        &format!("{loads} page load(s) during the walk"),
+    );
+
+    // And the reading it replaced them with is the same reading. Two rotation
+    // tables agree at zero and disagree at every turn, so this is the only check
+    // that can tell them apart -- and it is worth most on the corpora that have
+    // a turn in them.
+    let disagreements = rotation_disagreements(document);
+    report.check(
+        disagreements.is_empty(),
+        "the page tree and PDFium agree about every page's rotation",
+        &if disagreements.is_empty() {
+            format!("{} pages compared", document.page_count())
+        } else {
+            disagreements.join("; ")
+        },
     );
 
     if let Some(entries) = expected.get("entries").and_then(|v| v.as_array()) {

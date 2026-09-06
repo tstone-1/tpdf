@@ -50,18 +50,17 @@ Chromium throttles those too. Keep the window visible; see the trap.
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
+from harness_launch import SUMMARY, report, run_app
 from live_output import stream_results
 from stray import clear_strays
 from webview_guard import require_visible_session
 
-SUMMARY = re.compile(r"^(\d+)/(\d+) checks passed", re.M)
 
 
 COLD_CLICK = "double-click (Apple Event, cold)"
@@ -132,32 +131,6 @@ def write_session(path: Path, pdf: str) -> None:
     )
 
 
-def report(phase: str, code: int, out: str) -> bool:
-    """Prints a phase's transcript and says whether it is readable and green.
-
-    Both the summary line and the exit code are read, and a disagreement between
-    them is itself a failure. A run with no summary at all is a *broken run* --
-    a crash, a timeout and a suspended page all print nothing, which is exactly
-    what a silent pass looks like.
-    """
-    print(f"--- {phase} ---")
-    print(out, end="" if out.endswith("\n") else "\n")
-
-    summary = SUMMARY.search(out)
-    if not summary:
-        print(f"[FAIL] {phase}: no summary line, so the run did not finish")
-        return False
-    passed, total = int(summary.group(1)), int(summary.group(2))
-    green = passed == total
-    if green != (code == 0):
-        print(f"[FAIL] {phase}: summary says {passed}/{total} but exit was {code}")
-        return False
-    if not green:
-        print(f"[FAIL] {phase}: {total - passed} of {total} checks failed")
-        return False
-    return True
-
-
 def skip(phase: str, reason: str) -> bool:
     """Records a phase that cannot run here, in the same shape as one that did.
 
@@ -172,15 +145,14 @@ def skip(phase: str, reason: str) -> bool:
 
 
 def run_direct(binary: Path, mode: str, session: Path, args: list[str], timeout: float):
-    """Launches the executable itself, so stdout is ours."""
+    """Launches the executable itself, so stdout is ours.
+
+    The launch and the transcript reader are `harness_launch.py`'s; what is left
+    here is the environment one phase needs.
+    """
     env = dict(os.environ, TPDF_OPENCHECK=mode, TPDF_SESSION_FILE=str(session))
-    try:
-        done = subprocess.run(
-            [str(binary), *args], env=env, capture_output=True, text=True, timeout=timeout
-        )
-    except subprocess.TimeoutExpired:
-        return 1, "[FAIL] run timed out\n"
-    return done.returncode, done.stdout + done.stderr
+    done = run_app([str(binary), *args], env=env, timeout=timeout)
+    return done.code, done.out
 
 
 def run_via_open(bundle: Path, mode: str, session: Path, pdf: str, timeout: float, scratch: Path):
@@ -188,22 +160,25 @@ def run_via_open(bundle: Path, mode: str, session: Path, pdf: str, timeout: floa
     captured = scratch / "open-stdout.txt"
     captured.write_text("")
     env = dict(os.environ, TPDF_OPENCHECK=mode, TPDF_SESSION_FILE=str(session))
-    try:
-        done = subprocess.run(
-            ["open", "-a", str(bundle), "--stdout", str(captured), "--wait-apps", pdf],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return 1, "[FAIL] run timed out\n"
+    done = run_app(
+        ["open", "-a", str(bundle), "--stdout", str(captured), "--wait-apps", pdf],
+        env=env,
+        timeout=timeout,
+    )
+    # A run that never answered is reported as it stands. The captured file is
+    # not read for one: `open` may have left it empty or half written, and the
+    # exit code computed from it below would then say "the app concluded
+    # nothing" where the truth is "the app never finished". `timed_out` is
+    # carried on the result rather than read back out of the transcript, because
+    # a timeout and a refusal are both exit 1 with no summary line.
+    if done.timed_out:
+        return done.code, done.out
     # `open` reports whether it could *launch*, never what the app concluded, so
     # the app's own exit code is unavailable here. The transcript is the verdict,
     # and `report` fails a run that produced none.
     text = captured.read_text()
     code = 0 if SUMMARY.search(text) and "[FAIL]" not in text else 1
-    return code, text + done.stdout + done.stderr
+    return code, text + done.out
 
 
 """How many launches the race phase gets.
@@ -235,7 +210,7 @@ def race_phase(binary: Path, pdf: str, other: str, room: Path, timeout: float) -
     for launch in range(1, RACE_LAUNCHES + 1):
         session = room / f"race-{launch}.json"
         code, out = run_direct(binary, f"race:{pdf}|{other}", session, [], timeout)
-        ok &= report(f"two overlapping opens, launch {launch}/{RACE_LAUNCHES}", code, out)
+        ok &= report(out, code, f"two overlapping opens, launch {launch}/{RACE_LAUNCHES}")
     return ok
 
 
@@ -290,13 +265,13 @@ def main() -> int:
         # phase before -- a control contaminated that way is already recorded in
         # AGENTS.md, from the session check.
         code, out = run_direct(binary, f"opened:{pdf}", room / "argv.json", [pdf], args.timeout)
-        ok &= report("argv", code, out)
+        ok &= report(out, code, "argv")
 
         if USES_LAUNCH_SERVICES:
             code, out = run_via_open(
                 bundle, f"opened:{pdf}", room / "click.json", pdf, args.timeout, room
             )
-            ok &= report(COLD_CLICK, code, out)
+            ok &= report(out, code, COLD_CLICK)
         else:
             ok &= skip(
                 COLD_CLICK,
@@ -308,12 +283,12 @@ def main() -> int:
             remembered = room / "beats.json"
             write_session(remembered, other)
             code, out = run_direct(binary, f"opened:{pdf}", remembered, [pdf], args.timeout)
-            ok &= report("a handed-over document beats the remembered one", code, out)
+            ok &= report(out, code, "a handed-over document beats the remembered one")
 
             control = room / "control.json"
             write_session(control, other)
             code, out = run_direct(binary, f"opened:{other}", control, [], args.timeout)
-            ok &= report("control: with nothing handed over, the remembered one opens", code, out)
+            ok &= report(out, code, "control: with nothing handed over, the remembered one opens")
             ok &= race_phase(binary, pdf, other, room, args.timeout)
         else:
             print("--- precedence ---")
@@ -398,7 +373,7 @@ def running_phase(binary: Path, bundle: Path, pdf: str, room: Path, timeout: flo
         out = log.read_text(encoding="utf-8", errors="replace")
         out += f"[FAIL] run timed out after {timeout:.0f} s\n"
         code = 1
-    return report(RUNNING_HANDOVER, code, out)
+    return report(out, code, RUNNING_HANDOVER)
 
 
 if __name__ == "__main__":

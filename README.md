@@ -378,8 +378,8 @@ issue for one.
 ## A note on the documentation
 
 [`docs/TRAPS.md`](docs/TRAPS.md) is a list of every mistake this project has made that was
-expensive enough to be worth writing down — indexed by title in [`AGENTS.md`](AGENTS.md),
-with a gate keeping the two lists the same list. How many there are is
+expensive enough to be worth writing down — indexed by title in its own table of contents,
+with a gate keeping the list and the entries the same list. How many there are is
 `grep -c '^### ' docs/TRAPS.md` and is deliberately not written here: this paragraph said
 "over two hundred" while the file held 425, which is the same drift the gate exists to
 stop one level down. A good half

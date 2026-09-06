@@ -353,6 +353,7 @@ fn main() {
     );
     let matches = worker.call(&Request::Search {
         page: 0,
+        pages: Vec::new(),
         query: "the".into(),
         options: Default::default(),
         carry: None,

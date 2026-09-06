@@ -47,7 +47,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import re
 import shutil
@@ -61,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
 import mutation_resume  # noqa: E402
 import mutation_since  # noqa: E402
+from stray import clear_leftover_app  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 WINDOWS = sys.platform == "win32"
@@ -615,10 +615,14 @@ MUTATIONS = [
         "with no document only the commands needing none are offered",
     ),
     Mutation(
+        # Re-aimed when `carry_for` became `Prepared::tail_of`: the tail is now
+        # computed where the query is compiled, so that a walk over many pages
+        # builds it once. Same edit --- hand the next page nothing, so a phrase
+        # that runs over the break cannot be found.
         "a page break is not looked across at all",
         "src-tauri/src/search.rs",
-        "    let tail = carry_for(text, page, query, options);",
-        "    let tail = None;",
+        "        let tail = self.tail_of(codes, page);",
+        "        let tail = None;",
         "a phrase is found across a page break",
     ),
     Mutation(
@@ -1578,28 +1582,6 @@ def run_probe(runner: str) -> tuple[list[str], str, str]:
     return lines, done.stdout, done.stderr
 
 
-def _kill_leftovers() -> None:
-    """Kills any tpdf still running, on whichever platform this is.
-
-    **This was `pkill` unconditionally, and on Windows that is not a program.**
-    `check=False` swallows a non-zero exit and not a `FileNotFoundError`, so the
-    run died before its first mutation with a traceback and exit 0.
-    `viewer_sweep.py` carried the same line and the same defect; the trap entry
-    is under that file's name.
-
-    Failure is ignored on purpose: "there was nothing to kill" is the ordinary
-    case and both tools report it with a non-zero exit.
-    """
-    if sys.platform == "win32":
-        command = ["taskkill", "/F", "/IM", "tpdf.exe"]
-    else:
-        command = ["pkill", "-f", "tpdf.app/Contents/MacOS/tpdf"]
-    try:
-        subprocess.run(command, check=False, capture_output=True)
-    except OSError:
-        pass
-
-
 def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     """Runs the viewer check. Returns its result lines, its stdout, and its stderr.
 
@@ -1634,7 +1616,7 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     #  - `--timeout`, so that a hang is a bounded failure. A harness whose worst
     #    case is an unbounded wait cannot report anything at all, and this one is
     #    run unattended by design.
-    _kill_leftovers()
+    clear_leftover_app()
     done = subprocess.run(
         [
             sys.executable,
@@ -1911,7 +1893,6 @@ def main() -> int:
             continue
         path = ROOT / m.path
         original = path.read_bytes()
-        digest = hashlib.sha256(original).hexdigest()
         # Every anchor in the table above is written with "\n", and the checkout
         # was CRLF -- so a multi-line anchor matched ZERO times here and
         # the mutation is reported as unreadable, which reads as drift in the
@@ -1941,26 +1922,43 @@ def main() -> int:
         if crlf:
             mutated = mutated.replace("\n", "\r\n")
         payload = mutated.encode("utf-8")
-        # Recorded BEFORE the bytes land, and it is the only backup that
-        # outlives this process: `original` above is a local, so a kill here
-        # used to leave the mutation with nothing anywhere to restore it from.
-        resume.begin(m, path, original, payload)
-        path.write_bytes(payload)
+        # Applied and taken off again by `mutation_resume.py`. It records the
+        # mutation before the bytes land -- the other order leaves a window in
+        # which a kill puts a mutation in the tree that no record names -- and
+        # the backup it writes is the only one that outlives this process:
+        # `original` above is a local, so a kill here used to leave the mutation
+        # with nothing anywhere to restore it from.
+        #
+        # **And the restore is the shared one, which this harness did not have.**
+        # It puts the bytes back and leaves the file *newer* than the mutation,
+        # so nothing that decides staleness by timestamp goes on serving what
+        # was just taken off. `mutate_rust.py` and `mutate_frontend.py` were
+        # given that rule on the day it was paid for and this one was not; the
+        # entry is in `docs/TRAPS.md` under "A restored file with its original
+        # timestamp leaves the build serving the mutation". It also refuses a
+        # file that is neither the clean bytes nor this mutation, which the
+        # readback this replaces could only report after it had written over it.
+        resume.apply(m, path, original, payload)
         try:
             built, err = build(m.runner)
-            if not built:
-                # A mutation that will not compile is not a caught mutation: the
-                # checks never ran, so they said nothing about it either way.
-                say(m, "unreadable", f"[BROKEN] {m.name}: does not build\n{err[-400:]}")
-                continue
-            lines, out, err = execute(m.runner)
-            failures, broken = verdict(lines, out, err)
+            if built:
+                lines, out, err = execute(m.runner)
+                failures, broken = verdict(lines, out, err)
         finally:
-            path.write_bytes(original)
-            restored = hashlib.sha256(path.read_bytes()).hexdigest() == digest
-        if not restored:
-            print(f"[FAIL] {m.path} was not restored byte for byte")
+            put_back, notes = resume.restore()
+        # Read before anything else is said about this mutation. Nothing under
+        # the `finally` leaves the loop on its own any more: a `continue` there
+        # runs the restore and then jumps straight past whatever the restore had
+        # to report, so a build failure would have hidden a tree left mutated.
+        if not put_back:
+            for line in notes:
+                print(line, flush=True)
             return 1
+        if not built:
+            # A mutation that will not compile is not a caught mutation: the
+            # checks never ran, so they said nothing about it either way.
+            say(m, "unreadable", f"[BROKEN] {m.name}: does not build\n{err[-400:]}")
+            continue
 
         took = time.monotonic() - started
         if broken:

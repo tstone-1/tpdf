@@ -53,12 +53,14 @@ import { placeholder } from "./panelrow";
 import {
   Expansion,
   allRows,
-  currentId,
+  currentIdIn,
   flatten,
   isNavigable,
   openFlagOf,
+  reachOrder,
   reasonFor,
   type Outline,
+  type Reached,
   type Row,
 } from "./outline";
 import { CommentList, type CommentListOptions } from "./commentlist";
@@ -158,6 +160,14 @@ export class Sidebar {
    * thousand entries.
    */
   private ordered: Row[] = [];
+  /**
+   * The navigable rows in destination order, for {@link setPosition}.
+   *
+   * Built with {@link ordered} rather than derived on each call: the question
+   * is asked on every frame the reader moves, and a long manual's outline is
+   * thousands of rows. See `outline.ts`'s `reachOrder`.
+   */
+  private reach: Reached[] = [];
   private readonly elements = new Map<string, HTMLElement>();
   /** Last position asked about, so an unchanged frame costs one comparison. */
   private asked = { page: -1, top: -1 };
@@ -461,6 +471,7 @@ export class Sidebar {
     this.outline = outline;
     this.expansion = new Expansion();
     this.ordered = outline ? allRows(outline.items) : [];
+    this.reach = reachOrder(this.ordered);
     this.focused = null;
     this.current = null;
     this.asked = { page: -1, top: -1 };
@@ -486,7 +497,7 @@ export class Sidebar {
     if (page === this.asked.page && rounded === this.asked.top) return;
     this.asked = { page, top: rounded };
 
-    const next = currentId(this.ordered, page, top);
+    const next = currentIdIn(this.reach, page, top);
     if (next === this.current) return;
 
     if (this.current) this.mark(this.current, false);

@@ -1126,8 +1126,10 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example crop-probe --
 # the OS process table must be replaced by one serving the same document. Run it
 # on vector-heavy as well as a text fixture -- it is the only corpus whose render
 # is slow enough for the withdrawal and drain checks to apply, and on every other
-# one they report [SKIP] with the reason. vector-heavy is the run to read: 43
-# check names, 2 skipped on macOS (42 until 2026-08-16, when comments were added
+# one they report [SKIP] with the reason. vector-heavy is the run to read: 44
+# check names, 2 skipped on macOS (43 until 26.9.2, when the retirement phase
+# gained `growing the pool adopts the warmed spare and re-arms the slot`; 42
+# until 2026-08-16, when comments were added
 # to the comparison; measured 2026-07-31 at 42, and this said 41/1 then and
 # contradicted the "all 42 names" sentence below it -- the prose was right).
 cargo run --release --manifest-path src-tauri/Cargo.toml --example backend-probe -- \
@@ -1137,12 +1139,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example backend-probe
 The count that matters there is the count of **names**, not the split between passed and
 skipped: the split moves with the corpus and with a thumbnail's timing, and chasing a
 documented split back to its value is how a condition that keeps a check honest gets
-deleted. What holds on every corpus is that all **43** names appear (42 until 2026-08-16,
+deleted. What holds on every corpus is that all **44** names appear (43 until 26.9.2, when the
+retirement phase gained `growing the pool adopts the warmed spare and re-arms the slot`,
+which skips with a stated reason on a platform that pre-spawns nothing; 42 until 2026-08-16,
 when the comment comparison landed) --- diff the name sets
 across two fixtures rather than comparing their totals, which is what caught a check that
 had stopped existing on one-page documents.
 
-One of the 42 **skips itself** rather than passing, and it is the pattern to copy. *"A
+One of the checks **skips itself** rather than passing, and it is the pattern to copy. *"A
 search option crosses the worker boundary"* compares a whole-word search on both backends
 against an unrestricted one; where the option changes nothing --- a page with no extractable
 text --- it says so and skips, because two backends agreeing on the same result is exactly
@@ -1723,8 +1727,9 @@ no PDFium in it, so it needs nothing generated.
 **Four more on 2026-08-26, so the number is now 23** --- measured **23/23 with none not
 applicable on macOS**; the Windows figure was 19/19 before they existed and has not been
 re-run. They put a worker on the save's *verification* side, which nothing exercised until
-then: `save::InWorker` was reachable only from `lib.rs`, so every test and every other probe
-passed `save::Here` and the shipped verifier was proved by compiling.
+then: `save::InWorker` was reachable only from the command bodies (in `lib.rs` at the time,
+now `commands/mod.rs`), so every test and every other probe passed `save::Here` and the
+shipped verifier was proved by compiling.
 
 What they assert is a differential --- the worker and the coordinator asked the identical
 question about identical bytes --- plus the two things a differential cannot say on its own.
@@ -2549,7 +2554,7 @@ difficult". The instrument for that is the corpus sweep the macOS side already h
 ⚠ **A blank reading for *both* strings is a suspect probe before it is a suspect engine.** GDI
 writes RGB into a 32-bit DIB and leaves the alpha byte alone, so the buffer forces alpha to 255
 after drawing; if that were wrong every glyph would be transparent and the engine would honestly
-report no text. The comment in `draw` says so. Vary the fixture --- a larger `GLYPH_PX`, a
+report no text. The comment in `draw` says so. Vary the fixture --- a larger entry in `SIZES_PX`, a
 different face --- before concluding anything about `Windows.Media.Ocr`.
 
 **The containment rung, added 2026-08-29.** Everything above runs at whatever integrity the
@@ -3917,6 +3922,24 @@ pattern matched nothing at all**. It survived because `compile`'s own doc commen
 invariant it was breaking, and because `viewer_check.py` builds its pattern from a word taken
 from the page --- so on every corpus with ordinary prose the pattern was lowercase and the two
 sides agreed by accident. This corpus's garbage happens to be uppercase.
+
+**`--mode scan` is the timing arm, and it is a different question from the manifest checks
+above.** It walks a whole document for a query three ways, round by round and interleaved:
+`extract` is what a scan did before 26.9.2 (a fresh `text::extract` and a freshly compiled
+query per page), `cached` is what it does now (`OpenDocument::page_codes` and one
+`search::Prepared` for the walk), and `recompile` is the cache without the compile-once, so
+the two effects can be told apart. The three arms' hit counts are compared as well as their
+times --- a faster answer that is a different answer is not a measurement --- and every round
+is printed, because interleaving controls for drift between the arms and not for a machine
+that is slow for both.
+
+```sh
+cargo run --release --example search-probe -- \
+    --mode scan --file ../testdata/text-heavy.pdf --query the --rounds 5
+```
+
+The first round is reported apart from the rest, because on the `cached` arm it is the round
+that fills the cache and therefore the one round that still measures the old cost.
 
 **Compare the name *sets*, not the counts, and slice the name by column.** Every label is
 exactly six characters --- `[OK]  `, `[FAIL]`, `[SKIP]` --- so the name begins at column 7

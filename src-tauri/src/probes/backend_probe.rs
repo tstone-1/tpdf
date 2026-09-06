@@ -378,9 +378,10 @@ pub fn main() {
         ..plain
     };
     let worker_hits =
-        wait(|reply| workers.search(worker_doc.id, page, query.clone(), plain, None, reply));
-    let native_hits =
-        wait(|reply| in_process.search(native_doc.id, page, query.clone(), plain, None, reply));
+        wait(|reply| workers.search(worker_doc.id, vec![page], query.clone(), plain, None, reply));
+    let native_hits = wait(|reply| {
+        in_process.search(native_doc.id, vec![page], query.clone(), plain, None, reply)
+    });
     report.check(
         "a search returns the same ranges on both",
         same_matches(&worker_hits, &native_hits),
@@ -393,9 +394,10 @@ pub fn main() {
     // did not move means the option had nothing to bite on here, and that is a
     // skip rather than a pass: the check would agree with a worker ignoring it.
     let worker_words =
-        wait(|reply| workers.search(worker_doc.id, page, query.clone(), words, None, reply));
-    let native_words =
-        wait(|reply| in_process.search(native_doc.id, page, query.clone(), words, None, reply));
+        wait(|reply| workers.search(worker_doc.id, vec![page], query.clone(), words, None, reply));
+    let native_words = wait(|reply| {
+        in_process.search(native_doc.id, vec![page], query.clone(), words, None, reply)
+    });
     let hit_count =
         |result: &Result<PageMatches, String>| result.as_ref().ok().map(|m| m.matches.len());
     if hit_count(&native_words) == hit_count(&native_hits) {
@@ -1004,8 +1006,40 @@ fn retiring_idle_workers(report: &mut Report, document: &Path, render_ms: f64, o
     let lean = pool_pids_besides(&service, others);
 
     let wanted = service.pool_size();
+    // A warm spare, waited for rather than hoped for. `adopt_or_spawn` takes
+    // whatever is in the slot at the instant growth reaches it, so a check that
+    // grew without this would be asserting the outcome of a race between the
+    // burst below and the prewarm thread --- green on a quiet machine, red on a
+    // busy one, and about neither the pool nor the slot.
+    let armed = settle_for(Duration::from_secs(5), || service.spare_pid().is_some());
+    let adopted_before = service.adopted();
     let (grown, attempts) = grow_pool(&service, &doc, at, bound, others);
+    let adopted_after = service.adopted();
+    // And the slot is refilled, which is the half that decides whether the
+    // saving survives past the first growth step: `adopt_or_spawn` calls
+    // `prewarm` itself, and without that a pool would adopt once and spawn cold
+    // for ever after with nothing anywhere saying so.
+    let rearmed = settle_for(Duration::from_secs(5), || service.spare_pid().is_some());
     let grown_fds = settled_descriptors(&service);
+    if PRESPAWNS {
+        report.check(
+            RETIRE_ADOPTS,
+            armed && adopted_after > adopted_before && rearmed,
+            format!(
+                "{} adoption(s) across the burst, {} before it; \
+                 a spare was {}ready beforehand and {}ready again after",
+                adopted_after,
+                adopted_before,
+                if armed { "" } else { "not " },
+                if rearmed { "" } else { "not " },
+            ),
+        );
+    } else {
+        report.skip(
+            RETIRE_ADOPTS,
+            "not applicable --- this platform pre-spawns nothing to adopt",
+        );
+    }
     // The precondition, named rather than assumed. Everything below is about
     // giving workers back, and a pool that never grew has nothing to give.
     report.check(
@@ -1167,6 +1201,7 @@ fn dropping_a_service_kills_its_workers(report: &mut Report, document: &Path) {
 }
 
 const RETIRE_GROWS: &str = "a burst grows the pool it will later give back";
+const RETIRE_ADOPTS: &str = "growing the pool adopts the warmed spare and re-arms the slot";
 const RETIRE_CONTROL: &str = "a worker idle for less than its timeout survives a sweep";
 const RETIRE_DOWN: &str = "an idle pool is retired down to one worker";
 const RETIRE_FDS: &str = "retiring gives back every descriptor growing took";
@@ -1182,8 +1217,9 @@ const RETIRE_DROP: &str = "dropping a service kills the workers it owned";
 /// copies of a list like this drift and the drift is silent: a renamed check
 /// would simply appear twice, once per path, and the invariant that says the set
 /// of names is fixed would still hold.
-const RETIRE_CHECKS: [&str; 7] = [
+const RETIRE_CHECKS: [&str; 8] = [
     RETIRE_GROWS,
+    RETIRE_ADOPTS,
     RETIRE_CONTROL,
     RETIRE_DOWN,
     RETIRE_FDS,

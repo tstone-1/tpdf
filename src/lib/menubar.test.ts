@@ -48,7 +48,7 @@ function registry(overrides: Record<string, () => unknown> = {}): CommandRegistr
   const answers: Record<string, () => unknown> = {
     // The two fields `find.inSelection`'s guard reads. Not a Viewer; a stub with
     // its real surface would suggest the commands' actions are exercised here.
-    viewer: () => ({ searchScoped: false, selectedText: "" }),
+    viewer: () => ({ searchScoped: false, hasSelection: false }),
     pageCount: () => 3,
     canUndo: () => false,
     canRedo: () => false,
@@ -259,6 +259,29 @@ describe("menuEnablement", () => {
   it("answers for every command in the layout and nothing else", () => {
     const state = menuEnablement(registry());
     expect(Object.keys(state).sort()).toEqual([...laidOut()].sort());
+  });
+
+  it("opens Find in selection once there is a selection to scope to", () => {
+    // Both directions, because only the closed one was reachable from the
+    // default registry above and a guard seen from one side is a guard that
+    // could be `() => false`. The base state is a document with nothing
+    // selected, where the item is greyed with "nothing is selected" as the
+    // reason; a reader who drags across a paragraph must find it live.
+    expect(menuEnablement(registry())["find.inSelection"]).toBe(false);
+    const selected = registry({
+      viewer: () => ({ searchScoped: false, hasSelection: true }),
+    });
+    expect(menuEnablement(selected)["find.inSelection"]).toBe(true);
+  });
+
+  it("keeps Find in selection open while it is scoped and nothing is selected", () => {
+    // The way back out. Scoping the search and then clicking the page clears
+    // the selection, and without this arm of the guard the reader would be left
+    // in a scoped search with the only command that unscopes it greyed.
+    const scoped = registry({
+      viewer: () => ({ searchScoped: true, hasSelection: false }),
+    });
+    expect(menuEnablement(scoped)["find.inSelection"]).toBe(true);
   });
 });
 

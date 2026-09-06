@@ -26,6 +26,7 @@
  * plausibly placed and wrong.
  */
 
+import { quarterTurns } from "./pages";
 import { coveredText } from "./reading";
 import { rowLine } from "./rowline";
 import { turnQuad, type PageText, type Quad } from "./text";
@@ -313,7 +314,7 @@ export function turnedFor<T extends Placed>(
   width: number,
   height: number,
 ): T[] {
-  if (((turns % 4) + 4) % 4 === 0) return [...items];
+  if (quarterTurns(turns) === 0) return [...items];
   return items.map((item) => {
     const quad = viewRect(item.rect, turns, width, height);
     return {

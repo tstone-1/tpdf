@@ -82,18 +82,86 @@ SELF = Path(__file__).resolve().relative_to(ROOT).as_posix()
 EXEMPT_DATES = {when for _, when in EXEMPT}
 
 
+def head_author_date() -> "datetime.date | None":
+    """The author date of `HEAD`, on the author's own calendar.
+
+    `%aI` carries the author's UTC offset, so the first ten characters are the
+    date the author saw when they committed, whatever clock the machine running
+    this gate keeps. `None` when there is no repository to ask, which the caller
+    treats as "the machine's own date is all there is".
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(ROOT), "log", "-1", "--format=%aI", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    try:
+        return datetime.date.fromisoformat(out.stdout.strip()[:10])
+    except ValueError:
+        return None
+
+
+def latest_permitted(
+    today: "datetime.date | None" = None,
+    head: "datetime.date | None" = None,
+) -> datetime.date:
+    """The latest date a stamp may carry: the later of two calendars.
+
+    **Not the machine's own date alone.** A stamp written at 00:30 local on the
+    7th is the 6th in UTC, and a CI runner is on UTC --- so a gate keyed on
+    `date.today()` was green on the machine that wrote the stamp and red on the
+    runner minutes later, on a file nobody had touched. The commit that carries
+    the stamp knows better: its author date is on the author's own calendar,
+    offset and all, and a stamp no later than that commit's date is one the
+    author could have written.
+
+    **Not "today anywhere on Earth" either.** That was the first fix, on
+    2026-09-06: accept any date that is today somewhere, i.e. UTC+14. It closed
+    the runner case and opened a worse one --- from 10:00 UTC onwards it accepts
+    *tomorrow*, so the same afternoon twenty-four stamps for the 7th were written
+    on the 6th and passed. A gate that accepts tomorrow every evening is not a
+    gate on the future.
+
+    So the threshold is the later of the machine's date and `HEAD`'s author
+    date. On the runner the author date carries the after-midnight stamp; on
+    the machine that wrote it, `today` already does; and nowhere does either
+    calendar reach a day that has not started for whoever is writing.
+
+    Both arguments are parameters so this is answerable without waiting for a
+    date to come round; nothing in the repository passes them.
+    """
+    today = today or datetime.date.today()
+    head = head if head is not None else head_author_date()
+    return max(today, head) if head else today
+
+
 def tracked() -> "list[str]":
     out = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files"],
         capture_output=True,
         text=True,
+        # Decoded explicitly rather than by the locale codec: git prints a path
+        # outside ASCII verbatim when `core.quotePath` is off, and a cp1252
+        # console would then turn one such file into a UnicodeDecodeError with
+        # no listing at all.
+        encoding="utf-8",
+        errors="replace",
         check=True,
     )
     return out.stdout.split()
 
 
-def main() -> int:
-    today = datetime.date.today()
+def main(
+    today: "datetime.date | None" = None,
+    head: "datetime.date | None" = None,
+) -> int:
+    today = latest_permitted(today, head)
     try:
         files = tracked()
     except (subprocess.CalledProcessError, FileNotFoundError) as why:

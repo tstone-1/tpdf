@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ICON_SIZE, INK_WIDTH, MIN_BOX } from "./markband";
 import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
-import { Viewer, type Drawn } from "./viewer";
+import { Viewer, type ArmedTool, type Drawn } from "./viewer";
 import type { Anchor } from "./popup";
 import { INK_SAMPLE } from "./markband";
 
@@ -289,6 +289,55 @@ describe("arming the tool", () => {
     expect(viewer.drawPreview).toBe(null);
     viewer.destroy();
   });
+});
+
+/** Every tool a reader can arm, which is `ArmedTool` less "nothing armed". */
+type ToolKind = Exclude<ArmedTool["kind"], "none">;
+
+/**
+ * Arming one tool, and reading each tool back.
+ *
+ * **Keyed by `ArmedTool`'s own kinds, which is the point of the table.** A
+ * variant added to the union with no row here does not compile, so a fifth tool
+ * cannot arrive without a test that it puts the other four away --- the property
+ * that used to live in four arming methods each clearing three flags, and that
+ * nothing outside those methods could see.
+ */
+const ARM: Record<ToolKind, (viewer: Viewer) => void> = {
+  draw: (viewer) => viewer.armDraw("square"),
+  erase: (viewer) => viewer.armErase(),
+  crop: (viewer) => viewer.armCrop(),
+  redact: (viewer) => viewer.armRedact(),
+};
+
+/** What each tool answers when it is the armed one. Same keys, same reason. */
+const ARMED: Record<ToolKind, (viewer: Viewer) => boolean> = {
+  draw: (viewer) => viewer.drawArmed !== null,
+  erase: (viewer) => viewer.eraseArmed,
+  crop: (viewer) => viewer.cropArmed,
+  redact: (viewer) => viewer.redactArmed,
+};
+
+describe("one hand, one tool", () => {
+  const kinds = Object.keys(ARM) as ToolKind[];
+
+  for (const armed of kinds) {
+    it(`arming ${armed} leaves every other tool disarmed`, async () => {
+      const viewer = build();
+      await settle();
+
+      // Every other tool armed first, so the assertion is about this arming
+      // putting them away rather than about them never having been on --- which
+      // a viewer that armed nothing at all would also satisfy.
+      for (const other of kinds) if (other !== armed) ARM[other](viewer);
+      ARM[armed](viewer);
+
+      for (const kind of kinds) {
+        expect([kind, ARMED[kind](viewer)]).toEqual([kind, kind === armed]);
+      }
+      viewer.destroy();
+    });
+  }
 });
 
 describe("the rectangle that reaches the model", () => {

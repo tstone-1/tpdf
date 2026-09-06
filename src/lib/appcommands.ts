@@ -568,7 +568,7 @@ export function registerAppCommands(
       enabled: () => {
         const viewer = actions.viewer();
         return (
-          viewer !== null && (viewer.searchScoped || viewer.selectedText !== "")
+          viewer !== null && (viewer.searchScoped || viewer.hasSelection)
         );
       },
       run: () => actions.toggleSearchScope(),

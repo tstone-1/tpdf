@@ -1,0 +1,119 @@
+{
+  "version": "1.7",
+  "bytes": 123456,
+  "pages": 2,
+  "revisions": 3,
+  "fields": [
+    {
+      "name": "Title",
+      "value": "A document",
+      "standard": true
+    }
+  ],
+  "encryption": {
+    "method": "AESV3",
+    "revision": 6,
+    "opened_without_password": false,
+    "permissions": [
+      {
+        "what": "print",
+        "allowed": true
+      },
+      {
+        "what": "copy",
+        "allowed": false
+      }
+    ]
+  },
+  "signatures": [
+    {
+      "field": "Signature1",
+      "signed": true,
+      "handler": "Adobe.PPKLite",
+      "kind": "ETSI.CAdES.detached",
+      "name": "A. Signer",
+      "reason": "I approve",
+      "location": "Hamburg",
+      "when": "2026-01-02T03:04:05Z",
+      "covers_whole_file": false,
+      "covered_bytes": 100000,
+      "appended_bytes": 23456,
+      "appendix": {
+        "added": 4,
+        "replaced": 1,
+        "kinds": [
+          "/Annot"
+        ],
+        "catalog_gained": [
+          "/AcroForm"
+        ],
+        "pages_touched": 1,
+        "unread": false
+      },
+      "certification": 1,
+      "certificate": {
+        "subject": "CN=A. Signer,O=Example",
+        "subject_cn": "A. Signer",
+        "issuer": "CN=Example CA,O=Example",
+        "issuer_cn": "Example CA",
+        "serial": "0a0b0c",
+        "from": "2025-01-01T00:00:00Z",
+        "until": "2026-01-01T00:00:00Z",
+        "self_issued": false,
+        "chain": 2,
+        "matched_signer": true,
+        "key_usage": [
+          "digitalSignature"
+        ],
+        "extended_usage": [
+          "1.2.840.113583.1.1.5"
+        ],
+        "authority": false,
+        "extensions_unread": 1
+      },
+      "timestamp": {
+        "when": "2026-01-02T03:04:06Z",
+        "authority": {
+          "subject": "CN=A. Signer,O=Example",
+          "subject_cn": "A. Signer",
+          "issuer": "CN=Example CA,O=Example",
+          "issuer_cn": "Example CA",
+          "serial": "0a0b0c",
+          "from": "2025-01-01T00:00:00Z",
+          "until": "2026-01-01T00:00:00Z",
+          "self_issued": false,
+          "chain": 2,
+          "matched_signer": true,
+          "key_usage": [
+            "digitalSignature"
+          ],
+          "extended_usage": [
+            "1.2.840.113583.1.1.5"
+          ],
+          "authority": false,
+          "extensions_unread": 1
+        }
+      }
+    }
+  ],
+  "tagged": true,
+  "language": "en-GB",
+  "attachments": 2,
+  "xmp": {
+    "bytes": 2048,
+    "conformance": [
+      "PDF/A-2b"
+    ],
+    "unread": false
+  },
+  "limits": {
+    "locked": false,
+    "fields_dropped": 1,
+    "values_clipped": 2,
+    "timestamps_unread": 3,
+    "signatures_dropped": 4,
+    "unreadable": 5,
+    "certificates_unread": 6
+  },
+  "scan_ms": 11.75
+}

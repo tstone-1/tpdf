@@ -59,6 +59,7 @@
  * upright one rather than a parallel one that gets tested half as often.
  */
 
+import { quarterTurns } from "./pages";
 import {
   charQuad,
   coveredIndices,
@@ -140,7 +141,7 @@ export function axesFor(turns: number): {
   alongSign: 1 | -1;
   crossSign: 1 | -1;
 } {
-  const at = ((turns % 4) + 4) % 4;
+  const at = quarterTurns(turns);
   return {
     sideways: at % 2 === 1,
     alongSign: at === 2 || at === 3 ? -1 : 1,

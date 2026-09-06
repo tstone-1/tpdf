@@ -52,10 +52,8 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -196,6 +194,13 @@ FILTERS = [
     # it reads anchors and test names out of the sources and knows nothing about
     # this list -- which is why the note is here rather than trusted to a gate.
     "save_order::",
+    # Added 2026-09-06 with `fields.rs`, in the same edit that moved the two
+    # field-tree walks into it. It is subsumed by `tests::` above and is written
+    # anyway, because that entry matches only because this module happens to
+    # call its test module `tests` -- a filter that depends on nobody renaming a
+    # private module is not a filter. Tenth entry; the eight notes above are all
+    # the same incident.
+    "fields::",
 ]
 
 
@@ -775,7 +780,7 @@ MUTATIONS = [
         # it. Nothing else in the build compares these files -- `BUILD.md` lists
         # the four and lists them only.
         "version: report a hardcoded version rather than the crate's",
-        "src/lib.rs",
+        "src/commands/app.rs",
         '    env!("CARGO_PKG_VERSION")',
         '    "26.0.0"',
         "the_version_files_agree_with_the_crate",
@@ -1233,8 +1238,12 @@ MUTATIONS = [
     Mutation(
         # Treat a shared edge as an overlap, so a region drawn flush against a
         # line silently eats it.
-        "redact: treat two rectangles that only touch as overlapping",
-        "src/redact.rs",
+        # Re-aimed 2026-09-06 with the page-object vocabulary: `overlaps` and
+        # `normalised` moved to `objects.rs`, beside the code that produces the
+        # boxes they compare. The test stays in `redact.rs`, which still reaches
+        # both through the re-export, so only the file this names moved.
+        "objects: treat two rectangles that only touch as overlapping",
+        "src/objects.rs",
         "    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]",
         "    a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]",
         "a_region_flush_against_a_line_does_not_eat_it",
@@ -1713,8 +1722,20 @@ MUTATIONS = [
         # page, so the drawing stays where the reader can see it while the value
         # behind it has gone.
         "redact: take a matched field without the widgets under it",
+        # Re-aimed 2026-09-06: `collect_field_subtree` is `fields::descend`,
+        # which is the same loop `covered_fields` itself runs. The edit is the
+        # same one -- take the field and leave everything under it.
         "src/redact.rs",
-        "        collect_field_subtree(doc, id, &mut all);",
+        """        crate::fields::descend(doc, &[id], &bounds, |node| {
+            let Some(at) = node.id else {
+                return crate::fields::Flow::Leaf;
+            };
+            if all.contains(&at) {
+                return crate::fields::Flow::Leaf;
+            }
+            all.push(at);
+            crate::fields::Flow::Descend
+        });""",
         "        if !all.contains(&id) {\n            all.push(id);\n        }",
         "a_matched_field_takes_the_widgets_under_it",
     ),
@@ -1742,8 +1763,9 @@ MUTATIONS = [
         # Trust the corners' order. A region arriving with either pair the other
         # way round then overlaps nothing at all, and the redaction quietly
         # removes nothing.
-        "redact: assume a region's corners arrive in the order PDFium uses",
-        "src/redact.rs",
+        # Re-aimed 2026-09-06 with the move to `objects.rs`.
+        "objects: assume a region's corners arrive in the order PDFium uses",
+        "src/objects.rs",
         "        rect[0].min(rect[2]),\n        rect[1].min(rect[3]),",
         "        rect[0],\n        rect[1],",
         "a_region_with_its_corners_the_other_way_round_still_overlaps",
@@ -1753,8 +1775,9 @@ MUTATIONS = [
         # there is one function rather than two copies: the first version of
         # this mutation survived because a test reversing both axes let the
         # other copy rescue it.
-        "redact: normalise the region a reader drew and not the object it covers",
-        "src/redact.rs",
+        # Re-aimed 2026-09-06 with the move to `objects.rs`.
+        "objects: normalise the region a reader drew and not the object it covers",
+        "src/objects.rs",
         "    let a = normalised(a);\n    let b = normalised(b);",
         "    let b = normalised(b);",
         "an_object_with_its_corners_the_other_way_round_is_still_found",
@@ -2310,10 +2333,14 @@ MUTATIONS = [
         "matches_do_not_overlap",
     ),
     Mutation(
+        # Re-aimed when the guard moved into `Prepared::new`, which is where a
+        # query is now read once for a whole walk rather than once per page. The
+        # edit is the same one: stop calling a whitespace-only query barren, so
+        # the walk runs it and answers with every gap in the document.
         "match: run a query of only whitespace",
         "src/search.rs",
-        "    } else if needle.chars.iter().all(|ch| *ch == ' ') {\n        return Ok(Vec::new());\n    }",
-        "    }",
+        "            needle.chars.iter().all(|ch| *ch == ' ')",
+        "            false",
         "an_empty_query_matches_nothing",
     ),
     Mutation(
@@ -2375,15 +2402,15 @@ MUTATIONS = [
     Mutation(
         "context: take the words after the hit from before it",
         "src/search.rs",
-        "            before: slice_of(&text.codes, start.saturating_sub(CONTEXT_CHARS)..start),",
-        "            before: slice_of(&text.codes, start..(start + CONTEXT_CHARS).min(text.codes.len())),",
+        "            before: slice_of(codes, start.saturating_sub(CONTEXT_CHARS)..start),",
+        "            before: slice_of(codes, start..(start + CONTEXT_CHARS).min(codes.len())),",
         "a_hit_carries_the_words_on_either_side_of_it",
     ),
     Mutation(
         "context: run off the end of the page instead of clamping",
         "src/search.rs",
-        "                stop..(stop + CONTEXT_CHARS).min(text.codes.len()),",
-        "                stop..(stop + CONTEXT_CHARS),",
+        "            after: slice_of(codes, stop..(stop + CONTEXT_CHARS).min(codes.len())),",
+        "            after: slice_of(codes, stop..(stop + CONTEXT_CHARS)),",
         "context_stops_at_the_ends_of_the_page",
     ),
     Mutation(
@@ -2394,17 +2421,21 @@ MUTATIONS = [
         "context_is_bounded_and_the_hit_is_not",
     ),
     Mutation(
+        # The replacement is the *folded* needle rather than the query as typed,
+        # because the walk no longer has the raw query in scope --- it holds a
+        # `Prepared`. It is the same mutation: show what was searched for rather
+        # than what the page says.
         "context: show the query instead of what the page says",
         "src/search.rs",
-        "            hit: exact_of(&text.codes, start..stop),",
-        "            hit: query.to_string(),",
+        "            hit: exact_of(codes, start..stop),",
+        "            hit: needle.chars.iter().collect::<String>(),",
         "the_hit_is_the_page_text_and_not_the_query",
     ),
     Mutation(
         "context: collapse the whitespace inside the hit as well",
         "src/search.rs",
-        "            hit: exact_of(&text.codes, start..stop),",
-        "            hit: slice_of(&text.codes, start..stop),",
+        "            hit: exact_of(codes, start..stop),",
+        "            hit: slice_of(codes, start..stop),",
         "context_collapses_line_breaks_but_the_hit_keeps_them",
     ),
     Mutation(
@@ -2415,11 +2446,143 @@ MUTATIONS = [
         "context_collapses_line_breaks_but_the_hit_keeps_them",
     ),
     Mutation(
+        # Same edit, aimed at `Prepared::search_page`, where the answer is now
+        # built. The needle's length stands in for the query's, which is what
+        # this module has left of it by then.
         "page: report the query's length rather than the page's",
         "src/search.rs",
-        "                chars: text.len() as u32,\n                problem: None,",
-        "                chars: query.chars().count() as u32,\n                problem: None,",
+        "            chars: codes.len() as u32,\n            problem: None,",
+        "            chars: self.needle.chars.len() as u32,\n            problem: None,",
         "a_page_with_no_text_reports_it_rather_than_no_matches",
+    ),
+    Mutation(
+        # A run's answers are indexed positionally by the caller, which continues
+        # from the end of what came back. Out of order, it re-asks about pages it
+        # already has and skips the ones it does not.
+        "range: answer a run out of walk order",
+        "src/render.rs",
+        "        answers.push(answer);",
+        "        answers.insert(0, answer);",
+        "a_run_answers_the_pages_it_was_asked_about",
+    ),
+    Mutation(
+        # Carry the tail between any two pages of a run rather than between
+        # neighbours only. An unscoped scan wraps, so the page after the last is
+        # the first, and this reports a phrase spanning the end of the document.
+        "range: carry a tail across a gap in the pages",
+        "src/render.rs",
+        "        let adjacent = step > 0 && pages[step - 1] + 1 == page;",
+        "        let adjacent = step > 0;",
+        "a_run_does_not_carry_across_pages_that_are_not_neighbours",
+    ),
+    Mutation(
+        # Answer every page asked about, whatever the reply weighs. A reply is
+        # read under `MAX_REPLY_BYTES` and one that exceeds it leaves the stream
+        # mid-line, which kills the worker -- so a document with a hit on every
+        # line turns a search into a lost pool.
+        "range: answer every page whatever the reply weighs",
+        "src/render.rs",
+        "        if spent >= budget {\n            break;\n        }",
+        "",
+        "a_run_stops_at_the_budget_rather_than_answering_every_page",
+    ),
+    Mutation(
+        # Lose a run because a later page will not extract. One damaged page in
+        # sixteen would take the hits on the fifteen before it with it.
+        "range: lose the run when a later page will not extract",
+        "src/render.rs",
+        "            Err(_) => break,",
+        "            Err(e) => return Err(e),",
+        "a_damaged_page_ends_a_run_rather_than_losing_it",
+    ),
+    Mutation(
+        # Answer a run that produced nothing with a page that has no hits, which
+        # is the reassuring branch: a document that could not be read at all
+        # would report itself as containing no matches.
+        "range: answer an empty run with a page that has no hits",
+        "src/render.rs",
+        '        return Err("the search answered no pages at all".into());',
+        "        return Ok(PageMatches { page: 0, matches: Vec::new(), chars: 0, problem: None, tail: None, more: Vec::new() });",
+        "packing_no_pages_at_all_is_refused",
+    ),
+    Mutation(
+        # Evict rather than decline. A scan touches every page once in the same
+        # order, so eviction empties the cache of exactly the pages the next scan
+        # asks for first -- a hit rate of zero rather than a partial one.
+        "cache: evict what fits to make room for what does not",
+        "src/textcache.rs",
+        "        if self.chars + held.len() <= budget {\n            self.chars += held.len();\n            self.entries.insert(key, Arc::clone(&held));\n        }",
+        "        while self.chars + held.len() > budget {\n            let Some(victim) = self.entries.keys().next().copied() else { break };\n            if let Some(gone) = self.entries.remove(&victim) { self.chars -= gone.len(); }\n        }\n        self.chars += held.len();\n        self.entries.insert(key, Arc::clone(&held));",
+        "what_does_not_fit_is_declined_rather_than_evicting_what_does",
+    ),
+    Mutation(
+        # Key on the page alone. The two extractions carry the same codes today,
+        # so a caller that starts asking for cropped text would be served the
+        # uncropped page's answer with nothing anywhere disagreeing.
+        "cache: key on the page and ignore the crop",
+        "src/textcache.rs",
+        "    (page, crop.map(|c| c.map(f32::to_bits)))",
+        "    let _ = crop;\n    (page, None)",
+        "a_crop_is_part_of_the_key",
+    ),
+    Mutation(
+        # Count the *asks* rather than the parses, by moving the counter outside
+        # the cell that memoises it. Five parses and one give identical answers
+        # and differ by 5.8 ms each on the 775-page document, so the count is the
+        # only thing that can see the difference -- and it only can while it is
+        # inside the closure that does the work.
+        #
+        # An earlier version of this mutation replaced the cell with a fresh
+        # `OnceCell` per call, which is what "parse again for every question"
+        # would literally be. It does not compile: the reference would outlive
+        # the temporary. Recorded because the shape recurs -- a memo returning a
+        # borrow cannot be un-memoised by an expression.
+        "graph: count the questions rather than the parses",
+        "src/docgraph.rs",
+        "        self.parsed\n            .get_or_init(|| {",
+        "        self.parses.set(self.parses.get() + 1);\n        self.parsed\n            .get_or_init(|| {",
+        "one_parse_answers_every_question",
+    ),
+    Mutation(
+        # Start the fingerprint at open, as it was. Hashing reads the file end to
+        # end -- 452 ms cold on the 337 MB scan fixture -- and this puts that read
+        # back on the wire while the first page is being drawn.
+        "hash: start the fingerprint at open rather than at the first edit",
+        "src/edits.rs",
+        "                to_hash,\n            },\n        );\n    }",
+        "                to_hash,\n            },\n        );\n        self.wake(doc);\n    }",
+        "opening_a_document_does_not_start_the_hash",
+    ),
+    Mutation(
+        # Leave the edit path to somebody else. `edits.rs` has no chokepoint, so
+        # a trigger missing from one mutator is a document whose hash does not
+        # start until the save that waits for it.
+        "hash: do not start the fingerprint on an edit",
+        "src/edits.rs",
+        '        self.wake(doc);\n        let mut docs = self.docs.lock().expect("edits lock");\n        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;\n        model.apply_in(cmd, sweep).map_err(describe)?;',
+        '        let mut docs = self.docs.lock().expect("edits lock");\n        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;\n        model.apply_in(cmd, sweep).map_err(describe)?;',
+        "every_edit_starts_the_hash",
+    ),
+    Mutation(
+        # One of the twelve that lock for themselves, so it has a wake of its
+        # own and no chokepoint to inherit one from. Aimed here rather than only
+        # at `command_in` because the two halves fail differently: this is the
+        # half a test written against a delegating method cannot see.
+        "hash: do not start the fingerprint on an annotation",
+        "src/edits.rs",
+        "    pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {\n        // The reader is here: start the fingerprint if nothing has. See `wake`.\n        self.wake(doc);",
+        "    pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {",
+        "every_edit_starts_the_hash",
+    ),
+    Mutation(
+        # The other direction: wake on a read of the state as well. The frontend
+        # asks for it the instant a document opens, so this is the deferral
+        # undone while every test about the fingerprint still passes.
+        "hash: start the fingerprint when the state is read",
+        "src/edits.rs",
+        "    pub fn state(&self, doc: u32) -> Result<EditState, String> {",
+        "    pub fn state(&self, doc: u32) -> Result<EditState, String> {\n        self.wake(doc);",
+        "reading_the_state_does_not_start_the_hash",
     ),
     Mutation(
         # The invariant the wire carries: runs present means runs complete. A
@@ -4025,8 +4188,8 @@ MUTATIONS = [
         # anchor. A mutation has to be a program.
         "merge: start every incoming document at the beginning of the buffer",
         "src/save.rs",
-        "            at: inputs.len(),",
-        "            at: 0,",
+        "        incoming.push(Incoming {\n            at,",
+        "        incoming.push(Incoming {\n            at: 0,",
         "the_coordinator_does_not_parse_the_documents_it_merges",
     ),
     Mutation(
@@ -4204,6 +4367,28 @@ MUTATIONS = [
         '    const KNOWN: &[&[u8]] = &[b"ASCIIHexDecode", b"RunLengthDecode", b"Crypt"];',
         "    const KNOWN: &[&[u8]] = &[];",
         "a_filter_we_cannot_decode_is_blind_rather_than_deferred",
+    ),
+    Mutation(
+        # Take the wrap away. Rust's `%` keeps the dividend's sign, so a page
+        # written `/Rotate -90` comes back as a quarter-turn count of 255 -- and
+        # the cast is what makes it silent, since `as u8` does not panic on a
+        # negative in either profile.
+        "pagetree: drop the wrap that makes a negative rotation a turn count",
+        "src/pagetree.rs",
+        "    (((degrees / 90) % 4 + 4) % 4) as u8",
+        "    ((degrees / 90) % 4) as u8",
+        "a_rotation_in_degrees_becomes_quarter_turns_clockwise",
+    ),
+    Mutation(
+        # Round to the nearest quarter turn rather than truncating towards zero.
+        # Every document that writes a multiple of 90 -- which is every document
+        # that follows the specification -- is unaffected, and a page written
+        # `/Rotate 45` is shown sideways.
+        "pagetree: round a rotation to the nearest quarter turn",
+        "src/pagetree.rs",
+        "    (((degrees / 90) % 4 + 4) % 4) as u8",
+        "    ((((degrees + 45) / 90) % 4 + 4) % 4) as u8",
+        "a_rotation_that_is_not_a_multiple_of_ninety_truncates_towards_zero",
     ),
 ]
 
@@ -4709,7 +4894,7 @@ MUTATIONS += [
         # a document that plainly is, and every permission goes with it.
         "docinfo: ask about the encryption after decrypting rather than before",
         "src/docinfo.rs",
-        "    let encryption = read_encryption(&document).or_else(|| encryption_from_state(&document));",
+        "    let encryption = read_encryption(document).or_else(|| encryption_from_state(document));",
         "    let encryption: Option<Encryption> = None;",
         "a_document_that_needs_a_password_says_so_rather_than_reporting_nothing",
     ),
@@ -4720,8 +4905,8 @@ MUTATIONS += [
         # as carrying no encryption at all.
         "docinfo: read the encryption only from the trailer",
         "src/docinfo.rs",
-        "    let encryption = read_encryption(&document).or_else(|| encryption_from_state(&document));",
-        "    let encryption = read_encryption(&document);",
+        "    let encryption = read_encryption(document).or_else(|| encryption_from_state(document));",
+        "    let encryption = read_encryption(document);",
         "an_encrypted_document_reports_its_encryption_either_way",
     ),
     Mutation(
@@ -5054,10 +5239,14 @@ MUTATIONS += [
         # any one-signature fixture, which was every signed fixture until
         # `incr-two-signers.pdf`.
         "docinfo: list the signature fields in the reverse of document order",
-        "src/docinfo.rs",
-        """    // Reversed so the queue pops in document order, which is the order a reader
-    // sees the fields in every other application.
-    queue.reverse();""",
+        # Re-aimed 2026-09-06: the traversal moved to `fields.rs`, where the
+        # reversal is what `Order::Document` means. The test that catches it is
+        # still `docinfo`'s, because `redact` walks the same tree in the other
+        # order on purpose and cannot see this.
+        "src/fields.rs",
+        """    if bounds.order == Order::Document {
+        queue.reverse();
+    }""",
         "",
         "two_signers_are_told_apart_and_neither_is_reported_as_the_authority",
     ),
@@ -5078,12 +5267,13 @@ MUTATIONS += [
         # which is indistinguishable from one that has none -- and PDFium does
         # exactly this, so the differential cannot catch it either.
         "docinfo: do not walk into a field node's kids",
-        "src/docinfo.rs",
-        """            if depth < 8 {
-                for kid in kids.iter().rev() {
-                    queue.push((kid, depth + 1, name.clone()));
-                }
-            } else {""",
+        # Re-aimed 2026-09-06 with the traversal. Emptying the push loop is
+        # what "walk past a node's kids" is now spelled as, and it is the same
+        # edit: a signature under a `/Kids` node is never reached.
+        "src/fields.rs",
+        """        for kid in pushed {
+            queue.push((Entry::Inline(kid), depth + 1, name.clone()));
+        }""",
         """            if false {
                 for kid in kids.iter().rev() {
                     queue.push((kid, depth + 1, name.clone()));
@@ -5096,17 +5286,20 @@ MUTATIONS += [
         # fixture but one has unique leaf names, so this is right about all of
         # them and wrong about what it means: `/T` is unique among siblings only.
         "docinfo: name a field by its own /T alone",
-        "src/docinfo.rs",
-        "        let name = qualified_name(&prefix, &text_of(document, field, b\"T\"));",
-        "        let name = text_of(document, field, b\"T\");",
+        # Re-aimed 2026-09-06 with the traversal.
+        "src/fields.rs",
+        "            (true, Some(field)) => qualified_name(&prefix, &partial_name(doc, field)),",
+        "            (true, Some(field)) => partial_name(doc, field),",
         "two_fields_with_the_same_leaf_name_are_told_apart_by_the_groups_above_them",
     ),
     Mutation(
         # Give an unnamed node a level of the name anyway, which puts an empty
         # component in the middle -- `top..Signature1`, a string no other reader
         # shows -- and gives a wholly unnamed chain the name ".".
-        "docinfo: make an unnamed field node a level of the name",
-        "src/docinfo.rs",
+        # Re-aimed 2026-09-06: `qualified_name` moved to `fields.rs` with the
+        # traversal that calls it.
+        "fields: make an unnamed field node a level of the name",
+        "src/fields.rs",
         "        (_, true) => prefix.to_string(),",
         "        (_, true) => format!(\"{prefix}.\"),",
         "a_node_with_no_name_of_its_own_is_not_a_level_of_the_name",
@@ -5115,9 +5308,10 @@ MUTATIONS += [
         # Hand each kid an empty prefix instead of its parent's name, so the
         # ancestry is walked and then thrown away one level at a time.
         "docinfo: forget the ancestry when descending into kids",
-        "src/docinfo.rs",
-        "                    queue.push((kid, depth + 1, name.clone()));",
-        "                    queue.push((kid, depth + 1, String::new()));",
+        # Re-aimed 2026-09-06 with the traversal.
+        "src/fields.rs",
+        "            queue.push((Entry::Inline(kid), depth + 1, name.clone()));",
+        "            queue.push((Entry::Inline(kid), depth + 1, String::new()));",
         "a_signature_field_under_kids_is_found_rather_than_walked_past",
     ),
     Mutation(
@@ -5290,7 +5484,7 @@ MUTATIONS += [
         # packet -- which is true of most of them.
         "docinfo: report every document as carrying no metadata packet",
         "src/docinfo.rs",
-        "        xmp: catalog.and_then(|c| read_xmp(&document, c)),",
+        "        xmp: catalog.and_then(|c| read_xmp(document, c)),",
         "        xmp: catalog.and_then(|_| None),",
         "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
     ),
@@ -5454,20 +5648,24 @@ MUTATIONS += [
         # is followed to the end. The queue is the only thing between a hostile
         # field tree and however long it cares to be.
         "docinfo: follow a field tree to whatever depth it claims",
-        "src/docinfo.rs",
-        "            if depth < 8 {",
-        "            if depth < usize::MAX as u32 {",
+        # Re-aimed 2026-09-06 with the traversal. `false` rather than a larger
+        # number, because the bound is now a value the caller passes and the
+        # mutation has to remove the test of it rather than the number in it.
+        "src/fields.rs",
+        "        if bounds.depth.is_some_and(|max| depth >= max) {",
+        "        if false {",
         "a_field_tree_is_walked_to_a_bounded_depth_and_the_refusal_is_counted",
     ),
     Mutation(
         # Refuse a too-deep tree in silence. A signature dropped without a word
         # reads as a document that has none, which is the reassuring direction.
         "docinfo: drop a too-deep field node without counting it",
-        "src/docinfo.rs",
-        """            } else {
-                limits.unreadable += 1;
-            }""",
-        """            }""",
+        # Re-aimed 2026-09-06 with the traversal. The bound still fires; only
+        # the count of what it cut goes, which is the half that reads as a form
+        # with nothing more in it.
+        "src/fields.rs",
+        "            cut.too_deep += 1;\n            continue;",
+        "            continue;",
         "a_field_tree_is_walked_to_a_bounded_depth_and_the_refusal_is_counted",
     ),
     Mutation(
@@ -5517,7 +5715,7 @@ MUTATIONS += [
         """        out.covered_bytes = numbers
             .chunks_exact(2)
             .map(|pair| u64::try_from(pair[1]).unwrap_or_default())
-            .sum();""",
+            .fold(0_u64, u64::saturating_add);""",
         """        out.covered_bytes = numbers
             .chunks_exact(2)
             .map(|pair| u64::try_from(pair[1]).unwrap_or_default())
@@ -6073,127 +6271,126 @@ def main() -> int:
         return tally(ok)
 
     problems = 0
-    with tempfile.TemporaryDirectory(prefix="tpdf-mutate-rs-") as scratch:
-        for mutation in chosen:
-            stored = resume.done(mutation)
-            if stored is not None:
-                # Marked, because a reused verdict and one taken just now are
-                # the same claim about the tree and not the same run --- and a
-                # transcript that cannot tell them apart is where somebody
-                # reads "all caught" for a table that was never executed here.
-                print(f"{stored.line}   [reused]", flush=True)
-                problems += tally(stored.ok)
-                continue
-            target = CRATE / mutation.path
-            # Copied aside and written *back*, never moved: docs/TRAPS.md
-            # records a restore-by-move that left the mutated build in place.
-            #
-            # And written back rather than copied back, which is the same trap
-            # arriving through a timestamp. `shutil.copy2` preserves the
-            # backup's mtime, so the restored file ends up *older* than the
-            # artifact cargo built from the mutated one -- and the next
-            # `cargo test` finds nothing to rebuild and serves the mutation.
-            # The file on disk is correct; the binary under test is not. The
-            # backup stays a real file so that a harness that dies mid-run
-            # leaves something to recover from.
-            backup = Path(scratch) / f"{len(list(Path(scratch).iterdir()))}.bak"
-            shutil.copy2(target, backup)
-            try:
-                # Bytes, decoded explicitly. `read_text` uses the locale codec,
-                # and on Windows that is cp1252, which does not merely mangle
-                # this file -- it *cannot read it*: search.rs holds `İ` and `ﬁ`
-                # for the case-folding tests, whose UTF-8 encodings contain the
-                # byte 0x81, and cp1252 leaves 0x81 undefined. So this raised
-                # UnicodeDecodeError on the first mutation and the harness never
-                # ran here at all.
-                #
-                # The newlines are normalised for matching only, because the
-                # anchors are written with "\n" and eight of them span lines.
-                # The file's own convention goes back on the way out, and the
-                # restore below is bytes, as docs/TRAPS.md requires.
-                #
-                # **This said "a Windows checkout is CRLF", and since 2026-08-26
-                # it is not**: `.gitattributes` pins `* text=auto eol=lf`, so
-                # every text file checks out LF on every platform. Kept anyway,
-                # and not as ceremony -- a checkout is not the only way a file
-                # gets written, and a tool that rewrites one in text mode on
-                # Windows produces CRLF whatever git checked out. The branch is
-                # two lines and its absence cost this harness every multi-line
-                # anchor once already.
-                raw = target.read_bytes().decode("utf-8")
-                crlf = "\r\n" in raw
-                source = raw.replace("\r\n", "\n") if crlf else raw
-                if source.count(mutation.before) != 1:
-                    problems += say(
-                        mutation,
-                        False,
-                        f"[FAIL] {mutation.name}: its anchor appears "
-                        f"{source.count(mutation.before)} times, so the mutation is not the "
-                        "one described",
-                    )
-                    continue
-                mutated = source.replace(mutation.before, mutation.after)
-                if crlf:
-                    mutated = mutated.replace("\n", "\r\n")
-                payload = mutated.encode("utf-8")
-                # Recorded BEFORE the bytes land. The other order leaves a
-                # window in which a kill puts a mutation in the tree that no
-                # record names, which is the one state recovery cannot answer.
-                resume.begin(mutation, target, backup.read_bytes(), payload)
-                target.write_bytes(payload)
-                # The test this mutation names, first and alone. When it goes
-                # red -- which is the whole table's expected outcome -- the
-                # verdict is settled and the run stops there.
-                names, counted, out = run_tests(mutation.expect)
-                narrow = True
-                if counted is not None and not names:
-                    # It did not. Now the full set matters: "nothing noticed"
-                    # and "something else noticed" are different findings, and
-                    # the second one prints which tests went red instead.
-                    names, counted, out = run_tests()
-                    narrow = False
-            finally:
-                target.write_bytes(backup.read_bytes())
+    for mutation in chosen:
+        stored = resume.done(mutation)
+        if stored is not None:
+            # Marked, because a reused verdict and one taken just now are
+            # the same claim about the tree and not the same run --- and a
+            # transcript that cannot tell them apart is where somebody
+            # reads "all caught" for a table that was never executed here.
+            print(f"{stored.line}   [reused]", flush=True)
+            problems += tally(stored.ok)
+            continue
+        target = CRATE / mutation.path
+        # Bytes, decoded explicitly. `read_text` uses the locale codec,
+        # and on Windows that is cp1252, which does not merely mangle
+        # this file -- it *cannot read it*: search.rs holds `İ` and `ﬁ`
+        # for the case-folding tests, whose UTF-8 encodings contain the
+        # byte 0x81, and cp1252 leaves 0x81 undefined. So this raised
+        # UnicodeDecodeError on the first mutation and the harness never
+        # ran here at all.
+        #
+        # The newlines are normalised for matching only, because the
+        # anchors are written with "\n" and eight of them span lines.
+        # The file's own convention goes back on the way out, and the
+        # restore below is bytes, as docs/TRAPS.md requires.
+        #
+        # **This said "a Windows checkout is CRLF", and since 2026-08-26
+        # it is not**: `.gitattributes` pins `* text=auto eol=lf`, so
+        # every text file checks out LF on every platform. Kept anyway,
+        # and not as ceremony -- a checkout is not the only way a file
+        # gets written, and a tool that rewrites one in text mode on
+        # Windows produces CRLF whatever git checked out. The branch is
+        # two lines and its absence cost this harness every multi-line
+        # anchor once already.
+        clean = target.read_bytes()
+        raw = clean.decode("utf-8")
+        crlf = "\r\n" in raw
+        source = raw.replace("\r\n", "\n") if crlf else raw
+        if source.count(mutation.before) != 1:
+            problems += say(
+                mutation,
+                False,
+                f"[FAIL] {mutation.name}: its anchor appears "
+                f"{source.count(mutation.before)} times, so the mutation is not the "
+                "one described",
+            )
+            continue
+        mutated = source.replace(mutation.before, mutation.after)
+        if crlf:
+            mutated = mutated.replace("\n", "\r\n")
+        payload = mutated.encode("utf-8")
+        # Applied and taken off again by `mutation_resume.py`, which holds
+        # the backup that outlives this process and enforces the three rules
+        # this harness paid for one at a time: the record is written before
+        # the bytes, the restore writes bytes rather than moving or copying
+        # a file over them, and the restored file is left newer than the
+        # mutation so cargo does not go on serving it. `docs/TRAPS.md` has
+        # each of them. The anchor check above happens before any of it, so
+        # the only path under the `finally` is one where a mutation is
+        # really on the tree.
+        resume.apply(mutation, target, clean, payload)
+        try:
+            # The test this mutation names, first and alone. When it goes
+            # red -- which is the whole table's expected outcome -- the
+            # verdict is settled and the run stops there.
+            names, counted, out = run_tests(mutation.expect)
+            narrow = True
+            if counted is not None and not names:
+                # It did not. Now the full set matters: "nothing noticed"
+                # and "something else noticed" are different findings, and
+                # the second one prints which tests went red instead.
+                names, counted, out = run_tests()
+                narrow = False
+        finally:
+            put_back, notes = resume.restore()
+        # A restore that could not put the file back stops the run. Carrying
+        # on would test every later mutation against a file still holding
+        # this one, and the verdicts would be about a tree nobody described.
+        if not put_back:
+            for line in notes:
+                print(line, flush=True)
+            return 1
 
-            if counted is None:
-                # Almost always a compile error, which produces no failing-test
-                # lines at all -- indistinguishable from a survivor without this.
-                first = next(
-                    (line for line in out.splitlines() if line.startswith("error")), ""
-                )
-                problems += say(
-                    mutation,
-                    False,
-                    f"[FAIL] {mutation.name}: no summary line -- the run did not finish"
-                    + (f" ({first})" if first else ""),
-                )
-                continue
-            if len(names) != counted:
-                problems += say(
-                    mutation,
-                    False,
-                    f"[FAIL] {mutation.name}: {len(names)} failing test lines but the summary "
-                    f"says {counted} -- this harness cannot read its own output",
-                )
-                continue
-            if not names:
-                problems += say(
-                    mutation, False, f"[FAIL] {mutation.name}: SURVIVED -- no test noticed"
-                )
-                continue
-            hit = any(mutation.expect in name for name in names)
-            mark = "[OK]  " if hit else "[FAIL]"
-            # The scope is printed because the count means different things in
-            # the two cases: `1 red` out of the one test named for the mutation
-            # is not the same statement as `1 red` out of 607.
-            scope = "the test named for it" if narrow else f"{len(known)} tests"
-            verdict = [
-                f"{mark} {mutation.name}: {counted} red of {scope}"
-                + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
-            ]
-            if not hit:
-                verdict.append(f"         red instead: {sorted(names)}")
-            problems += say(mutation, hit, *verdict)
+        if counted is None:
+            # Almost always a compile error, which produces no failing-test
+            # lines at all -- indistinguishable from a survivor without this.
+            first = next(
+                (line for line in out.splitlines() if line.startswith("error")), ""
+            )
+            problems += say(
+                mutation,
+                False,
+                f"[FAIL] {mutation.name}: no summary line -- the run did not finish"
+                + (f" ({first})" if first else ""),
+            )
+            continue
+        if len(names) != counted:
+            problems += say(
+                mutation,
+                False,
+                f"[FAIL] {mutation.name}: {len(names)} failing test lines but the summary "
+                f"says {counted} -- this harness cannot read its own output",
+            )
+            continue
+        if not names:
+            problems += say(
+                mutation, False, f"[FAIL] {mutation.name}: SURVIVED -- no test noticed"
+            )
+            continue
+        hit = any(mutation.expect in name for name in names)
+        mark = "[OK]  " if hit else "[FAIL]"
+        # The scope is printed because the count means different things in
+        # the two cases: `1 red` out of the one test named for the mutation
+        # is not the same statement as `1 red` out of 607.
+        scope = "the test named for it" if narrow else f"{len(known)} tests"
+        verdict = [
+            f"{mark} {mutation.name}: {counted} red of {scope}"
+            + ("" if hit else f", but NOT the expected one ({mutation.expect!r})")
+        ]
+        if not hit:
+            verdict.append(f"         red instead: {sorted(names)}")
+        problems += say(mutation, hit, *verdict)
 
     print()
     # The skip count rides on the verdict rather than sitting in a line above it.
@@ -6953,7 +7150,7 @@ MUTATIONS += [
         # check certifies nothing*, arriving through the filter in front of it.
         "gate: let the survivor filter take the covered words too",
         "src/ocr_gate.rs",
-        "            regions.iter().any(|r| crate::redact::overlaps(w.rect, *r))\n                || !gone.iter().any(|g| *g == w.text)",
+        "            regions.iter().any(|r| crate::objects::overlaps(w.rect, *r))\n                || !gone.iter().any(|g| *g == w.text)",
         "            !gone.iter().any(|g| *g == w.text)",
         "a_word_a_region_covers_is_kept_even_when_the_removal_names_it",
     ),
@@ -7970,8 +8167,8 @@ MUTATIONS += [
         # beside it is gone. Nothing but an assertion on the flag can see this:
         # `docs/TRAPS.md`, "A refusal flattened to a string across a process
         # boundary loses the action that answers it".
-        "lib: flatten the print refusal to its message again",
-        "src/lib.rs",
+        "print: flatten the print refusal to its message again",
+        "src/commands/print.rs",
         "            save::print_ready(source, plan)?;",
         "            save::print_ready(source, plan)\n"
         "                .map_err(|refused| save::Refusal::from(refused.message))?;",
@@ -8003,7 +8200,7 @@ MUTATIONS += [
         # asked, over bytes this process could not have produced that answer
         # from.
         "verify: scan the written file in the coordinator instead of the verifier",
-        "src/lib.rs",
+        "src/commands/redact.rs",
         "    scanning.scan(&mut file, len, needles, password)",
         "    let _ = scanning;\n"
         "    let mut bytes = Vec::new();\n"
@@ -8018,7 +8215,7 @@ MUTATIONS += [
         # would be certified clean. This is the exact shape `docs/PLAN.md` 6
         # forbids, and it is one `?` away at all times.
         "verify: certify a file that could not be opened at all",
-        "src/lib.rs",
+        "src/commands/redact.rs",
         "    let mut file = std::fs::File::open(at)\n"
         '        .map_err(|why| format!("the redacted file could not be read back: {why}"))?;',
         "    let Ok(mut file) = std::fs::File::open(at) else {\n"
@@ -8056,6 +8253,131 @@ MUTATIONS += [
     ),
 ]
 
+
+# --- the ordering, the bounds and the handle a save's guards rest on ---------
+MUTATIONS += [
+    Mutation(
+        # Send the answer and release the worker afterwards. Every path through
+        # `InWorker` hands its worker a mapping of the file the coordinator is
+        # about to resize: on Windows a file with a section open on it cannot be
+        # shortened at all, so the roll-back after a refused read-back fails with
+        # ERROR_USER_MAPPED_FILE and the reader keeps the update that was just
+        # refused. Nothing about that is visible on macOS, where ftruncate
+        # succeeds either way -- which is why the check is on the ordering.
+        "save_outside: send the worker's answer before releasing its mapping",
+        "src/save_outside.rs",
+        "        let answer = ask(&mut resource);\n"
+        "        // Before the send, never after. See the note above.\n"
+        "        drop(resource);\n"
+        "        let _ = tx.send(answer);",
+        "        let answer = ask(&mut resource);\n"
+        "        let _ = tx.send(answer);\n"
+        "        drop(resource);",
+        "a_worker_is_released_before_its_answer_is_sent",
+    ),
+    Mutation(
+        # Signal outside the table's lock, which is where it was until an
+        # overdue reply arriving in the gap was traced through: the blocked
+        # thread reads `killed`, takes the entry and hands its worker to
+        # `discard`, which reaps the child -- and the pid is free before the
+        # signal is sent. Windows reissues one immediately.
+        "workers: signal an overdue worker after releasing the in-flight table",
+        "src/workers.rs",
+        "            for call in calls.iter_mut().filter(|call| overdue.contains(&call.pid)) {\n"
+        "                call.killed = true;\n"
+        "                kill(call.pid);\n"
+        "            }",
+        "            for call in calls.iter_mut().filter(|call| overdue.contains(&call.pid)) {\n"
+        "                call.killed = true;\n"
+        "            }\n"
+        "            for pid in &overdue {\n"
+        "                kill(*pid);\n"
+        "            }",
+        "an_overdue_worker_is_signalled_while_its_entry_is_still_held",
+    ),
+    Mutation(
+        # Keep the claim after a spare that never warmed. `prewarm` returns
+        # early whenever `warming` is set, so this is not one lost spare: no
+        # spare is ever started again for the life of the process, and every
+        # open from then on pays the link and the font walk on the reader's
+        # thread. The only symptom is opens that are quietly slower.
+        "workers: keep the spare slot claimed after a warm that timed out",
+        "src/workers.rs",
+        "    let answered = rx.recv_timeout(within).ok();\n"
+        "    slot.lock().unwrap_or_else(|e| e.into_inner()).warming = None;",
+        "    let answered = rx.recv_timeout(within).ok();\n"
+        "    if answered.is_some() {\n"
+        "        slot.lock().unwrap_or_else(|e| e.into_inner()).warming = None;\n"
+        "    }",
+        "a_spare_that_never_warms_gives_the_slot_back",
+        # The stand-in for a silent spare is a real process, so the test is
+        # `#[cfg(unix)]` and this mutation reports SURVIVED on Windows rather
+        # than blocking the run there.
+        only_on="macos",
+    ),
+    Mutation(
+        # Take the ceiling off a merge's inputs, which is how it was: every
+        # incoming file read into one buffer with nothing in the way, in a
+        # process that then copies it. A file dialog takes as many files as
+        # somebody cares to shift-click.
+        "save: merge as many incoming bytes as the reader picked",
+        "src/save.rs",
+        "        if total > ceiling {",
+        "        if false {",
+        "more_incoming_bytes_than_the_ceiling_are_refused_with_something_to_do",
+    ),
+    Mutation(
+        # Add the byte-range lengths plainly. Three of `i64::MAX` is a legal
+        # array and a five-line file: the sum panics under debug assertions and
+        # wraps in the shipped build, where it becomes a coverage figure the
+        # panel prints as fact.
+        "docinfo: add a signature's byte-range lengths without saturating",
+        "src/docinfo.rs",
+        "            .fold(0_u64, u64::saturating_add);",
+        "            .sum();",
+        "byte_range_lengths_that_cannot_be_added_saturate_rather_than_wrap",
+    ),
+    Mutation(
+        # Walk the `/Parent` chain with the trip count as the only guard. A loop
+        # in it then yields the same ancestors until the bound runs out, and
+        # every lap decrements a `/Count`: one deleted page took a three-page
+        # tree to -29.
+        "pagetree: walk a page's ancestors without a visited set",
+        "src/pagetree.rs",
+        "            if !seen.insert(parent) {\n"
+        "                break;\n"
+        "            }\n"
+        "            decrements.push(parent);",
+        "            decrements.push(parent);",
+        "a_cyclic_parent_chain_decrements_each_ancestor_once",
+    ),
+    Mutation(
+        # Decrement the count plainly. `/Count -9223372036854775808` is as
+        # writable as any other number, and this panics on it under debug
+        # assertions and wraps to the largest count there is in release.
+        "pagetree: decrement a node's count without saturating",
+        "src/pagetree.rs",
+        '                tree.set("Count", count.saturating_sub(1));',
+        '                tree.set("Count", count - 1);',
+        "a_count_at_the_bottom_of_its_range_saturates_rather_than_wrapping",
+    ),
+    Mutation(
+        # Fingerprint the name rather than the handle it was handed. The
+        # document is mapped for the workers on one thread while this hashes on
+        # another, so this is a second lookup of one name -- and a file replaced
+        # in that window by a revision with the same page count leaves the model
+        # describing bytes nobody has seen, with every other guard agreeing.
+        "fingerprint: hash the pathname again instead of the handle handed over",
+        "src/fingerprint.rs",
+        "    pub fn of_open(file: &File, what: &Path) -> Result<Fingerprint, String> {\n"
+        "        let meta = file",
+        "    pub fn of_open(_handed: &File, what: &Path) -> Result<Fingerprint, String> {\n"
+        "        let file = &File::open(what)\n"
+        '            .map_err(|e| format!("could not open {} to fingerprint it: {e}", what.display()))?;\n'
+        "        let meta = file",
+        "a_fingerprint_through_a_handle_is_of_the_file_that_was_opened",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

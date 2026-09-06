@@ -175,16 +175,16 @@ pub struct Links {
 /// indistinguishable from a document that simply has none of what is being
 /// looked for. See [`crate::progressive::RawDocument::password`].
 pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<Links, String> {
+    scan_from(&crate::encoding::load(bytes, password)?, page_count)
+}
+
+/// [`scan`] over a document somebody else parsed. See [`crate::annots::scan_from`].
+///
+/// # Errors
+///
+/// As [`scan`], less the parse it no longer does.
+pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String> {
     let started = std::time::Instant::now();
-    let document = Document::load_mem_with_options(
-        bytes,
-        LoadOptions {
-            max_decompressed_size: Some(MAX_DECODE),
-            password: password.map(str::to_string),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
 
     let mut limits = Limits::default();
     let mut items: Vec<Link> = Vec::new();
@@ -211,7 +211,7 @@ pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<L
     let geometry: Vec<PageBox> = pages
         .values()
         .take(page_count)
-        .map(|page| page_geometry(&document, *page))
+        .map(|page| page_geometry(document, *page))
         .collect();
 
     for (index, page) in pages.values().take(page_count).enumerate() {
@@ -220,7 +220,7 @@ pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<L
             break;
         }
         read_page(
-            &document,
+            document,
             *page,
             index as u32,
             &numbers,

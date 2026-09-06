@@ -515,7 +515,7 @@ describe("Viewer status", () => {
   it("names the armed crop, which is not a mark kind", async () => {
     // **The status is a copy, and the copy is what the reader sees.** The tests
     // around this file read the viewer's own accessors; the window reads
-    // `ViewerStatus`, and a `report` that filled `armed` from `drawKind` alone
+    // `ViewerStatus`, and a `report` that filled `armed` from the drawing kind alone
     // would leave a reader who armed the crop with a crosshair and no words ---
     // which is the exact complaint the field was added for, arriving through the
     // one tool that is not a `MarkKind`.
@@ -1398,6 +1398,124 @@ describe("Viewer press guard", () => {
     press(dom, viewer, 0);
 
     expect(viewer.selectedText).toBe("");
+    viewer.destroy();
+  });
+});
+
+/**
+ * What one frame costs the layout, which is not a question about pixels.
+ *
+ * Two readings the frame loop used to take that it did not need. `clientWidth`
+ * and `clientHeight` are layout reads, and the tick writes styles before asking
+ * for them --- the scrollbar thumb, an open note, the link ring --- so each ask
+ * forced the engine to flush the layout it had just invalidated. And
+ * `visiblePages` walks the page tops and allocates an array, for an answer that
+ * cannot change between two calls inside one frame.
+ *
+ * Both are counted here rather than timed. A timing would be a statement about
+ * this machine on this afternoon; a count of the calls is the mechanism, and it
+ * is what a later edit can put back without anyone noticing.
+ */
+describe("Viewer frame cost", () => {
+  let dom: FakeDom;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+    core.invoke.mockReset();
+    core.invoke.mockImplementation(() => Promise.resolve(pageText()));
+    tiles.fetchTile.mockReset();
+    tiles.fetchTile.mockImplementation(() => Promise.reject(new Error("boom")));
+    tiles.cancelTile.mockReset();
+    let rid = 0;
+    tiles.nextRequestId.mockImplementation(() => ++rid);
+  });
+
+  afterEach(() => {
+    dom.restore();
+    vi.clearAllMocks();
+  });
+
+  it("does not measure the surface while drawing a frame", () => {
+    const viewer = build(dom);
+    const height = dom.root.clientHeight;
+    let reads = 0;
+    Object.defineProperty(dom.root, "clientHeight", {
+      configurable: true,
+      get: () => {
+        reads++;
+        return height;
+      },
+    });
+
+    dom.runFrames();
+    expect(reads).toBe(0);
+
+    // The control, and it is what says the reading was moved rather than
+    // dropped: the observer's callback is where the element is measured, and a
+    // cache nothing ever refills would answer the constructor's one-pixel
+    // viewport for the life of the document.
+    (viewer as unknown as { onResize(): void }).onResize();
+    expect(reads).toBeGreaterThan(0);
+
+    viewer.destroy();
+  });
+
+  it("lets a pinch settle before asking for tiles, and a zoom step not", () => {
+    // The two zooms are different shapes and want different answers. A pinch is
+    // a wheel event per frame, so every scale it passes through would drop the
+    // tiles on screen and ask for a screenful at a zoom the reader has already
+    // left; a zoom step is one event, and the tiles it wants are the ones to ask
+    // for now. See `Scroller.quieten`.
+    const viewer = build(dom);
+    const inner = viewer as unknown as {
+      scroller: { setZoom(zoom: number, settleMs?: number): void };
+    };
+    const scroller = inner.scroller;
+    const real = scroller.setZoom.bind(scroller);
+    const settles: (number | undefined)[] = [];
+    scroller.setZoom = (zoom: number, settleMs?: number): void => {
+      settles.push(settleMs);
+      real(zoom, settleMs);
+    };
+
+    dom.root.dispatch("wheel", {
+      ctrlKey: true,
+      metaKey: false,
+      deltaY: -40,
+      deltaMode: 0,
+      target: dom.root,
+      preventDefault: () => {},
+    });
+    expect(settles).toHaveLength(1);
+    expect(settles[0] ?? 0).toBeGreaterThan(0);
+
+    viewer.zoomStep(1);
+    expect(settles).toHaveLength(2);
+    expect(settles[1]).toBe(0);
+
+    viewer.destroy();
+  });
+
+  it("asks the scroller for the visible pages twice a frame, not a dozen times", () => {
+    // Twice, and the two are named: `learnGeometry` reads it before correcting
+    // any page size, because a correction relays the document out and can move
+    // what is on screen; everything after that shares one reading taken once
+    // the layout has settled. It was about ten before, one per consumer.
+    const viewer = build(dom);
+    const inner = viewer as unknown as {
+      scroller: { visiblePages(): number[] };
+    };
+    const scroller = inner.scroller;
+    const real = scroller.visiblePages.bind(scroller);
+    let calls = 0;
+    scroller.visiblePages = (): number[] => {
+      calls++;
+      return real();
+    };
+
+    dom.runFrames();
+    expect(calls).toBe(2);
+
     viewer.destroy();
   });
 });

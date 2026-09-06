@@ -131,9 +131,15 @@ RUST = ROOT / "src-tauri" / "src"
 #: and each carries why it is not a summary. An entry whose text is no longer in
 #: its file fails the check rather than being ignored --- an exemption nobody can
 #: see is how a check stops covering what it was written for.
+#:
+#: The file half is the path below `src-tauri/src`, not the basename it was until
+#: the command groups moved into `commands/`. A basename exempts the sentence in
+#: every file with that name, and `mod.rs` is a name a tree acquires more of ---
+#: so the one entry that needed a directory is what made the key wrong for all
+#: four.
 PROSE: dict[tuple[str, str], str] = {
     (
-        "lib.rs",
+        "commands/mod.rs",
         "`docs/THREAT-MODEL.md` §T6.9 carries what holding it costs.",
     ): "closes the paragraph about holding the password, and points at the section",
     (
@@ -177,7 +183,7 @@ def fused(path: pathlib.Path) -> list[tuple[int, str]]:
         after = doc(i + 2)
         if after is None or not after.startswith("**"):
             continue
-        if (path.name, here) in PROSE:
+        if (path.relative_to(RUST).as_posix(), here) in PROSE:
             continue
         out.append((i + 1, here))
     return out
@@ -244,7 +250,7 @@ def main() -> int:
     if not rust:
         print(f"[FAIL] no .rs files under {RUST}", file=sys.stderr)
         return 1
-    by_name = {p.name: p for p in rust}
+    by_name = {p.relative_to(RUST).as_posix(): p for p in rust}
     for name, text in PROSE:
         path = by_name.get(name)
         if path is None:

@@ -56,7 +56,6 @@
 //! collapses "checked, unchanged" and "could not look" into one silent success.
 
 use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -95,22 +94,49 @@ impl Fingerprint {
     /// The file cannot be opened, its metadata cannot be read, or a read fails
     /// part way through.
     pub fn of(path: &Path) -> Result<Fingerprint, String> {
-        let mut file = File::open(path)
+        let file = File::open(path)
             .map_err(|e| format!("could not open {} to fingerprint it: {e}", path.display()))?;
+        Self::of_open(&file, path)
+    }
+
+    /// [`Fingerprint::of`] taken through a handle that is already open.
+    ///
+    /// **A seam, and the pathname is the point --- the same one
+    /// `crate::worker_shm::Shm::map_open_file` exists for.** The document's
+    /// bytes are mapped for the workers at open time, and this is the hash the
+    /// save compares against before it applies the reader's edits. Taken by
+    /// name, those are two lookups of one name with a thread between them: a
+    /// file replaced in that window by a different revision of the same page
+    /// count leaves `opened_as` describing a document nobody has seen, and every
+    /// other guard --- the page count, the length --- agrees with it. Taken
+    /// through the handle that was mapped, the fingerprint is of the bytes the
+    /// reader is looking at, whatever the name reaches afterwards.
+    ///
+    /// `what` is for the messages only; nothing here resolves it.
+    ///
+    /// Read positionally rather than sequentially, so the caller's file offset
+    /// is where they left it --- a `try_clone` on unix shares one offset with the
+    /// handle it came from, and this is deliberately reachable from a clone.
+    ///
+    /// # Errors
+    ///
+    /// The metadata cannot be read, or a read fails part way through.
+    pub fn of_open(file: &File, what: &Path) -> Result<Fingerprint, String> {
         let meta = file
             .metadata()
-            .map_err(|e| format!("could not read {}'s metadata: {e}", path.display()))?;
+            .map_err(|e| format!("could not read {}'s metadata: {e}", what.display()))?;
 
         let mut hasher = Sha256::new();
         let mut buffer = vec![0_u8; CHUNK];
+        let mut at = 0_u64;
         loop {
-            let read = file
-                .read(&mut buffer)
-                .map_err(|e| format!("could not read {} to fingerprint it: {e}", path.display()))?;
+            let read = read_at(file, &mut buffer, at)
+                .map_err(|e| format!("could not read {} to fingerprint it: {e}", what.display()))?;
             if read == 0 {
                 break;
             }
             hasher.update(&buffer[..read]);
+            at += read as u64;
         }
 
         Ok(Fingerprint {
@@ -370,6 +396,40 @@ const WAY_OUT: &str = "Your edits are still here: save them under another name, 
 /// `None` for a platform or filesystem with no modification time, and also for
 /// the pre-1970 case, which is unreachable in practice and would otherwise need
 /// a signed representation for no benefit.
+/// Reads at an offset without moving the handle's own position.
+///
+/// Two spellings of one operation, because the platforms name it differently and
+/// neither is on `Read`. Windows' `seek_read` does move the pointer, which is
+/// why the offset is tracked by the caller rather than left to it.
+#[cfg(unix)]
+fn read_at(file: &File, into: &mut [u8], at: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt as _;
+    file.read_at(into, at)
+}
+
+/// [`read_at`] on Windows.
+#[cfg(windows)]
+fn read_at(file: &File, into: &mut [u8], at: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt as _;
+    file.seek_read(into, at)
+}
+
+/// A file that is already open, and the name it was opened by.
+///
+/// **Handed rather than named**, which is the whole of what it is for: the
+/// document is opened once, one clone of the handle is mapped for the workers
+/// and one is hashed here, so the fingerprint is of the bytes that were mapped.
+/// See [`Fingerprint::of_open`].
+///
+/// `what` is the name the reader chose, carried for the messages a failed
+/// fingerprint writes. Nothing resolves it.
+pub struct Opened {
+    /// The handle. Hashed, never reopened.
+    pub file: File,
+    /// What to call it in a message.
+    pub what: std::path::PathBuf,
+}
+
 fn modified_ns(meta: &std::fs::Metadata) -> Option<u128> {
     meta.modified()
         .ok()
@@ -440,6 +500,57 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    /// A handle is fingerprinted, never the name it was opened by.
+    ///
+    /// The window is real and it is wide: the document is opened and mapped for
+    /// the workers on one thread while the hash runs on another, and a hash
+    /// taken by name is a second lookup of that name. A file replaced in
+    /// between by a revision with the *same page count* passes every other
+    /// guard there is --- the page count is the one the plan was built against,
+    /// and here the length matches too --- so the reader would be looking at one
+    /// document while `opened_as` described another, and the save would rewrite
+    /// whichever the name reaches.
+    ///
+    /// A rename over the name stands in for that. Both readings are taken, and
+    /// the second is what makes the first mean something: `of` sees the
+    /// replacement, `of_open` sees what was opened.
+    #[test]
+    fn a_fingerprint_through_a_handle_is_of_the_file_that_was_opened() {
+        let subject = Scratch::new("through-a-handle", b"the original");
+        let handle = File::open(subject.path()).expect("open the document");
+
+        // Something else lands a different document of the same length on the
+        // name. Same length on purpose: a shorter one would be caught by a
+        // comparison that never looks at a byte.
+        let replacement = Scratch::new("through-a-handle-other", b"NOT ORIGINAL");
+        assert_eq!(
+            std::fs::metadata(replacement.path()).expect("stat").len(),
+            std::fs::metadata(subject.path()).expect("stat").len(),
+            "the two have to be the same length, or this tests the length check"
+        );
+        std::fs::rename(replacement.path(), subject.path()).expect("replace the name");
+
+        let through_handle =
+            Fingerprint::of_open(&handle, subject.path()).expect("hash the handle");
+        let by_name = Fingerprint::of(subject.path()).expect("hash the name");
+
+        let original: [u8; 32] = Sha256::digest(b"the original").into();
+        assert_eq!(
+            through_handle.digest, original,
+            "the handle has to answer for the bytes it was opened on"
+        );
+        assert_ne!(
+            through_handle.digest, by_name.digest,
+            "and the name now reaches something else --- without this the test passes on a \
+             `of_open` that simply reopened the path"
+        );
+        assert_eq!(
+            through_handle.len,
+            "the original".len() as u64,
+            "and its length is the opened file's, not the replacement's"
+        );
     }
 
     #[test]

@@ -72,9 +72,26 @@ pub enum Request {
         #[serde(default)]
         crop: Option<[f32; 4]>,
     },
-    /// Find a query's occurrences on one page.
+    /// Find a query's occurrences on one page, or on a run of them.
     Search {
         page: u32,
+        /// The whole run to answer, in walk order, when the caller wants more
+        /// than one page.
+        ///
+        /// **A field rather than a variant of its own**, so the `Engine` method,
+        /// the registered command, its capability, its window-harness entry and
+        /// its README marker all stay the one thing they describe: a search.
+        /// Empty is a single-page request and is what every caller written
+        /// before this sends --- `serde(default)` is what makes an old request
+        /// parse as exactly the request it meant.
+        ///
+        /// `page` is still the first page of the run, and is what the reply's
+        /// top-level answer is about. The rest arrive in
+        /// `search::PageMatches::more`, and the worker may answer fewer pages
+        /// than were asked for --- see `render::run_search_range`, which bounds
+        /// what one reply may carry.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pages: Vec<u32>,
         query: String,
         /// How to match. Defaulted so that a request written before the options
         /// existed still parses as the unrestricted search it meant.
@@ -920,6 +937,10 @@ mod tests {
             },
             Request::Search {
                 page: 1,
+                // A run rather than one page, because the field is skipped when
+                // empty: a fixture that left it empty would round-trip a request
+                // whose JSON never carried it at all.
+                pages: vec![1, 2, 3],
                 query: "quartz".into(),
                 options: crate::search::Options {
                     match_case: true,
@@ -990,6 +1011,7 @@ mod tests {
                 chars: 120,
                 problem: None,
                 tail: None,
+                more: Vec::new(),
             }),
             // The confusable pair, given the *same* four numbers so that only
             // the tag can tell them apart.
