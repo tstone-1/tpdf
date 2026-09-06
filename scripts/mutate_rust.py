@@ -5274,11 +5274,9 @@ MUTATIONS += [
         """        for kid in pushed {
             queue.push((Entry::Inline(kid), depth + 1, name.clone()));
         }""",
-        """            if false {
-                for kid in kids.iter().rev() {
-                    queue.push((kid, depth + 1, name.clone()));
-                }
-            } else {""",
+        """        for kid in pushed {
+            let _ = (kid, depth, &name);
+        }""",
         "a_signature_field_under_kids_is_found_rather_than_walked_past",
     ),
     Mutation(
@@ -8282,17 +8280,25 @@ MUTATIONS += [
         # `discard`, which reaps the child -- and the pid is free before the
         # signal is sent. Windows reissues one immediately.
         "workers: signal an overdue worker after releasing the in-flight table",
+        # The first spelling of this mutation kept the second loop *inside* the
+        # block that holds `calls`, so the lock was still held when it signalled
+        # and the test rightly saw nothing: a variant, not the defect. The kill
+        # has to land after the block's closing brace to be outside the lock.
         "src/workers.rs",
         "            for call in calls.iter_mut().filter(|call| overdue.contains(&call.pid)) {\n"
         "                call.killed = true;\n"
         "                kill(call.pid);\n"
-        "            }",
+        "            }\n"
+        "            overdue\n"
+        "        };\n",
         "            for call in calls.iter_mut().filter(|call| overdue.contains(&call.pid)) {\n"
         "                call.killed = true;\n"
         "            }\n"
-        "            for pid in &overdue {\n"
-        "                kill(*pid);\n"
-        "            }",
+        "            overdue\n"
+        "        };\n"
+        "        for pid in &overdue {\n"
+        "            kill(*pid);\n"
+        "        }\n",
         "an_overdue_worker_is_signalled_while_its_entry_is_still_held",
     ),
     Mutation(

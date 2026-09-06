@@ -520,9 +520,12 @@ Believing it would return the corpse to the pool, where it would fail a differen
 than the one that was actually too slow.
 
 The deadline is not a refinement of the withdrawal mechanism, it is the only bound the
-other request kinds have. Only a tile can be withdrawn; `Text`, `Search`, `Outline` and
-`Open` hold a service thread until they answer, and there are `pool + 2` of those *shared
-across every open document* — so one page that never finished parsing stopped the viewer
+other request kinds have. Only a tile can be withdrawn --- `Withdraw` names a tile's
+request id and nothing else --- so **every other request kind** holds a service thread until
+it answers, and there are `pool + 2` of those *shared across every open document*. That read
+"`Text`, `Search`, `Outline` and `Open`" until 2026-09-06, which was the whole set when it was
+written and is now four of the twenty-one `worker_proto::Request` variants; the property is the
+absence of a withdrawal, not the list, and the list is what went stale — so one page that never finished parsing stopped the viewer
 answering anything at all, and `Workers::close` then hung on its own drain waiting for a
 worker that was never coming back.
 
@@ -662,10 +665,14 @@ Memory is the larger residual and it is unbounded, not merely coarsely bounded: 
 kernel's limit (refused) nor ours (unwired) applies to a worker on macOS today. Bounding the
 *inputs* — decompressed stream size, tile dimensions, pages per request — is the layer that
 would catch a sub-interval burst even with the poll running. This read "only the tile bound
-exists" until 2026-09-02; there are three, and the two added that day (`MAX_PAGE_POINTS`,
-`MAX_WAVE_SEGMENTS`) bound a **plan's** geometry rather than a document's — an input this
-section had not counted at all. The tile bound is still the only one refused before a worker is
-asked (`protocol.rs`).
+exists" until 2026-09-02; there are **four** as of 2026-09-06, and the two added on 2026-09-02
+(`MAX_PAGE_POINTS`, `MAX_WAVE_SEGMENTS`) bound a **plan's** geometry rather than a document's —
+an input this section had not counted at all. **The fourth is `save::MAX_MERGE_BYTES`
+(1 GiB), and it corrects the sentence that stood here**: the tile bound is no longer the only
+one refused before a worker is asked. A merge's total is checked against the incoming files'
+own handles at `save.rs:1063`, before the mapping is created and before a byte is read, so the
+reader meets a refusal naming the limit rather than an allocation failure --- the tile bound's
+own shape (`protocol.rs`), arriving on the one input the coordinator holds all of at once.
 
 ### T4 — Filesystem and network reach from a compromised worker
 
@@ -2093,9 +2100,17 @@ save and a second file open of a path the app just wrote — the same filesystem
 `save_copy` already holds.
 
 **On a platform with no engine the gate says so once and the file is not certified.**
-`OcrWorker::spawn` returns `NO_ENGINE` on Windows, which becomes one sentence in
+`OcrWorker::spawn` returns `NO_ENGINE`, which becomes one sentence in
 `Applied::why` rather than one per region, and `verified` is false. A skipped check that read
 as a clean answer would be this document's own T5 failure arriving through the platform gate.
+
+⚠ **This sentence named Windows as that platform until 2026-09-06, eight days after it
+stopped being one.** The refusing arm is `#[cfg(not(any(target_os = "macos", windows)))]`
+(`ocr_worker.rs`, `OcrWorker::spawn` and `serve`), so both shipped platforms run the gate and
+`NO_ENGINE` is reachable only where neither engine exists. Risk 19 recorded the closure on
+2026-08-29 and struck its own half of it; this paragraph, four lines above the Windows arm it
+contradicts, did not move --- the same summary-drifting-from-the-section-beneath-it failure
+§3 records three times over, arriving inside one section instead of between two.
 
 **The coverage this has, stated as a number rather than implied.** A region whose page yields
 no qualifying control is `NotVerified`: measured across 41 documents, 45.9% of realistic
@@ -2219,8 +2234,10 @@ which is what makes it evidence rather than a milestone.
    `proc_pid_rusage` poll that would substitute for them is measured in spike 0.5 and has
    no caller in the app (§T3). What is missing before it can be wired is the budget, which
    needs a measurement of a legitimate worker's peak that nothing has taken. Input limits
-   are the second layer, and there are three as of 2026-09-02 rather than the one this entry
-   claimed --- see risk 22, which is where the input this section had not counted is named.
+   are the second layer, and there are **four** as of 2026-09-06 rather than the one this entry
+   claimed --- see risk 22, which is where the plan's geometry is named, and risk 18 for
+   `save::MAX_MERGE_BYTES`, the one bound besides the tile's that is refused before a worker is
+   asked at all.
 3. **A document's pool multiplies its memory by up to six, while it is being scrolled.**
    Each worker holds its own parse, at 7.8–48.2 MB depending on the corpus, so a fully
    grown pool on the A0 sheet is about 290 MB. Growth is lazy — a reader turning one page
@@ -2283,7 +2300,12 @@ which is what makes it evidence rather than a milestone.
    This entry also said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02,
    which was wrong about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a
    narrowed policy where the scaffold ships `"csp": null`. The **capability set** is the part
-   that is still scaffold — `core:default` plus `dialog:allow-open`, unpared.
+   that is still scaffold --- and it has grown twice since that sentence was written, which the
+   sentence did not record. `src-tauri/capabilities/default.json` grants four permissions as of
+   2026-09-06: `core:default`, `dialog:allow-open`, `dialog:allow-save` (2026-08-16) and
+   `updater:default` (`26.8.2`), still unpared. §3's boundary table carries the same list, and
+   this entry read `core:default` plus `dialog:allow-open` alone until today --- a residual
+   describing a narrower grant than the one that ships, which is the over-claiming direction.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
 9. **Nothing here protects previous copies, backups, or free sectors.**
@@ -2333,7 +2355,10 @@ which is what makes it evidence rather than a milestone.
     nothing, a pre-spawn that failed, a print that did not present — every one of those was
     an `eprintln!`, and a GUI process started by double-clicking a PDF has no stderr at all,
     so the diagnostics this codebase words most carefully were exactly the ones a user could
-    never send back. Nine parent-process sites go through `diag::note` since 2026-08-02: it
+    never send back. Nineteen parent-process sites go through `diag::note`, counted 2026-09-06 --- it was
+    nine when this landed on 2026-08-02, and a count in prose is the thing this document
+    records as drifting, so the authority is `grep -rn 'diag::note(' src-tauri/src` and not
+    this number. It
     writes the line to stderr byte for byte as before — that channel is what `viewer_check.py`,
     `worker-probe` and `backend-probe` capture, and a line quietly moved off it would be a
     regression in checks that have nothing to do with logging — and appends a UTC-stamped copy
@@ -2457,7 +2482,7 @@ which is what makes it evidence rather than a milestone.
     `verify::MAX_OBJECT_REASONS` bounds the per-object lists at a thousand and adds one line
     counting the rest; without it a file with a few hundred thousand undecodable objects
     produces a report that will not fit, and the reader is told the verification *failed*
-    rather than that the file is unaccountable. And `lib::scan_written_file` takes
+    rather than that the file is unaccountable. And `commands::redact::scan_written_file` takes
     `&dyn save::Verifier` rather than the `&dyn save::Outside` its callers hold, so the
     read-back cannot reach a writer --- a trait upcast, which costs nothing and is what lets
     the test double be a verifier and no more.
@@ -2783,7 +2808,7 @@ which is what makes it evidence rather than a milestone.
     fills and a save that refuses, and the pool restarts a process. That is the entry about a
     pool replacing a dead worker with the same bytes and faulting again --- correct behaviour
     with an unhelpful shape, rather than a compromise. Before those moves it would have taken
-    the application down from `lib::print_job`. **The last route by which it still could ---
+    the application down from `commands::print::print_job`. **The last route by which it still could ---
     `save::write_merged` --- closed later the same day**, so every `lopdf` load of the reader's
     document now happens where an abort takes a worker rather than the window. **The last one ---
     `verify::scan`, the redaction read-back --- closed later the same day through

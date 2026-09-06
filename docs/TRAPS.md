@@ -594,6 +594,8 @@ hop through the index.
 - A check that returns from six places cannot own a directory with `mkdtemp`
 - A `continue` under a `finally` runs the cleanup and jumps past what it reported
 - `pkill -f <a path the harness passes as an argument>` matches the harness's own child
+- A re-aim keyed on anchors cannot see a replacement that names a removed field
+- A describe block's name is not part of the test name the harness reads
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -22794,3 +22796,28 @@ need this one" and "the frontend has not noticed this one" being the same shape 
 Three assertions is what closes it: every mirror key is sent, every key sent is mirrored or
 named in an exclusion table with a reason, and every name in that table is a field the sample
 really sends, so an excusal cannot outlive the field it excuses.
+
+### A re-aim keyed on anchors cannot see a replacement that names a removed field
+
+2026-09-06. When `Viewer`'s five tool flags became one `tool` field, every mutation row
+whose *anchor* had moved was re-aimed, and the anchor gate went green. One row survived
+the next full table: its anchor, a `boxQuad(...)` line, had not moved, and its replacement
+still wrote `this.drawKind = null`. Under `tsc` that is an error; under vitest, which does
+not type-check, it is a write to a property the class no longer declares --- a no-op ---
+so the mutation changed nothing and `SURVIVED` was the correct verdict about a row that
+said nothing. The anchor gate is blind to this by construction: it reads the `before`
+text and never the `after`. After a rename or a field removal, grep the *replacements* in
+every mutation table for the old names, not only the anchors; the sweep that found this
+one was three lines of Python over the table's text.
+
+### A describe block's name is not part of the test name the harness reads
+
+2026-09-06. Seven rows written for the search runs named their expected test as
+`runFrom > stops at a gap in the slots`, the way vitest prints a nested test in its own
+reporter. The harness reports the leaf name alone, so every one of the seven was caught
+and every one was reported as *caught by the wrong test*, which is the shape a mis-aimed
+row has. `check_mutation_test_files.py` could not see it either: it checks that a named
+test exists somewhere in the suite, and the leaf existed. Name the leaf. The repeated
+`--only` that made re-running them slow is the argparse trap already in this file: this
+harness's flag keeps the last value, and the run that "caught all 1 mutations" was one
+of eight.

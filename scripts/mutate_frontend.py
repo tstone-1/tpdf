@@ -457,7 +457,10 @@ MUTATIONS = [
         "viewer: spend the box tool on a click that drew nothing",
         "src/lib/viewer.ts",
         "            : boxQuad(live.from, live.to, this.laidSize(live.slot));",
-        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n        this.drawKind = null;",
+        # Re-spelled 2026-09-06: `drawKind` is gone, and a write to a field the
+        # class no longer has is a no-op at runtime that vitest cannot see, so
+        # the row survived while saying nothing. `tool` is the one field now.
+        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n        this.tool = NO_TOOL;",
         "refuses a click, and keeps the tool armed",
     ),
     Mutation(
@@ -1865,7 +1868,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "    if (last !== undefined && entry.page !== last + 1) break;",
         "    if (false) break;",
-        "runFrom > stops at a gap in the slots",
+        "stops at a gap in the slots",
     ),
     Mutation(
         # The second vocabulary, and the one an unedited document cannot show:
@@ -1875,7 +1878,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "    if (previousSource !== undefined && source !== previousSource + 1) break;",
         "    if (false) break;",
-        "runFrom > stops where the file pages are not consecutive either",
+        "stops where the file pages are not consecutive either",
     ),
     Mutation(
         # Ask about the whole plan in one request. The render thread is FIFO, so
@@ -1884,7 +1887,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "  for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {",
         "  for (let step = at; step < plan.length; step++) {",
-        "runFrom > takes a whole run of consecutive pages, bounded by RUN_PAGES",
+        "takes a whole run of consecutive pages, bounded by RUN_PAGES",
     ),
     Mutation(
         # Start every run at the beginning of the plan. The walk would re-ask
@@ -1893,7 +1896,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "  for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {",
         "  for (let step = 0; step < plan.length && run.length < RUN_PAGES; step++) {",
-        "runFrom > starts where it is asked to and not at the beginning",
+        "starts where it is asked to and not at the beginning",
     ),
     Mutation(
         # Pair every slot the run asked about, whatever came back. The backend
@@ -1903,7 +1906,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "  for (const [step, answer] of answers.entries()) {\n    const slot = slots[step];\n    if (slot === undefined) break;",
         "  for (const [step, answer] of slots.entries()) {\n    const answer = answers[step] ?? reply;\n    void step;",
-        "runAnswers > pairs a full run with the slots it was asked about",
+        "pairs a full run with the slots it was asked about",
     ),
     Mutation(
         # Read only the first page of a run's reply. Fifteen pages in sixteen
@@ -1913,7 +1916,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "  const answers = [reply, ...(reply.more ?? [])];",
         "  const answers = [reply];",
-        "runAnswers > pairs a full run with the slots it was asked about",
+        "pairs a full run with the slots it was asked about",
     ),
     Mutation(
         # The first-entry case, which is the only one that isolates the missing
@@ -1922,7 +1925,7 @@ MUTATIONS = [
         "src/lib/search.ts",
         "    if (source === undefined) break;\n    const last = run[run.length - 1];",
         "    const last = run[run.length - 1];",
-        "runFrom > stops at once when the first slot has no page behind it",
+        "stops at once when the first slot has no page behind it",
     ),
     Mutation(
         "recents: show only the basename, whatever collides",
