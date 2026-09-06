@@ -188,8 +188,29 @@ def commands_that_write(source: str) -> set[str]:
     return found
 
 
+def command_files() -> list[Path]:
+    """Every file a `#[tauri::command]` may be written in.
+
+    `lib.rs` and every module under `src/commands/`. It was `lib.rs` alone, and
+    reading only that one would quietly stop covering a command the moment a
+    split moved it -- which is not a hypothetical here: this gate is keyed on
+    *where the call is written*, so `docs/TRAPS.md` already records an extraction
+    dropping a writing command out of the set with every other gate green.
+
+    The directory need not exist yet. What must not happen is this list silently
+    becoming shorter than the tree, so `main` prints how many files it read and
+    the count of commands found, and both are asserted against zero.
+    """
+    files = [ROOT / "src-tauri" / "src" / "lib.rs"]
+    commands = ROOT / "src-tauri" / "src" / "commands"
+    if commands.is_dir():
+        files.extend(sorted(commands.rglob("*.rs")))
+    return files
+
+
 def main() -> int:
-    lib = (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
+    command_sources = command_files()
+    lib = "\n".join(f.read_text(encoding="utf-8") for f in command_sources)
     # `save.rs` and every submodule under `src/save/`, concatenated. It was one
     # file until 2026-09-01, and reading only that one would have quietly stopped
     # covering a terminal writer the moment a split moved it -- the control below
@@ -222,6 +243,18 @@ def main() -> int:
     listed = set(marker.group(1).split())
     writes = commands_that_write(lib)
 
+    # Two controls, and the second is the one the file list needs. A regex that
+    # stopped matching gives an empty set, and an empty set agrees with an empty
+    # list; a file list that stopped finding files does the same thing one layer
+    # up, and looks exactly like a tree with no commands in it.
+    registered = len(
+        re.findall(r"#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn\s+\w+", lib)
+    )
+    ok &= say(
+        registered > 0,
+        f"{registered} registered command(s) across {len(command_sources)} file(s):"
+        f" {', '.join(f.name for f in command_sources)}",
+    )
     ok &= say(len(writes) > 0, f"{len(writes)} registered command(s) reach a writer")
 
     unlisted = sorted(writes - listed)

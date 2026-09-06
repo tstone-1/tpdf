@@ -223,7 +223,29 @@ pub fn scan(
     page_count: usize,
     password: Option<&str>,
 ) -> Result<Vec<PageMapping>, String> {
-    let document = Document::load_mem_with_options(
+    scan_from(&load(bytes, password)?, page_count)
+}
+
+/// Parses a document's bytes under this crate's load options.
+///
+/// **The one place the options are written**, and the reason is the same one the
+/// bound above gives for being imported rather than restated: five modules used
+/// to open the same document with five copies of this block, so a change to the
+/// decompression bound or to how the password is passed was five edits, and
+/// nothing anywhere would go red for making four of them.
+///
+/// It is also what makes one parse serve five questions --- see
+/// [`crate::docgraph::DocumentGraph`], which holds the result. That was five
+/// parses of the same file: 5.8 ms each on the 775-page document, 11.9 ms on the
+/// 337 MB scan.
+///
+/// # Errors
+///
+/// The bytes not parsing as a PDF, or a stream exceeding [`MAX_DECODE`]. A
+/// document whose password is wrong parses without error and yields no objects
+/// --- see the note on `password` above, which is why every caller here takes one.
+pub fn load(bytes: &[u8], password: Option<&str>) -> Result<Document, String> {
+    Document::load_mem_with_options(
         bytes,
         LoadOptions {
             max_decompressed_size: Some(MAX_DECODE),
@@ -231,13 +253,21 @@ pub fn scan(
             ..Default::default()
         },
     )
-    .map_err(|e| format!("could not parse the document: {e}"))?;
+    .map_err(|e| format!("could not parse the document: {e}"))
+}
 
+/// [`scan`] over a document somebody else parsed.
+///
+/// # Errors
+///
+/// None today; the signature matches [`scan`]'s so the two cannot drift into
+/// answering differently shaped things.
+pub fn scan_from(document: &Document, page_count: usize) -> Result<Vec<PageMapping>, String> {
     let mut pages: Vec<PageMapping> = document
         .get_pages()
         .values()
         .take(page_count)
-        .map(|id| page_mapping(&document, *id))
+        .map(|id| page_mapping(document, *id))
         .collect();
 
     // Whatever is missing is unknown, never clean. Also covers the opposite

@@ -2,13 +2,28 @@
 
 Things already paid for once, or verified before writing code, in full.
 
-[`AGENTS.md`](../AGENTS.md) carries the index of these --- titles only, grouped by area ---
-and is what an agent loads automatically. This file is what it points at. Read the entry
-for any area you are about to work in; add new ones here **and** to the index in the same
-commit, or the index stops being a reliable answer to "is there anything known about this?"
+**The table of contents below is the index.** It names every entry --- titles only, grouped
+by area --- and `AGENTS.md` names the thirteen groups and points here. Read the entry for any
+area you are about to work in. A title is a claim, not the lesson: several of them are the
+opposite of what they sound like, which is why they were written down.
 
-The order is the order they were written in, which is roughly chronological and is left
-alone deliberately: several entries correct an earlier one, and a few say so explicitly.
+It moved here on 2026-09-06, out of `AGENTS.md`, where it had lived since 2026-07-28. The
+reason is arithmetic. The index was 639 bullets, `AGENTS.md` was 112,084 characters against
+the 130,000-character ceiling `scripts/check_trap_index.py` enforces, and the corpus had been
+growing about 130 entries a week --- so the ceiling was two to three weeks away, and the file
+an agent loads on every task was going to stop being loaded because of traps nobody was
+reading that minute. Both halves of the index now live in the file they describe, and
+`AGENTS.md` grows by nothing when a trap is added.
+
+Add a new trap in one commit: the entry under a `### ` heading below, and its title verbatim
+as a bullet under the matching `## ` group in the table of contents. A bullet is the title and
+nothing else --- `scripts/check_trap_index.py` diffs the two as sets, both ways, and refuses a
+parenthetical gloss except for the one title named in its allowlist.
+
+The order of the entries is the order they were written in, which is roughly chronological and
+is left alone deliberately: several entries correct an earlier one, and a few say so
+explicitly. The groups are a view over that order rather than a rearrangement of it, so a
+group's entries are not contiguous in the file --- grep the title.
 
 **A reference elsewhere to "`AGENTS.md` records ..." means an entry in this file.** These
 lived in `AGENTS.md` until 2026-07-28, when they had grown to 93% of it --- an instruction
@@ -16,6 +31,714 @@ budget spent, on every task, on the ninety-eight traps that were not the one in 
 you. The roughly one hundred references in code comments and the other documents were
 deliberately not rewritten: a mechanical diff over that much prose is a worse risk than one
 hop through the index.
+
+## PDFium: rendering, mutation and page state
+- PDFium: removed objects come back unless you regenerate the content stream
+- Destroying an object removed from a page segfaults
+- PDFium mutations regenerate page content wholesale
+- `set_text()` silently draws `.notdef` when a glyph is outside the subset
+- PDFium pays a large fixed cost *per render call*, not per page open
+- PDFium parses a document lazily --- but enumerating pages is not lazy
+- PDFium rendering *is* interruptible --- via the progressive API
+- PDFium decides how often it can be interrupted, and the slice does not change it
+- `FPDF_LoadPage` re-parses every time, and on a complex page that is 44 ms
+- `PdfiumLibraryBindingsAlreadyInitialized` — a helper that binds its own library works alone and fails in company
+- A wash that reads as zero everywhere: PDFium's buffer is RGBA, not BGRA
+- PDFium's render rotation composes with `/Rotate`, and wants the turned size
+- A rotated page whose box it inherited comes back `width x width`
+- PDFium accepting a file is not evidence the file is well formed
+- An error message that names no cause is not vague, it is a wrong diagnosis
+- A fallback is in the coordinate system of whoever wrote it
+- Two handles to one cached page are aliases, and a reading taken after a change describes the change
+- PDFium answers the same error for no password and for the wrong one
+
+## PDFium: text, coordinates and outlines
+- A byte scan cannot verify a document with a Type0 font
+- The page break is whitespace, and concatenating two pages loses it
+- A pattern over folded text has no lines, so `^` means the page
+- `FPDFText_GetText` drops characters, so it cannot be indexed alongside boxes
+- A page carries `/Rotate`, and PDFium answers in two coordinate systems at once
+- PDFium lays a page out from its `/CropBox`, and everything else here read `/MediaBox`
+- A line-grouping rule assumes an axis, and the axis is not always vertical
+- Two rotation tables, disagreeing at every turn but zero
+- PDFium's character order is not the page's line order
+- A dense page of uniform lines cannot detect a y-flip
+- A comma opens a line of its own, and every space on the line joins it
+- A loop that re-attaches to the previous item drops a leading orphan
+- A font can float a space's box clear of its own line, and overlap banding drops it
+- An absolute epsilon refuses a page whose every glyph is that thin
+- A paragraph is one mark and several text objects, and the gap between them belongs to neither
+- `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
+- `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every other fit lands at the page top
+- Two resolvers agreeing with themselves is not two resolvers agreeing
+- `FPDFBookmark_GetDest` cannot tell a heading from a damaged link
+- A differential that needs a manifest is a differential over one document
+- A destination's offset belongs to the page it lands on, not the page it left
+- An outline can be infinite, and PDFium says so in its own documentation
+- PDFium cannot create digital signatures
+- PDFium's signature enumeration does not walk the field tree, and ours does
+- PDFium draws a comment's icon in its own colour, and the file is not wrong
+- PDFium synthesises an appearance for `/Text` and not for `/Stamp`
+- A form's text is on the page's text layer, and the page's object list cannot reach it
+- A form drawn twice on one page is one reference in the object graph
+- Removing the `Do` stops the page drawing the picture, and leaves every byte of it in the file
+- A comment saying two rules are the same is not a check that they are
+- Filtering the engine's answer is weaker than not showing it the pixels
+- The gate reads a band of rows, so a region narrower than its line is judged with its neighbours
+- `FPDFPage_GetRotation` needs a loaded page, and the outline asked for one per bookmark
+
+## Text matching, and scripts that are not English
+- `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
+- A content stream has no bidi, so logical order draws right-to-left text backwards
+- PDFium maps Arabic presentation forms to base letters, which was assumed to be false
+- `ß` does not lowercase to `ss`, and the doc comment saying so stood for days
+- A combining mark does not touch its own line, and a word with an ascender hides it
+- With no `/ToUnicode`, PDFium returns plausible garbage rather than nothing
+- A pattern was compiled case-sensitively against a haystack the fold had lowercased
+- Two broken `/ToUnicode` entries can decode to one valid astral character
+- A change predicted to fix three things fixed two, and the third was never the same problem
+- PDFium normalises ligatures too, so the cost of case folding was smaller than stated
+- A body's newlines live below the table that decodes it
+
+## The worker boundary, the sandbox and the pool
+- macOS Vision cannot run in the parser worker's sandbox, and it aborts rather than refusing
+- Printing maps a PDF parser into the app process, on both platforms
+- `thread_safe` does not serialize PDFium --- there is no mutex, and threads crash
+- A worker process is nearly free; the webview boundary is not
+- macOS has no memory rlimit, and `RLIMIT_CPU` is a lifetime budget
+- Polling a child's footprint bounds a leak, not a burst
+- `proc_pid_rusage` takes the struct's address, not a pointer to it
+- The vendored PDFium has no JavaScript engine and no XFA --- verify it, do not assume it
+- The no-V8 property is one word in a URL, so the fetch asserts it
+- A symbol scan needs symbols, and the Windows PDFium has none
+- PDFium ships its loadable library in a different directory on Windows
+- A sandboxed PDFium substitutes fonts silently --- and the obvious fix does not work
+- The linker's image table is an observable; a milestone of ours is a claim
+- Where the parse runs is not observable from a unit test
+- A Rust process absorbs the first SIGSEGV you send it
+- A released id must leave a hole, because removing it renumbers the rest
+- Forgetting a node in a linked list is not removing it from the list
+- A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets
+- Two copies of a distinction drift, and a mutation of one survives
+- Dropping the owner does not close a pipe something else has cloned
+- A descriptor without `FD_CLOEXEC` leaks into every later child, and keeps it alive
+- Two mechanisms with the same limit make one of them untestable
+- FIFO dequeue is not FIFO completion
+- A worker killed a moment ago still says it is running
+- A pre-spawned worker outlived its parent, and the claim that it cannot is untested by design
+- The cleanup after an fd shuffle can close what it just installed
+- A per-page invalidation counter is not the same as a generation
+- State keyed by a slot belongs to whatever moves into that slot
+- `(deny file-write*)` does not deny a write through a descriptor you were handed
+- A child cannot tell a descriptor it was handed from whatever is open at that number
+- A refusal flattened to a string across a process boundary loses the action that answers it
+- A MAP_SHARED document does not pin the file, so a truncation is a SIGBUS
+- A rename over a mapped file succeeds, and the mapping goes on serving the file that is gone
+- A pool that replaces a dead worker with the same bytes faults again, forever
+- A diagnosis placed after a liveness check inherits that check's race
+- A valid in-place rewrite is served silently, and a length check cannot see it
+- The check that could not exist while one function did both halves
+- A field documented as the caller's last look, and read by nobody
+- A guard that looks a pathname up again is not a guard on the file you are writing
+- One temporary name for every save, written with a call that truncates
+- Writing a page's rotation "for completeness" flattens what a bounded walk could not read
+- Two page numbers can be one page object, and the second turn composes on the first
+- A page number is a position, and deleting a page renumbers every one after it
+- Removing one of two page numbers that name one page cannot be done by removing objects
+- Dropping a reference out of a destination array leaves a destination with no page
+- Flattening a page tree loses what a page inherited from the node it hung under
+- A permutation and a subset are the same document to every reader, and not the same file
+- A quirk documented as harmless becomes a defect the day its precondition is wired
+- The order a model inserts into is not the order its caller is looking at
+- An id and a slot are both `number`, so a mark drawn on the last page vanished
+- Moving a mark is a re-inking of it, and reusing the command beat adding one
+- A password that unlocks the first worker unlocks nothing else
+- Wrapping stdin in a `BufReader` eats the first request of the session
+- One untyped reply carrier, and the two ways serde refuses to replace it
+- An extraction already on the wire was measured against a crop box the page no longer has
+- A slot held across an await belongs to whatever moved into it, in two more places
+- A worker released after its answer is sent still holds the file the answer is about
+- The overdue worker was signalled after the table said it was dead
+- A spare that never warms takes every later open down with it
+- A merge read every file the reader picked, twice, with no ceiling
+- The fingerprint was taken of the name, while the mapping was taken of the file
+- An LRU over a sequential scan caches exactly what the next scan will not ask for first
+- A reply that grows with the document turns a bigger answer into a dead worker
+- Moving a size check before the work it guards changes when the refusal happens, not whether
+- A withdrawal that is correct as a broadcast is expensive in exactly the moment it is used
+
+## The document model: saving, structure, signatures
+- Redaction conflicts with incremental save --- and a full rewrite is not sufficient either
+- Digital signatures constrain what may be edited at all
+- Whether `/Annots` is an indirect array decides how large an annotation edit is
+- Embedded fonts are subsetted
+- `lopdf`'s object collection is quadratic, but the algorithm is not
+- Removing a refusal removes it for every caller, including the one that never had a guard of its own
+- `lopdf` silently drops encryption on save
+- An incremental save is cheap on disk, not in memory --- and its cost is the parse
+- An object a prior revision overwrote is reachable by no parser
+- A signature blob is trimmed by trailing zero, and BER ends in zeros
+- Asking for fewer pages made the walk reach more, because the bound was a property of taking all of them
+- A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
+- A shortcut can produce the right answer and lose the report
+- An empty answer from a whole-document scan cannot say whether it looked
+- A cited instance can be half right, and the wrong half is the one doing the work
+- JSON refuses `NaN`, which is what made an unchecked `f32` look safe
+- A mutation that survives every check because nothing reads the field
+- A panel that lists a hidden comment must not let the page open it
+- `/F` is a bit field, and the flag every real link sets is not the one you are testing
+- One predicate answering three questions is right until a second kind makes them disagree
+- Padding a rectangle to make one refusal legal disables the check that refusal was doing
+- A byte grep cannot see inside an object stream, and it returns enough hits to look like it worked
+- `lopdf::decrypt` removes the entry that says the document is encrypted
+- The guard that could not fire, because the library removes the evidence first
+- A field with no reachable `true`, guarded by a comment about the wrong call
+- The same silent decryption, on the path whose output a reader keeps
+- A mark's rectangle survives a quarter turn and everything drawn inside it does not
+- Twelve tests for marks and not one of them turned a page
+- The uncovered bytes are mostly the signature's own container, and reporting the total reads as an accusation
+- A field added to a shared plan is read by one writer, and nothing says which
+- A guard checked after the surgery is a true sentence about the wrong document
+- A workflow step is the one source no local gate reads, and mine named a file that cannot exist
+- A `run:` line is not a `run:` step, and the emptiness control could not tell the difference
+- A pin the gate prints and never reads, and the rule that they move together
+- Two mutations that survived because they were aimed at the exemption
+- A green gate run and the commit after it are about different trees
+- The count was printed and asserted by nothing, and git can answer emptily
+- The step that blocks the release was written for a shell the machine does not run
+- An emptiness control written as a threshold is a measurement of the platform it was written on
+- The operation that "cannot lose anything" was the one nobody guarded, and its own doc comment said why
+- Two nested `Result`s because the outer one is the pool
+- A cross-reference stream states the width of its own fields, and `lopdf` believes it
+- The bound is on what the loader expands, not on what a caller asks for afterwards
+- A guard about the arithmetic is not a guard on the trip count, and the loop between them was unbounded
+- `/ByteRange` is the document's arithmetic, not ours
+- A trip count is not a guard on what the trips do
+- Splitting one function into five callers of a shared parse: four of them wanted only the objects, and the fifth wanted the bytes
+- Two walks of one tree, and every bound they shared was a different number
+- A wire shape and a model type are the same distinction twice, unless one derives the other
+
+## Tauri, the webview and startup
+- `AppHandle::exit` does not set the process's exit code
+- `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
+- A raw `cargo build` binary runs no webview content at all
+- A page that never ran looks exactly like one that ran slowly
+- WKWebView presents at 59 Hz on a 120 Hz display
+- `performance.now()` is clamped to 1 ms — average, do not take a median
+- Never benchmark through `tauri dev` without `--release`
+- Startup has three regimes, and two of them are the OS, not us
+- The shell floor is ~250 ms, and no lever on our side moves it
+- A webview's first custom-protocol request costs ~45 ms, whichever request it is
+- Tauri creates config windows *before* the setup hook, hiding the webview's cost
+- A page whose window is not visible is suspended --- so a JS watchdog cannot fire either
+- A refusal in the setup hook cannot speak, so it must happen before the event loop
+- Turning on updater artifacts makes every build demand the signing key
+- A status element that comes and goes rearranges the toolbar it sits beside
+- A menu item is a global key claim, not a label
+- A menu item's greying is a snapshot, so a guard that moves without an edit is stale for ever
+- A one-shot tool armed from the palette says nothing, and the reader is not stuck but lost
+- A page's own turn is not the view's, and a rectangle drawn by one was found by the other
+- A size is learned once, so a page turned before it was seen keeps a transposed one
+- A framework can abort your whole test binary, and 470 passing tests report nothing
+- A synthetic right-click posted to the window server never reaches the web view
+- A Control+click is the primary button, so a guard on the button number missed the commonest right-click on macOS
+- A key handler is only as safe as the newest element inside it
+- A label the platform writes is compared against a label we write by nothing
+- The second copy of a gated list is the one that drifts, and only it
+- A title that is a strict prefix of another ties, and registration order decides
+- Placing a mark is what tells you which page it is on, so a visibility test after it costs the document
+- A layout read taken after a style write in the same frame forces the layout
+- A settle belongs on the request, not on the drop, because a stale tile is drawn at its own size
+- A max over a filtered set is a binary search once the filter is a prefix
+- Concatenating a selection to compare it with the empty string
+- Tauri exports a command's wrapper macro only for a function that is visible
+
+## Rust and macOS
+- A locked macOS session cannot be unlocked from a script, so it must be prevented
+- `Instant` on Apple Silicon ticks at 41.67 ns, so "elapsed == 0" is reachable
+- `evict_page` can dangle a live `RawPage`, and the borrow checker allows it
+- A mechanical insert before a declaration can land between an attribute and its item
+- A `Decode<'static>` bound is satisfiable by leaking, and nothing goes red
+- `trim_text` trims each event, and a value with an entity in it arrives as several
+- A stale binary answered for a source file that was never written
+- A guard whose neighbour refuses the same input cannot be tested by it
+- Putting a guard in front of a parser disarms the parser's own guard, and the test still passes
+- macOS has no `setsid`, so a detached restart never starts
+
+## Measuring: what a number can and cannot say
+- A documented count that is one sample of a race makes an honest run look like a defect
+- The harness prints the count so nobody has to derive it, and it was derived anyway
+- Two counts from two commits are not a platform difference
+- A baseline that skips the expensive step leaves its noise in the answer
+- A difference is only a measurement when the operands make it one
+- A clamped delta turned "the baseline moved" into "this cost nothing"
+- The edit that moved a copy and reported it as removing one
+- A difference assertion is satisfied by any difference, including the one the defect produces
+- A probe reading one edge of a box cannot see a mutation that clips the other three
+- A check on the sign of a noisy quantity fires only when the noise falls one way
+- The append was 8.2x in the spike and 1.1x in the application, and the difference is a hash
+- A round trip is a composition, so it is blind to a symmetric error
+- A mean cannot test a claim about a minimum
+- A guard that reads the whole file does not belong on the path a reader waits on
+- A check that defers to a cheaper one it supersedes cannot be tested, and refuses what it should forgive
+- A guard's last look should compare against the moment of the first look, not the moment of the open
+- One refusal message, two moments, and it told the reader to do something they no longer could
+- A poll for something to appear has no control, so six clean absences meant the walk was broken
+- A synthetic click from System Events does not reach the web view, and the pointer was 120 points off
+- A wait built on a program the machine does not have returns instantly, and every check after it reads as a pass
+- Two runs failing different checks is variance; the same check twice is a defect
+- A test that changes the working directory silences every other test that reads a relative path
+- A refusal that names a fallback has to keep the fallback open, and this one closed it
+- A message set before the operation that clears the message area is a message nobody sees
+- A frame-rate pass means nothing without a coverage number beside it
+- A rate whose sample size is also an input to the mechanism does not travel, and 40 regions a page is not a reader
+- The engine that certifies a redaction is more permissive on one platform, and it both certifies more and alarms less
+- A rate argument carries the engine that produced it, and this one reversed on the other platform
+- Interleaving controls for drift, not for what the last variant left behind
+- Three similarity metrics in a row, each unable to see its own failure
+- A timer that starts after the setup measures the wrong thing, and reports it
+- `cargo test` is a debug build, and a debug number in a doc comment is a lie
+- PDFKit reports an annotation's bounds rotated and renders the page unrotated
+- Reading the code predicted four call sites, and there were eleven
+- The delta was the wrong term, because the mapping was already absent from both numbers
+- A multiplied mark's coverage is a reading about the page, not only about the mark
+- Interleaving controls for drift between the arms, not for a machine that is slow for both
+- Process RSS is a high-water mark, so two oversized seeds look exactly like a leak
+- Four of the six modules that left the cycle were nowhere near the edit
+
+## Writing a check that can fail
+- Break the code on purpose, or the test suite is decoration
+- There was no check on the overlay at all, and that is why a reader found the underline defect
+- A feature can be inert in the application while three layers of tests pass
+- A control that is easier than the check certifies nothing
+- A bound enforced against an upper bound on the quantity is enforced against nothing, and the shortfall reads as the engine's fault
+- A count of failures bucketed by a property is not evidence about that property, and the numerator alone reads as a finding
+- Two marginals bound an overlap and cannot measure it, and the bound reads like a finding
+- When the remedy is a constant, compute what it would take before you write it
+- An intervention outranks a stratified observation, and a bucket four points wide did not break the tie
+- Two variables a corpus cannot separate, because on an ordinary page one forces the other
+- A sweep that pads with `resize` is not the change it stands in for, and the difference set the next increment
+- An OCR engine's bounding box is a detection, not a measurement
+- A property that holds by construction cannot test the thing it resembles
+- Four assertions became unfalsifiable without being touched
+- A fixture the library itself wrote cannot tell a passthrough from a rewrite
+- An oracle more forgiving than the thing it stands in for cannot fail
+- A writer and its own reader agree about a document that is wrong
+- A reply parsed as the wrong shape reads as absence, and absence is the reassuring branch
+- A canvas round trip cannot read back what a renderer produced
+- A dependency that refuses your test input makes your own guard look redundant
+- Two constants in different units, and the comment comparing them was false at every zoom a reader uses
+- PDFKit synthesises an appearance for an annotation that has none
+- A defect that switches off a check's precondition is not caught by that check
+- An "already have it" cache needs an in-flight set, not just the cache
+- A text comparison cannot see a property that is not about text
+- A selector naming one element stops reading the page when the layer gains another
+- A test whose precondition is already satisfied never runs
+- A check that borrows a neighbour's precondition passes wherever the neighbour ran
+- A catch-all arm that was right for two variants is wrong for the third
+- A crash test that compiles away proves containment of a crash that never happened
+- A test for an atomic write must plant the intermediate it is meant to prove
+- A control can be contaminated by the phase that ran before it
+- A check that derives its inputs from the thing it is testing cannot fail
+- A closure and a direct read of the same variable disagreed, and it is unexplained
+- A hit-test slack that rescues a small target hands the click to its neighbour
+- The nib was tested where it was, not where it had been
+- Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
+- A mirror of the DOM's focus goes stale, and Enter activates the row nobody is on
+- A synchroniser is not a fix, and the entry above called the arrows fixed anyway
+- The fourth copy carried the explanation and not the fix
+- A page fitted to the element's own width is measured under the scrollbar
+- Fit-width rescales every page when one of them becomes the widest
+- A synthetic heading that does not reach the second column tests nothing
+- Two tests naming their scratch directory the same string delete each other's
+- Whatever a fixture is meant to discriminate, it needs two of
+- A fixture where the right rule and the wrong rule agree cannot tell them apart
+- `NSURL` hands a path back decomposed, and the fixture that shows it is not the ASCII one
+- Reading a decision back out of the DOM makes the test double part of the logic
+- The fake DOM supports what has been needed before, and nothing else
+- A leak no behaviour can see needs an accounting observable, not a cleverer assertion
+- The window reads the status and the tests read the viewer, so the copy between them is untested
+- A bound stops discriminating when the behaviour around it changes, and its test keeps passing
+- Four checks that say where the ink is, and none that says how long it is
+- A check that measures along the axis it is policing shrinks its expectation with its measurement
+- A bound no correct input can reach makes a check that cannot pass, and a manual-only harness is where that survives
+- Two mechanisms for one rule, and it took two survivors to see it
+- Two mechanisms, one outcome, and deleting either one would have been the defect
+- A check no gate runs is a check nobody runs, and two commands shipped past it
+- A harness printed `[FAIL]` and exited 0, under a criterion that names it
+- A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships
+- A readings table outlived the code that produced it, and every document still agreed
+- An accounting observable nobody reads is the same as not having one
+- The same assumption, quiet in one mode and loud in its neighbour
+- Borrowing the writer's own table to avoid drift made the check unable to fail
+- Two readers of one file cannot catch the writer that moved it
+- An outcome two mechanisms can produce cannot test either one
+- A length bound cannot be tested by the verdict it produces
+- A check nested inside a lookup for the thing under test disappears with it
+- A lower bound on a wait is satisfied by any longer wait, including a broken one
+- A check whose failure mode is a wait cannot fail
+- A test whose failure is a hang reports a pass and a timeout in one breath
+- A check that cannot run is not a check, and a locked screen is enough to stop one
+- An unreachable guard is worth keeping if the type can carry it instead
+- A fixture that aborts its parser cannot live in a directory something sweeps
+- A risk and a gate both keyed on writing cannot see the path that only reads
+- A guard the type system already makes unexpressible has no mutation to write
+- A guard whose only reachable input is one the model forbids
+- An Escape ordering that no reachable input can distinguish
+- A label rendered only from real ids cannot be tested on a combination none of them uses
+- A post-destroy guard that returns early leaks what it declined to take
+- A print check that counts pages cannot see a blank page
+- A page count read too early is 0, and 0 is not a count
+- A DIB pixel is not a device unit, and every page printed at half size while a check passed
+- A tolerated gap in the input becomes a hole in the output
+- A test cannot see the direction of an attachment it puts in index order
+- A guard for "more than one page" is not a guard for "a page that can be reached"
+- A wrap is correct when there is nothing ahead, so the check cannot fire
+- A check with no precondition reports a sparse fixture as a defect
+- A test that refuses an empty fixture set is what makes CI's absence visible
+- A feature made a standing check false, and the only corpus that could tell had never been opened
+- A negative assertion needs an observable saying the question was asked
+- A class used with `instanceof` must not live in a module the tests mock wholesale
+- A command deliberately left out of the window harness still has to be classified
+- A refusal that carries a `NaN` is not equal to itself, and both sides print the same
+- Testing a rule is not testing that the rule is used
+- A margin above a destination lands on the previous page, and the tolerance that compensates for it can only reach within a page
+- A guard asking how long the document is cannot answer how far the jump went
+- A size-driven invalidation cannot see a half turn
+- Every statement about a turned page is also true of a rotated view
+- An exclusion keyed on a prefix grows on its own
+- `instanceof` against a constructor the runner does not have throws, it does not answer no
+- A page count cannot see a move, and every deletion check is built on the page count
+- A duplicate key in an object literal is legal JavaScript, so the suite stayed green
+- A tolerance around one value is satisfied by an estimate that replaced every value
+- The natural place to press is the one place the defect has no effect
+- A feature reached only through an optional callback is invisible to a harness that omits it
+- Pressing a row navigates, and navigating scrolls the list out from under the drag
+- A break recorded as a position in a list the callee does not own
+- A caller that validates first cannot reach the guard beneath it
+- A coverage figure over the union of several quads measures the line spacing
+- A control refused by a different guard than the one it was written for
+- A count taken from the input, asserted against the output --- red on a clean tree
+- A control refused by a different guard than the one it was written for, again --- and the verdict was green
+- A differential between two readers cannot tell you which mechanisms ran
+- A denominator that is constant in one dimension cannot compare areas
+- A band check can pass by two hundredths of a point, and a passing run does not say so
+- A probe that writes one colour cannot measure a mark drawn in another
+- A single-entry cache is evicted by the grid scan that was about to test it
+- A cross-check that type-checks the other platform does not lint it
+- A reading in fractions of a rectangle cannot test something that is a fixed size
+- A count of the tabs cannot see that one of them is clipped out of the panel
+- Two synthetic marks addressed by page land on top of each other on a one-page corpus
+- A getter that answers from the rows it was handed cannot see a panel that drew one
+- Two writers for one document, and the printer got the older one
+- Removing the second copy is what made the differential unable to fail
+- A differential's most important check was hard-coded to pass when both readers failed
+- A test helper that builds its fixture with the encoder under test
+- A mock's default return value decides whether a mutation fails or hangs
+- `String(e)` on a structured refusal is `[object Object]`, and one of the three checks stayed green
+- A check reported `[OK]` with the reason it should have failed printed beside it
+- A check read the palette's rendered rows, which are capped at 64
+- A correction that changed the direction of a movement that was never happening
+- Before widening a check to another language, ask whether that language admits the defect
+- A bound written against its own constant cannot see the constant move
+- A control token spanning a whole line is read back only when the engine returns the line in one piece
+- A control chosen from the document's own text is worth nothing when the text layer does not say what the page draws
+- A framework you link is mapped whether you call it or not, so an absent image cannot be the evidence
+- Two strips butted together make the engine misread both, and the control is what pays
+- The words are still in the file, and the redaction is correct
+- An ordering asserted over a `HashMap` fails a third of the time, which reads as flake
+- A widened type enumerates its readers, and is blind to the ones that already had a fallback
+- A skip in a reply-driven queue stops the queue, and "nothing was requested" is what a stall looks like
+- A cache keyed by the page of the file, and every caller holding the slot
+- A record of what has been asked for, kept where it cannot see the answer being thrown away
+- The status line showed the selection and the copy refused it, over a page with nothing on it
+- One refusal, three callers, one string --- and the string named one of them
+- A helper named after the local it replaces shadows it, and `expect(fn.length)` passes
+- A gate that reads prose as code can pass for the wrong reason, and rewording a comment turns it red
+- An unbounded report crossing a bounded pipe turns a bad file into a failed check
+- A `NaN` in one field is not a test of the other, and the clause that looks redundant is the one it needs
+- An "already read" set keyed by page cannot see the second region on that page
+- A withdrawn thumbnail's failure condemned the row it belonged to
+- A checker that scans its subject's prose counts a fixture that nothing generates
+- The copyleft sweep warned about a crate with no licence and said nothing about a package with none
+- An ordering cannot be asserted from outside the call that performs it
+- Five fields for one fact, and the invariant lived in the methods that wrote them
+- An accounting observable is what a speed change has instead of a symptom
+- A trigger with no chokepoint is a trigger you have to enumerate
+- A stub that returns the safe answer passes every test written for the feature
+- A gate keyed on where a call is written has to be taught the new place first
+- A control that counts an attribute counts every sentence that mentions it
+- A `Widen` of the mirror is what makes a JSON sample checkable against it
+
+## Harnesses: running checks and reading what they print
+- A mutation harness needs the same control as the thing it is testing
+- A timeout that discards the transcript recreates the failure it was added to diagnose
+- Restoring a mutated file by *moving* a backup over it tests the mutated binary (the title names the wrong mechanism --- see the entry below it)
+- Piping the gate runner through `tail` ate the exit code and the evidence, about fifteen times
+- A harness that prints only at the end cannot say where it stopped
+- A harness that prints as it goes writes nothing until it exits, under a redirect
+- A `pgrep -f` wait loop is defeated by the command that checks on it
+- A wait built on `pgrep -f` outlives the job, and every later check agrees with it
+- A mutation harness that dies leaves the mutation in the tree
+- A design that wiped the state on every ordinary run was useless in the workflow it was for
+- The check aimed at the mutation is the one that raised, and a traceback names no check
+- An earlier case emptied the store the later case reads, so neither lookup ever happened
+- A filtered test run is only as good as the names, and mine excluded the check I wrote
+- An over-removal control cannot be proved by a mutation that under-removes
+- Running a repo's formatter over files it does not format
+- A mutation aimed at deleted code is refused far too late to matter
+- A refactor orphans mutations nobody can see, and the gate is what finds them
+- A cross-check that counts names against a count of tests is wrong wherever two tests share a name
+- A refactor moved three callers away, and the mutation kept its anchor and lost its meaning
+- A mutation harness knows only the tests it was told to run
+- A verification chained after a failed edit reports success for work that is not there
+- A restored file with its original timestamp leaves the build serving the mutation
+- The gates rebuild debug and the probes run release, so a green suite says nothing about the binary you are about to run
+- Three mechanisms, no checks: measure what a commit's tests can actually see
+- A verdict that reads a timeout as "no result" throws away the finding
+- A mutation naming a test the harness cannot run reports SURVIVED
+- A mutation that survives may be a variant, not a gap --- check before strengthening
+- A mutation that survived, a comment that claimed a behaviour, and no test to add
+- A check written because a mutation survived has to inherit that mutation's expectation
+- A leaner data structure turned a wrong edit into a no-op
+- A harness that prints stderr only on failure hides what a passing run said
+- A wrapper's own verdicts are on the other stream, in the same shape as a check's
+- A mutation aimed at a check that skips reports SURVIVED
+- A timeout whose failure path has no timeout is not a bound
+- A mutation caught by an access violation produces no test results at all
+- An unguarded `invoke` for a command that is not registered ends the run, and the harness calls it SURVIVED
+- A guard that also guarantees termination fails as a hang, not as a red test
+- A comment claimed an ordering mattered, and the mutation that should have hurt did not
+- Three ways to be wrong about whether your own build is still running
+- `caffeinate <utility>` becomes a child of the utility, so a child count counts it
+- Repeating a race inside one process re-runs the first round, not the race
+- A precondition that names the cause still lets the symptom print
+- A text-mode restore is not a byte restore, and the locale codec cannot even read the file
+- A gate's static reason turned a crash into a wrong diagnosis, twice over
+- A sweep that names one cause for a symptom several produce sends you to rebuild what is current
+- A decoder told to replace what it cannot read does, and the result ships
+- A harness that synthesises input must reset the input's own state machine
+- The last page cannot reach the top of the viewport
+- An expected error line beside a passing suite makes a green run unreadable
+- A harness that cannot read a script skips, and blames the fixture
+- A check name that is a prefix of another cannot be aimed at
+- A check named by its position in a list is renamed by whatever is appended to that list
+- A global text replace with a "one or more" assertion rewrote four unrelated checks
+- A mutation aimed at code no fixture reaches survives, and the fix is not a new corpus
+- A harness sliced a code-point index with `String.prototype.slice`
+- A measured string transcribed off a terminal loses what the terminal does not draw
+- A mutation aimed at one branch when the fixture only reaches the other
+- A delivery counter cannot say WHICH delivery, and the guard was satisfied by the event it excluded
+- A snapshot taken after the first mutation restores the mutation, and verifies itself clean
+- A `|` in the data split my own mutation in half, and the run reported a pass
+- Three near-copies of a command made an existing mutation's anchor ambiguous
+- The mutation that proves a guard is the one that performs the write it prevents
+- `--only "text: "` runs every `context:` mutation too
+- A rewritten line leaves a mutation aimed at nothing, and only the harness says so
+- A stream split done for the failing direction leaves the passing one where it was
+- Two budgets for one run, and the one that was raised is not the one that decides
+- A workflow copied from CI can lose a whole step, and then the release gate is the weaker one
+- A parity check that compares steps is blind to the authority they run with
+- A step that signs before anything imports the certificate fails with the masked secret as its error
+- The verification step failed after everything it verifies had succeeded, because `mapfile` is bash 4
+- A mirrored value read after "idle" is the previous operation's, and it flaked on a release artifact
+- A PATCH that sets only the body clears the draft's tag, and publishing then attaches it to nothing
+- Renaming the changelog heading instead of opening a new one files a released version as unreleased
+- A draft release is invisible, and the tag beside it says the work shipped
+- A test that walks every prefix of a journal still could not see the snapshot rule
+- Two tests sharing a name make a mutation harness's two counts disagree
+- A mutation that inserts rather than moves runs the code twice, and the second run overwrites the first
+- The sweep shelled out to `pkill`, which is not a program on Windows
+- `subprocess.run(text=True)` decodes with the locale codec, and the multilingual corpus is the one that breaks it
+- An escape sequence written into a mutation table through a shell never arrives as an escape
+- An event without the modifier fields a matcher tests reads as no match at all
+- A probe copied from its neighbour inherits a starting point that may not apply
+- The gate guarding the anchors reads the file differently from the harness that uses them
+- A mutation written on one platform names a test the other platform does not compile
+- Adding a third drag made five existing mutations aim at nothing, or at two things
+- A new test can make an existing mutation's anchor ambiguous, and the anchor never moved
+- A new command turns the mutation harness's control red, one layer from where it reads
+- A new kind that is a near-twin inherits a predicate written when it had no twin
+- A test named for the population it covers is renamed by every kind you add
+- A predicate named after the population it covers is renamed by every kind you add
+- A mutation that ANDs with true has changed nothing, and SURVIVED is then correct
+- A mechanical edit keyed on a field name hits every occurrence of that name
+- An AppleScript loop over a property list iterates a reference, and every menu reads as empty
+- A harness that edits source files pays for the editor watching them
+- A harness that prints its first three failures reads exactly like one that prints all of them
+- A harness's cost expired because the code grew, and nothing goes red about that
+- A `tauri dev` watcher recompiles the crate you are gating, and rustc's own OOM reads as a failed test
+- A harness written on a locked screen is a harness that has never run
+- A documented cost measured warm is the wrong number for the run you are about to make
+- A mutation block below the `__main__` guard is counted by the gate and run by nothing
+- Narrowing a run made a shape the output parser had assumed away
+- A capability nobody could use is invisible to every check, including the mutation harness
+- An option whose value is optional swallows the next argument, and `vitest list --json` overwrote a test file
+- A wrapper that exits zero on a run that ran nothing, while both its callers guard themselves
+- A rule written for the job a review named stops at that job, and the job next door had the most to lose
+- A module split renames the harness's filter without moving one anchor
+- A security gate keyed on where a call is written decides where that call may move
+- A mutation that leaks a file poisons the absolute-count check written to catch that leak
+- A count over a directory the whole suite shares is not an observable while the suite runs in parallel
+- A filtered `cargo test --exact` that matches nothing prints `test result: ok`
+- A link flag that makes the build succeed and the binary unable to start
+- Without a sanitizer, libFuzzer blames whichever input was current when its sampler fired
+- Nine `cargo fuzz run` invocations queue on one build lock and print nothing
+- A generator that works around the defect it found stops looking behind it
+- A fuzz artifact that comes back clean is a hypothesis, and the control is to revert the fix
+- The revert control has to take back every guard added since, not the one you suspect
+- Repeating a flag argparse did not declare repeatable proves what the last one says
+- `date.today()` is one clock's opinion, and the gate that refuses a future date runs on two
+- A fingerprint that decodes a binary diff dies before the first mutation runs
+- An empty set and a missing key are opposite facts, and reading them both as falsy killed a refusal
+- A check that returns from six places cannot own a directory with `mkdtemp`
+- A `continue` under a `finally` runs the cleanup and jumps past what it reported
+- `pkill -f <a path the harness passes as an argument>` matches the harness's own child
+
+## Windows and portability
+- The gates had never run on the platform where they fail
+- A document meant to cover both platforms was generated from platform-specific inputs
+- A crate-root `#![cfg]` empties a `[[bin]]`, and cargo reports a missing `main`
+- An uninhabited type carries its impossibility into every caller
+- A `null` that means "inferred" is not a `null` that means "unknown"
+- A directory that exists is not the library you need
+- A wedged compile and a slow one look identical, and CPU time is the only thing that separates them
+- A stale Windows resource artifact disables the cross-check and reads as a broken checkout
+- The comment naming the grep that would have caught it, four times running
+- A list of documented blockers can be wrong in the direction that looks thorough
+- A gate list that never links a binary cannot see a link error
+- A pin that nothing verifies is indistinguishable from no pin
+- A toolchain pin can match on version and still be the wrong ABI
+- A custom URI scheme is not spelled the same way on every platform
+- One constant standing for two platform distinctions breaks the moment they diverge
+- A release build is not a production build; a cargo *feature* decides that
+- A test cannot see a change to a profile it does not run under
+- A guard that degrades to a no-op off its platform stops being a guard
+- Reaching for a constant *because* it is portable, and picking the one that is absent
+- The same platform refusal, a result in one scenario and a failure in the next
+- `CreateProcessAsUser` waives a privilege only for a token it still recognises
+- A restricting SID stops the loader, and the code never runs
+- One failing rung cannot say which ingredient failed
+- A verdict that takes the last row that worked recommends the weakest one
+- A refusal that exists because nobody wrote the code is not a guarantee
+- The kernel refuses a writable mapping of a read-only file, on both platforms
+- "Inherit nothing" cannot be spelled as an empty handle list
+- A safe function taking a raw `HANDLE` has an unstated contract, and clippy says so
+- `GetExitCodeProcess` reports 259 for a live process, and 259 is a legal exit code
+- A bound documented as "not load-bearing", measured under the only load it will meet
+- A pipe reaches EOF before the process it belonged to is signalled
+- `eprintln!` is not one write, and every worker shares the parent's stderr
+- A test whose child never answers cannot see the pipes being crossed
+- A wait for a condition that cannot hold spends its whole bound, and retires the pool it was about to measure
+- A check that wins a race on one platform has not been shown to pass on it
+- Single-instance turns a stray process into a launch that succeeds and does nothing
+- A `DataWriter` closes the stream it was created over, so a helper that returns the stream returns a closed one
+- WinRT reports a PDF page's size in DIPs, not points
+- A BMP's DIB header is never 4-byte aligned, so reading it in place is undefined behaviour
+- A print DPI relative to the page is the wrong quantity, and A4 is the example that hides it
+- The OS's PDF rasteriser is not fast, and a raster print path inherits that
+- A directory under `src/bin/` becomes a phantom binary in the Windows installer
+- A trailing slash in a Tauri resource map is a rename on macOS, not a directory
+- An interpolated status label is two columns narrower when it passes
+- A green gate list can sit beside a distributable that cannot be built
+- A bundled app that finds its library in the dev tree proves nothing about the bundle
+- A GUI process has no stderr, and every Windows check launched the app from a shell
+- A refusal the reader needs, reported on a channel that does not exist
+- Three ways to look for a macOS recent-documents list, and all three say nothing is there
+- Moving a binary out of the installer moves it out of the gate that links it
+- The same trailing slash on the other platform, left there by a prediction that it was survivable
+- A silent installer skips the file it cannot write, and exits 0
+- `cargo fmt` was blamed for mangling a string, and it was innocent
+- A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it
+- An unused-import warning on one platform is not an unused import
+- A gate that refuses on a precondition of running is red on every machine that is not running
+- One unguarded call to an external program made eleven fixtures that need nothing unbuildable
+- Two drafts under one tag, with the artifacts split, and the first cause I recorded was wrong
+- `$?` read in the same word as a command substitution is the substitution's status
+- A relative forward-slash path is not an executable, and `cwd` makes every other argument in the list work
+- `git` reports forward slashes on every platform, so a path key built with `Path` matches nothing on Windows
+- A guard that answers by refusing the whole run turns two blocked mutations into 178
+- An `[INFO]` line guarded on a macOS-only reading cannot print on Windows, and the instruction was to read it
+- A `[SKIP]` whose stated reason is true can be the check you most need
+- A capability absent through a struct default has no defect to find
+- A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary
+- A platform gate widened in one of three copies, and the two left behind blamed the engine
+- A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
+
+## Fixtures
+- The test fixtures are generated, not committed
+- A fixture whose origin is zero makes an offset term unfalsifiable
+- A stand-in glyph with a degenerate box measures the wrong rule
+- A fixture's self-check forbade its own finding
+- A square fixture cannot tell a rotation from an identity
+- A bound in the code hides everything after it in the fixture
+- A test pinned a random value out of a generated fixture, and both places it runs hid that
+- A test whose oracle is the heuristic the code replaced fails once in 256 runs, on correct code
+- A `-manifest.json` sidecar enrols a fixture in a check it never claimed
+- A `/Text` annotation's rectangle is advisory, and PDFKit replaces it
+- The second reader substitutes the same icon and centres it, where the first anchored it
+- A rotated page makes a document mixed-size, and two checks assume it is not
+- A new corpus has to satisfy the sample points every existing check hardcodes
+- An empty transcript is what a *running* viewer check looks like
+- A probe fixture swept as a corpus, against the file that already said not to
+- Three crop-box mutations in one module and one in its twin, for code written twice
+- A rule about names, enforced by the one harness that discovers it last
+- The tool written to catch a missing check reported agreement about the wrong set
+- A control that cannot discriminate is not a failure, and calling it one made a documented command red
+- A guard written inline with an FFI call is reachable by nothing
+- Two predicates decide whether a save removes anything, and neither mentions removal
+- An empty warning line and no warning line are the same string
+- The containment rule that makes a highlight readable makes a redaction dishonest
+- An "already asked" set keyed by a slot is renumbered by the next deletion
+- Four answers, because a review panel may not say "nothing here" when it means "not yet"
+- A request still in flight is not re-issued, so a mid-flight invalidation looks broken
+- A fixture no script writes gated ten guards, and the tests that skipped passed
+- A test helper that reads through a parser that could not read
+- A control that turns the page in the plan turns nothing the writer reads
+- Two correct rules deciding every subject make each other unfalsifiable
+- The guard the type checker asked for made the loop bound untestable
+
+## Documents as controls
+- A mitigation present and disclaimed is quieter than one claimed and absent
+- A mitigation that moved half a path reads exactly like one that moved the path
+- A checklist step nothing can perform, and a comment promising a mechanism that does not exist
+- The plan said the words had to be extracted, and the model had never let them be lost
+- A *Not done* note outlives the work that closes it, and it is the recommendation nobody re-checks
+- The only document nobody re-reads is the one strangers read
+- The half of a check that could only ever agree with its own guess
+- A gate over claimed absences only catches the name the claim guessed
+- A regex over the source could not see eleven of the seventy-seven commands, four of them the ones the check was written for
+- A refusal a reader could answer, reported on a channel with no answer in it
+- An insertion between a doc comment and its declaration orphans it, and TypeScript says nothing
+- Two `///` runs with no blank line are one comment, and it documents the wrong item
+- A comment defending a name can become an argument for the opposite name, with no word of it changing
+- A comment defending a design, with every number in it stale
+- A comment argued for an ordering the code did not have, and the file's own measurement had made it pointless
+- A *Not done* note can describe a route with no reader in it
+- Two open questions joined by a word, and the smaller one had no choice in it
+- A module header that says "and nothing more", under a `use` block that says otherwise
+- The obvious name for the new type was already taken, and the error count climbed instead of falling
+- A document's spelling of an em dash is not a string's, and the comment above the line legitimises it
+- A disclosed risk names the operation you had in mind, and the path it describes keeps acquiring callers
+- Nothing in this process catches the defect step 5 exists for, and the obvious repair condemned a healthy file
+- PDFKit's first call costs 39 seconds in a debug build and 51 milliseconds in release, and the file it gets looks guilty
+- Three structural rules, three over-refusals on correct files, and the third would have been unreachable anyway
+- A comment's stated reason was checkable and false, and the next feature copied it
+- 486 lines of the viewer never run under vitest, and the fix is a seam rather than a harness
+- A tripwire that promised to go red could not, because three carriers answer one needle
+- A fixed point is invisible when the fixture is written in dependency order
+- A refusal promised in the plan and never built emits nothing to grep for
+- A paragraph that names its own failure mode reads as coverage, and the count went stale three more times
+- A sweep that stays inside one drawing really is one undo, and four files said that meant every sweep was
+- The unchecked clause of a two-sided decision was the one carrying the cost, and checking it inverted the answer
+- The checker tolerated the thing the rule forbade, and the index grew until nothing loaded it
+- A claim about somebody else's program has no gate here, and this one was false for months
+- A handover telling a person what to expect is a second implementation, and mine was wrong
+- "The one copy" acquired a second copy the day after the sentence, and its comment cited an import as the definition
+- An allowlist for a tool that is not installed reads exactly like a control
+- The decision was right, its cost basis had doubled, and the share was the half that had not moved
+- A YAML comment binds to nothing, so an inserted step can steal the one below it
+- A cache whose entries can never go stale still needs the argument written down
 
 ---
 ### PDFium: removed objects come back unless you regenerate the content stream
@@ -10810,7 +11533,7 @@ workaround: it is what macOS needs too, and macOS is the platform that will not 
 What the code does with that is close the *shape* rather than remember the rule.
 `save.rs`'s single atomic write is two functions --- `stage_in_place` writes the sibling
 temporary file, `commit_in_place` renames it --- so there is a place for the close to go and
-no way to spell the write without one. `lib.rs`'s `save_document` is the only caller and
+no way to spell the write without one. `commands/save.rs`'s `save_document` is the only caller and
 holds the order. A mutation that puts the save in place during the staging is in
 `scripts/mutate_rust.py`, and it is caught by the test that asserts the source is untouched
 until the commit.
@@ -18952,8 +19675,9 @@ Three live instances on 2026-08-28, found by writing the check rather than by re
 - **`save.rs`** --- `mark_sites` rendered with **two summaries and two `# Errors` sections**,
   the second describing a function that writes. The paragraphs belonged to `write_marks`,
   sixty lines below, which had its own shorter doc.
-- **`lib.rs`** --- introduced *in the session that wrote the check*, while fixing the other
-  two, and caught only by running it. That is the argument for the check existing: a careful
+- **`lib.rs`** (the fused run is `await_reply`'s, now `commands/mod.rs`) --- introduced *in
+  the session that wrote the check*, while fixing the other two, and caught only by running
+  it. That is the argument for the check existing: a careful
   reader cannot see this, because a fused run and a long comment are the same characters.
 
 **The rule is narrow, and the wide version was measured first.** A `///` line is flagged when
@@ -21099,3 +21823,974 @@ which this file already records as the shape that reports a pass and a timeout i
 about a generator that works around the defect it found is the same target: it had been reducing
 its own page turns for a day, and the run that produced this was the first with that dimension
 open.
+
+### An "already read" set keyed by page cannot see the second region on that page
+
+2026-09-06. The walk that fills the redaction panel picked its next region by asking which
+*pages* had been read, and recorded the page before awaiting the extraction. That is
+right for the reason the walk exists --- one `page_text` answers every region on a page,
+so they are all answered together --- and it is the wrong key for deciding what is
+*left*. Draw a second region on a page whose text was already read and the walk never
+selects it: its entry in `redactionWords` stays absent, `rowLineFor` draws *reading...*
+for the rest of the session, and no `redaction_plans` call is ever made for it, so the
+row's second line never says what a removal would take either. The set was only cleared
+when the document closed.
+
+The two facts had been conflated in the field's own comment, which argued at length for
+keying by page **id** rather than by slot --- correct, and about a different question.
+What has been *answered* is a property of a region, because every one of `rowLineFor`'s
+four states is. The rule is now `nextUnreadRegion` in `redactlist.ts`, a pure function
+selecting the first region with no entry in the words map, and the page set is gone; a
+page that could not be read is still answered, as `null` for each of its regions, which
+is what stops the walk asking about it for ever. Pinned by *picks the second region on a
+page whose text has already been read*, which was written against the old rule and was
+red on it.
+
+### An extraction already on the wire was measured against a crop box the page no longer has
+
+2026-09-06. `TextCache.setPageCrop` dropped the page's text, its turned view and the record that
+asking had failed, because a crop moves the corner every character box is measured from
+--- an extraction taken under the old box is not stale, it is in another coordinate
+system. What it could not drop was the request already in flight. That request's `.then`
+runs whatever has happened here meanwhile, so it called `remember` and the old crop's
+boxes were served as the new crop's answer, with the caret landing a crop's width from
+the glyph under the pointer. The pending entry was worse than the reply: `worthAsking`
+answered "already asked" for as long as it sat there, so the frame loop never fetched
+the page under the new box at all.
+
+Each page now carries a generation, bumped by `forget`. `load` reads it as the request
+goes out and again as it comes back and drops a reply whose generation moved; `forget`
+also removes the pending entry, and the `finally` deletes the entry only if it is still
+the one the map is holding --- an unconditional delete takes the *replacement* out, after
+which every caller issues a duplicate extraction for a page already on the wire. Three
+tests in `textcache.test.ts`, one per failure; the third was written twice, because the
+first version passed on the unfixed code for a reason that had nothing to do with the
+guard.
+
+### A slot held across an await belongs to whatever moved into it, in two more places
+
+2026-09-06. Two page operations read a slot, went to the backend for a measurement, and used the
+slot they had read. `Viewer.adoptCrops` walks the page map learning each cropped page's
+geometry, one `page_geometry` round trip each, and wrote `notePageSize(slot, ...)` and
+`invalidatePage(slot)` with the slot from the map it was handed --- so a reorder while the
+geometry was in flight recorded the cropped page's dimensions against the page that had
+taken its slot, laying an uncropped page out at another page's size. `App.svelte`'s
+`cropPage("content")` did the same with `contentBox`, sending the crop against a slot a
+deletion above it had renumbered.
+
+`cropTo` next door had had the fix and the explanation for weeks: it resolves the slot
+*inside* the edit closure, and its comment says why a `source` is safe to read early and
+a slot is not. The repair is that comment applied twice more --- `adoptCrops` returns when
+`this.pages` is no longer the map it was walking, since `setPages` starts a walk of its
+own over the new one, and `cropPage` takes the page's id before the measurement and looks
+the slot up through `slotOfIdIn` in the closure, which is now one function rather than a
+`findIndex` written out at each site. The first is pinned by *does not write the geometry
+into the slot the page has left*; the second is in `App.svelte`, which no test imports,
+so what is pinned there is the helper.
+
+### A withdrawn thumbnail's failure condemned the row it belonged to
+
+2026-09-06. The page strip's render reply had a generation check on the way in and none on the way
+out. A *result* arriving after a rotation, an inversion or a change of page order is
+dropped, because it is a picture of an orientation the reader has left. A *failure*
+arriving after the same events went straight into `failed`, and `failed` is cleared only
+by one of those three events --- so a request the strip had itself withdrawn during
+`setPages` marked its row as unrenderable a moment after `setPages` had cleared the set,
+and the row stayed blank for the life of the document with a console warning blaming the
+renderer for a cancellation.
+
+What made it reachable rather than theoretical is that `withdraw` does not clear
+`this.request`: the pump refuses to issue anything while a request is outstanding, so
+after a withdrawal nothing is asked for until the withdrawn reply lands --- and if that
+reply is an error, the row is condemned in the same breath. The `.catch` now takes the
+same generation check the success branch has and pumps without recording anything. Pinned
+by *does not give up on a row because a withdrawn request came back an error*, which fails
+on the old code by asking for the next row instead of re-asking for this one.
+
+### Placing a mark is what tells you which page it is on, so a visibility test after it costs the document
+
+2026-09-06. `paintMarks` ran `viewQuadsOf` over every mark in the document each frame and only then
+asked whether the mark's page was on screen. `viewQuadsOf` starts with `slotOfId`, a walk
+of the page order, so a document with a few hundred marks paid for a few hundred page-order
+walks sixty times a second to draw the two marks in front of the reader. `markUnder` did
+the same on every hover, and four call sites looked a mark up by id with a linear `find`.
+
+The index is by slot and by id, built on demand and dropped by `setMarks` and `setPages`
+--- and dropping it in both places is the whole cost of having it, because it is keyed by
+slot and a deletion renumbers every slot after the gap, so a stale index draws a mark
+where it no longer is and hit-tests it there too. Three tests, one per half:
+*places only the marks on the slots the frame says are on screen*, *finds a mark under
+the pointer after its page has moved*, and *forgets a mark the model has taken away* ---
+the last of which had to be given two marks, because with one it passes whether the index
+is dropped or not: `markUnder` returns early on an empty list, so the control was being
+satisfied by a guard with nothing to do with what was being tested.
+
+### A layout read taken after a style write in the same frame forces the layout
+
+2026-09-06. `clientWidth` and `clientHeight` cannot be answered without a layout, and the frame loop
+wrote styles --- the scrollbar thumb, an open note, the link ring --- before asking for
+them about a dozen times. Every one of those asks flushed the layout the writes had just
+invalidated, for an answer that cannot change between two calls in one frame: what
+changes it is the element being resized, and the `ResizeObserver` already hears about
+that.
+
+The reading is now taken in `onResize` and everything on the frame path reads what it
+left, with a fallback that measures once when the cache is empty --- `ResizeObserver`
+fires on `observe`, so a browser fills it before the first frame, but the constructor
+needs a size before the observer exists and the fake DOM the tests run against has an
+observer that never calls back. The last direct read was `thumbRect`, which took the
+scrollbar track's height off the element although the track spans the surface. The test
+counts reads of `clientHeight` during a frame and asserts zero, with the control that a
+resize still measures --- without which a cache nothing refills would answer the
+constructor's one-pixel viewport for the life of the document.
+
+### A settle belongs on the request, not on the drop, because a stale tile is drawn at its own size
+
+2026-09-06. A trackpad pinch is a wheel event per frame and a window drag a resize per frame, and each
+one was a full zoom: every tier-2 tile dropped, a screenful asked for at the new scale, and
+next frame all of it withdrawn for a scale the reader had already left. What actually
+reached the renderer was `maxInFlight` tiles a frame, none of which was ever drawn.
+
+The obvious repair is to defer the drop as well as the request, and it does not work ---
+which is worth knowing before trying it. A tile is drawn at its own pixel size at an offset
+computed for the box it was rendered for, so tiles kept across a scale change paint a mosaic
+of the previous zoom over part of the page, under a placeholder that *is* stretched
+correctly. That reads as a rendering fault rather than as a gesture in progress. So the
+tiles are still dropped at once and only the *asking* waits: `Scroller.quieten` records a
+moment, `request` skips tier 2 until it passes and asks for tier-1 placeholders throughout,
+which is what makes the wait invisible rather than grey. `nextRetryMs` counts the settle,
+or a pinch that ends with nothing else outstanding lets the frame loop go idle inside it and
+the page stays on its placeholder until the reader touches something else.
+
+### A max over a filtered set is a binary search once the filter is a prefix
+
+2026-09-06. `currentId` decides which outline entry the reader is inside, and the rule is not "the last
+row at or before them" --- an outline that jumps backwards makes that answer every row after
+the jump. It is *the row whose destination is furthest into the document among those at or
+before the position*, with document order breaking a tie. Written as a walk that is a
+comparison per row, and `sidebar.setPosition` asks it on every frame the rounded scroll
+position moves, so a long technical manual was a few thousand comparisons a frame for an
+answer that changes a few dozen times in a document.
+
+Sorted by `(page, top)` with document order breaking the tie --- exactly the order the
+walk's own comparison ranks its candidates in --- the reached test is true for a prefix, so
+the answer is the last entry of that prefix and a binary search finds it. The tolerance
+falls out of the same fact: it applies only on the reader's own page, and an entry on an
+earlier page is behind them however far down it sits, which is what keeps the test monotone.
+The walk stays as the oracle rather than being replaced, and the search is checked against
+it over a scrambled 5,000-entry outline --- plus one three-row fixture, because the scrambled
+one and the tree the walk's own tests use both happen to list entries on a page in the order
+they appear down it, and a sort that ignored `top` survived both.
+
+### Concatenating a selection to compare it with the empty string
+
+2026-09-06. The scope toggle is enabled on there being something to scope to, and asked through
+`Viewer.selectedText` --- which builds every page of the selection in reading order and
+joins them. `refreshMenu` runs from the frame loop, so a reader who had pressed select-all
+on a long document was rebuilding the document sixty times a second to find out whether it
+was empty.
+
+`Selection.hasText` answers the same question and stops at the first page that contributes.
+The care is in "the same question": two pages that each contribute nothing still join to a
+newline, so a selection running from the last character of one page to the first of the next
+is non-empty by the old measure although it holds no letters. Whether that should enable the
+toggle is a real question and a separate one, and folding it in silently is how a performance
+change becomes a behaviour change nobody looked for --- so `hasText` counts the separator too,
+and a test pins that it does. The module's own header says there is no `isEmpty` because every
+call site guarded on one and a mutation making it constant changed nothing observable; this is
+not that guard coming back, it is the answer the header points at being made cheap.
+
+### `date.today()` is one clock's opinion, and the gate that refuses a future date runs on two
+
+2026-09-06. `scripts/check_dates.py` refused any date later than `datetime.date.today()`,
+which is the date in the timezone of whatever machine is running. This
+repository is written from a machine at UTC+2 and gated by runners at UTC, so a
+provenance stamp written at 00:30 local on the 7th is correct where it was
+written, is the 6th in UTC, and turns both CI legs red minutes later on a file
+nobody has touched. The same collision blocks a release for a tag cut just after
+midnight, and there is nothing to fix in the tree, which is the worst shape a
+gate can have: a red that is about the clock and reads as a defect.
+
+The invariant the gate is really enforcing is that a measurement cannot have
+been taken in the future, and *the future* is not a property of one clock. The
+first fix said: accept anything that is today *somewhere*, UTC plus fourteen
+hours, Kiribati's Line Islands. It closed the runner case, and it opened a worse
+one the same afternoon --- from 10:00 UTC the 7th has begun in Kiribati, so on
+the evening of the 6th the gate accepted the 7th, and twenty-four stamps written
+that evening carried tomorrow's date past it, one afternoon after the rule that
+a stamp in the future makes every stamp from the same sitting unreliable had
+been quoted as the gate's reason to exist. A gate that accepts tomorrow every
+evening is not a gate on the future; it is a gate on the day after.
+
+What a stamp may not exceed is not a clock at all, it is a calendar somebody
+was on: the threshold is now the **later of the machine's own date and the
+author date of `HEAD` in the author's timezone** (`git log -1 --format=%aI`,
+whose first ten characters are the date the author saw). On the runner the
+commit that carries the 00:30 stamp is dated the 7th by its author, so the
+stamp passes; on the machine writing on the evening of the 6th neither calendar
+has reached the 7th, so it fails. The control ran the gate's own `main()`
+three ways with a stamp planted in a tracked file: the 7th on the 6th with
+`HEAD` at the 2nd exits 1 naming the stamp; the 7th with `today` the 6th and
+`head` the 7th exits 0; the 8th under the same pair exits 1. `main(today=...,
+head=...)` takes both calendars as parameters for exactly that reason: a claim
+about a date is answerable in a second or not at all.
+
+### A fingerprint that decodes a binary diff dies before the first mutation runs
+
+2026-09-06. `mutation_resume.tree_fingerprint()` ran `git diff HEAD --binary` under
+`subprocess.run(..., text=True)`, and `--binary` is the whole point of that
+command: it is asked for so that a changed PDF is its bytes rather than the
+sentence *Binary files differ*. Git calls a file with no NUL in its first block
+*text*, so those bytes reach the pipe verbatim, and one dirty file holding 0x81,
+0x8D, 0x90 or 0x9D --- undefined in cp1252 and not valid UTF-8 either --- raises
+`UnicodeDecodeError` inside subprocess's own reader thread. Every harness calls
+this function unconditionally on the way in, before a single mutation runs, so a
+four-hour table would have ended in a traceback about a codec.
+
+The fix is not a better codec: the fingerprint asks whether the tree moved, and
+a hash answers that without reading a word of it, so the diff's bytes are
+digested and only `rev-parse` and `ls-files` are decoded, explicitly and with
+`errors="replace"`. `VERSION` went to 3, because an older state file records
+verdicts against a fingerprint computed differently and a half-understood record
+is worse than none. Case 12 of `--self-test` commits a file holding those four
+bytes and then dirties it; with the pre-fix decode restored it prints
+`[FAIL] a byte no codec can decode still fingerprints` and the raise beside it,
+and green afterwards. The same `text=True` without `encoding=` was fixed at
+seven other call sites --- every place a check reads an app transcript, a window
+title, a qpdf report or a gate's output, all of which are document text.
+
+### An empty set and a missing key are opposite facts, and reading them both as falsy killed a refusal
+
+2026-09-06. `check_mutation_anchors.py` maps each Rust test to the platforms it compiles on.
+An **ungated** test is absent from that map, documented as compiling everywhere;
+a test gated to something the project does not ship --- `#[cfg(target_os =
+"linux")]` --- is in the map as the **empty set**, meaning it compiles nowhere
+the harness can run. The main loop read them with `platforms = gated.get(name)`
+followed by `if not platforms: continue`, which is true for both, so the refusal
+written twenty lines further down for the second case could never be reached: a
+mutation naming a linux-only test passed the gate and would report SURVIVED on
+every platform, which reads as a gap in the tests rather than as a row aimed at
+nothing.
+
+Beside it, the scan's own module gate never closed. A `#[cfg(all(test,
+windows))]` attribute at column 0 set `gate = "windows"` and nothing cleared it,
+so the region ran to the next such attribute or to the end of the file, and any
+ordinary test written *after* a gated module inherited its gate --- reported as
+windows-only, and a mutation aimed at it refused unless it declared a platform
+that is false. `recentdocs.rs` has two such modules. The control is a scratch
+Rust file carrying a windows-gated module, an ungated test after it and a
+linux-gated one, run through the gate's own `main()` over a fake table: pre-fix
+the map reads `after_test: ['windows']`, the linux row exits 0 and the ungated
+row exits 1; post-fix `after_test` is absent, the linux row exits 1 naming
+*gated to no platform*, and the ungated row exits 0.
+
+### A checker that scans its subject's prose counts a fixture that nothing generates
+
+2026-09-06. `check_workflow_fixtures.py` reads workflow `run:` lines and requires every
+`testdata/*.pdf` they name to be a fixture `ci_fixtures.py` writes. Its
+`wanted()` half is careful to scan what *executes*, with a comment saying why ---
+a path in a comment is prose. Its `generated()` half then regexed the whole text
+of `ci_fixtures.py`, comments and docstring included, so a fixture mentioned in
+prose and generated by nothing counted as generated, and the one direction the
+gate exists to refuse had a hole in it in the same file.
+
+The same regex was wrong the other way too, which measuring found and reasoning
+would not: it saw 11 stems where the tables hold 37, because `SIGNED` and
+`HOSTILE` build their paths as `f"testdata/{name}.pdf"` and a regex cannot read
+an f-string --- so a workflow step naming any signed or hostile fixture was
+reported as ungeneratable, a false alarm on a step that runs perfectly well.
+`generated()` now imports the module and reads `FIXTURES`, `SIGNED` and
+`HOSTILE` themselves. The mutation added to `scripts/mutate_python.py` comments
+out the one entry all six workflow probe steps run against: read as tables the
+gate goes red naming `testdata/text-wide.pdf`, and with the text scan restored
+the same mutation reports SURVIVED.
+
+### The copyleft sweep warned about a crate with no licence and said nothing about a package with none
+
+2026-09-06. `third_party_notices.py` runs the licensing constraint over three populations,
+and the cargo loop already warned when a crate declared no licence at all. The
+npm loop did not. A lockfile entry with no `license` field comes out of
+`npm_shipped_packages()` as the literal string `UNKNOWN`, which matches nothing
+in `FORBIDDEN` --- so a package whose licence nobody has read passed the sweep
+exactly like a package known to be MIT, and went into the notices table saying
+UNKNOWN with nothing anywhere saying it had never been read. On the population
+this repository is most exposed to it was the quiet direction of a check whose
+whole point is that a quiet pass and a clean tree must not look the same.
+
+The mirror warning is now there, worded like the cargo one and still a warning
+rather than a refusal: an unread licence is a thing to go and read, not
+necessarily a forbidden one. The control calls `scan_copyleft` with the four
+packages that really ship plus one planted entry carrying no licence: post-fix
+the planted package is named in the warnings and the real four are not, pre-fix
+the warnings list is empty and nothing is said.
+
+### A check that returns from six places cannot own a directory with `mkdtemp`
+
+2026-09-06. `save_check.py` copied its fixture into `tempfile.mkdtemp(...)` and never removed
+it. `mkdtemp` hands back a path and forgets it, and this particular directory
+holds a PDF that every phase writes to, so any run ending after that line ---
+six of them return early, and one returns from inside a `finally` that quits the
+application --- left a copy of the document in the system temp directory for
+good. The check is run by hand, repeatedly, which is exactly the shape that
+accumulates unnoticed.
+
+It is a `TemporaryDirectory` now, with `ignore_cleanup_errors=True` for the
+reason `open_check.py` passes it: on Windows the child can hold the file a
+moment after it exits and a `PermissionError` while tidying up must not fail a
+run whose phases were all green. Registered with `atexit` rather than wrapped in
+a `with`, because wrapping the body would re-indent a hundred and fifty lines
+for nothing. The control drives `main()` to its first early return with the app
+calls replaced, then runs the exit handlers and lists the temp directory:
+pre-fix one `tpdf-save-check-*` directory is left behind and named, post-fix
+none.
+
+### A worker released after its answer is sent still holds the file the answer is about
+
+2026-09-06. `InWorker`'s four seams each spawn a worker for one question, ask it on a thread, and
+send the answer back down a channel. The worker owns an `Arc<Shm>` mapping the file the
+coordinator is about to act on --- and the coordinator's answer to a refused read-back is
+`save::append_through`'s roll-back, which is `set_len` on that same file. The thread sent
+first and dropped the worker afterwards, so at the instant the roll-back ran the mapping
+was still open. On macOS `ftruncate` succeeds through a mapping and nothing is visible.
+On Windows a file with a section object open on it cannot be resized at all:
+`SetFileInformationByHandle` fails with `ERROR_USER_MAPPED_FILE` (1224), so the reader was
+told *"the saved file could not be read back --- and it could not be put back"* and kept an
+update the re-read had just refused.
+
+A `drop` written after the `send` runs at some unrelated moment on a thread nobody is
+watching, so "the mapping is gone by the time the answer arrives" was true only by luck ---
+and on macOS it is true often enough that a test written against the timing would pass.
+The fix is to make the release *precede* the send, which makes it observable: the waiter
+cannot see the answer until the drop has finished. `asked_on_a_thread` is where that
+ordering lives, generic over what is being released so that a `Drop` marker can stand in
+for a worker a `cargo test` cannot spawn.
+
+### The overdue worker was signalled after the table said it was dead
+
+2026-09-06. `kill_overdue` marked `killed` under the `calls` lock, released it, and then signalled. The
+mark is what the blocked thread reads --- a child's pipe closes before it becomes waitable,
+so a killed worker still says it is running --- and that thread is free to act on it the
+moment the lock is released. An overdue reply already in the pipe arrives intact, `Ok` and
+"killed" being a reachable pair; the thread then takes the entry and hands its worker to
+`discard`, which kills and reaps the child. The pid is free from there, and Windows
+reissues one immediately, so the supervisor's `TerminateProcess` lands on whatever now
+holds the number.
+
+The entry's own lifetime was the argument that signalling by pid is safe, and the gap is on
+the far side of that entry. Re-checking membership just before an unlocked signal only
+moves the window: the entry can go between the re-check and the syscall exactly as before.
+What closes it is signalling inside the same critical section that sets the mark --- while
+the entry is there the thread has not taken it, so it still owns the `Worker` and the child
+is unreaped. It is affordable because `kill(2)` and `TerminateProcess` are both
+non-blocking; the `diag::note` that names the kill stays outside, because that one writes a
+file on a lock every request start and end contends on. The observable is not which pid was
+signalled but *when*: `try_lock` from the thread already holding the mutex answers
+`WouldBlock`, and nothing else in the design can see the difference.
+
+### A spare that never warms takes every later open down with it
+
+2026-09-06. `Workers::prewarm` claims the spare slot, spawns a child, and blocks in
+`PreWorker::wait_warm` --- a read on the child's pipe, which nothing can interrupt. A child
+that starts and then says nothing therefore held that thread for ever with `warming` still
+set, and `prewarm` returns early whenever `warming` is set. So the cost is not one lost
+spare: no spare is ever started again for the life of the process, and every open from then
+on pays the ~6.6 ms link and the ~7.4 ms font walk on the reader's thread. The only symptom
+is opens that are quietly slower than they should be, which is the shape nobody reports.
+
+The wait is bounded by moving it to a thread of its own and taking the answer with
+`recv_timeout`; `settled` gives the claim back in **both** branches, which is what makes
+the two impossible to write differently, and ends the process on the timeout so the thread
+blocked reading its pipe reaches EOF and drops what it was holding. A late answer arrives
+at a dropped receiver and the `WarmWorker` in it is dropped with it, which kills it.
+
+### A merge read every file the reader picked, twice, with no ceiling
+
+2026-09-06. `concatenated` read each incoming document into a `Vec`, appended it to a second `Vec`, and
+`InWorker::merge` then copied that into a fresh `Shm` --- so merging a gigabyte of documents
+peaked at two to three gigabytes in the app process, and nothing bounded any of it. A file
+dialog takes as many files as somebody cares to shift-click, and this repository's own
+fixtures include a 337 MB scan and a 550 MB incremental document.
+
+Sizing from the handles first is what makes the single copy possible: open each file, take
+its length from that handle, create one mapping of the total, and read each file straight
+into its span. That is also what makes a ceiling checkable *before* anything is allocated,
+which is the difference between a refusal a reader can act on --- merge fewer files, or in
+two passes --- and an allocation failure. The ceiling is the total rather than each file,
+because ten 200 MB scans cost what two 1 GB ones do; it is a parameter internally, since a
+guard reachable only with a gigabyte of fixtures is a guard nothing ever runs. Opening once
+also closes a smaller hole: a `metadata` on the path followed by a read of the path is two
+lookups of one name, and a file swapped between them gives a span that describes one
+document and bytes from another.
+
+### The fingerprint was taken of the name, while the mapping was taken of the file
+
+2026-09-06. The document is opened and mapped for the workers on one thread while `Edits::open`
+fingerprints it on another, and both did their own `File::open` of the path. That is two
+lookups of one name with a whole document open in between. A file replaced in that window
+by a different revision with the *same page count* passes every guard a save has --- the
+page count is the one the plan was built against, and the length matches too --- so the
+reader is looking at one document while `opened_as` describes another, and a later rewrite
+applies the plan to whichever the name reaches. The check that exists precisely to catch
+"another program wrote to this file" is the one blind to it.
+
+The fix is the same seam `Shm::map_open_file` already is: the application opens the file
+once, hands one clone of the handle to the render service to map and one to the fingerprint
+thread, and `Fingerprint::of_open` hashes the handle it was given. Nothing on either path
+resolves the name a second time. Reading is positional rather than sequential, because a
+`try_clone` on unix shares one file offset with the handle it came from.
+
+### `/ByteRange` is the document's arithmetic, not ours
+
+2026-09-06. A signature's `/ByteRange` is an array of the document's own numbers, and three lengths of
+`i64::MAX` fit in a five-line PDF. Summing them with `.sum()` on `u64` panics under debug
+assertions --- every `cargo test` and every developer build --- and wraps in the shipped one,
+where it becomes a coverage figure of eight bytes for a file the range claims to cover twice
+over, printed in the properties panel as fact. Saturating says "more than there is", which
+is what the panel then compares against the file's size and refuses.
+
+### A trip count is not a guard on what the trips do
+
+2026-09-06. `drop_pages` walks each doomed page's `/Parent` chain to decrement a `/Count` per ancestor,
+bounded by `MAX_PARENTS`. `/Kids` is a tree and `/Parent` is a separate back-pointer, so a
+loop in the second is invisible to every walk of the first --- `get_pages` returns three
+pages from a document whose root hangs under a node that hangs under it, exactly as from a
+healthy one. The bound stopped the walk and did nothing at all about the damage: the same
+two nodes came back thirty-two times each, and every lap was a decrement, so deleting one
+page left a three-page tree claiming -29. A visited set beside the bound is what fixes it;
+a cycle is not a second ancestor. The decrement saturates for the neighbouring reason ---
+`/Count -9223372036854775808` is as writable as any other number, and `count - 1` on it
+panics in debug and wraps to the largest count there is in release.
+
+Recomputing each `Pages` node's `/Count` from its kids is the stronger repair and was not
+taken: `control_page_deletion_matches_lopdf_byte_for_byte` compares this path's output
+against `lopdf`'s own decrementing implementation, so a recomputation would have to be
+argued against that control rather than merely against the specification.
+
+### A `continue` under a `finally` runs the cleanup and jumps past what it reported
+
+2026-09-06. `mutate_viewer.py` had a mutation that would not compile reported from inside its
+`try`, which then `continue`d --- so the `finally` restored the file and the loop
+went straight to the next mutation. That was correct while the restore had nothing
+to say. The moment it could refuse --- a file that is neither the clean bytes nor
+the mutation is not written over, because clobbering a repair somebody made by
+hand is a worse outcome than the mutation it would undo --- the refusal had
+nowhere to land. `continue` runs the `finally` and then leaves the block, so the
+`if not put_back:` beneath it is unreachable from that path. The run would have
+gone on to the next mutation with the previous one still in the tree, and every
+verdict after that would have been about a file nobody described.
+
+Nothing goes red about this. The cleanup does run, `git status` during the run
+shows what you would expect, and the only thing lost is the report --- which is
+exactly the half you need.
+
+Two ways out, and the one taken matters. The fix is not to remember the rule at
+each `continue`; it is to leave nothing under the `finally` that can exit the loop
+on its own. `mutate_viewer.py` sets `built` inside the `try` and reads it after
+the restore has been read; `mutate_rust.py` and `mutate_frontend.py` moved their
+anchor check *above* the `apply`, so the only path under their `finally` is one
+where a mutation is really on the tree. Both shapes have one exit, and the check
+sits on it.
+
+The general form: **a `try/finally` whose body can `continue`, `break` or `return`
+has as many exits as it has those statements, and a verdict placed after the block
+is on exactly one of them.** Where the cleanup can fail, either it reports for
+itself or the body has one exit.
+
+### An ordering cannot be asserted from outside the call that performs it
+
+2026-09-06. `Resume.apply` records the mutation in a file and then writes the mutated bytes,
+in that order, because the other order leaves a window in which a kill puts a
+mutation in the tree that no record names. The check written for it read the state
+file afterwards and asserted the record was there.
+
+That check cannot fail. Reversing the two lines was tried as a control and the
+self-test stayed green, because from outside the call both orders leave the same
+two artifacts: a state file naming the mutation and a file holding it. The
+observable the assertion needed --- what the tree looked like *between* the two
+statements --- does not exist once the call has returned.
+
+Two honest responses, and inventing a third is where this goes wrong. Either give
+the code a seam the test can interrupt, or say plainly what the assertion does
+cover. Here the second was taken: the check was renamed from *records it before
+writing it* to *records what it wrote*, which is the claim it can actually
+support, with the ordering left as the reason `apply` exists at all --- one place
+where the two lines are written, instead of the three that each wrote them out
+and could each get them the wrong way round.
+
+The trap is not the unfalsifiable check. It is that its name asserted the property
+the module's docstring, three call sites and a paragraph of `docs/TRAPS.md` all
+turn on, so anyone auditing the file would have found the property named, checked
+and green.
+
+### `pkill -f <a path the harness passes as an argument>` matches the harness's own child
+
+2026-09-06. `clear_leftover_app` ends a tpdf left running by a previous iteration, and on
+POSIX it does so with `pkill -f tpdf.app/Contents/MacOS/tpdf`. Its two callers
+then launch `viewer_check.py` with that same path as `argv[2]`, so the pattern
+matches the *python* process driving the check as readily as the app it drives.
+
+It is harmless as written, and only by arrangement: both callers sweep immediately
+before they spawn, when no such child exists yet. Nothing states that as a
+precondition, and it stops holding the moment two sweeps overlap, a previous
+`viewer_check.py` outlives its app, or somebody moves the call.
+
+Same family as the `pgrep -f` wait loop defeated by the command that checks on it.
+`-f` matches the whole command line, and a path handed to a tool as an argument is
+part of that tool's command line --- so any pattern specific enough to identify
+the binary is also specific enough to identify everything that names it.
+
+### Five fields for one fact, and the invariant lived in the methods that wrote them
+
+2026-09-06. `Viewer` held `drawKind`, `drawStamp`, `cropping`, `redacting` and `erasing`.
+At most one tool can be armed --- one hand, one tool --- and that rule was
+carried by four arming methods each clearing the other three, by a comment on
+`erasing` saying the two are "never both set", and by a window check. Nothing in
+the type refused the state, so every gesture had to ask which of the five meant
+it: the crop's drag began on `!this.cropping && !this.redacting`, Escape's ladder
+listed eight terms, and the status line's `armed` field was a three-deep ternary
+over three of them.
+
+The cost is not the verbosity. It is that **every tool added has to be remembered
+in every one of those places**, and the one that is forgotten is invisible: a
+reader left in a mode with nothing on screen but a cursor. The mutation table
+records that happening --- `crop: let armDraw leave the crop tool armed` and its
+four siblings each exist because one arming method could forget one flag.
+
+A discriminated union makes arming one assignment and the invariant a property of
+the type. Two things worth knowing before doing this to a similar pile of flags.
+
+**A disarm is not always "set it to none".** Six sites cleared one flag and left
+the others alone, and every one of them is reachable with a *different* tool
+armed, because a command from the palette can arm a tool while a pointer drag is
+live. `this.drawKind = null` in the drag's cancel path meant "put the pen away
+and leave whatever else is armed"; `this.tool = NO_TOOL` would also disarm an
+eraser the reader took up mid-drag. Each of those sites needs a guard on the
+variant --- `if (this.tool.kind === "draw") this.tool = NO_TOOL;` --- and reading
+which of them are reachable is most of the work.
+
+**Five mutations become unwritable, and that is the result rather than a
+casualty.** Each of them left two tools armed at once, which the union cannot
+represent. Deleting them is right --- a mutation nothing can express is a
+permanent red line --- but the coverage has to go somewhere, or a refactor that
+removes a class of defect also removes the proof that the tests could see it.
+What replaces it is a mutation arming the *wrong* tool, which the type still
+permits, and a test keyed by the union's own kinds: a variant added with no row
+in that table does not compile, so the fifth tool cannot arrive without a test
+that it puts the other four away.
+
+### An LRU over a sequential scan caches exactly what the next scan will not ask for first
+
+2026-09-06. A whole-document search walks every page once, in the same order, every time the
+query changes. Put a least-recently-used cache in front of that and it holds the
+*last* N pages of the walk --- which are the ones the next walk reaches last, by
+which time they have been evicted again by the pages before them. The hit rate is
+not "lower than it could be", it is **zero**, and it stays zero however large the
+cache is until it is larger than the whole document. A reader typing a six-letter
+query pays six full extractions of the file and the cache does nothing but spend
+memory.
+
+The policy that degrades instead is **fill and hold**: take pages until the budget
+is spent, then decline the rest and keep what is there. A document larger than the
+budget then serves its first pages from memory and extracts the tail --- every
+time, but strictly better than serving none of it --- and one that fits is free
+after the first query. `textcache.rs` does that, and its test asserts the
+direction rather than the hit rate: the page that fitted has to survive the page
+that did not.
+
+This is the same family as *a single-entry cache is evicted by the grid scan that
+was about to test it*, and the general rule is worth stating on its own: **before
+choosing an eviction policy, write down the access pattern.** LRU is right for a
+reader, who returns to the page in front of them --- `progressive::PageCache` holds
+`FPDF_PAGE` handles for exactly that reason and is right to be an LRU. It is wrong
+for a sweep, and the two live one module apart.
+
+### A cache whose entries can never go stale still needs the argument written down
+
+2026-09-06. `textcache.rs` has no invalidation hook at all, and that is correct rather than
+missing --- but only because of a property of the process that nothing in the file
+enforces. A worker holds one read-only mapping of one file for its whole life; an
+edit that changes the bytes cannot reach it, because a save that alters the
+document answers `save::Refusal::reopen` and the reader reopens into new workers
+with new caches. The reader's own rotation is applied when a tile is drawn, never
+at extraction, and the crop is part of the key rather than state.
+
+Every one of those is a fact about somebody else's module. If a request ever
+mutated the document a worker holds --- a crop written onto the file, an annotation
+applied in place, anything --- the cache would go on serving the characters of the
+file as it was, silently, and a search would report hits in text nobody can see.
+So the safety argument belongs in the module's own header where the next person to
+add a request will read it, not in the head of whoever wrote it.
+
+The generalisation: **"nothing can invalidate this" is a claim about the whole
+system, made in one file.** Write it down with the mechanism named, the way a
+bound written in one place is imported rather than restated.
+
+### A reply that grows with the document turns a bigger answer into a dead worker
+
+2026-09-06. `worker_proto::MAX_REPLY_BYTES` is 32 MB and a reply that exceeds it leaves the
+stream mid-line, which kills the worker. That is fine while every reply is one
+page's answer, because one page can only hold so many hits. It stops being fine
+the moment a request asks about a *run* of pages: the reply is then the sum of N
+pages' answers, and N is chosen by the caller.
+
+So a range request needs a budget of its own, and the budget has to bound the
+thing that can run away --- the number of matches and the text each carries ---
+rather than the number of pages, which is exactly the quantity that does not
+predict the size. `render::run_search_range` stops when the answers reach a tenth
+of the reply limit, and the margin is deliberate: the estimate counts the
+characters a match carries and not the JSON around them.
+
+Two things fall out of that and both are contracts the caller has to know about.
+The reply is a **prefix** of what was asked for, never a subset, because the carry
+chain that finds a phrase spanning a page break cannot be rebuilt around a hole.
+And the caller must read *how many pages came back* rather than assume the run
+completed --- a walk that advanced by the number it asked for would skip every page
+the budget cut off, silently, and the hits on them would simply not be reported.
+
+### Splitting one function into five callers of a shared parse: four of them wanted only the objects, and the fifth wanted the bytes
+
+2026-09-06. Five modules opened the same document for themselves --- `encoding::scan`,
+`annots::scan`, `links::scan`, `docinfo::scan`, `pagetree::displayed_boxes` ---
+each with a byte-identical `Document::load_mem_with_options` prologue. Hoisting
+that into one parse the graph holds is mechanical for four of them and not for the
+fifth: `docinfo` reads the file's **size**, how many **revisions** it carries and
+the **appendix** each signature does not cover, none of which are in the object
+graph. Its `scan_from` therefore still takes the bytes as well as the document,
+and a signature that pretended otherwise would have had to re-read the file inside
+a function whose whole point was that the file is already read.
+
+Worth knowing before the next such split: **the shared thing is the parse, not the
+input.** A caller that also needs the raw stream is not a caller that failed to be
+refactored, and giving it the bytes back is cheaper than making it look uniform.
+
+The second half is a cost rather than a trap, and is recorded because it is
+invisible: on the path that opened a *path* rather than a mapping --- the probes ---
+`properties` now reads the file a second time, because the parse borrowed the
+bytes and let them go. The worker, which is what ships, holds the mapping and pays
+nothing.
+
+### `FPDFPage_GetRotation` needs a loaded page, and the outline asked for one per bookmark
+
+2026-09-06. Everything the outline walk reads comes out of the page dictionary through
+`FPDF_GetPageSizeByIndexF`, which costs no page load --- except the rotation, which
+PDFium will only answer for an `FPDF_PAGE`. So a bookmark whose destination names
+coordinates cost an `FPDF_LoadPage`, up to 44 ms on a complex page, and an outline
+over four hundred such pages paid it four hundred times **at open**, before the
+reader had clicked anything. The answer was cached per page, so nothing about the
+walk looked wasteful; the cost was one load per distinct page named, which on a
+book's outline is most of the book.
+
+`/Rotate` is a page-dictionary entry, inheritable through `/Parent`, and
+`pagetree.rs` was already reading it --- `displayed_page` applies PDFium's own
+formula (truncating division by 90, modulo 4, the wrap for a negative) over the
+same inheritance walk it does for `/MediaBox`. So this is not a second rotation
+table, which would be its own trap: it is the existing one, exposed.
+
+The check that keeps it that way is a differential, not a comment. Two rotation
+tables that agree at zero and disagree at every turn is a shape this repository has
+already paid for, and the only thing that can catch it is a comparison run over
+corpora that have turned pages in them.
+
+### An accounting observable is what a speed change has instead of a symptom
+
+2026-09-06. Four of the changes here alter *when* work happens and nothing else: a worker
+adopted from the spare slot serves identically to one spawned cold, a document
+parsed once answers exactly what five parses answered, a fingerprint started at
+the first edit is the same fingerprint, a page whose characters came from a cache
+is the same page. Every one of them can regress completely and leave no failing
+test, no wrong pixel and no error --- only time, which nothing here measures on a
+schedule.
+
+So each carries a counter that exists for no other purpose: `Workers::adopted`,
+`DocumentGraph::parses`, `Edits::hashing_started`, `RawDocument::page_loads`. The
+rule that makes them worth having is the one `docs/TRAPS.md` already states in the
+other direction --- *an accounting observable nobody reads is the same as not having
+one* --- so each is read by a test or a probe check in the same commit that adds it,
+and the check asserts the number rather than that it moved.
+
+The direction to be careful about: **count the call, not the decision above it.**
+`RawDocument::page_loads` is incremented at `FPDF_LoadPage` rather than at the
+cache miss that precedes it, because what costs the 44 ms is the call, and a miss
+that then fails to load is not a load.
+
+### A trigger with no chokepoint is a trigger you have to enumerate
+
+2026-09-06. Deferring the fingerprint means starting it at "the first sign the reader is
+present", and in `edits.rs` there is no single place that is. Fourteen public
+methods take the model's lock themselves and mutate through it; a wake written at
+the one helper that four of them share covers four of them, which is *a check
+bound to one caller covers only that caller* wearing a different hat.
+
+Two things make the enumeration safe rather than hopeful. The trigger is
+idempotent by construction --- the handle is `take`n, so a second call finds
+nothing --- so adding it in one place too many costs nothing. And the coverage is a
+test that drives **every** public mutator against its own freshly opened document
+and asserts the wake, so a fifteenth method added later goes red rather than
+quietly opting out. Each drive gets a fresh document on purpose: sharing one would
+let a method that woke the hash hide a method that did not.
+
+The read path is deliberately outside it, and that is the half that decides
+whether the deferral is worth anything: the frontend asks for the edit state the
+instant a document opens, so waking there would put the whole-file read back
+exactly where it was taken from.
+
+### A stub that returns the safe answer passes every test written for the feature
+
+2026-09-06. `withdraw_to` was written to send a withdrawal to the one worker holding the
+request, and shipped as `let _ = taken_by;` followed by a return of every sender.
+That is not a subtle bug: it is the function's entire body missing, replaced by
+the old behaviour. It compiled, it was correct --- a broadcast withdrawal *works*,
+which is why the old code did it --- and the only thing that caught it was the one
+test that asserted which senders came back rather than that the withdrawal
+arrived.
+
+The general shape is worth naming because a half-finished optimisation almost
+always looks like this. An optimisation's stub is the **unoptimised** path, so it
+passes every test about correctness and every test about outcomes, and fails only
+a test about the mechanism. When the whole point of a change is that it does less
+work, the test has to be about the work: which senders, how many parses, how many
+page loads, how many round trips.
+
+`let _ = x;` on a parameter the function is named for is the tell, and it is worth
+grepping for after any interrupted piece of work.
+
+### Moving a size check before the work it guards changes when the refusal happens, not whether
+
+2026-09-06. A tile used to be rendered into a `Vec`, measured against the shared mapping, and
+copied in. Rendering straight into the mapping removes the allocation and a copy
+of up to 16 MB per tile --- and it forces the size check to move, because there is
+nowhere else to put the pixels while deciding. So a tile too large for the mapping
+is now refused **before** it is drawn.
+
+That reads like a behaviour change and is worth being precise about, in both
+directions. The refusal is the same refusal with the same message, and it is
+strictly cheaper --- a render that was going to be thrown away no longer happens.
+What genuinely changed is that the check's input is now a computed size
+(`tile_bytes(spec)`) rather than the length of a buffer that exists, so the check
+is only as good as the agreement between what the renderer will write and what the
+size says it will. That agreement is the thing to test: the two paths have to
+produce identical bytes, which is what keeps `render_tile` implemented as
+`render_tile_into` plus the allocation rather than as a second copy of the flags,
+the placement and the clear.
+
+The general rule: **when an optimisation moves a guard earlier, ask what the guard
+now reads.** A guard on a buffer measures the buffer; a guard on an estimate
+measures the estimate, and the two are only the same guard while something keeps
+them equal.
+
+### A withdrawal that is correct as a broadcast is expensive in exactly the moment it is used
+
+2026-09-06. A `rid` is unique for the life of the process, so shouting a withdrawal at every
+worker is *correct*: a worker that never saw it ignores it. The cost is invisible
+from the correctness side and is entirely about when it happens --- a fast scroll
+withdraws a tile per frame, and each one wrote a line down the pipe of every worker
+of **every open document**, which are pipes belonging to children that are inside
+a render. That is the one moment a write to them can block.
+
+Addressing it needs the in-flight table to say who took the request, which means
+recording the `rid` alongside the pid --- and that immediately needs a convention
+for the calls that are not withdrawable tiles. Zero is that convention and it needs
+its own guard: every `Text`, `Open` and `Geometry` records zero, so without a guard
+a withdrawal of rid 0 would be "addressed" at whichever of them happened to be
+running --- a real pid, a plausible answer, and the wrong one.
+
+The half that must not be narrowed away: the entry exists only between the send and
+the reply, so a request still queued for a free worker is in flight **nowhere**.
+There is no pid to aim at, and the answer there has to stay the broadcast. Falling
+back to every sender is also the right direction when the pid names a worker the
+pool has already discarded --- an empty answer is a withdrawal that reaches nobody,
+and the render then runs to completion, which is worse than sending too many.
+
+### Two walks of one tree, and every bound they shared was a different number
+
+2026-09-06. `/AcroForm /Fields` is walked twice: `docinfo::read_signatures` lists the
+signature fields, `redact::covered_fields` decides which fields a removal takes with it.
+Each carried its own loop, and each carried a constant named `MAX_FIELD_NODES`.
+
+They were 4,096 and 20,000. `redact.rs`'s doc comment said, in full, *"`docinfo.rs`
+bounds its own walk of the same tree at the same number and for the same reason"* --- a
+sentence that is checkable, was false, and had nobody to check it, because the number it
+names is in a different file and the two are never read together.
+
+**The asymmetry turned out to be right and the comment turned out to be the defect**,
+which is the outcome worth planning for: the fix is not to make the numbers agree. A field
+the properties panel does not reach is a line missing from a list; a field a *redaction*
+does not reach is somebody's name still sitting in a document they redacted. The two walks
+want different bounds, and five of them differ, not one --- node budget, depth, cycle
+guard, whether names are built, and the order kids are pushed in.
+
+So `fields.rs` shares the *plumbing* and not the policy: one pop-with-a-budget, resolve,
+name, enqueue-the-kids loop, with a `Bounds` struct whose five fields the two callers set
+five different ways. That is not a shared rule with knobs on it, and saying so in the
+module header is the point --- the next reader's instinct will be to collapse the knobs,
+and the header is what tells them which collapse costs a redaction.
+
+**What made it safe was refusing to unify the two orders.** `docinfo` pushes kids reversed
+so the stack pops them in document order, which is the order a reader sees fields in every
+other application, and `signature-probe --mode agree` reddens 4 of 13 comparisons when
+that one `reverse()` goes. `redact` produces a set of object ids and pushes them forward.
+Either order is invisible in the other caller's tests, so a "tidy" unification would have
+been green here and wrong in a differential nobody runs per-commit.
+
+### A wire shape and a model type are the same distinction twice, unless one derives the other
+
+2026-09-06. `SaveFailure` carried `{message, reopen, changed}` and the frontend reads
+exactly those three fields. `docmodel::Refusal` carries eighteen variants and was flattened
+to a `String` at `edits::describe` before it crossed anything --- which is this
+repository's own *a refusal flattened to a string loses the action that answers it*, one
+layer further in than the three instances already recorded.
+
+The obvious repair is to add a richer `action` beside the two booleans. That is two copies
+of one distinction, and the entry about copies drifting is two screens up.
+
+The repair that holds: **the type carries the action, and the wire is computed from it.**
+`Failure { message, action }` with a hand-written `Serialize` emitting `message`, `reopen`
+and `changed` off `action.reopen()` and `action.changed()`. The window sees the same three
+fields it always has, and there is one place that decides what they mean.
+
+Two consequences to state rather than discover. **Several actions serialise identically**
+--- `Carry`, `Amend` and `Report` are all `false, false` today --- which is a limit of the
+wire and not of the model, and it is where a richer answer goes when a window is ready to
+offer one. And the mapping from `Refusal` is exhaustive by the compiler while a *wrong*
+arm is not, so the test enumerates one case per variant: adding a variant fails to compile
+in the `From`, and moving one between the two groups compiles and reddens the test.
+
+### Four of the six modules that left the cycle were nowhere near the edit
+
+2026-09-06. Moving four structs and one function out of `redact.rs` into `objects.rs`
+removed one `use`. Measured over the crate's production module graph --- test modules
+stripped, because `#[cfg(test)]` code makes a cycle out of anything and a fixture calling
+`redact::covered` is not an architectural dependency --- the strongly connected component
+went from 23 modules to 19, and only one of the four that left was `objects`.
+
+`ocr`, `ocr_vision` and `ocr_windows` left because `ocr.rs`'s only reference to `redact`
+was two calls to `overlaps`, and once that lived in `objects.rs` the whole OCR family's
+last edge into the knot was gone. Nothing about those three files changed.
+
+**The transferable half is the instrument, not the result.** A dependency cycle is not a
+thing you can see by reading, and the module you are editing is rarely the one that
+leaves: the win here was a *transitive* consequence three files away, and it would have
+been invisible in a review of the diff. A graph over `crate::` references with
+`#[cfg(test)]` blocks removed is about forty lines of Python, and it answers
+before-and-after in a second.
+
+The other direction of the same lesson, from the same session: two *new* modules joined
+the component without anyone intending it. `fields.rs` reaches `annots::decode_text_string`
+and is in the knot; `failure.rs` reached `edits::describe` and was, until the conversion
+moved to `edits.rs` and left the wire type depending on nothing at all. A new leaf module
+is a leaf only until its first `use`, and the first `use` is usually a one-line
+convenience.
+
+### A gate keyed on where a call is written has to be taught the new place first
+
+2026-09-06. `check_writers.py` answers *how many ways can the webview cause a write* by
+scanning each `#[tauri::command]` body for the terminal writers in `save.rs`, and this
+file already records what that costs: an extraction that moves the write out of the
+command body drops the command out of the set, silently.
+
+The same is true one level up and is easier to miss, because nothing about it looks like a
+refactor of a *command*: the gate read one file. Moving a command group into
+`src-tauri/src/commands/` --- a perfectly ordinary tidy-up, with `generate_handler!` left
+in `lib.rs` and every other gate green --- would have made `§3`'s list of writing commands
+shrink and the gate agree with it.
+
+So the file list changed **before** the move, and was proved red before being trusted: a
+throwaway `src/commands/zz_red_proof.rs` holding one command that calls
+`save::commit_in_place` turned the gate red with `['zz_red_proof'] are not` and the
+boundary row disagreeing 8 against 9, and removing the file restored eight of eight.
+Ordering it that way costs one minute; the other order costs a wrong number in a threat
+model, which is the row that has been wrong three times already.
+
+Worth checking at the same time and it was: `ipc.test.ts` reads `lib.rs?raw` too, and
+needs **no** change, because what it reads is `generate_handler!` and that list stays in
+`lib.rs` whatever happens to the bodies. `check_classified.py` reads only `appcommands.ts`
+and `viewercheck.ts` and never touches Rust at all. Three gates read the command registry
+and each reads a different thing about it; only one of them cares where a command is
+written.
+
+### A control that counts an attribute counts every sentence that mentions it
+
+2026-09-06. `src/lib/replyshapes.test.ts` enumerates the reply payloads by reading each
+`#[tauri::command]`'s return type out of `src-tauri/src/commands/*.rs`. The regex that finds
+a command finds its signature in the same match, so a signature it cannot read is a command
+it never counted --- and a parse that silently stops matching produces a short list that
+agrees with any table at all. The control is to count the commands a second way, by the
+attribute alone, and assert the two agree.
+
+Written the obvious way it fails on a healthy tree. `source.match(/#\[tauri::command\]/g)`
+counted **72** where **67** commands exist, because five of the ten command modules say
+`#[tauri::command]` in their own prose --- a module header describing what the file holds, a
+doc comment explaining that nothing can call the body of one, a comment about a private
+helper. The control was red and the subject was fine, which is the worst way for a control
+to be wrong: it reads as a finding about the code and it is a fact about the checker.
+
+Anchoring to the start of a line (`/^#\[tauri::command\]$/gm`) is the fix, and it is exact
+rather than approximate: the attribute is always alone on a line at column zero, and prose
+mentioning it is always inside `//`, `///` or `//!` and therefore never is.
+
+This is the same reading of a comment as code that `scripts/check_writers.py`'s docstring
+records, where it classified `print_document` as a writer because the words
+`save::print_bytes` appear in a comment saying it does *not* call it --- and where rewording
+that comment would have turned a security gate red for a command that had not changed. That
+one was found by a review; this one was found by writing the control. Both point the same
+way: **before a scan over source text is trusted, ask what the file says *about* the thing
+you are matching on.** A repository that documents itself as heavily as this one will always
+have prose that looks like code.
+
+### Tauri exports a command's wrapper macro only for a function that is visible
+
+2026-09-06. Moving the command bodies out of `lib.rs` needs `generate_handler!` to still
+find them, and the mechanism is not the one it looks like. `#[tauri::command]` emits the function plus two
+`macro_rules!` items --- `__cmd__<name>` and a name macro --- and it attaches `#[macro_export]`
+to them **only when the function's visibility is `pub` or `pub(...)`**
+(`tauri-macros/src/command/wrapper.rs`, `maybe_macro_export`). `#[macro_export]` is what puts
+them in the crate root's macro namespace, which is what makes a bare `__cmd__open_document!`
+resolve from `lib.rs` after the function moved into `commands::document`.
+
+So a private command in a submodule compiles, and `generate_handler!` then cannot find its
+wrapper --- a macro-resolution error at the registry, pointing at a list of names rather than
+at the visibility that caused it. The commands here were private `async fn` for as long as
+they lived beside the macro, because textual scope was doing the work.
+
+Two consequences worth keeping. `pub(crate)` is enough for Tauri --- `Visibility::Restricted`
+takes the same arm --- but **not** for `scripts/check_writers.py`, whose command regex is
+`#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn`: `pub(crate)` does not match, so a command
+written that way drops out of the set that gate reads, silently, in the direction that
+under-claims. And the alternative spelling the Tauri documentation shows,
+`generate_handler![commands::document::open_document]`, is closed here for an unrelated
+reason: `src/lib/ipc.test.ts` reads the macro's body as source text and refuses anything that
+is not a plain identifier, on purpose, so that a comment or an attribute inside the macro
+cannot arrive as a "command name". A glob import per group is what satisfies both.
+
+### A `Widen` of the mirror is what makes a JSON sample checkable against it
+
+2026-09-06. `resolveJsonModule` gives an imported `.json` a type the compiler has already
+widened: a string literal is `string`, a two-element array is `number[]`, never a tuple. So
+`sample satisfies EditState` cannot pass against any mirror that uses a string-literal union
+(`MarkKind`), a branded number (`PageId = number & { readonly __pageId: unique symbol }`) or
+a tuple (`MarkColor = readonly [number, number, number]`) --- and this surface uses all
+three. The reflex fix is to cast, which checks nothing.
+
+Widening the **mirror** instead is what keeps the check: a conditional type that maps
+`string -> string`, `number -> number`, a `readonly (infer E)[] -> Widen<E>[]` and an object
+to itself field by field. It keeps the field names, the optionality and the nesting --- which
+is the whole of what the sample can be wrong about --- and drops only the precision JSON
+cannot carry. A branded number matches the `number` arm, so that arm has to come before the
+`object` arm.
+
+What it still cannot do is the other direction, and the reason is worth writing down because
+it looks like an oversight: **excess-property checking applies to fresh object literals, and
+an imported module is not one.** A sample carrying a field the mirror has never heard of
+satisfies the mirror perfectly. That is exactly the drift the check exists for --- a Rust
+field added without a mirror arrives as `undefined` at whichever call site needed it --- so it
+needs a second, run-time comparison of the key sets, with the key table typed
+`Record<keyof T, ...>` so that the compiler holds it to the mirror rather than a reader
+holding it to both.
+
+And a mirror is allowed to be a strict subset: `pages.ts`'s `RegionPlan` deliberately omits
+the five fields of `redact::RegionPlan` that only the writer's refusal reads. A set equality
+is therefore wrong, and a set *containment* tolerates any extra key --- "the frontend does not
+need this one" and "the frontend has not noticed this one" being the same shape from outside.
+Three assertions is what closes it: every mirror key is sent, every key sent is mirrored or
+named in an exclusion table with a reason, and every name in that table is a field the sample
+really sends, so an excusal cannot outlive the field it excuses.

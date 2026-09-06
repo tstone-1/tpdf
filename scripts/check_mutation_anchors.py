@@ -252,11 +252,25 @@ def gated_tests(root: pathlib.Path) -> dict[str, set[str]]:
             for pattern, platform in PLATFORM_GATES:
                 if pattern.match(line):
                     # A module attribute at column 0 opens a region that runs to
-                    # the next one or to the end of the file. Every test module
-                    # in this tree is written that way, and a nested one would
-                    # simply be attributed to its outer gate --- which is the
-                    # conservative direction.
+                    # the closing brace of the module it is written on. Every
+                    # test module in this tree is written that way, and a nested
+                    # one would simply be attributed to its outer gate --- which
+                    # is the conservative direction.
                     gate = platform
+            # ...and the region *closes*. Until it did, the gate ran on to the
+            # next attribute or to the end of the file, so anything written
+            # after a `#[cfg(all(test, windows))] mod tests { ... }` inherited
+            # its gate: an ordinary test below such a module read as
+            # windows-only, and a mutation aimed at it would be refused unless
+            # it declared `only_on="windows"`, which is false. `recentdocs.rs`
+            # has two such modules and is the file this was measured on.
+            #
+            # A brace in column 0 is the module's own: the attributes matched
+            # above sit at column 0 too, so the item they open is a top-level
+            # one, and everything nested inside it is indented.
+            if gate is not None and line.startswith("}"):
+                gate = None
+                continue
             match = DEFINITION.match(line)
             if not match:
                 continue
@@ -426,9 +440,18 @@ def main() -> int:
             continue
         declared = 0
         for mutation in table:
-            platforms = gated.get(mutation.expect)
-            if not platforms:
+            # **Absent from the map, not merely falsy.** `gated_tests` puts an
+            # ungated test nowhere and a test gated to nothing this project
+            # ships --- `#[cfg(target_os = "linux")]` --- in as the empty set, and
+            # those two mean opposite things: the first compiles everywhere and
+            # needs no declaration, the second compiles nowhere the harness can
+            # run and is exactly what the refusal below exists to reject.
+            # Reading them both as "nothing to say" made that refusal
+            # unreachable, so a mutation naming a linux-only test passed this
+            # gate and would report SURVIVED on every platform.
+            if mutation.expect not in gated:
                 continue
+            platforms = gated[mutation.expect]
             if platforms >= SHIPPED:
                 # Reachable on both shipped platforms, so no declaration is
                 # needed -- one rule with a test on each side of the cfg.

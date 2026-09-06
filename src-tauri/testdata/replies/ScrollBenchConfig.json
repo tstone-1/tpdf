@@ -1,0 +1,22 @@
+{
+  "path": "/tmp/one.pdf",
+  "rounds": 3,
+  "frames": 120,
+  "warmup_frames": 10,
+  "px_per_frame": 40.0,
+  "tile_px": 512,
+  "zooms": [
+    1.0,
+    2.0
+  ],
+  "layouts": [
+    "single"
+  ],
+  "cache_tiles": 64,
+  "max_in_flight": 4,
+  "prefetch_screens": 1.5,
+  "cancels": [
+    0,
+    1
+  ]
+}

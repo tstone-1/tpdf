@@ -398,6 +398,28 @@ export function madeSizeOf(
 }
 
 /**
+ * Quarter turns clockwise, reduced to 0..3, whatever the sign of the input.
+ *
+ * Every rotation in the application is a sum --- the view's, plus whatever an
+ * edit applied to the page, plus a `rotateBy(-1)` the reader just pressed ---
+ * so the value that reaches a tile request, a coordinate table or a layout is
+ * routinely negative or past three. JavaScript's `%` keeps the sign of the left
+ * operand, so `-1 % 4` is `-1` and not `3`; the double reduction is what makes
+ * it a turn rather than a signed remainder.
+ *
+ * One function rather than the expression written out at each site, because the
+ * same page rotated by the same amount must come out the same everywhere: the
+ * strip, the layout, the two reading-direction tables and the tile key all take
+ * the number from here, and `docs/TRAPS.md` records under *two rotation tables,
+ * disagreeing at every turn but zero* what a second copy of a turn costs. The
+ * literal union is the return type so a caller indexing a four-entry table by
+ * it needs no assertion of its own.
+ */
+export function quarterTurns(turns: number): 0 | 1 | 2 | 3 {
+  return (((turns % 4) + 4) % 4) as 0 | 1 | 2 | 3;
+}
+
+/**
  * One page of the working document, as the backend reports it.
  *
  * Mirrors `edits::PageView`. It lives here rather than in `edits.ts` so that the
@@ -614,6 +636,30 @@ export class PageMap {
 
 /** The map of a document with nothing open, which has no pages. */
 export const NO_PAGES = new PageMap([]);
+
+/**
+ * The slot a page id occupies in a state's own page list, or `undefined`.
+ *
+ * {@link PageMap.slotOfId} for a caller holding the array the model answered
+ * with rather than a map built from it, and it exists so that the two callers
+ * that need it late are asking one question rather than each writing a
+ * `findIndex` of their own.
+ *
+ * **Late is the whole point.** A page operation names a *slot* and everything
+ * a page is measured against arrives as an *id*, and between the two there is
+ * usually a round trip --- a content box, a crop box. A page moved or deleted
+ * while that is in flight renumbers every slot after it, so a slot read before
+ * the await names a different page by the time the command is sent. `docs/TRAPS.md`
+ * has this as an id and a slot both being `number`; what makes it hard to see
+ * is that on a document nobody has reordered the two numbers are equal.
+ */
+export function slotOfIdIn(
+  pages: readonly PageView[],
+  id: PageId,
+): number | undefined {
+  const slot = pages.findIndex((one) => one.id === id);
+  return slot < 0 ? undefined : slot;
+}
 
 /**
  * The links of the working document: rectangles in slots, targets in slots.

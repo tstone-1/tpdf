@@ -1,0 +1,32 @@
+{
+  "page": 1,
+  "matches": [
+    {
+      "page": 1,
+      "start": 10,
+      "end": 14,
+      "endPage": 2,
+      "before": "the ",
+      "hit": "quick",
+      "after": " brown"
+    }
+  ],
+  "chars": 1200,
+  "problem": "the page has no character map",
+  "tail": {
+    "page": 1,
+    "from": 1190,
+    "codes": [
+      113,
+      117,
+      105
+    ]
+  },
+  "more": [
+    {
+      "page": 2,
+      "matches": [],
+      "chars": 900
+    }
+  ]
+}

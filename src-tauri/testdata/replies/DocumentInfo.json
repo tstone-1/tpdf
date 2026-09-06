@@ -1,0 +1,17 @@
+{
+  "id": 1,
+  "pages": [
+    {
+      "width_pt": 595.0,
+      "height_pt": 842.0
+    },
+    {
+      "width_pt": 612.0,
+      "height_pt": 792.0
+    }
+  ],
+  "page_count": 2,
+  "lazy_geometry": false,
+  "open_ms": 12.5,
+  "at_ms": 340.25
+}

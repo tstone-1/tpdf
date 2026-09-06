@@ -1,0 +1,28 @@
+{
+  "codes": [
+    84,
+    104,
+    101
+  ],
+  "boxes": [
+    10.0,
+    20.0,
+    18.0,
+    32.0
+  ],
+  "height_pt": 842.0,
+  "width_pt": 595.0,
+  "quarter_turns": 1,
+  "extract_ms": 3.5,
+  "runs": [
+    {
+      "tag": "H1",
+      "path": [
+        "Document",
+        "Sect"
+      ],
+      "start": 0,
+      "end": 3
+    }
+  ]
+}

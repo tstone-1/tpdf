@@ -559,13 +559,25 @@ fn handle(
         },
         Request::Search {
             page,
+            pages,
             query,
             options,
             carry,
-        } => match render::run_search(document, *page, query, *options, carry.as_ref()) {
-            Ok(matches) => Response::reply(Reply::Search(matches)),
-            Err(e) => Response::err(e),
-        },
+        } => {
+            // A run when the caller asked for one, and the single page it always
+            // was otherwise --- the two paths differ only in how many pages one
+            // reply carries. See `worker_proto::Request::Search`.
+            let answered = if pages.is_empty() {
+                render::run_search(document, *page, query, *options, carry.as_ref())
+            } else {
+                render::run_search_range(document, pages, query, *options, carry.as_ref())
+                    .and_then(render::packed)
+            };
+            match answered {
+                Ok(matches) => Response::reply(Reply::Search(matches)),
+                Err(e) => Response::err(e),
+            }
+        }
         Request::Content { page } => {
             match render::run_content(bindings, document, *page, &CancelToken::default()) {
                 Ok(found) => Response::reply(Reply::Content(found)),
@@ -708,7 +720,7 @@ fn merge(
         );
     };
     let handed = crate::save::Inputs {
-        whole: inputs.as_slice(),
+        whole: inputs,
         each: incoming,
     };
     let (bytes, pages) = match render::run_merge(document, plan, handed) {
@@ -847,37 +859,74 @@ fn render(
         },
     };
 
-    let outcome = render::render_tile(bindings, document, &req, &token);
+    // **Rendered straight into the shared mapping, not into a `Vec` this then
+    // copies in.** The mapping is where the coordinator reads the tile from, so
+    // an intermediate buffer was an allocation and a copy of up to 16 MB per
+    // tile that nothing downstream could observe --- the pixels are identical
+    // either way, which is what `render::render_tile` still being the same
+    // function underneath is for.
+    //
+    // The room check happens **before** the render rather than after it, which
+    // is the one behavioural difference: a tile too large for the mapping is now
+    // refused without being drawn. That is the same refusal, earlier and
+    // cheaper, and it is the only order that can work --- there is nowhere else
+    // to put the pixels while deciding.
+    let room = tile.len();
+    let want = progressive::tile_bytes(render::tile_spec(&req));
+    if want > room {
+        queue.with(|queue| queue.release(rid));
+        // Refused rather than truncated. A short tile is a picture with the
+        // bottom missing, which reads as a rendering bug forever after; a
+        // refusal names its own cause once.
+        return Response::err(format!(
+            "tile is {want} bytes and the shared mapping holds {room}"
+        ));
+    }
+
+    let fill = render::render_tile_into(bindings, document, &req, &token, tile.as_mut_slice());
     queue.with(|queue| queue.release(rid));
 
-    match outcome {
-        Err(e) => Response::err(e),
-        Ok(render::TileOutcome::Abandoned) => Response {
-            ok: true,
-            abandoned: true,
-            ..Default::default()
-        },
-        Ok(render::TileOutcome::Rendered(rendered)) => {
-            let payload = rendered.bytes;
-            let room = tile.len();
-            if payload.len() > room {
-                // Refused rather than truncated. A short tile is a picture with
-                // the bottom missing, which reads as a rendering bug forever
-                // after; a refusal names its own cause once.
-                return Response::err(format!(
-                    "tile is {} bytes and the shared mapping holds {room}",
-                    payload.len()
-                ));
-            }
-            tile.as_mut_slice()[..payload.len()].copy_from_slice(&payload);
-            Response {
+    let render_us = match fill {
+        Err(e) => return Response::err(e),
+        Ok(render::TileFill::Abandoned) => {
+            return Response {
                 ok: true,
-                bytes: payload.len(),
-                render_us: rendered.render_us,
-                encode_us: rendered.encode_us,
+                abandoned: true,
                 ..Default::default()
             }
         }
+        Ok(render::TileFill::Drawn { render_us }) => render_us,
+    };
+
+    let t1 = std::time::Instant::now();
+    // Raw is already in place and costs nothing here. A PNG cannot be encoded
+    // over its own input, so that path still allocates and copies --- which is
+    // what it always did, and it is a tenth of the bytes.
+    let bytes = if png {
+        let encoded =
+            match render::encode_png(&tile.as_slice()[..want], width.into(), height.into()) {
+                Ok(encoded) => encoded,
+                Err(e) => return Response::err(e),
+            };
+        if encoded.len() > room {
+            return Response::err(format!(
+                "tile is {} bytes and the shared mapping holds {room}",
+                encoded.len()
+            ));
+        }
+        tile.as_mut_slice()[..encoded.len()].copy_from_slice(&encoded);
+        encoded.len()
+    } else {
+        want
+    };
+    let encode_us = t1.elapsed().as_micros() as u64;
+
+    Response {
+        ok: true,
+        bytes,
+        render_us,
+        encode_us,
+        ..Default::default()
     }
 }
 

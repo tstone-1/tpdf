@@ -53,15 +53,26 @@
 //! then does is PDFium's. [`OpenDocument::pdfium`] is how a caller hands the
 //! handle to something that genuinely wants only that.
 
+use std::cell::RefCell;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::docgraph::{DocumentGraph, Source};
 use crate::progressive::{Bindings, RawDocument, RawPage, Refusal};
+use crate::textcache::{self, TextCache};
 
 /// A document, both halves of it.
 pub struct OpenDocument {
     pdfium: RawDocument,
     graph: DocumentGraph,
+    /// Characters already extracted, so a second query does not re-extract.
+    ///
+    /// A third cache beside the graph's, and it belongs here rather than in
+    /// `RawDocument` for the reason the module note above gives about the graph:
+    /// the handle type owns the ability to draw and nothing else. See
+    /// [`crate::textcache`], which is where the policy and the reason nothing
+    /// invalidates it are written down.
+    text: RefCell<TextCache>,
 }
 
 impl OpenDocument {
@@ -81,6 +92,7 @@ impl OpenDocument {
                 Source::Path(path.to_path_buf()),
                 password.map(str::to_string),
             ),
+            text: RefCell::new(TextCache::new()),
         })
     }
 
@@ -101,6 +113,7 @@ impl OpenDocument {
         Ok(Self {
             pdfium: RawDocument::open_bytes(bindings, bytes, password)?,
             graph: DocumentGraph::new(Source::Bytes(bytes), password.map(str::to_string)),
+            text: RefCell::new(TextCache::new()),
         })
     }
 
@@ -155,5 +168,40 @@ impl OpenDocument {
         let pages = self.pdfium.page_count() as usize;
         self.pdfium
             .page_cropped(index, to, &|page| self.graph.sheet(page, pages))
+    }
+
+    /// One page's characters, extracting them only the first time.
+    ///
+    /// **The characters and not the boxes**, which is what makes holding the
+    /// whole document affordable: search reads `codes` alone, at four bytes a
+    /// character against the twenty a whole `PageText` costs. A caller that
+    /// needs the geometry wants `crate::render::run_text`, which extracts every
+    /// time and is right to --- it answers about the page a reader is looking
+    /// at, and the frontend caches those itself.
+    ///
+    /// # Errors
+    ///
+    /// The page not loading, or the extraction failing.
+    pub fn page_codes(&self, index: u32, crop: Option<[f32; 4]>) -> Result<Arc<Vec<u32>>, String> {
+        let key = textcache::key(index, crop);
+        // Borrowed and dropped before the extraction below, which loads a page
+        // --- a Pdfium call made while this borrow is live could re-enter and
+        // panic, which is the same rule `progressive::RawDocument` states about
+        // its own page cache.
+        if let Some(held) = self.text.borrow().get(key) {
+            return Ok(held);
+        }
+        let extracted = crate::text::extract(&self.page_cropped(index, crop)?)?;
+        Ok(self
+            .text
+            .borrow_mut()
+            .put(key, extracted.codes, textcache::BUDGET_CHARS))
+    }
+
+    /// How many characters this document has cached, for a harness that is
+    /// measuring the cache rather than using it.
+    #[must_use]
+    pub fn cached_chars(&self) -> usize {
+        self.text.borrow().chars()
     }
 }

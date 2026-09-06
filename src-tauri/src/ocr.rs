@@ -542,7 +542,7 @@ impl ControlChoice {
 ///
 /// 1. **No region covers it.** A word the removal was supposed to take is not
 ///    evidence that the engine can read: it is evidence the removal failed. The
-///    test is [`crate::redact::overlaps`], the same one that decided which words
+///    test is [`crate::objects::overlaps`], the same one that decided which words
 ///    the removal took, so the two cannot come to disagree about a word.
 /// 2. **It is set no larger than the smallest box the regions covered.** A
 ///    control in 12 pt proves nothing about a 6 pt footnote that survived.
@@ -568,7 +568,7 @@ pub fn control_from_page(
         .filter(|word| {
             regions
                 .iter()
-                .any(|region| crate::redact::overlaps(word.rect, *region))
+                .any(|region| crate::objects::overlaps(word.rect, *region))
         })
         .map(|word| word.rect)
         .collect();
@@ -579,7 +579,7 @@ pub fn control_from_page(
         .filter(|word| {
             !regions
                 .iter()
-                .any(|region| crate::redact::overlaps(word.rect, *region))
+                .any(|region| crate::objects::overlaps(word.rect, *region))
         })
         .collect();
     if survivors.is_empty() {

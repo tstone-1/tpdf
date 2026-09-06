@@ -5235,7 +5235,7 @@ impl Rewriter for FakeWriter {
             .push((len, password.map(str::to_string)));
         self.merges
             .borrow_mut()
-            .push((inputs.whole.to_vec(), inputs.each.to_vec()));
+            .push((inputs.whole.as_slice().to_vec(), inputs.each.to_vec()));
         let bytes = self.answer.clone()?;
         out.write_all(&bytes).map_err(|e| e.to_string())?;
         // A page count this writer invents. The coordinator has no way to
@@ -5714,6 +5714,85 @@ fn the_coordinator_does_not_parse_the_documents_it_merges() {
     );
 }
 
+/// The incoming documents arrive whole, in order, and each span is its own file.
+///
+/// The property every merge rests on, and the one a change to how the bytes get
+/// into the mapping can break silently: a span that is off by a byte still
+/// parses on most documents, because `lopdf` finds its cross-reference by
+/// searching backwards.
+#[test]
+fn the_documents_to_merge_arrive_whole_and_in_order() {
+    let scratch = Scratch::new("merge-concatenated");
+    let first = scratch.join("first.bin");
+    let second = scratch.join("second.bin");
+    let one = vec![b'a'; 1_000];
+    let two = vec![b'b'; 3];
+    std::fs::write(&first, &one).expect("plant the first");
+    std::fs::write(&second, &two).expect("plant the second");
+
+    let (carried, spans) = concatenated(&[first, second]).expect("read both");
+    let inputs = Inputs {
+        whole: &carried,
+        each: &spans,
+    };
+
+    assert_eq!(spans.len(), 2);
+    assert_eq!(
+        inputs.bytes_of(&spans[0]).expect("the first"),
+        one.as_slice()
+    );
+    assert_eq!(
+        inputs.bytes_of(&spans[1]).expect("the second"),
+        two.as_slice()
+    );
+    assert_eq!(spans[0].at, 0, "the first document starts at the start");
+    assert_eq!(
+        spans[1].at,
+        one.len(),
+        "and the second begins where the first ends --- no gap, no overlap"
+    );
+    assert_eq!(spans[0].label, "first.bin", "named as the reader saw it");
+}
+
+/// More incoming bytes than tpdf will hold at once is refused before any of them
+/// are read.
+///
+/// There was no ceiling at all: every file was read into a `Vec`, concatenated
+/// into a second, and copied into a mapping, so a reader who shift-clicked a
+/// folder of scans asked this process for two to three times their total size
+/// with nothing in the way. The refusal has to say what to do instead --- an
+/// allocation failure says nothing, and a swap storm is worse than either.
+///
+/// The ceiling is a parameter here for the reason `concatenated_within` gives:
+/// a guard reachable only with a gigabyte of fixtures is a guard nothing runs.
+#[test]
+fn more_incoming_bytes_than_the_ceiling_are_refused_with_something_to_do() {
+    let scratch = Scratch::new("merge-ceiling");
+    let first = scratch.join("first.bin");
+    let second = scratch.join("second.bin");
+    std::fs::write(&first, vec![b'a'; 600]).expect("plant the first");
+    std::fs::write(&second, vec![b'b'; 600]).expect("plant the second");
+
+    // The control first: under the ceiling, the same two files are read.
+    let (_, spans) = concatenated_within(&[first.clone(), second.clone()], 2_000)
+        .expect("1,200 bytes under a 2,000-byte ceiling");
+    assert_eq!(spans.len(), 2, "or the refusal below is not about the size");
+
+    let why = concatenated_within(&[first, second], 1_000)
+        .err()
+        .expect("1,200 bytes over a 1,000-byte ceiling must be refused");
+    assert!(
+        why.message.contains("at most"),
+        "the refusal has to state the limit: {}",
+        why.message
+    );
+    assert!(
+        why.message.contains("two passes"),
+        "and what the reader can do instead: {}",
+        why.message
+    );
+}
+
 #[test]
 fn a_merge_of_nothing_is_refused_in_the_worker_too() {
     // **The guard on the far side of the pipe**, which `write_merged`'s own
@@ -5729,7 +5808,10 @@ fn a_merge_of_nothing_is_refused_in_the_worker_too() {
         &base,
         &plan,
         Inputs {
-            whole: &[],
+            // A mapping of nothing cannot be created, so the emptiness under
+            // test is the span list rather than the segment. See `concatenated`,
+            // whose `max(1)` is there for this same refusal.
+            whole: &Shm::create(1).expect("a mapping to hold nothing"),
             each: &[],
         },
         None,

@@ -42,7 +42,6 @@
 //! the id-allocator property that would need proving first.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -51,7 +50,7 @@ use crate::docmodel::{
     Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, PageSource, Point, Quad, Rect,
     Redaction, RedactionId, Refusal, Size, StampName, Stroke, SweepId, INK_WIDTH, NIB_MAX, NIB_MIN,
 };
-use crate::fingerprint::Fingerprint;
+use crate::fingerprint::{Fingerprint, Opened};
 use std::num::NonZeroU64;
 
 /// One open document: the edit model, and what its file looked like at open.
@@ -79,6 +78,12 @@ struct Open {
     /// `OnceLock` being unset means it is still being computed, and those are
     /// different states that must not be collapsed.
     opened_as: Arc<OnceLock<Option<Fingerprint>>>,
+    /// The open handle, until the hash it feeds has been started.
+    ///
+    /// `Some` means the fingerprint has not begun; `None` means it has, or that
+    /// there was never a file to hash. Taken rather than flagged, so starting it
+    /// twice is not expressible --- see [`Edits::wake`].
+    to_hash: Option<Opened>,
 }
 
 /// One page as the frontend sees it.
@@ -541,43 +546,26 @@ impl Edits {
     /// render service reuses document numbers, so an id can legitimately name a
     /// different file than it did, and keeping the old journal would apply one
     /// document's edits to another.
-    pub fn open(&self, doc: u32, pages: u32, source: Option<PathBuf>) {
+    pub fn open(&self, doc: u32, pages: u32, source: Option<Opened>) {
         let opened_as: Arc<OnceLock<Option<Fingerprint>>> = Arc::new(OnceLock::new());
-        match source {
-            Some(path) => {
-                let cell = Arc::clone(&opened_as);
-                // Detached on purpose: nothing joins it, and the only reader
-                // blocks on the cell rather than on the thread. A handle would
-                // have to be stored, kept alive across a close, and reasoned
-                // about when a document is dropped mid-hash.
-                std::thread::spawn(move || {
-                    let taken = answered(|| match Fingerprint::of(&path) {
-                        Ok(print) => Some(print),
-                        Err(why) => {
-                            // Through `diag` rather than `eprintln!`, which is
-                            // the difference between a line the reader can send
-                            // us and one that goes nowhere: a process started
-                            // from Explorer or the Dock has no stderr, and this
-                            // is the line that explains a refusal the reader
-                            // *does* see --- Save is off for this document for
-                            // the rest of the session and nothing else says why.
-                            // The sink is a `OnceLock`, so this is safe from a
-                            // detached thread.
-                            crate::diag::note(&format!(
-                                "[WARN] {} could not be fingerprinted, so Save is refused for it: {why}",
-                                path.display()
-                            ));
-                            None
-                        }
-                    });
-                    // A failed `set` means the document was closed and reopened
-                    // under the same handle while this ran. The new open has its
-                    // own cell, so there is nothing to correct.
-                    let _ = cell.set(taken);
-                });
-            }
-            // No path to fingerprint: settle immediately rather than leaving a
-            // reader of the cell waiting for a thread that was never started.
+        // **Recorded, not started.** Hashing reads the whole file --- 452 ms cold
+        // on the 337 MB scan fixture --- and starting it here put that read on
+        // the wire while the first page was still being drawn, competing for the
+        // same disk with the render the reader is waiting for. Nothing needs the
+        // answer until a save or a print, and both of those are minutes away and
+        // about to read the file anyway.
+        //
+        // So it starts at the first thing that says the reader is present: any
+        // edit command, or a read of the fingerprint itself. See [`Edits::wake`],
+        // and note that the deferral changes nothing about the *guarantee* --- a
+        // save still blocks on the cell, and the handle it hashes is still the
+        // one the document was opened through.
+        let to_hash = source;
+        match &to_hash {
+            // A handle to hash later, so the cell stays unset until `wake`.
+            Some(_) => {}
+            // No file to fingerprint: settle immediately rather than leaving a
+            // reader of the cell waiting for a hash that will never be started.
             None => {
                 let _ = opened_as.set(None);
             }
@@ -587,8 +575,85 @@ impl Edits {
             Open {
                 model: Doc::open(pages),
                 opened_as,
+                to_hash,
             },
         );
+    }
+
+    /// Starts the fingerprint if it has not been started, and returns at once.
+    ///
+    /// **Called by every entry point that touches a document rather than by one
+    /// of them**, which is the point: a trigger bound to a single caller covers
+    /// that caller, and `docs/TRAPS.md` records exactly that shape. `edits.rs`
+    /// has no chokepoint --- fourteen public methods take the lock themselves ---
+    /// so the coverage is asserted instead, by a test that drives each of them
+    /// against a fresh document and reads [`Edits::hashing_started`].
+    ///
+    /// Idempotent by construction: the handle is `take`n, so the second call
+    /// finds nothing and spawns nothing.
+    fn wake(&self, doc: u32) {
+        // Taken under the lock and spawned outside it. A thread spawn is
+        // microseconds and this lock is held by every edit command, which is the
+        // same reason `pending` waits outside it.
+        let taken = self
+            .docs
+            .lock()
+            .expect("edits lock")
+            .get_mut(&doc)
+            .and_then(|open| {
+                open.to_hash
+                    .take()
+                    .map(|opened| (opened, Arc::clone(&open.opened_as)))
+            });
+        let Some((opened, cell)) = taken else {
+            return;
+        };
+        // Detached on purpose: nothing joins it, and the only reader blocks on
+        // the cell rather than on the thread. A handle would have to be stored,
+        // kept alive across a close, and reasoned about when a document is
+        // dropped mid-hash.
+        std::thread::spawn(move || {
+            let taken = answered(|| {
+                match Fingerprint::of_open(&opened.file, &opened.what) {
+                    Ok(print) => Some(print),
+                    Err(why) => {
+                        // Through `diag` rather than `eprintln!`, which is the
+                        // difference between a line the reader can send us and
+                        // one that goes nowhere: a process started from Explorer
+                        // or the Dock has no stderr, and this is the line that
+                        // explains a refusal the reader *does* see --- Save is
+                        // off for this document for the rest of the session and
+                        // nothing else says why. The sink is a `OnceLock`, so
+                        // this is safe from a detached thread.
+                        crate::diag::note(&format!(
+                            "[WARN] {} could not be fingerprinted, so Save is refused for it: {why}",
+                            opened.what.display()
+                        ));
+                        None
+                    }
+                }
+            });
+            // A failed `set` means the document was closed and reopened under
+            // the same handle while this ran. The new open has its own cell, so
+            // there is nothing to correct.
+            let _ = cell.set(taken);
+        });
+    }
+
+    /// Whether this document's fingerprint has been started.
+    ///
+    /// **An accounting observable**, and it exists because deferring the hash
+    /// has no other symptom: a hash started at open and one started at the first
+    /// edit produce the same fingerprint and refuse the same saves, and differ
+    /// only by a whole-file read happening while the first page is being drawn.
+    /// `None` for a document with no model. Read by this module's own tests.
+    #[must_use]
+    pub fn hashing_started(&self, doc: u32) -> Option<bool> {
+        self.docs
+            .lock()
+            .expect("edits lock")
+            .get(&doc)
+            .map(|open| open.to_hash.is_none())
     }
 
     /// What the file looked like when this document was opened.
@@ -611,6 +676,10 @@ impl Edits {
     /// the 337 MB fixture --- and block every other edit command on the file
     /// being read, which is the shape of a hang rather than of a slow save.
     fn pending(&self, doc: u32) -> Option<Arc<OnceLock<Option<Fingerprint>>>> {
+        // The last trigger, and the one that cannot be forgotten: whatever else
+        // happened to this document, a caller asking for the fingerprint is
+        // about to wait for it.
+        self.wake(doc);
         self.docs
             .lock()
             .expect("edits lock")
@@ -651,6 +720,11 @@ impl Edits {
     ///
     /// The handle names no open document.
     pub fn state(&self, doc: u32) -> Result<EditState, String> {
+        // **Deliberately does not `wake`.** The frontend asks for the state as
+        // soon as a document opens, so waking here would put the whole-file read
+        // back exactly where the deferral took it from --- and looking at a
+        // document is not editing one. Every method that *changes* the model
+        // wakes; this one reads.
         let docs = self.docs.lock().expect("edits lock");
         let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
         let model = &open.model;
@@ -776,6 +850,8 @@ impl Edits {
         after: Option<u64>,
         size: [f64; 2],
     ) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         // **Here rather than in the model**, for the reason the mark path checks
         // its coordinates here: a non-finite number is a sender defect, and the
         // model's own refusal is about a size that encloses no area --- which
@@ -821,6 +897,8 @@ impl Edits {
     /// note is longer than [`crate::textbox::MAX_NOTE_CHARS`]; the mark covers
     /// no area; or the page does not exist or was deleted.
     pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         if want.quads.len() % 4 != 0 {
             return Err(format!(
                 "a mark is four numbers per rectangle, and this has {}",
@@ -923,6 +1001,8 @@ impl Edits {
     /// already been removed --- two diagnoses, for the reason
     /// [`delete`](Edits::delete) keeps two.
     pub fn unannotate(&self, doc: u32, mark: u64, sweep: u64) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         self.command_in(
             doc,
             Command::Unannotate {
@@ -949,6 +1029,8 @@ impl Edits {
     /// not finite; or the model refuses --- the page not existing, having been
     /// deleted, or the region covering no area.
     pub fn redact(&self, doc: u32, page: u64, area: [f32; 4]) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         // [`annotate`](Edits::annotate)'s third door, and the same reasoning
         // applies with one difference in where it bites: a mark's infinite
         // corner is written into a content stream as `inf`, and a redaction's
@@ -1029,6 +1111,8 @@ impl Edits {
         remove: Vec<usize>,
         sweep: u64,
     ) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         let id = MarkId::from_raw(mark);
@@ -1088,6 +1172,8 @@ impl Edits {
     /// [`crate::textbox::MAX_NOTE_CHARS`]; the mark is a text box and the note
     /// holds a character `/WinAnsiEncoding` has no byte for.
     pub fn renote(&self, doc: u32, mark: u64, note: String) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         // Before the lock, because it needs nothing from the model and the lock
         // is what a long note makes expensive to hold.
         too_long(&note)?;
@@ -1147,6 +1233,8 @@ impl Edits {
         body: String,
         made: String,
     ) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         if object.0 == 0 {
             return Err("that comment has no object to write over".to_string());
         }
@@ -1187,6 +1275,8 @@ impl Edits {
     /// The handle names no open document; the object is 0; the page does not
     /// exist or was deleted.
     pub fn discard(&self, doc: u32, object: (u32, u16), page: u64) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         if object.0 == 0 {
             return Err("that comment has no object to remove".to_string());
         }
@@ -1214,6 +1304,8 @@ impl Edits {
     /// The handle names no open document; the id names no mark, or one that has
     /// already been removed.
     pub fn recolor(&self, doc: u32, mark: u64, color: [f32; 3]) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model
@@ -1247,6 +1339,8 @@ impl Edits {
     /// The handle names no open document; the offset is not finite; the id names
     /// no mark, or one that has already been removed.
     pub fn displace(&self, doc: u32, mark: u64, dx: f32, dy: f32) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         if !dx.is_finite() || !dy.is_finite() {
             return Err(format!("a mark cannot be moved by ({dx}, {dy})"));
         }
@@ -1270,6 +1364,17 @@ impl Edits {
         cmd: Command,
         sweep: Option<SweepId>,
     ) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        //
+        // **The only wake for the five methods that delegate here**, and it was
+        // not, until a mutation said so: `rotate`, `crop`, `delete`, `move_page`
+        // and `unredact` each carried one of their own as well, so deleting this
+        // one changed nothing and the test could not tell which mechanism it was
+        // reading. Two mechanisms for one rule make both of them unfalsifiable
+        // --- `docs/TRAPS.md` has the entry. The methods that lock for
+        // themselves still wake for themselves, because for them there is no
+        // chokepoint to put it in.
+        self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model.apply_in(cmd, sweep).map_err(describe)?;
@@ -1287,6 +1392,8 @@ impl Edits {
     ///
     /// The handle names no open document.
     pub fn undo(&self, doc: u32) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model.undo();
@@ -1299,6 +1406,8 @@ impl Edits {
     ///
     /// The handle names no open document.
     pub fn redo(&self, doc: u32) -> Result<EditState, String> {
+        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
         let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
         model.redo();
@@ -1966,7 +2075,53 @@ impl Plan {
 /// Spelled out rather than `Debug`-formatted. `Debug` would carry the `PageId`'s
 /// raw number into a reader-facing string, and the two refusals that matter here
 /// differ in their *diagnosis*, which is the part worth wording.
-fn describe(why: Refusal) -> String {
+/// A model refusal, carried rather than flattened.
+///
+/// [`describe`] turns one into the sentence a reader sees; this
+/// keeps the sentence *and* what answers it, so a command that returns a
+/// `Failure` hands the window both. Nothing returns one yet --- the edit
+/// commands answer `Result<_, String>` --- and the conversion exists so the
+/// first one that wants to does not have to invent the mapping under deadline.
+///
+/// **The split is by who can act, not by what went wrong.** An id the model
+/// never issued and a mark shaped in a way the model forbids are both defects on
+/// the sending side, and no wording makes them something a reader does. What is
+/// left --- the last page, a mark covering nothing, a comment somebody's own
+/// reply answers --- is a thing they can change and try again.
+impl From<Refusal> for crate::failure::Failure {
+    fn from(why: Refusal) -> Self {
+        let action = match why {
+            // Nothing a reader did: an id the model never issued, an id it has
+            // retired, or a mark whose fields disagree with its kind.
+            Refusal::NoSuchPage(_)
+            | Refusal::PageDeleted(_)
+            | Refusal::AnchorIsTarget(_)
+            | Refusal::NoSuchMark(_)
+            | Refusal::MarkRemoved(_)
+            | Refusal::NoSuchRedaction(_)
+            | Refusal::RedactionRemoved(_)
+            | Refusal::ShapeMismatch(_)
+            | Refusal::StampMismatch(_)
+            | Refusal::ReplyMismatch(_) => crate::failure::Action::Report,
+            // Something the reader can change: keep a page, drag a box with area
+            // in it, take their own reply off first.
+            Refusal::LastPage(_)
+            | Refusal::DegenerateCrop(_)
+            | Refusal::DegeneratePage(_)
+            | Refusal::CropOnMadePage(_)
+            | Refusal::RedactionOnMadePage(_)
+            | Refusal::EmptyMark
+            | Refusal::EmptyRedaction
+            | Refusal::ReplyAnswersIt(_) => crate::failure::Action::Amend,
+        };
+        Self {
+            message: describe(why),
+            action,
+        }
+    }
+}
+
+pub(crate) fn describe(why: Refusal) -> String {
     match why {
         Refusal::NoSuchPage(_) => "no such page".into(),
         Refusal::PageDeleted(_) => "that page has been deleted".into(),
@@ -2195,6 +2350,154 @@ fn snapshot(model: &Doc) -> EditState {
 #[cfg(test)]
 mod tests {
 
+    /// A scratch file and an `Edits` with it open as document 1.
+    fn with_a_file(name: &str) -> (std::path::PathBuf, Edits) {
+        // Named per test as well as per process, because two tests naming their
+        // scratch directory the same string delete each other's --- which
+        // `docs/TRAPS.md` records having cost a session.
+        let dir = std::env::temp_dir().join(format!("tpdf-wake-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let file = dir.join("source.bin");
+        std::fs::write(&file, b"some bytes").expect("write");
+        let edits = Edits::default();
+        edits.open(
+            1,
+            3,
+            Some(Opened {
+                file: std::fs::File::open(&file).expect("open the subject"),
+                what: file.clone(),
+            }),
+        );
+        (file, edits)
+    }
+
+    /// Opening a document starts no hash.
+    ///
+    /// The whole of the deferral: hashing reads the file end to end --- 452 ms
+    /// cold on the 337 MB scan fixture --- and doing it here put that read on the
+    /// wire while the first page was being drawn. Nothing needs the answer until
+    /// a save.
+    #[test]
+    fn opening_a_document_does_not_start_the_hash() {
+        let (_file, edits) = with_a_file("open");
+        assert_eq!(
+            edits.hashing_started(1),
+            Some(false),
+            "opening a document must not read it end to end"
+        );
+    }
+
+    /// Every method that changes the model starts it.
+    ///
+    /// **Enumerated rather than sampled**, because `edits.rs` has no chokepoint:
+    /// fourteen public methods take the lock themselves, so a trigger written at
+    /// one of them covers one of them --- the shape `docs/TRAPS.md` records as *a
+    /// check bound to one caller covers only that caller*. Each runs against its
+    /// own freshly opened document, so one that woke the hash cannot hide
+    /// another that did not.
+    ///
+    /// The calls are allowed to fail: several refuse on a document with no such
+    /// mark or no such page, and refusing is still the reader being present. What
+    /// is asserted is the wake, not the outcome.
+    #[test]
+    fn every_edit_starts_the_hash() {
+        type Drive = (&'static str, fn(&Edits) -> ());
+        let drives: &[Drive] = &[
+            ("rotate", |e| drop(e.rotate(1, 1, 1))),
+            ("crop", |e| drop(e.crop(1, 1, None))),
+            ("delete", |e| drop(e.delete(1, 1))),
+            ("move_page", |e| drop(e.move_page(1, 1, None))),
+            ("insert", |e| drop(e.insert(1, None, [612.0, 792.0]))),
+            ("annotate", |e| {
+                drop(e.annotate(
+                    1,
+                    NewMark {
+                        kind: MarkKind::Highlight,
+                        page: 1,
+                        quads: vec![0.0, 0.0, 1.0, 1.0],
+                        strokes: Vec::new(),
+                        stamp: None,
+                        reply_to: None,
+                        color: [1.0, 1.0, 0.0],
+                        author: String::new(),
+                        note: String::new(),
+                        width: 1.0,
+                    },
+                    String::new(),
+                ))
+            }),
+            ("unannotate", |e| drop(e.unannotate(1, 1, 0))),
+            ("redact", |e| drop(e.redact(1, 1, [0.0, 0.0, 1.0, 1.0]))),
+            ("unredact", |e| drop(e.unredact(1, 1))),
+            ("erase", |e| drop(e.erase(1, 1, Vec::new(), 0))),
+            ("renote", |e| drop(e.renote(1, 1, String::new()))),
+            ("rewrite", |e| {
+                drop(e.rewrite(1, (1, 0), 1, String::new(), String::new()))
+            }),
+            ("discard", |e| drop(e.discard(1, (1, 0), 1))),
+            ("recolor", |e| drop(e.recolor(1, 1, [0.0, 0.0, 0.0]))),
+            ("displace", |e| drop(e.displace(1, 1, 1.0, 1.0))),
+            ("undo", |e| drop(e.undo(1))),
+            ("redo", |e| drop(e.redo(1))),
+        ];
+        for (name, drive) in drives {
+            let (_file, edits) = with_a_file(name);
+            assert_eq!(edits.hashing_started(1), Some(false), "{name}: before");
+            drive(&edits);
+            assert_eq!(
+                edits.hashing_started(1),
+                Some(true),
+                "{name} left the fingerprint unstarted, so a save after it pays \
+                 the whole read"
+            );
+        }
+    }
+
+    /// Looking at a document is not editing one.
+    ///
+    /// The control, and the direction that decides whether the deferral is worth
+    /// anything: the frontend asks for the state the instant a document opens, so
+    /// a wake here would put the read back exactly where it was taken from.
+    #[test]
+    fn reading_the_state_does_not_start_the_hash() {
+        let (_file, edits) = with_a_file("state");
+        edits.state(1).expect("the document is open");
+        assert_eq!(edits.hashing_started(1), Some(false));
+    }
+
+    /// A save starts it and waits for it.
+    ///
+    /// The half the deferral must not lose: whatever else happened, a caller
+    /// asking for the fingerprint gets one rather than `None` --- and `None` is
+    /// what a document whose hash was never started would answer, which every
+    /// save treats as a refusal.
+    #[test]
+    fn a_save_starts_the_hash_and_waits_for_it() {
+        let (file, edits) = with_a_file("save");
+        assert_eq!(edits.hashing_started(1), Some(false));
+        let taken = edits.opened_as(1).expect("the document is open");
+        assert!(
+            taken.is_some(),
+            "a save has to be given the fingerprint, not a refusal"
+        );
+        assert_eq!(edits.hashing_started(1), Some(true));
+        assert_eq!(
+            taken,
+            Fingerprint::of(&file).ok(),
+            "and it has to be this file's"
+        );
+    }
+
+    /// Waking twice hashes once.
+    #[test]
+    fn waking_a_second_time_starts_nothing() {
+        let (_file, edits) = with_a_file("twice");
+        edits.wake(1);
+        let first = edits.opened_as(1).expect("open");
+        edits.wake(1);
+        assert_eq!(edits.opened_as(1).expect("open"), first);
+    }
+
     /// A panic while fingerprinting must refuse the save, not block it.
     ///
     /// `opened_as` is a `OnceLock` with exactly one writer, and its reader is
@@ -2243,13 +2546,82 @@ mod tests {
         std::fs::write(&file, b"some bytes").expect("write");
 
         let edits = Edits::default();
-        edits.open(1, 2, Some(file.clone()));
+        edits.open(
+            1,
+            2,
+            Some(Opened {
+                file: std::fs::File::open(&file).expect("open the subject"),
+                what: file.clone(),
+            }),
+        );
         let plan = edits.plan(1).expect("plan");
         assert!(
             plan.opened_as.is_some(),
             "the plan must carry what the file was, not race the thread that read it"
         );
         assert_eq!(plan.opened_as.expect("some").len, 10);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The fingerprint is of the handle the open was given, not of the name.
+    ///
+    /// The wiring half of `Fingerprint::of_open`'s own test, one layer up, and
+    /// the layer where the race actually is: the hash runs on a thread while the
+    /// render service maps the document, so a hash taken by name is a second
+    /// lookup with a whole open in between. A file replaced in that window by a
+    /// revision with the same page count passes every guard a save has --- and
+    /// this one arranges the same length as well, so nothing cheap can tell them
+    /// apart either.
+    #[test]
+    fn the_fingerprint_is_of_the_handle_the_open_was_given() {
+        let dir = std::env::temp_dir().join(format!("tpdf-edits-handed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let file = dir.join("source.bin");
+        std::fs::write(&file, b"some bytes").expect("write");
+        // A copy kept out of the way, so the expected answer is derived from the
+        // original bytes rather than restated as a digest nobody can read.
+        let original = dir.join("original.bin");
+        std::fs::write(&original, b"some bytes").expect("write");
+
+        let handle = std::fs::File::open(&file).expect("open the document");
+
+        // Something else replaces the name, keeping the length.
+        let replacement = dir.join("replacement.bin");
+        std::fs::write(&replacement, b"SOME BYTES").expect("write");
+        std::fs::rename(&replacement, &file).expect("replace the name");
+
+        let edits = Edits::default();
+        edits.open(
+            1,
+            2,
+            Some(Opened {
+                file: handle,
+                what: file.clone(),
+            }),
+        );
+        let taken = edits
+            .plan(1)
+            .expect("plan")
+            .opened_as
+            .expect("a fingerprint was recorded");
+
+        let expected = Fingerprint::of(&original).expect("hash the original bytes");
+        assert_eq!(
+            taken.digest, expected.digest,
+            "the model has to record what the reader is looking at"
+        );
+        let now = Fingerprint::of(&file).expect("hash what the name reaches");
+        assert_ne!(
+            taken.digest, now.digest,
+            "and the name reaches something else --- without this the test passes on a \
+             fingerprint taken by name"
+        );
+        assert_eq!(
+            taken.len, now.len,
+            "the two are the same length, deliberately"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4223,5 +4595,103 @@ mod tests {
         let back = edits.undo(7).expect("undo the note");
         assert_eq!(back.marks[0].note, "", "undo left the note behind");
         assert!(back.dirty, "the highlight is still an edit");
+    }
+
+    /// Every `Refusal` variant maps to an action, and the two groups are real.
+    ///
+    /// **The count is asserted against the match's own arms**, because the
+    /// mapping is exhaustive by the compiler and a *wrong* arm is not: moving a
+    /// variant from one group to the other compiles and is what this catches.
+    /// One case per variant, so a variant added without a decision fails to
+    /// compile in the `From` and fails here for want of a case.
+    #[test]
+    fn every_refusal_carries_an_action_and_the_two_groups_are_told_apart() {
+        let page = PageId::from_raw(1);
+        let cases: Vec<(Refusal, crate::failure::Action)> = vec![
+            (Refusal::NoSuchPage(page), crate::failure::Action::Report),
+            (Refusal::PageDeleted(page), crate::failure::Action::Report),
+            (
+                Refusal::AnchorIsTarget(page),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::NoSuchMark(MarkId::from_raw(1)),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::MarkRemoved(MarkId::from_raw(1)),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::NoSuchRedaction(RedactionId::from_raw(1)),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::RedactionRemoved(RedactionId::from_raw(1)),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::ShapeMismatch(MarkKind::Ink),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::StampMismatch(MarkKind::Ink),
+                crate::failure::Action::Report,
+            ),
+            (
+                Refusal::ReplyMismatch(MarkKind::Ink),
+                crate::failure::Action::Report,
+            ),
+            (Refusal::LastPage(page), crate::failure::Action::Amend),
+            (
+                Refusal::DegenerateCrop(Rect {
+                    llx: 0.0,
+                    lly: 0.0,
+                    urx: 0.0,
+                    ury: 0.0,
+                }),
+                crate::failure::Action::Amend,
+            ),
+            (
+                Refusal::DegeneratePage(Size {
+                    width: 0.0,
+                    height: 0.0,
+                }),
+                crate::failure::Action::Amend,
+            ),
+            (Refusal::CropOnMadePage(page), crate::failure::Action::Amend),
+            (
+                Refusal::RedactionOnMadePage(page),
+                crate::failure::Action::Amend,
+            ),
+            (Refusal::EmptyMark, crate::failure::Action::Amend),
+            (Refusal::EmptyRedaction, crate::failure::Action::Amend),
+            (
+                Refusal::ReplyAnswersIt(ObjectId::new(7, 0)),
+                crate::failure::Action::Amend,
+            ),
+        ];
+
+        for (why, want) in &cases {
+            let failure = crate::failure::Failure::from(*why);
+            assert_eq!(failure.action, *want, "{why:?}");
+            assert!(
+                !failure.message.is_empty(),
+                "{why:?} carries the sentence as well as the action"
+            );
+            assert!(
+                !failure.reopen(),
+                "{why:?} refuses before anything is taken apart"
+            );
+        }
+
+        // Both groups are non-empty, so a mapping that collapsed to one answer
+        // would fail here rather than passing every case above.
+        assert!(cases
+            .iter()
+            .any(|(_, a)| *a == crate::failure::Action::Report));
+        assert!(cases
+            .iter()
+            .any(|(_, a)| *a == crate::failure::Action::Amend));
     }
 }

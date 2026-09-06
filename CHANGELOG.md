@@ -17,6 +17,621 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.2] - Unreleased
+
+Everything under this heading so far **shipped in 26.9.1** and was not recorded there. The
+findings come from seven commits between `v26.9.0` and `v26.9.1` that never reached this file,
+and from two changes the release commit itself carried, whose only edit here was the date on
+the `26.9.1` heading below. They are filed under this version because that is where a reader
+of the changelog will now find them, and each entry says which release it actually went out
+in. No count is given: work for 26.9.2 lands under this heading too, and a number in the lead
+paragraph would be wrong the first time it does.
+
+### Fixed: one fuzz target had been unable to finish a run since 2026-09-01, and nothing said so
+
+Shipped in 26.9.1, unrecorded. `lopdf_load` stopped 21 seconds into its hour: libFuzzer halts
+at the first finding, and this target reaches `docs/THREAT-MODEL.md` residual risk 21 almost
+immediately --- `lopdf`'s cross-reference parser multiplies out the `/W` widths a document
+declares and asks for the product, aborting through `handle_alloc_error` where no guard of
+ours can sit. The artifact is the fourth instance of it, reproduced rather than read off the
+filename. So everything behind that point had been unreachable, on every run, and no campaign
+had been run to completion since the defect was found. Measured on the same corpus and binary:
+80,269 executions in 21 s stopped, against 380,803 in 96 s under `-fork=1 -ignore_crashes=1`.
+`src-tauri/fuzz/run.py` gained `MUST_FORK`, naming the two targets that reach risk 21 with the
+reason beside each, and a `--fork` flag for the rest.
+
+**The flag is the small half: fork mode redefines a clean run.** With `-ignore_crashes=1`
+libFuzzer answers 0 for a forked run that completed, however many children it buried, so a
+harness reading the exit code would report a target aborting every few minutes as permanently
+green. The verdict now diffs `artifacts/<target>/` across the run, snapshotted before anything
+starts because it is a difference and not a count, and both observables are kept --- a non-zero
+exit is still a build error or a bad corpus path. Proved both ways: a 60 s run exits 0 with no
+new artifacts, and a file appearing mid-run turns it red and names it.
+
+### Fixed: the fuzz verdict covered the background run and not the foreground one
+
+Shipped in 26.9.1, unrecorded, and found by the interpreter rather than by reading. `run()` in
+`src-tauri/fuzz/run.py` has two call sites and the new artifact check first covered only the
+background one --- so a bare `--target <name>`, which is the invocation people actually use,
+would have kept the exit code as its whole verdict under a mode that had just stopped meaning
+anything.
+
+### Changed: every whole-document fuzz reader forks, because the target list was the thing that was wrong
+
+Shipped in 26.9.1, unrecorded. `annots_scan` filed its first artifact ever, 14 minutes into a
+one-hour run at 8,051,057 executions: the same residual risk 21 `/W` abort at a fifth
+magnitude. Risk 21 already names `annots::scan` as one of five load-path readers that reach it,
+so the list of targets that fork was wrong rather than the risk. `run.py` now forks **every**
+whole-document reader instead of the two observed to stop. `save_rewrite_update` stays out:
+its findings are ours and stopping on one is the point, and it ran a clean hour at 13,638,855
+executions. `--list` prints which targets fork, since fork mode changes what a clean run means.
+
+### Fixed: an artifact re-ran clean, and a guard added a day later was standing in front of the defect
+
+Shipped in 26.9.1, unrecorded, and it is a lesson about triage rather than about a fixture.
+`crash-732de3ab` re-ran clean, and reverting the fix it was filed against left it clean too ---
+two negative controls agreeing, which reads as an artifact from a build no longer in git. It
+was wrong. A guard added a *day later*, the made-page bound of residual risk 22, refuses that
+plan before the turns arithmetic runs; with all three reverted together it panics at
+`save.rs:3097` with `attempt to add with overflow`, on the first run and every run. A real
+defect, correctly fixed, one command from being retired as noise. What transfers: an artifact's
+age is the first thing to check, before the fix you suspect, and everything merged since stands
+between the input and the defect without having to be related to it. The positive control is
+what made the negative one readable --- a known reproducer from the same directory read 207 MB
+with the guards off, its recorded figure, so "the revert did not fire" and "the revert did not
+take effect" could be told apart. Five artifacts across three targets now carry the `/W` abort,
+at five magnitudes, each reproduced.
+
+### Fixed: the gate written to catch a bad workflow fixture path could not see the block those paths live in
+
+Shipped in 26.9.1, unrecorded. `scripts/check_workflow_fixtures.py` scanned lines whose
+stripped form starts with `run:` or `- run:`. That is the whole of a one-line step and the
+first line of every other kind: a step with more than one command is written `run: |`, and its
+commands then sit on lines starting with neither. Every fixture path inside a block scalar was
+invisible to the gate written to find exactly that mistake --- planting
+`./probe testdata/no-such-fixture.pdf` inside the block at `ci.yml:154` printed
+`[OK] all 6 workflow fixture path(s)` and exited 0, while the identical string on a line of its
+own at the `run:` indent failed.
+
+**The emptiness control is what let it through, and it is a real control.** `asked == 0` fires
+if *every* path moves into a block; it cannot fire on partial blindness, and partial is the
+case that happens, because a new probe step almost always needs more than one command. The walk
+now consumes the block by indentation --- `|`, `>` and their chomping and keep indicators open
+one, and it ends at the first non-blank line indented no deeper than the `run` key --- with no
+dependency, since there is no PyYAML here. Four controls, two of which matter: a bogus path
+inside the block now fails, and a *valid* path inside the block stays green with the count
+going 6 to 7, which is what proves the line was read where a failure proves only that
+something failed somewhere. The same string dedented out of the block is still not read and the
+count stays at six, which is the over-reach control.
+
+### Added: `scripts/mutate_python.py`, because sixteen gates had each been proved once, by hand, and never again
+
+Shipped in 26.9.1, unrecorded. `scripts/gates.py` runs sixteen gates whose implementation is a
+Python script. Each was shown able to fail on the day it was written and nothing re-proved any
+of them afterwards: no test file named one, and neither `mutate_rust.py` nor
+`mutate_frontend.py` carried a mutation aimed at one. A check that has never been shown to fail
+is indistinguishable from one that keeps passing. The harness breaks each gate's **subject** ---
+the workflow, the trap index, the toolchain pin, the source file --- and requires the gate to
+notice; not the checker, since a checker with its matcher removed reports a clean tree, which
+is the failure rather than the proof. Twelve mutations across nine gates, 30 s for the table,
+registered in `check_mutation_anchors.py` like the other three harnesses. Every row carries a
+`says` string the gate's output must contain, because a gate that goes red for the wrong reason
+passes an exit-code test exactly as well as one that caught the plant, and three rows expect
+GREEN --- the half that is easy to leave out.
+
+### Fixed: `fetch_pdfium.py --check` printed the pin and never compared it against the tree
+
+Shipped in 26.9.1, unrecorded, and the first finding of the harness above. With the pin changed
+it answered `[OK] pdfium chromium/9999 mac-arm64 verified` for an install stamped 7881. The
+archive digest below it carries the real guarantee and still does, so nothing was unverified;
+what was missing is that the two must agree, which the module's own docstring states as a rule
+--- "bumping the pin means changing TAG and the whole PINS table together" --- with nothing
+enforcing it. `check()` reads `VERSION.txt` now. A value a check prints is not a value a check
+tested, and a printed constant is the most convincing possible evidence of a comparison that
+never happened.
+
+### Added: six more gate mutations, and the commit that added the first twelve was red
+
+Shipped in 26.9.1, unrecorded. Six rows take `scripts/mutate_python.py` from nine gates to
+fifteen --- `writers`, `classified`, `wiring`, `corpora`, `mutations`, `notices` --- eighteen
+rows in all, each caught by the gate named for it. `bundleshare` is the exception and the
+reason is measured rather than assumed: its subject is the built bundle, so a row would have to
+run `npm run build` between the edit and the gate, and the obvious edit does not work either
+--- a 200,000-character exported constant added to `viewercheck.ts` left the family at 151,362
+units, unchanged, because Vite tree-shakes an export nothing imports.
+
+**And the commit before it was red, because of staging.** `gates.py` reported 23/23 and then
+`git add -A` put `mutate_python.py` into the tree carrying a next-year date as the `dates`
+row's test data. `check_dates.py` scans **tracked** files, so while the file was untracked the
+gate could not see it: the verification and the artifact it was meant to verify were two
+different sets of files. On a commit that ADDS a file, stage first and run the gates second.
+The row needs that date, so it is assembled at import from today's year plus one and the file
+at rest contains no such string --- the first attempt left the literal in the comment
+explaining the fix, which kept the gate red one line under the code that had stopped causing
+it.
+
+### Fixed: `check_dates.py` printed its population and asserted nothing about it
+
+Shipped in 26.9.1, unrecorded. Every gate mutation written up to that point plants a defect in
+a file the gate already reads, so none of them could see a gate whose **population** shrank to
+nothing. Asking that question of the one gate whose subject is the whole repository got
+`[OK] no date ahead of 2026-09-02 in 0 tracked text files` and exit 0. It derives its files
+from `git ls-files` and fails closed when git *errors*; what it could not see is git succeeding
+and returning nothing, and every other gate in `scripts/` already refused a zero population.
+Printing a population is not asserting it --- following the convention as far as printing the
+count leaves the check exactly as weak as it was while making it look thorough to anyone who
+reads the line rather than the code. The mutation needs no fixture and no temporary repository:
+`GIT_INDEX_FILE=/tmp/no-such-index` makes `git ls-files` print nothing and exit 0, which is
+precisely the case the error branch cannot catch. Distinct from the trap about a tool whose
+universe comes from a command: that one is the command being *absent*, and the fix is to fail
+closed on the error; this is the command being present and answering emptily, which passes
+every check written for the first case.
+
+### Tested: fifteen emptiness controls had never been fired, and five now have
+
+Shipped in 26.9.1, unrecorded. Fifteen of the sixteen gates already carried an
+`if not <population>` refusal and `check_dates.py` was the only one that did not --- but
+reading a control is not evidence that it fires. Five rows in `scripts/mutate_python.py` point
+a gate's population root at nothing and require the control to speak: `docs` twice, since the
+frontend scan and the Rust scan are separate populations with separate messages, then `sinks`,
+`classified` and `traps`. Twenty-four mutations, all caught. These perturb the **checker**
+rather than its subject, which every other row avoids deliberately; it is the right instrument
+for this one question, because the real tree cannot be emptied.
+
+**Two of the five were written with `says="[FAIL]"` and that was wrong in the way this table
+exists to prevent.** Accepting any failure is the generic-assertion problem, and one of the two
+proved it: pointing the trap corpus at `LICENSE` does not reach `check_trap_index.py`'s
+`if not entries` guard at all --- the index-versus-corpus set difference fires first, one
+message per bullet. Still the gate refusing an empty population, still red, and a different
+sentence, which `says="[FAIL]"` would have accepted without anybody noticing which control had
+run. `corpora` is the one deliberate tolerance and stays: its population is `testdata/*.pdf`,
+generated and gitignored, so a fresh checkout legitimately has none and `--list` reports the
+shortfall as `[INFO]` and exits 0.
+
+### Fixed: a `#[cfg]` between `#[test]` and `fn` was invisible to the mutation-anchor gate, and five mutations blocked all 655 on Windows
+
+Shipped in 26.9.1, in the release commit itself, whose only edit to this file was the date on
+the heading below. Five mutations name three `#[cfg(unix)]` tests and carried no `only_on`, so
+the Rust mutation table refused all 655 before touching anything --- failing closed, which is
+the only reason it was visible, and it meant that table had never once run on Windows.
+`scripts/check_mutation_anchors.py` exists to prevent exactly that and was structurally blind:
+it matched a module attribute at column 0, so an attribute between `#[test]` and the function
+was invisible, and its own docstring read an absent name as "ungated, so it compiles
+everywhere". Both halves are fixed. The gate reads the attribute block around each test, and
+its decision asks whether the named test exists on both shipped platforms --- a `SHIPPED` set
+--- rather than whether it is gated more than once.
+
+### Fixed: `String(e)` on a structured refusal renders `[object Object]`, and two viewer checks had been red since the print refusal grew a shape
+
+Shipped in 26.9.1, in the release commit, unrecorded. `print_document` returns
+`Result<(), save::Refusal>`, so a refusal crosses the boundary as an object and `String(e)`
+turns it into text neither assertion can find. `src/lib/viewercheck.ts` calls `describeThrown(e)`
+now --- the helper that already handled this correctly, 280 lines above in the same file. The
+trap entry is *`String(e)` on a structured refusal is `[object Object]`, and one of the three
+checks stayed green*.
+
+### Fixed: a second region on a page already read said "reading..." for the rest of the session
+
+The walk that fills the redaction panel picked its next region by which *pages* had been
+read, so a region drawn on a page whose text was already extracted was never selected: no
+words, no plan, and a row stuck on *reading...* until the document closed. The rule is now
+a pure `nextUnreadRegion` in `redactlist.ts` and counts what has been answered by region,
+which is what every one of `rowLineFor`'s four states is about; a page that cannot be read
+is still answered, once, for each of its regions.
+
+### Fixed: an extraction in flight when a page was cropped was stored as the new crop's text
+
+Character boxes are measured from the displayed page's corner, so a reply issued under the
+old crop is in another coordinate system rather than merely stale, and the caret landed a
+crop's width from the glyph under the pointer. Worse, the request stayed in `pending`, so
+`worthAsking` answered "already asked" and the page under the new box was never fetched at
+all. `TextCache` now carries a per-page generation and drops a reply whose crop has moved.
+
+### Fixed: a crop's geometry could be recorded against the page that took the cropped page's slot
+
+`adoptCrops` awaits one `page_geometry` per cropped page and wrote the size and the tile
+invalidation against the slot it had read before the round trip. A reorder in between laid
+an uncropped page out at the cropped page's dimensions. `cropPage("content")` had the same
+shape and now resolves the slot inside the edit, which is what `cropTo` beside it has always
+done; the lookup is one `slotOfIdIn` rather than a `findIndex` per site.
+
+### Fixed: a thumbnail request the strip itself withdrew condemned its row
+
+A render *result* arriving after a rotation or a reorder was already dropped; a *failure*
+went into `failed`, which only those same events clear --- so a request withdrawn during
+`setPages` marked its row unrenderable just after `setPages` had cleared the set, leaving it
+blank for the life of the document and a console warning blaming the renderer for a
+cancellation. The failure path now takes the generation check the success path has.
+
+### Fixed: a thumbnail request whose reply chain throws is no longer forgotten
+
+`fetchTile` failing where it is called --- which is what a bridge that is not there does ---
+lands in the catch after the reply handler has already pumped, so the record cleared there
+belonged to the *next* page, and the strip then asked for that page a second time with
+nothing expecting either reply. The catch now clears only the record it made.
+
+### Changed: the overlay places only the marks on the pages that are on screen
+
+Placing a mark is what says which page it is on, so the frame loop was walking the page order
+once per mark in the *document* to draw the two in front of the reader. Marks are now indexed
+by slot and by id, rebuilt whenever the marks or the page order change; the pointer hit-test
+and four lookups by id go through the same index.
+
+### Changed: the frame loop no longer measures the surface or re-derives the visible pages
+
+`clientWidth`/`clientHeight` cannot be answered without a layout, and the tick asked about a
+dozen times after writing styles, flushing the layout it had just invalidated. The size is now
+read in the `ResizeObserver` callback and shared; `visiblePages` is read once a frame and
+handed down instead of being recomputed by each of its ten consumers.
+
+### Changed: a pinch or a window drag waits until it settles before asking for tiles
+
+Every wheel event with a modifier and every resize delivery was a full zoom: the sharp tiles
+dropped, a screenful asked for at the new scale, and all of it withdrawn on the next frame for
+a scale the reader had already left. The zoom still applies immediately, so the geometry and
+the stretched placeholder follow the gesture; only the tile requests wait 100 ms for the
+gesture to stop. A zoom step, a fit and a restored place are one event each and keep the
+immediate path.
+
+### Changed: a screenful of learnt page sizes lays the document out once
+
+A lazily opened document knows only page 1's size, and the frames after it correct a screenful
+of pages from the text extraction each one carries. One `notePageSize` each meant a
+whole-document geometry pass and a relayout apiece, every one of them undone by the next before
+anything was drawn. `Scroller.notePageSizes` records them all and lays out once.
+
+### Changed: the outline's current entry is found by search rather than by walking every row
+
+Which entry the reader is inside was a comparison per outline row on every frame the position
+moved, which on a long technical manual is thousands of them for an answer that changes a few
+dozen times in a document. The rows are sorted once by where they land, and the walk stays as
+the oracle the search is checked against.
+
+### Changed: the menu no longer builds the whole selection to ask whether anything is selected
+
+The scope toggle's guard compared `selectedText` with the empty string, and `refreshMenu` runs
+from the frame loop --- so select-all on a long document rebuilt the document every frame.
+`Selection.hasText` answers the same question, including the case of two pages that contribute
+nothing and are still joined by a newline, and stops at the first page that contributes.
+
+### Changed: the two round trips between the window appearing and the first page are made together
+
+`take_launch_paths` and the session on disk answer independent questions and were awaited one
+after the other on the startup path. They now go out together.
+
+### Changed: the viewer's armed tool is one field
+
+`drawKind`, `drawStamp`, `cropping`, `redacting` and `erasing` were five fields holding one
+fact --- which tool the reader has in hand --- and the rule that at most one could be set lived
+in four arming methods each clearing the other three, and in a comment. They are now a
+discriminated union, `ArmedTool`, so arming is one assignment and two tools at once is not
+expressible. Escape's ladder loses four of its eight terms with it, and a tool added later
+cannot be forgotten there.
+
+### Changed: Escape's tool arm is written flat
+
+Its explanation sits above the condition rather than between its operands, so a mutation can
+take a term out of it.
+
+### Fixed: `check_dates.py` refused a date that had already begun somewhere on Earth
+
+The gate compared against `datetime.date.today()`, which is the date in the running machine's
+timezone. A provenance stamp written at 00:30 local is the previous day in UTC, so it reddened
+both CI legs and would block a tag, on a tree with nothing wrong in it. The threshold is now the
+later of the machine's own date and the author date of `HEAD` on the author's calendar, which
+carries an after-midnight stamp onto a UTC runner without ever accepting a day that has not
+started for whoever is writing. The first fix the same afternoon, "today anywhere on Earth"
+(UTC+14), was withdrawn hours later: from 10:00 UTC it accepts tomorrow, and twenty-four stamps
+for the 7th written on the 6th passed it.
+
+### Fixed: a dirty file holding an undecodable byte killed every mutation harness before its first mutation
+
+`mutation_resume.tree_fingerprint()` ran `git diff HEAD --binary` under `text=True`, and git
+calls a file with no NUL in its first block text --- so those bytes reached the pipe verbatim
+and one of them raised `UnicodeDecodeError` inside subprocess's own reader thread. The diff is
+hashed now rather than decoded, and the state `VERSION` went to 3 because an older record was
+computed differently. The same `text=True` without an encoding was fixed at seven other call
+sites, in `open_check.py`, `session_check.py`, `mark_check.py`, `save_check.py`,
+`check_dates.py` and `mutate_python.py`, each of which reads document text, a window title or a
+gate's output.
+
+### Fixed: a mutation aimed at a test gated to a platform tpdf does not ship passed the anchor gate
+
+`check_mutation_anchors.py` read an absent entry and an empty set as the same falsy value, so
+the refusal written for a test that compiles nowhere could never be reached --- such a mutation
+would report SURVIVED everywhere, which reads as a gap in the tests. Beside it, a
+`#[cfg(all(test, <platform>))]` module gated every test written after it, because nothing
+closed the region, so ordinary tests were reported as windows-only and mutations aimed at them
+refused.
+
+### Fixed: the workflow-fixture gate counted a fixture that only appears in prose
+
+`check_workflow_fixtures.py` regexed the whole text of `ci_fixtures.py`, comments and docstring
+included, so a fixture named in prose and generated by nothing counted as generated --- a hole
+in the one direction the gate exists to refuse. The same regex saw 11 stems where the tables
+hold 37, because `SIGNED` and `HOSTILE` build their paths in an f-string, so every signed and
+hostile fixture was reported as ungeneratable. It reads the tables themselves now.
+
+### Fixed: the copyleft sweep said nothing about an npm package declaring no licence
+
+A lockfile entry with no `license` field comes out as the string `UNKNOWN`, which matches
+nothing in `FORBIDDEN`, so a package whose licence nobody has read passed the sweep exactly
+like one known to be MIT. `third_party_notices.py` warns about it now, worded like the cargo
+warning that was already there and still a warning rather than a refusal: an unread licence is
+a thing to go and read, not necessarily a forbidden one.
+
+### Fixed: `save_check.py` left a copy of the document in the system temp directory on every run
+
+It copied its fixture into `tempfile.mkdtemp(...)` and never removed it, and the check has six
+early returns plus one from inside a `finally`. It is a `TemporaryDirectory` registered with
+`atexit` now, with `ignore_cleanup_errors=True` for the reason `open_check.py` passes it.
+
+### Added: a mutation proving the fixture gate reads the fixture table rather than its prose
+
+`scripts/mutate_python.py` gained a row that comments out the entry all six workflow probe steps
+run against: the gate goes red naming `testdata/text-wide.pdf`, and with the old text scan
+restored the same mutation reports SURVIVED. Its three `traps` rows were re-aimed at the table
+of contents in `docs/TRAPS.md`.
+
+### Fixed: a save's roll-back could not shorten a file its read-back worker still had mapped
+
+The worker was dropped after its answer was sent, so at the instant `save::append_through`
+rolled back the mapping was still open. On Windows a file with a section object on it cannot be
+resized at all, so the reader was told the update could not be put back and kept one the
+re-read had just refused. The release now precedes the send, which makes the ordering
+observable rather than a matter of timing.
+
+### Fixed: an overdue worker was signalled after its entry had been given up
+
+`kill_overdue` marked the worker killed under the `calls` lock, released it, and then signalled
+by pid. The blocked thread is free to act on that mark the moment the lock drops, and a reaped
+pid is reissued immediately on Windows, so the signal could land on whatever now held the
+number. The signal is inside the same critical section as the mark now.
+
+### Fixed: a spare that never reported itself warm cost every later document its spare
+
+`Workers::prewarm` blocked in an uninterruptible read on the child's pipe with the spare slot
+still claimed, so one child that started and said nothing meant no spare was ever started again
+for the life of the process --- and every open from then on paid the link and the font walk on
+the reader's thread. The wait is bounded now, and the claim is given back in both branches.
+
+### Changed: merging documents reads each file straight into the mapping the worker is handed
+
+Each incoming file used to be read into a `Vec`, appended to a second `Vec` and then copied
+into the shared mapping, so merging a gigabyte peaked at two to three in the app process with
+nothing bounding any of it. Sizing from the open handles first makes one copy possible and a
+ceiling checkable before anything is allocated; a set larger than 1 GiB is refused with a
+refusal that says what to do instead.
+
+### Fixed: a document's fingerprint is taken through the handle it was mapped from
+
+The fingerprint and the mapping each did their own `File::open` of the path, with a whole
+document open in between. A file replaced in that window by a revision with the *same* page
+count passes every guard a save has, so the check that exists to catch "another program wrote
+to this file" was the one blind to it. The application opens the file once and hands out clones
+of the handle.
+
+### Fixed: a signature's `/ByteRange` lengths are added saturatingly
+
+Three lengths of `i64::MAX` are a legal array in a five-line PDF. Adding them panicked under
+debug assertions and wrapped in the shipped build, where the properties panel printed the
+wrapped total as the signature's coverage. Saturating says "more than there is", which is what
+the panel compares against the file's size and refuses.
+
+### Fixed: deleting a page from a document whose `/Parent` chain loops
+
+`/Kids` is a tree and `/Parent` is a separate back-pointer, so a loop in the second is
+invisible to every walk of the first. The trip bound stopped the walk and did nothing about the
+damage: the same two nodes came back thirty-two times each and every lap was a decrement, so
+deleting one page left a three-page tree claiming -29. A visited set fixes that, and the
+decrement saturates rather than panicking or wrapping on a `/Count` at the bottom of its range.
+
+### Changed: the mutation harnesses share one apply-and-restore ladder
+
+`mutation_resume.py` gained `apply()` and `restore()`, and `mutate_rust.py`,
+`mutate_frontend.py` and `mutate_viewer.py` call them. The three copies had drifted: two kept a
+second backup in a scratch directory and one held the original in a local, one verified the
+restore and two did not, and none refused to write over a file that had become neither the
+clean bytes nor the mutation. It is one ladder now, answered by digest, with the state file
+that already survives a kill as the only backup.
+
+### Changed: a restore leaves the file newer than the mutation it replaced, and checks that it does
+
+Writing the bytes stamps the current time, which is what stops cargo serving a mutation it has
+already built. On a filesystem whose timestamp resolution is coarser than one mutation takes,
+the stamp is moved by hand instead of being assumed.
+
+### Fixed: a mutation run carries on after a restore that could not put the file back
+
+Only `mutate_viewer.py` stopped; the other two went on, so every later verdict would have been
+taken against a file still holding the last mutation.
+
+### Changed: `harness_launch.py` holds the launch, the transcript reader and the verdict
+
+`open_check.py`, `session_check.py` and `mark_check.py` each carried a copy. What each still
+owns is what differs for a reason: the environment one phase needs, the two checks
+`mark_check.py` reads by name, and what an exit code from Launch Services means.
+
+### Changed: `stray.py` gained `clear_leftover_app`
+
+The leftover sweep that `mutate_viewer.py` and `viewer_sweep.py` had a copy of each. It is the
+coarse counterpart to `clear_strays`, and its docstring says why the two are not one function.
+
+### Added: `mutation_resume.py --self-test` covers apply, restore and the refusal
+
+Applying a mutation, taking it back off, refusing a file that is neither, and the restored
+file's timestamp. Each was watched fail before being trusted.
+
+### Changed: a whole-document search reads each page's characters out of a per-document store
+
+A scan of the 775-page corpus costs **13.3 ms where it cost 587.7 ms** --- 45x, measured
+interleaved in release with `search-probe --mode scan`, both arms finding the same 5,707 hits.
+It no longer re-extracts the document for every keystroke: each page's characters are kept in a
+per-document store, so the second query and every one after it reads them out of memory instead
+of calling PDFium again. Only the characters are held --- four bytes each, against the twenty a
+full extraction costs --- which is what makes the whole corpus fit inside the budget with room
+for a second document beside it. The first round is reported apart from the rest, because it is
+the round that fills the store and therefore still measures the old cost.
+
+### Changed: the character store fills and holds rather than evicting
+
+A scan touches every page once in the same order every time, so a cache smaller than the
+document would be emptied by each walk of exactly the entries the next walk asks for first. A
+document larger than the budget now serves its first pages from memory and extracts the tail,
+instead of serving none of it.
+
+### Changed: a search asks about sixteen pages per request rather than one
+
+On the 775-page corpus that is 49 round trips instead of 775, each of which crosses the webview
+boundary. The single-page request is unchanged and is still what a wrapped walk's last step and
+a non-contiguous scope use; a reply is bounded, so the worker may answer fewer pages than were
+asked for and the walk continues from where it stopped.
+
+### Changed: a query is compiled once per scan rather than once per page
+
+**48.3 ms -> 13.2 ms** for a pattern on the same corpus. The folded needle and, for a pattern,
+the whole automaton were rebuilt 775 times to answer one question; for a literal query it is
+worth about 0.1 ms, which is why the measurement that matters is the pattern one.
+
+### Changed: one `lopdf` parse answers six questions about a document instead of five separate ones
+
+The character mapping, the comments, the links, the properties, the page tree's boxes and its
+rotations each parsed the whole file for themselves --- 5.8 ms apiece on the 775-page document
+and 11.9 ms on the 337 MB scan, which was the whole cost of those features.
+
+### Changed: reading an outline no longer loads a page per bookmark
+
+A destination naming coordinates needs the page's rotation, which `FPDFPage_GetRotation` will
+only give for a loaded page --- up to 44 ms each, paid at open, before the reader had clicked
+anything. It comes out of the page tree now, through the same reading and the same formula the
+displayed-box table already used.
+
+### Changed: growing a document's pool adopts the warmed spare
+
+Only the first worker did; every later one was spawned cold on the thread of a reader whose tile
+was waiting, which is where the ~6.6 ms link and ~7.4 ms font walk cost most.
+
+### Changed: a document's fingerprint is no longer hashed while the first page is being drawn
+
+Hashing reads the file end to end --- 452 ms cold on the 337 MB scan fixture --- and nothing
+needs the answer until a save or a print. It starts at the first edit instead, and a save still
+waits for it.
+
+### Changed: a tile is rendered straight into the mapping it is answered from
+
+Rather than into a buffer that is then copied. The size check moves with it: a tile too large
+for the mapping is refused before it is drawn rather than after, which is the same refusal with
+the same message and one render cheaper.
+
+### Changed: the loaded-page cache is least-recently-used rather than first-in
+
+Under the old policy a hit renewed nothing, so the page a reader is looking at was evicted by its
+fourth neighbour however many of its tiles were still being drawn --- and the reload cost the
+44 ms re-parse the cache exists to avoid.
+
+### Fixed: a withdrawal reaches only the worker holding the request
+
+A fast scroll withdraws a tile per frame, and each one wrote a line down the pipe of every worker
+of every open document --- pipes belonging to children that are inside a render, which is the one
+moment a write to them can block. A request no worker has started yet is still broadcast, because
+there is no pid to aim at.
+
+### Changed: the page-object vocabulary lives beside the code that reads it
+
+`Rect`, `PageObject`, `FormText`, `FormObject`, `FormOther`, `overlaps` and `normalised`
+moved from `redact.rs` to `objects.rs`, beside the code that reads the objects out of
+PDFium. `redact.rs` re-exports every one of them, so `redact::Rect` and `redact::overlaps`
+still resolve and the two redaction probes are untouched. The point is the direction:
+`objects.rs` no longer imports from `redact.rs`, and with `ocr.rs` and `ocr_gate.rs`
+calling `objects::overlaps` instead, four modules leave the production dependency cycle ---
+`objects`, `ocr`, `ocr_vision`, `ocr_windows`. Three of the four are nowhere near the edit,
+which is the transitive half `docs/TRAPS.md` records.
+
+### Changed: one conversion from `/Rotate` degrees to quarter turns
+
+`pagetree::turns_of_degrees`, where `annots.rs` and `pagetree.rs` had a copy of the
+expression each. Two unit tests pin the whole table, including the negative rotations a
+scanner writes and the values §7.7.3.3 does not allow; two mutations are aimed at them.
+
+### Changed: one bounded walk of `/AcroForm /Fields`, adopted by both callers
+
+`fields.rs`, adopted by `docinfo::read_signatures` and `redact::covered_fields`. Each keeps
+its own predicate and its own bounds --- and the bounds differ in five ways that were
+invisible while the two loops lived in different files, so `Bounds` now records each
+difference and why it is the right way round. `redact::collect_field_subtree` is
+`fields::descend`, which is the same loop from roots the caller names.
+
+### Changed: `SaveFailure` is `failure::Failure`, and the wire is derived from it
+
+One type carrying a message and an `Action` rather than two booleans. The wire is unchanged
+--- `{message, reopen, changed}`, serialised by hand from the action, so the two fields
+cannot drift from the type --- and `docmodel::Refusal` converts into it, so a command that
+wants to answer a model refusal no longer has to flatten it to a sentence first.
+`failure.rs` imports nothing from the crate and is a leaf.
+
+### Fixed: `redact::MAX_FIELD_NODES`'s doc named a number that was not the other walk's
+
+It said `docinfo.rs` bounded the same tree "at the same number". It is 20,000 against
+4,096, and the asymmetry is deliberate: a field a redaction does not reach is a value left
+in the document, where one the properties panel does not reach is a line missing from a
+list.
+
+### Internal: `check_writers.py` reads every module under `src-tauri/src/commands/`
+
+It read `lib.rs` alone, and now reads that directory too, printing how many files and how
+many commands it found. The gate is keyed on where a call is written, so an extraction that
+moved a writing command out of `lib.rs` would otherwise have dropped it out of the set with
+every other gate green. The file list changed before any such move and was proved red
+first.
+
+### Changed: the command bodies live in `src-tauri/src/commands/`, grouped by the state they touch
+
+The 66 `#[tauri::command]` bodies moved out of `lib.rs`, which went from 4,291 lines to
+1,676 (3,479 non-test to 838): what is left is the entry point, `generate_handler!`, the
+module declarations, the PDFium library lookup, the environment plumbing the watchdog and
+the spikes share, and the root test module. The groups are `app`, `document`, `edit`,
+`menubar`, `print`, `read`, `redact`, `save`, `session` and `spike`, with the reply
+channel, the wait on it, the password lookup and the choice of where a parse happens in
+`commands/mod.rs`. Grouping is by state rather than by feature, which is what decides where
+a new command goes; `commands/mod.rs` says so.
+
+Three things about the shape are load-bearing rather than tidy. The registry stays in
+`lib.rs` and the names are brought into scope by a glob per group, because
+`src/lib/ipc.test.ts` reads `generate_handler!` as source text and wants plain identifiers.
+A command is `pub`, because `check_writers.py` admits `pub` and nothing narrower, and
+because Tauri exports a command's wrapper macro to the crate root only for a function that
+is visible. And the eight writing commands stayed inside the bodies the `writers` gate
+reads: it counts eight across twelve files where it counted eight across one, which is the
+entry in `docs/TRAPS.md` about a security gate keyed on where a call is written, met on
+purpose this time.
+
+### Changed: `check_doc_comments.py`'s `PROSE` exemptions are keyed by path, not by basename
+
+One entry had to name a file in a directory, and a basename exempts the sentence in every
+file of that name --- `mod.rs` most of all. The key is now the path below `src-tauri/src`.
+
+### Added: a committed sample of every named reply payload, and a check that the TypeScript mirror still describes it
+
+`src-tauri/testdata/replies/<Type>.json` holds what Rust serialises for each of the
+seventeen types a command answers with; `src-tauri/src/replies.rs` writes them
+(`TPDF_REPLIES=write`) and fails on a sample that has drifted, on a type with no file and on
+a file with no type. `src/lib/replyshapes.test.ts` reads the same bytes and holds them
+against the mirror two ways: `satisfies` against a widened form of the mirror type, which
+catches a missing or retyped field at any depth, and a per-key table typed
+`Record<keyof T, ...>`, which catches the direction `satisfies` structurally cannot --- a
+field the sample carries and the mirror has never heard of.
+
+`ipc.test.ts` diffs the command *names* and says in its own header that shapes are where it
+stops. This is that half. The drift it exists for is recorded in `ipc.ts`'s header:
+`DocumentInfo` was hand-declared four times and two copies had stopped listing the same
+fields.
+
+The seventeen are counted rather than remembered: the test globs the command modules, reads
+every `#[tauri::command]`'s return type, and fails on any shape it cannot classify as either
+a named payload with a sample or an allowlisted primitive. A mirror is allowed to be a
+strict subset --- `RegionPlan` is, deliberately --- and each omitted field is named with its
+reason, with a third assertion that an excused field is one the sample really sends.
+
 ## [26.9.1] - 2026-09-02
 
 ### Tested: a redaction over text in a switched-off layer, and PDFium answered the question the other way

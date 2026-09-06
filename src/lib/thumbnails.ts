@@ -54,7 +54,7 @@
  */
 
 import { Lifetime } from "./lifetime";
-import type { FilePage } from "./pages";
+import { quarterTurns, type FilePage } from "./pages";
 import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
@@ -665,7 +665,7 @@ export class Thumbnails {
    * change shape with it, so they are rebuilt rather than restyled.
    */
   setTurns(turns: number): void {
-    const next = ((turns % 4) + 4) % 4;
+    const next = quarterTurns(turns);
     if (next === this.turns) return;
     this.turns = next;
     this.generation++;
@@ -902,7 +902,27 @@ export class Thumbnails {
         ),
       )
       .catch((reason: unknown) => {
-        this.request = null;
+        // Cleared only if this is still the request the record names. The
+        // handler above runs first and pumps, so by the time a throw out of it
+        // lands here the strip can already be waiting on a *newer* page ---
+        // `fetchTile` reaching a bridge that is not there throws where it is
+        // called, which is after the next request has been recorded. Nulling
+        // then forgets a request that is outstanding, and the next pump issues
+        // a second one for the same page whose reply nothing is expecting.
+        if (this.request === outstanding) this.request = null;
+        // The same {@link generation} check the success branch makes, and it
+        // matters more here: a result arriving after a rotation or a reorder is
+        // merely discarded, while a *failure* was recorded in `failed`, which
+        // nothing clears until the next change of orientation or order. So a
+        // request the strip had itself withdrawn condemned its row --- the page
+        // was never asked for a second time and the row stayed blank for the
+        // life of the document, with a console warning blaming the renderer for
+        // a cancellation. Left out of it, the row is simply wanted again, which
+        // is what the pump below finds.
+        if (generation !== this.generation) {
+          this.pump();
+          return;
+        }
         // Once per page, which is every failure here --- the page is never
         // retried --- and `tiles.ts` builds an error naming it. Dropping that
         // left a strip with a blank row and nothing anywhere saying why.

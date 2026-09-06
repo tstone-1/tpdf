@@ -126,6 +126,81 @@ pub fn bind(library_dir: &Path) -> Result<&'static Pdfium, String> {
 /// be obviously safe, not measured to be optimal.
 const PAGE_CACHE: usize = 4;
 
+/// The loaded-page cache's bookkeeping, with the handles it holds left generic.
+///
+/// A separate type, and generic, for the reason [`box_to_use`] is a free
+/// function: written inline beside `FPDF_LoadPage` the eviction policy is
+/// reachable by no test in this crate, because nothing here can bind PDFium ---
+/// whereas with the handle as a type parameter it can be exercised over `u32`.
+///
+/// **Least-recently-used, not first-in-first-out**, and on this path the
+/// difference is not a refinement. Under FIFO a hit does not renew anything, so
+/// the page a reader is looking at is evicted by its fourth neighbour however
+/// many tiles of it are still being drawn --- and the reload costs the 44 ms
+/// `FPDF_LoadPage` re-parse this cache exists to avoid (`progressive-probe
+/// --mode pageload`, A0 sheet). Renewing on a hit is a scan of at most
+/// [`PAGE_CACHE`] entries.
+struct PageCache<H> {
+    /// Handle per page index.
+    map: HashMap<u32, H>,
+    /// Page indices, least recently used first.
+    order: VecDeque<u32>,
+    /// How many handles may be held at once.
+    capacity: usize,
+}
+
+impl<H: Copy> PageCache<H> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    /// The handle for `index`, renewing it as most recently used.
+    fn get(&mut self, index: u32) -> Option<H> {
+        let handle = *self.map.get(&index)?;
+        // Removing and re-pushing rather than leaving the position alone: the
+        // position *is* the policy, and a hit that does not move it is FIFO
+        // wearing an LRU name.
+        if let Some(at) = self.order.iter().position(|i| *i == index) {
+            self.order.remove(at);
+        }
+        self.order.push_back(index);
+        Some(handle)
+    }
+
+    /// Records a freshly loaded handle, returning whatever it displaced.
+    ///
+    /// The evicted handle is handed back rather than closed here, because
+    /// closing it is an FFI call and the caller holds a `RefCell` borrow --- a
+    /// Pdfium call made under that borrow could re-enter and panic.
+    fn insert(&mut self, index: u32, handle: H) -> Option<H> {
+        self.map.insert(index, handle);
+        if let Some(at) = self.order.iter().position(|i| *i == index) {
+            self.order.remove(at);
+        }
+        self.order.push_back(index);
+        if self.order.len() > self.capacity {
+            self.order.pop_front().and_then(|old| self.map.remove(&old))
+        } else {
+            None
+        }
+    }
+
+    /// Drops one entry, returning its handle for the caller to close.
+    fn remove(&mut self, index: u32) -> Option<H> {
+        self.order.retain(|i| *i != index);
+        self.map.remove(&index)
+    }
+
+    /// Every handle held, for a caller closing all of them.
+    fn handles(&self) -> Vec<H> {
+        self.map.values().copied().collect()
+    }
+}
+
 /// An `FPDF_DOCUMENT`, closed on drop, with a small cache of loaded pages.
 ///
 /// The cache is not a micro-optimisation. `FPDF_LoadPage` re-parses the page
@@ -143,8 +218,16 @@ pub struct RawDocument {
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
     form: Option<RawForm>,
-    /// Loaded page handles, and the order they were loaded in for eviction.
-    pages: RefCell<(HashMap<u32, FPDF_PAGE>, VecDeque<u32>)>,
+    /// Loaded page handles, most recently used last. See [`PageCache`].
+    pages: RefCell<PageCache<FPDF_PAGE>>,
+    /// How many times `FPDF_LoadPage` has actually been called.
+    ///
+    /// **An accounting observable.** A page load costs up to 44 ms on a complex
+    /// page and produces nothing a caller can see afterwards --- a handle out of
+    /// the cache and a freshly parsed one serve identically --- so a change that
+    /// starts loading pages nobody asked for has no symptom except time. Read by
+    /// `outline-probe`, which asserts that reading an outline loads none.
+    loads: std::cell::Cell<usize>,
     /// Each page's `/CropBox` as the file states it, read before any override.
     ///
     /// **PDFium has no "put it back": `FPDFPage_SetCropBox` overwrites, and
@@ -408,7 +491,8 @@ impl RawDocument {
             bindings,
             handle,
             form,
-            pages: RefCell::new((HashMap::new(), VecDeque::new())),
+            pages: RefCell::new(PageCache::new(PAGE_CACHE)),
+            loads: std::cell::Cell::new(0),
             original_crops: RefCell::new(HashMap::new()),
         })
     }
@@ -459,7 +543,8 @@ impl RawDocument {
             bindings,
             handle,
             form,
-            pages: RefCell::new((HashMap::new(), VecDeque::new())),
+            pages: RefCell::new(PageCache::new(PAGE_CACHE)),
+            loads: std::cell::Cell::new(0),
             original_crops: RefCell::new(HashMap::new()),
         })
     }
@@ -535,12 +620,17 @@ impl RawDocument {
     /// this is only correct for a caller that then sets one --- which is exactly
     /// the two that do.
     fn load_page(&self, index: u32) -> Result<RawPage<'_>, String> {
-        if let Some(&handle) = self.pages.borrow().0.get(&index) {
+        // `borrow_mut`, because a hit renews the entry's position --- see
+        // [`PageCache`], where the reason a read mutates is written down.
+        if let Some(handle) = self.pages.borrow_mut().get(index) {
             return Ok(self.borrow_page(handle));
         }
 
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.
         let handle = unsafe { self.bindings.FPDF_LoadPage(self.handle, index as c_int) };
+        // Counted at the call and not at the cache miss above: what costs the
+        // 44 ms is this line, and a miss that then fails to load is not a load.
+        self.loads.set(self.loads.get() + 1);
         if handle.is_null() {
             return Err(format!("no such page: {index}"));
         }
@@ -549,17 +639,7 @@ impl RawDocument {
             unsafe { self.bindings.FORM_OnAfterLoadPage(handle, form.handle) };
         }
 
-        let evicted = {
-            let mut pages = self.pages.borrow_mut();
-            let (map, order) = &mut *pages;
-            map.insert(index, handle);
-            order.push_back(index);
-            if order.len() > PAGE_CACHE {
-                order.pop_front().and_then(|old| map.remove(&old))
-            } else {
-                None
-            }
-        };
+        let evicted = self.pages.borrow_mut().insert(index, handle);
         // Closed outside the borrow, so a Pdfium call can never re-enter the
         // RefCell and panic.
         if let Some(old) = evicted {
@@ -614,13 +694,16 @@ impl RawDocument {
     /// Exists so the cache's value can be measured rather than assumed: the probe
     /// evicts between loads to time the uncached path. Also the honest response
     /// to memory pressure.
+    /// How many pages this document has loaded, cache misses only.
+    ///
+    /// See the field, and `outline-probe`, which is the caller.
+    #[must_use]
+    pub fn page_loads(&self) -> usize {
+        self.loads.get()
+    }
+
     pub fn evict_page(&self, index: u32) {
-        let handle = {
-            let mut pages = self.pages.borrow_mut();
-            let (map, order) = &mut *pages;
-            order.retain(|i| *i != index);
-            map.remove(&index)
-        };
+        let handle = self.pages.borrow_mut().remove(index);
         if let Some(handle) = handle {
             // SAFETY: as in `page`.
             self.close_page(handle);
@@ -651,7 +734,7 @@ impl RawDocument {
 
 impl Drop for RawDocument {
     fn drop(&mut self) {
-        let pages: Vec<FPDF_PAGE> = self.pages.borrow().0.values().copied().collect();
+        let pages: Vec<FPDF_PAGE> = self.pages.borrow().handles();
         for handle in pages {
             self.close_page(handle);
         }
@@ -1320,6 +1403,42 @@ pub fn render_tile(
     slice: Option<Duration>,
     cancel: &CancelToken,
 ) -> Result<(Vec<u8>, Progress), String> {
+    let mut buffer = vec![0u8; tile_bytes(spec)];
+    let progress = render_tile_into(bindings, page, spec, &mut buffer, slice, cancel)?;
+    Ok((buffer, progress))
+}
+
+/// How many bytes a tile of this size occupies as RGBA.
+#[must_use]
+pub fn tile_bytes(spec: TileSpec) -> usize {
+    spec.width as usize * spec.height as usize * 4
+}
+
+/// Renders one tile into a buffer the caller already has.
+///
+/// **The whole of [`render_tile`] is this plus the allocation**, deliberately:
+/// the worker renders straight into the shared mapping it will answer from, and
+/// two implementations of "produce a tile's pixels" would be two places for the
+/// flags, the placement and the clear to drift.
+///
+/// `buffer` must be at least [`tile_bytes`] long, and **is cleared first**.
+/// [`render`] fills only the *page's* rectangle, so wherever a tile overhangs
+/// the page the buffer keeps what it came in with --- which for a fresh
+/// allocation is transparent black and for a reused mapping is the previous
+/// tile. Clearing here rather than at the one call site that reuses a buffer is
+/// what makes the two paths produce identical bytes.
+///
+/// # Errors
+///
+/// The buffer is too small, or Pdfium refuses to wrap it.
+pub fn render_tile_into(
+    bindings: Bindings,
+    page: &RawPage<'_>,
+    spec: TileSpec,
+    buffer: &mut [u8],
+    slice: Option<Duration>,
+    cancel: &CancelToken,
+) -> Result<Progress, String> {
     let TileSpec {
         scale,
         turns,
@@ -1328,20 +1447,82 @@ pub fn render_tile(
         width,
         height,
     } = spec;
-    let mut buffer = vec![0u8; width as usize * height as usize * 4];
+    let want = tile_bytes(spec);
+    let buffer = buffer
+        .get_mut(..want)
+        .ok_or_else(|| format!("a {width}x{height} tile needs {want} bytes"))?;
+    buffer.fill(0);
     let placement = Placement::tile(page, scale, turns, x, y);
 
-    let progress = {
-        let mut bitmap = RawBitmap::borrowed(bindings, &mut buffer, width, height)?;
-        render(&mut bitmap, page, placement, slice, cancel)
-    };
-
-    Ok((buffer, progress))
+    let mut bitmap = RawBitmap::borrowed(bindings, buffer, width, height)?;
+    Ok(render(&mut bitmap, page, placement, slice, cancel))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A page used again is not the next one evicted.
+    ///
+    /// The FIFO this replaced fails here: it evicts by load order, so `a` --- hit
+    /// between the fourth load and the fifth --- goes out anyway, and the reader
+    /// looking at it pays `FPDF_LoadPage` again.
+    #[test]
+    fn a_hit_renews_a_page_and_the_untouched_one_is_evicted() {
+        let mut cache: PageCache<u32> = PageCache::new(4);
+        for page in 0..4u32 {
+            assert!(cache.insert(page, page + 100).is_none(), "no eviction yet");
+        }
+
+        assert_eq!(cache.get(0), Some(100), "page 0 is still held");
+
+        assert_eq!(
+            cache.insert(4, 104),
+            Some(101),
+            "the least recently used page is page 1, not the oldest load"
+        );
+        assert_eq!(
+            cache.get(0),
+            Some(100),
+            "the page just used is still cached"
+        );
+        assert_eq!(
+            cache.get(1),
+            None,
+            "the one nobody touched is the one that went"
+        );
+    }
+
+    /// Re-inserting a page already held does not leave two entries for it.
+    ///
+    /// The control on the renewal above: without the removal in `insert`, one
+    /// page occupies two slots in the order and the cache evicts a live handle
+    /// while holding a stale position for one it still has --- which on the real
+    /// type is a `FPDF_ClosePage` on a page still being drawn.
+    #[test]
+    fn re_inserting_a_held_page_does_not_take_a_second_slot() {
+        let mut cache: PageCache<u32> = PageCache::new(2);
+        assert!(cache.insert(7, 1).is_none());
+        assert!(
+            cache.insert(7, 2).is_none(),
+            "same page, not a second entry"
+        );
+        assert!(
+            cache.insert(8, 3).is_none(),
+            "there is still room for one more"
+        );
+        assert_eq!(cache.get(7), Some(2), "the second handle is the one held");
+    }
+
+    /// An evicted handle is handed back exactly once, and removal is idempotent.
+    #[test]
+    fn removing_a_page_yields_its_handle_once() {
+        let mut cache: PageCache<u32> = PageCache::new(2);
+        cache.insert(3, 33);
+        assert_eq!(cache.remove(3), Some(33));
+        assert_eq!(cache.remove(3), None, "nothing left to close a second time");
+        assert!(cache.handles().is_empty());
+    }
 
     /// The page tree is preferred exactly where PDFium has no sheet to offer.
     ///

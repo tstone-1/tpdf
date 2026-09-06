@@ -386,6 +386,19 @@ pub(crate) fn not_open(doc: u32, in_range: bool) -> String {
 pub(crate) enum Job {
     Open {
         path: PathBuf,
+        /// The file, already open, when the caller has one.
+        ///
+        /// **What it buys is that the bytes mapped are the bytes hashed.** The
+        /// app opens the document once and hands one clone of the handle here
+        /// and one to `crate::edits::Edits::open`; a second `File::open` of the
+        /// same name is a second lookup, and between the two a file can be
+        /// replaced by one with the same page count. The reader then sees one
+        /// document, `opened_as` describes another, and a later rewrite applies
+        /// the plan to whichever the name reaches.
+        ///
+        /// `None` for a caller with no handle --- the eager open, every probe and
+        /// benchmark --- and the backend then opens by name as it always did.
+        file: Option<std::fs::File>,
         /// Collect only page 1's size instead of the whole table.
         lazy_geometry: bool,
         /// The reader's password, when a previous attempt came back locked.
@@ -409,7 +422,9 @@ pub(crate) enum Job {
     },
     Search {
         doc: u32,
-        page: u32,
+        /// The run to answer, in walk order; a single-page search is a run of
+        /// one. See `worker_proto::Request::Search`.
+        pages: Vec<u32>,
         query: String,
         options: search::Options,
         /// The previous page's tail, when the walk had one --- see
@@ -660,6 +675,21 @@ impl RenderService {
         self.workers.as_ref().is_none_or(|w| w.spares_settled())
     }
 
+    /// How many workers this service adopted from the spare slot rather than
+    /// spawning cold.
+    ///
+    /// **An accounting observable**, for the reason `AGENTS.md` records one: an
+    /// adopted worker and a spawned one serve identically and differ only by the
+    /// ~6.6 ms link and the ~7.4 ms font walk nobody is timing, so a growth path
+    /// that stopped adopting would have no symptom at all. Zero on a backend
+    /// with no pool, which is the same answer as a pool that never adopted ---
+    /// the caller distinguishing them is `backend-probe`, which knows it started
+    /// a worker backend.
+    #[must_use]
+    pub fn adopted(&self) -> u64 {
+        self.workers.as_ref().map_or(0, |w| w.adopted())
+    }
+
     /// Which backend this service is running.
     #[must_use]
     pub fn backend(&self) -> Backend {
@@ -680,10 +710,28 @@ impl RenderService {
         password: Option<String>,
         reply: ReplyRefusal<DocumentInfo>,
     ) {
+        self.open_handed(path, None, lazy_geometry, password, reply);
+    }
+
+    /// [`RenderService::open`] with the file already opened by the caller.
+    ///
+    /// The one caller that has a handle is the application's `open_document`,
+    /// which opens the file once and hashes the same handle it hands over here.
+    /// See [`Job::Open`]'s `file`, which carries why that matters; every other
+    /// caller passes nothing and is opened by name.
+    pub fn open_handed(
+        &self,
+        path: PathBuf,
+        file: Option<std::fs::File>,
+        lazy_geometry: bool,
+        password: Option<String>,
+        reply: ReplyRefusal<DocumentInfo>,
+    ) {
         if self
             .tx
             .send(Job::Open {
                 path,
+                file,
                 lazy_geometry,
                 password,
                 reply,
@@ -756,10 +804,14 @@ impl RenderService {
     /// of the six a document may have. At page granularity a search interleaves
     /// with rendering, and the caller stops asking to cancel it --- there is
     /// nothing to withdraw.
+    /// `pages` is the run to answer, in walk order, and is never empty --- a
+    /// single-page search is a run of one. **One list rather than a first page
+    /// beside it**: the two would be a fact stated twice, and the copy that goes
+    /// wrong is the one nothing reads.
     pub fn search(
         &self,
         doc: u32,
-        page: u32,
+        pages: Vec<u32>,
         query: String,
         options: search::Options,
         carry: Option<search::Carry>,
@@ -769,7 +821,7 @@ impl RenderService {
             .tx
             .send(Job::Search {
                 doc,
-                page,
+                pages,
                 query,
                 options,
                 carry,
@@ -1046,15 +1098,24 @@ pub(crate) trait Engine {
     fn open(
         &self,
         path: &Path,
+        file: Option<std::fs::File>,
         lazy_geometry: bool,
         password: Option<&str>,
     ) -> Result<DocumentInfo, progressive::Refusal>;
     fn tile(&self, request: &TileRequest) -> Result<TileOutcome, String>;
     fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String>;
+    /// One page's hits, or a run's --- see [`Engine::search`]'s implementations
+    /// and `worker_proto::Request::Search`, where `pages` is described.
+    ///
+    /// `pages` empty is a single-page request. Otherwise it is the run to
+    /// answer, in walk order, `pages[0]` being `page`; the answers after the
+    /// first arrive in `PageMatches::more`, and there may be fewer of them than
+    /// were asked for.
     fn search(
         &self,
         doc: u32,
         page: u32,
+        pages: &[u32],
         query: &str,
         options: search::Options,
         carry: Option<&search::Carry>,
@@ -1093,10 +1154,11 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
     match job {
         Job::Open {
             path,
+            file,
             lazy_geometry,
             password,
             reply,
-        } => reply(engine.open(&path, lazy_geometry, password.as_deref())),
+        } => reply(engine.open(&path, file, lazy_geometry, password.as_deref())),
         Job::Tile { request, reply } => reply(engine.tile(&request)),
         Job::Text {
             doc,
@@ -1106,12 +1168,20 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         } => reply(engine.text(doc, page, crop)),
         Job::Search {
             doc,
-            page,
+            pages,
             query,
             options,
             carry,
             reply,
-        } => reply(engine.search(doc, page, &query, options, carry.as_ref())),
+        } => {
+            // A run of one is the single-page request, and is handed on as one:
+            // `Engine::search` reads an empty `pages` as "just this page", which
+            // is what keeps the reply byte-identical to what it was before runs
+            // existed. See `worker_proto::Request::Search`.
+            let first = pages.first().copied().unwrap_or_default();
+            let run: &[u32] = if pages.len() > 1 { &pages } else { &[] };
+            reply(engine.search(doc, first, run, &query, options, carry.as_ref()))
+        }
         Job::Content { doc, page, reply } => reply(engine.content(doc, page)),
         Job::Geometry {
             doc,
@@ -1218,9 +1288,16 @@ impl Engine for InProcess {
     fn open(
         &self,
         path: &Path,
+        file: Option<std::fs::File>,
         lazy_geometry: bool,
         password: Option<&str>,
     ) -> Result<DocumentInfo, progressive::Refusal> {
+        // Nothing to hand to PDFium: `FPDF_LoadDocument` takes a name, and this
+        // backend is the unsandboxed fallback --- see `UNSANDBOXED_MARK`. The
+        // handle is dropped here rather than being left out of the signature, so
+        // that a backend which *can* use one is not a special case at the call
+        // site.
+        drop(file);
         let t0 = Instant::now();
         let doc = OpenDocument::open(self.bindings, path, password)?;
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -1296,17 +1373,17 @@ impl Engine for InProcess {
         &self,
         doc: u32,
         page: u32,
+        pages: &[u32],
         query: &str,
         options: search::Options,
         carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String> {
-        run_search(
-            open_slot(&self.docs.borrow(), doc)?,
-            page,
-            query,
-            options,
-            carry,
-        )
+        let docs = self.docs.borrow();
+        let document = open_slot(&docs, doc)?;
+        if pages.is_empty() {
+            return run_search(document, page, query, options, carry);
+        }
+        packed(run_search_range(document, pages, query, options, carry)?)
     }
 
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String> {
@@ -1420,37 +1497,67 @@ fn bind_pdfium(library_dir: &Path) -> Result<&'static Pdfium, String> {
     Ok(PDFIUM.get_or_init(|| Pdfium::new(bindings)))
 }
 
-/// Renders one tile of one document.
-///
-/// Takes the document rather than the table it lives in, so that the two
-/// backends can disagree about how documents are stored --- a worker holds
-/// exactly one and the app process holds a `Vec` with holes in it --- without
-/// this needing to know.
-pub(crate) fn render_tile(
-    bindings: Bindings,
-    doc: &OpenDocument,
-    req: &TileRequest,
-    cancel: &CancelToken,
-) -> Result<TileOutcome, String> {
-    // Cached, because Pdfium re-parses a page on every `FPDF_LoadPage` --- 44 ms
-    // on the A0 sheet, which loading per tile request would charge a six-tile
-    // screenful nearly four times over.
-    let page = doc.page_cropped(req.page, req.crop)?;
-
-    let spec = TileSpec {
+/// Which region of a document to render, from the request naming it.
+pub(crate) fn tile_spec(req: &TileRequest) -> TileSpec {
+    TileSpec {
         scale: req.scale,
         turns: req.turns,
         x: req.x,
         y: req.y,
         width: req.width,
         height: req.height,
-    };
+    }
+}
+
+/// What a tile render left in the caller's buffer.
+pub(crate) enum TileFill {
+    /// The pixels are in the buffer's first [`progressive::tile_bytes`] bytes,
+    /// inverted already if the request asked for it.
+    Drawn {
+        /// Time inside Pdfium, in microseconds.
+        render_us: u64,
+    },
+    /// The request was withdrawn mid-render. See [`TileOutcome::Abandoned`].
+    Abandoned,
+}
+
+/// Renders one tile of one document into a buffer the caller supplies.
+///
+/// **The one place a tile's pixels are produced**, and it is a separate function
+/// from [`render_tile`] because of what the worker does with them: it renders
+/// straight into the shared mapping it answers from, where [`render_tile`]
+/// allocates a `Vec` the coordinator copies out of. Before this split the worker
+/// allocated a tile, PDFium filled it, and the worker copied it into the
+/// mapping --- two touches of up to 16 MB per tile that nothing downstream could
+/// see.
+///
+/// Takes the document rather than the table it lives in, so that the two
+/// backends can disagree about how documents are stored --- a worker holds
+/// exactly one and the app process holds a `Vec` with holes in it --- without
+/// this needing to know.
+///
+/// # Errors
+///
+/// The page cannot be loaded or cropped, the buffer is too small, or Pdfium
+/// reports a render failure.
+pub(crate) fn render_tile_into(
+    bindings: Bindings,
+    doc: &OpenDocument,
+    req: &TileRequest,
+    cancel: &CancelToken,
+    pixels: &mut [u8],
+) -> Result<TileFill, String> {
+    // Cached, because Pdfium re-parses a page on every `FPDF_LoadPage` --- 44 ms
+    // on the A0 sheet, which loading per tile request would charge a six-tile
+    // screenful nearly four times over.
+    let page = doc.page_cropped(req.page, req.crop)?;
+    let spec = tile_spec(req);
 
     let t0 = Instant::now();
     // No slice: the pause callback returns "stop" the moment the token is set,
     // so cancellation costs one poll interval either way, and slicing measured a
     // 1--2% overhead for nothing this path needs.
-    let (rgba, progress) = progressive::render_tile(bindings, &page, spec, None, cancel)?;
+    let progress = progressive::render_tile_into(bindings, &page, spec, pixels, None, cancel)?;
     let render_us = t0.elapsed().as_micros() as u64;
 
     match progress.outcome {
@@ -1458,18 +1565,41 @@ pub(crate) fn render_tile(
         // The bitmap holds a genuine partial composite, but whether a partial
         // tile is worth putting on screen is not measured (AGENTS.md), so it is
         // dropped rather than shipped on a guess.
-        Outcome::Cancelled => return Ok(TileOutcome::Abandoned),
+        Outcome::Cancelled => return Ok(TileFill::Abandoned),
         Outcome::Failed(status) => {
             return Err(format!("render failed with Pdfium status {status}"))
         }
     }
 
-    // Before the encode, so PNG and raw ship the same pixels, and after the
-    // cancellation check, so a tile that is about to be dropped is not paid for.
-    let mut rgba = rgba;
+    // Before the encode either caller may do, so PNG and raw ship the same
+    // pixels, and after the cancellation check, so a tile that is about to be
+    // dropped is not paid for.
     if req.invert {
-        crate::invert::invert_lightness(&mut rgba);
+        crate::invert::invert_lightness(&mut pixels[..progressive::tile_bytes(spec)]);
     }
+
+    Ok(TileFill::Drawn { render_us })
+}
+
+/// Renders one tile of one document, allocating for it.
+///
+/// [`render_tile_into`] with a buffer of its own, for every caller that has no
+/// mapping to render into: the in-process backend, the OCR gate and the probes.
+///
+/// # Errors
+///
+/// As [`render_tile_into`], plus a PNG encode that fails.
+pub(crate) fn render_tile(
+    bindings: Bindings,
+    doc: &OpenDocument,
+    req: &TileRequest,
+    cancel: &CancelToken,
+) -> Result<TileOutcome, String> {
+    let mut rgba = vec![0u8; progressive::tile_bytes(tile_spec(req))];
+    let render_us = match render_tile_into(bindings, doc, req, cancel, &mut rgba)? {
+        TileFill::Abandoned => return Ok(TileOutcome::Abandoned),
+        TileFill::Drawn { render_us } => render_us,
+    };
 
     let t1 = Instant::now();
     let bytes = match req.format {
@@ -1801,13 +1931,166 @@ pub(crate) fn run_search(
     // range of indices. Extracting under the reader's crop would cost the crop
     // set-and-restore on every page of a document-wide search to produce
     // identical answers.
-    Ok(search::search_page(
-        &run_text(document, page, None)?,
+    Ok(search::search_codes(
+        &document.page_codes(page, None)?,
         page,
         query,
         options,
         carry,
     ))
+}
+
+/// How many bytes of answers a range request may accumulate before it stops.
+///
+/// [`crate::worker_proto::MAX_REPLY_BYTES`] is 32 MB and a reply that exceeds it
+/// leaves the stream mid-line, which kills the worker --- so a bound here is not
+/// a nicety, it is what keeps a document with a hit on every line from turning a
+/// search into a crash. A tenth of the limit, because the estimate below is an
+/// estimate: it counts the characters a match carries and not the JSON around
+/// them, and the margin is what pays for the field names, the escaping and the
+/// carry.
+///
+/// `docs/TRAPS.md` records the shape --- *an unbounded report crossing a bounded
+/// pipe turns a bad file into a failed check*.
+const RANGE_BUDGET_BYTES: usize = 3 * 1024 * 1024;
+
+/// Searches a run of pages on the render thread, answering as many as fit.
+///
+/// **A prefix of `pages`, never a subset**, and the caller continues from the
+/// first page it was not given an answer for. Returning a subset would need the
+/// carry chain to be rebuilt around the holes, and a hit that spans a break is
+/// exactly what the chain exists for.
+///
+/// The query is compiled once for the whole run rather than once per page ---
+/// see [`search::Prepared`], which is what a scan of 775 pages was paying 775
+/// times.
+///
+/// Stops early on three things: the byte budget, a page that will not extract,
+/// and a pattern that does not compile. The last is a property of the query, so
+/// it is reported on the first page and the rest of the run is not walked ---
+/// which is what the frontend does with it anyway.
+///
+/// # Errors
+///
+/// The first page failing to extract. A later one ends the run instead, because
+/// by then there are answers to hand back and losing them to report a damaged
+/// page would hide the hits on the pages before it.
+pub(crate) fn run_search_range(
+    document: &OpenDocument,
+    pages: &[u32],
+    query: &str,
+    options: search::Options,
+    carry: Option<&search::Carry>,
+) -> Result<Vec<PageMatches>, String> {
+    let prepared = match search::Prepared::new(query, options) {
+        Ok(prepared) => prepared,
+        // Reported on the first page and nowhere else. Every page would say the
+        // same thing, and walking the rest to repeat it is a queue in front of
+        // the tiles for no information.
+        Err(problem) => {
+            let first = pages.first().copied().unwrap_or_default();
+            return Ok(vec![search::PageMatches {
+                page: first,
+                matches: Vec::new(),
+                chars: 0,
+                problem: Some(problem),
+                tail: None,
+                more: Vec::new(),
+            }]);
+        }
+    };
+
+    search_run(&prepared, pages, carry, RANGE_BUDGET_BYTES, |page| {
+        document.page_codes(page, None)
+    })
+}
+
+/// [`run_search_range`]'s walk, with the characters supplied.
+///
+/// A seam rather than a loop inside the caller, and for the reason
+/// `docs/TRAPS.md` gives about a decision reachable only by a running pool:
+/// three things here can be wrong in ways no correct document would reveal ---
+/// the budget stopping the run, the carry chaining only between neighbours, and
+/// a damaged page ending the run rather than losing the pages before it --- and
+/// every one of them needs pages this repository's fixtures do not have. With
+/// the fetch a parameter they can be driven directly.
+fn search_run(
+    prepared: &search::Prepared,
+    pages: &[u32],
+    carry: Option<&search::Carry>,
+    budget: usize,
+    mut codes_of: impl FnMut(u32) -> Result<Arc<Vec<u32>>, String>,
+) -> Result<Vec<PageMatches>, String> {
+    let mut answers: Vec<PageMatches> = Vec::with_capacity(pages.len());
+    let mut spent = 0usize;
+    // The carry given by the caller for the first page, then each page's own
+    // tail for the next --- but only between pages the caller listed adjacently,
+    // which is the same rule the walk applies across requests. A caller that
+    // lists two pages that are not neighbours gets no carry between them,
+    // because a phrase does not span a break that is not there.
+    let mut carried: Option<search::Carry> = carry.cloned();
+    for (step, page) in pages.iter().copied().enumerate() {
+        let codes = match codes_of(page) {
+            Ok(codes) => codes,
+            Err(e) if answers.is_empty() => return Err(e),
+            // A page that will not extract ends the run rather than losing it.
+            // The caller asks about that page on its own next, gets the same
+            // failure, and skips it --- which is what the per-page walk has
+            // always done with a damaged page.
+            Err(_) => break,
+        };
+        let adjacent = step > 0 && pages[step - 1] + 1 == page;
+        let carry = if step == 0 || adjacent {
+            carried.as_ref()
+        } else {
+            None
+        };
+        let answer = prepared.search_page(&codes, page, carry);
+        carried = answer.tail.clone();
+        spent += weight_of(&answer);
+        answers.push(answer);
+        if spent >= budget {
+            break;
+        }
+    }
+    Ok(answers)
+}
+
+/// Roughly how many bytes one page's answer will occupy as JSON.
+///
+/// An estimate and named as one. What it has to be is *monotone in the thing
+/// that can run away* --- the number of matches and the text each carries ---
+/// rather than accurate: the budget above leaves an order of magnitude of margin
+/// precisely so that the JSON scaffolding this does not count cannot close it.
+/// Folds a run's answers into the one a caller sees: the first, carrying the
+/// rest.
+///
+/// # Errors
+///
+/// The run answered nothing at all, which `run_search_range` does not do --- it
+/// either fails or returns at least the first page. Reported rather than
+/// unwrapped, because an empty answer read as a page with no hits is the
+/// reassuring branch and would be wrong.
+pub(crate) fn packed(mut answers: Vec<PageMatches>) -> Result<PageMatches, String> {
+    if answers.is_empty() {
+        return Err("the search answered no pages at all".into());
+    }
+    let rest = answers.split_off(1);
+    let mut first = answers.pop().expect("just checked there is one");
+    first.more = rest;
+    Ok(first)
+}
+
+fn weight_of(answer: &PageMatches) -> usize {
+    /// The fixed part of one match: five numbers, their field names, and the
+    /// punctuation between them.
+    const PER_MATCH: usize = 96;
+    answer
+        .matches
+        .iter()
+        .map(|m| PER_MATCH + m.before.len() + m.hit.len() + m.after.len())
+        .sum::<usize>()
+        + answer.tail.as_ref().map_or(0, |t| t.codes.len() * 8)
 }
 
 /// Walks a document's outline on the render thread.
@@ -1929,7 +2212,274 @@ pub(crate) fn run_properties(document: &OpenDocument) -> Result<Properties, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{crop_from_display, place_crop, Backend};
+    use super::{crop_from_display, packed, place_crop, search_run, weight_of, Backend};
+    use crate::search::{Options, Prepared};
+    use std::sync::Arc;
+
+    /// A page whose characters are `text`.
+    fn codes(text: &str) -> Arc<Vec<u32>> {
+        Arc::new(text.chars().map(|ch| ch as u32).collect())
+    }
+
+    /// Neither option, which is the search a reader who has opened nothing gets.
+    const PLAIN: Options = Options {
+        match_case: false,
+        whole_word: false,
+        regex: false,
+    };
+
+    /// A run answers every page it was given, in the order it was given them.
+    #[test]
+    fn a_run_answers_the_pages_it_was_asked_about() {
+        let prepared = Prepared::new("raster", PLAIN).expect("a literal query compiles");
+        let pages = [4u32, 5, 6];
+        let answers = search_run(&prepared, &pages, None, 1 << 20, |page| match page {
+            5 => Ok(codes("a raster and a raster")),
+            _ => Ok(codes("nothing here")),
+        })
+        .expect("the first page extracts");
+
+        assert_eq!(
+            answers.iter().map(|a| a.page).collect::<Vec<_>>(),
+            vec![4, 5, 6],
+            "a run has to answer in walk order --- the caller continues from the \
+             last page it was given an answer for"
+        );
+        assert_eq!(answers[1].matches.len(), 2);
+        assert!(answers[0].matches.is_empty() && answers[2].matches.is_empty());
+    }
+
+    /// A phrase across a break is found inside a run, without a second request.
+    ///
+    /// The whole reason a run may not be a subset: the chain is what finds the
+    /// hit, and a hole in the middle of one breaks it silently --- the phrase
+    /// simply stops being found, which reads as the document not containing it.
+    #[test]
+    fn a_run_carries_the_tail_from_one_page_to_the_next() {
+        let prepared = Prepared::new("raster appearance", PLAIN).expect("compiles");
+        let pages = [1u32, 2];
+        let answers = search_run(&prepared, &pages, None, 1 << 20, |page| match page {
+            1 => Ok(codes("the last word is raster")),
+            _ => Ok(codes("appearance begins this page")),
+        })
+        .expect("extracts");
+
+        let across: Vec<_> = answers
+            .iter()
+            .flat_map(|a| a.matches.iter())
+            .filter(|m| m.end_page.is_some())
+            .collect();
+        assert_eq!(
+            across.len(),
+            1,
+            "the phrase spans the break between the two pages of the run"
+        );
+        assert_eq!(across[0].page, 1);
+        assert_eq!(across[0].end_page, Some(2));
+    }
+
+    /// Two pages that are not neighbours get no carry between them.
+    ///
+    /// The control for the test above, and the direction that invents hits
+    /// rather than losing them: an unscoped scan wraps, so the page after the
+    /// last is the first, and stitching those two together would report a
+    /// phrase spanning the end of the document. A scoped scan can list any two
+    /// pages at all.
+    #[test]
+    fn a_run_does_not_carry_across_pages_that_are_not_neighbours() {
+        let prepared = Prepared::new("raster appearance", PLAIN).expect("compiles");
+        let pages = [1u32, 9];
+        let answers = search_run(&prepared, &pages, None, 1 << 20, |page| match page {
+            1 => Ok(codes("the last word is raster")),
+            _ => Ok(codes("appearance begins this page")),
+        })
+        .expect("extracts");
+
+        assert!(
+            answers
+                .iter()
+                .all(|a| a.matches.iter().all(|m| m.end_page.is_none())),
+            "pages 1 and 9 do not touch, so nothing may be found across the gap"
+        );
+    }
+
+    /// A run stops when its answers reach the budget, and says so by length.
+    ///
+    /// A reply is read under a bound and a stream left mid-line kills the
+    /// worker, so a document with a hit on every line must shorten the run
+    /// rather than overrun it. The caller reads how many pages came back.
+    #[test]
+    fn a_run_stops_at_the_budget_rather_than_answering_every_page() {
+        let prepared = Prepared::new("a", PLAIN).expect("compiles");
+        let dense = codes(&"a ".repeat(200));
+        let pages: Vec<u32> = (0..40).collect();
+        let answers = search_run(&prepared, &pages, None, 4_000, |_| Ok(Arc::clone(&dense)))
+            .expect("extracts");
+
+        assert!(
+            answers.len() < pages.len(),
+            "40 pages of 200 hits each cannot fit in a 4,000-byte budget"
+        );
+        assert!(
+            !answers.is_empty(),
+            "and it has to answer at least one page"
+        );
+        assert_eq!(
+            answers.iter().map(|a| a.page).collect::<Vec<_>>(),
+            (0..answers.len() as u32).collect::<Vec<_>>(),
+            "what comes back is a prefix, so the caller can continue from its end"
+        );
+
+        // The control: the same run under a budget nothing can reach answers
+        // every page. Without it "it stopped early" is equally satisfied by a
+        // walk that always stops early.
+        let all = search_run(&prepared, &pages, None, usize::MAX, |_| {
+            Ok(Arc::clone(&dense))
+        })
+        .expect("extracts");
+        assert_eq!(all.len(), pages.len());
+    }
+
+    /// A page that will not extract ends the run and keeps what came before it.
+    #[test]
+    fn a_damaged_page_ends_a_run_rather_than_losing_it() {
+        let prepared = Prepared::new("raster", PLAIN).expect("compiles");
+        let pages = [0u32, 1, 2];
+        let answers = search_run(&prepared, &pages, None, 1 << 20, |page| {
+            if page == 1 {
+                Err("that page will not load".into())
+            } else {
+                Ok(codes("a raster"))
+            }
+        })
+        .expect("the first page extracts");
+        assert_eq!(answers.len(), 1, "the run ends at the page that failed");
+        assert_eq!(answers[0].matches.len(), 1, "and page 0's hit is kept");
+    }
+
+    /// The first page failing is reported, not answered with nothing.
+    ///
+    /// The other direction, and it is the one that matters: an empty answer
+    /// reads as a page with no hits, which is the reassuring branch and would
+    /// hide a document that cannot be read at all.
+    #[test]
+    fn a_run_whose_first_page_fails_is_a_failure() {
+        let prepared = Prepared::new("raster", PLAIN).expect("compiles");
+        let answered = search_run(&prepared, &[7u32], None, 1 << 20, |_| {
+            Err("that page will not load".into())
+        });
+        assert_eq!(answered.err().as_deref(), Some("that page will not load"));
+    }
+
+    /// A query compiled once answers exactly what compiling it per page did.
+    ///
+    /// The scan built a `Folded` needle and, on the regex path, a whole
+    /// automaton for every page --- 775 of each on the dense corpus, for one
+    /// query. This is the byte-identity check that the reuse changed no answer:
+    /// both options, both query kinds, over pages that hit and pages that do
+    /// not.
+    #[test]
+    fn a_query_compiled_once_answers_what_compiling_it_per_page_did() {
+        let pages = [
+            codes("a raster appearance and a Raster"),
+            codes("nothing of interest here"),
+            codes("RASTER, raster, rasterise"),
+        ];
+        for (query, options) in [
+            ("raster", PLAIN),
+            (
+                "raster",
+                Options {
+                    match_case: true,
+                    ..PLAIN
+                },
+            ),
+            (
+                "raster",
+                Options {
+                    whole_word: true,
+                    ..PLAIN
+                },
+            ),
+            (
+                "rast(er|erise)",
+                Options {
+                    regex: true,
+                    ..PLAIN
+                },
+            ),
+        ] {
+            let prepared = Prepared::new(query, options).expect("compiles");
+            for (index, page) in pages.iter().enumerate() {
+                let once = prepared.search_page(page, index as u32, None);
+                let each = crate::search::search_codes(page, index as u32, query, options, None);
+                assert_eq!(
+                    serde_json::to_string(&once).expect("serialises"),
+                    serde_json::to_string(&each).expect("serialises"),
+                    "{query:?} with {options:?} on page {index} answered differently \
+                     when the query was compiled once"
+                );
+            }
+        }
+    }
+
+    /// Packing hands back the first page with the rest inside it.
+    #[test]
+    fn packing_a_run_keeps_the_first_page_at_the_top() {
+        let prepared = Prepared::new("raster", PLAIN).expect("compiles");
+        let answers = search_run(&prepared, &[3u32, 4, 5], None, 1 << 20, |_| {
+            Ok(codes("a raster"))
+        })
+        .expect("extracts");
+        let packed = packed(answers).expect("three pages were answered");
+        assert_eq!(packed.page, 3);
+        assert_eq!(
+            packed.more.iter().map(|a| a.page).collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        assert!(
+            packed.more.iter().all(|a| a.more.is_empty()),
+            "never nested more than one deep, which is what the caller reads"
+        );
+    }
+
+    /// Packing nothing is a failure rather than a page with no hits.
+    #[test]
+    fn packing_no_pages_at_all_is_refused() {
+        assert!(packed(Vec::new()).is_err());
+    }
+
+    /// A single-page reply carries no `more`, and serialises without the field.
+    ///
+    /// The compatibility claim, asserted rather than stated: every caller
+    /// written before runs existed reads this JSON.
+    #[test]
+    fn a_single_page_answer_carries_no_run_field() {
+        let answer = crate::search::search_codes(&codes("a raster"), 2, "raster", PLAIN, None);
+        let json = serde_json::to_string(&answer).expect("serialises");
+        assert!(
+            !json.contains("more"),
+            "a single-page reply must be byte-identical to what it was: {json}"
+        );
+    }
+
+    /// The weight of an answer grows with what it carries.
+    ///
+    /// Not a claim about accuracy --- see [`weight_of`], which is an estimate ---
+    /// but the property the budget rests on: a page with more hits, or longer
+    /// ones, may never weigh less.
+    #[test]
+    fn a_heavier_answer_weighs_more() {
+        let prepared = Prepared::new("a", PLAIN).expect("compiles");
+        let one = prepared.search_page(&codes("a"), 0, None);
+        let many = prepared.search_page(&codes(&"a ".repeat(50)), 0, None);
+        assert!(
+            weight_of(&many) > weight_of(&one),
+            "fifty hits have to weigh more than one: {} against {}",
+            weight_of(&many),
+            weight_of(&one)
+        );
+    }
 
     /// The file's own box, deliberately not at the origin.
     ///

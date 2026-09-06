@@ -82,6 +82,7 @@ import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 import {
   baselineOf,
   madeSizeOf,
+  quarterTurns,
   unedited,
   type FilePage,
   type PageView,
@@ -256,15 +257,15 @@ const PAGE_GAP = 16;
  * about a rotated page. The symptoms are not obviously the same bug: rows the
  * wrong shape in the strip, or a fit-width that fits the other axis.
  *
- * Reduced modulo four twice, which normalises a negative turn --- `rotateBy(-1)`
- * reaches here. Worth being precise that this is not what makes negatives work:
- * JavaScript's remainder keeps the sign, so the parity test below is right
- * either way and dropping one reduction changes nothing. It is kept because it
- * is the form the strip already used and because a reader of `((t % 4) + 4) % 4`
- * does not have to reason about the sign at all.
+ * Normalised through {@link quarterTurns}, because a negative turn reaches here
+ * --- `rotateBy(-1)` does. Worth being precise that this is not what makes
+ * negatives work: the parity test below is right for `-1` as it stands, and
+ * dropping the normalisation would change nothing here. It is called because
+ * every other reader of a turn needs it, and a size that normalised its own way
+ * would be the second copy this function exists to remove.
  */
 export function displayedSize(page: PageSize, turns: number): PageSize {
-  return (((turns % 4) + 4) % 4) % 2 === 0
+  return quarterTurns(turns) % 2 === 0
     ? page
     : { width_pt: page.height_pt, height_pt: page.width_pt };
 }
@@ -493,6 +494,14 @@ export class Scroller {
   private scrollTop = 0;
   private drawnThisFrame = 0;
   /**
+   * Clock reading before which no tier-2 tile is asked for. See {@link quieten}.
+   *
+   * A moment rather than a flag, so a gesture that keeps arriving keeps pushing
+   * it out and the tiles are asked for once, for the scale the reader stopped
+   * at.
+   */
+  private quietUntil = 0;
+  /**
    * Bumped when tier 2 is cleared between rounds.
    *
    * A tile requested by the previous round can land during this one. It is not
@@ -688,7 +697,7 @@ export class Scroller {
   /** Quarter-turns a page is drawn by, normalised to 0..3. For a tile request. */
   private requestTurns(page: number): number {
     const turns = this.effectiveTurns(page);
-    return ((turns % 4) + 4) % 4;
+    return quarterTurns(turns);
   }
 
   /**
@@ -725,7 +734,7 @@ export class Scroller {
    */
   setPageTurns(page: number, turns: number): boolean {
     if (page < 0 || page >= this.pageTurns.length) return false;
-    const next = ((turns % 4) + 4) % 4;
+    const next = quarterTurns(turns);
     if (this.pageTurns[page] === next) return false;
     this.pageTurns[page] = next;
     this.invalidatePage(page);
@@ -892,6 +901,38 @@ export class Scroller {
    * page whose size is *known* stops depending on an estimate that can move.
    */
   notePageSize(page: number, size: PageSize): boolean {
+    return this.recordSize(page, size) ? this.applySizes() : false;
+  }
+
+  /**
+   * {@link notePageSize} for several pages at once, laying out once.
+   *
+   * The viewer learns sizes on the frame path --- every visible page's text
+   * carries its dimensions, and a lazily opened document starts with only page
+   * 1's --- so the first frames after an open correct a screenful of pages in
+   * one pass. One at a time, each correction ran {@link applySizes}, which is a
+   * whole-document geometry pass plus a per-page comparison plus a relayout, so
+   * a screenful cost that many of them for one visible result.
+   *
+   * Not merely cheaper: the intermediate layouts were never shown. `applySizes`
+   * relays out synchronously, and every one of them but the last was undone by
+   * the next before the frame ended.
+   */
+  notePageSizes(entries: readonly { page: number; size: PageSize }[]): boolean {
+    let learnt = false;
+    for (const { page, size } of entries) {
+      if (this.recordSize(page, size)) learnt = true;
+    }
+    return learnt ? this.applySizes() : false;
+  }
+
+  /**
+   * Records one page's size, answering whether it was news.
+   *
+   * The half of {@link notePageSize} that touches no geometry, so a batch can
+   * record everything it has before paying for a single layout pass.
+   */
+  private recordSize(page: number, size: PageSize): boolean {
     if (page < 0 || page >= this.boxes.length) return false;
     const known = this.sizes[page];
     if (
@@ -902,7 +943,7 @@ export class Scroller {
       return false;
     }
     this.sizes[page] = size;
-    return this.applySizes();
+    return true;
   }
 
   /**
@@ -1074,7 +1115,16 @@ export class Scroller {
    * `backoff.ts` for why.
    */
   nextRetryMs(reference: number): number | null {
-    return this.backoff.nextWaitMs(reference);
+    const backedOff = this.backoff.nextWaitMs(reference);
+    // The settle counts as something to come back for. Without it the loop can
+    // go idle inside a settle that has nothing else outstanding --- a pinch that
+    // stops on a page whose tiles were all dropped --- and the page then stays
+    // on its placeholder until the reader touches something. Which is the same
+    // permanently blank square the backoff wake exists to avoid, by a second
+    // route.
+    const settling = this.quietUntil - reference;
+    if (settling <= 0) return backedOff;
+    return backedOff === null ? settling : Math.min(backedOff, settling);
   }
 
   /**
@@ -1118,9 +1168,10 @@ export class Scroller {
    * all of them do --- which is what stops a zoom step on the A0 sheet going
    * grey for the 1.5 s its placeholder costs to produce again.
    */
-  setZoom(zoom: number): void {
+  setZoom(zoom: number, settleMs = 0): void {
     if (zoom === this.opts.zoom) return;
     this.opts.zoom = zoom;
+    this.quieten(settleMs);
     // Before the geometry moves: `clearTiles` withdraws by a predicate that
     // asks the window which tiles it still wants, and the window it should be
     // asking is the one those tiles were requested for.
@@ -1143,7 +1194,7 @@ export class Scroller {
    * is not taken here because nothing has measured whether it is worth the code.
    */
   setTurns(turns: number): void {
-    const next = ((turns % 4) + 4) % 4;
+    const next = quarterTurns(turns);
     if (next === this.opts.turns) return;
 
     // Before the geometry moves, for the same reason `setZoom` clears first:
@@ -1523,6 +1574,32 @@ export class Scroller {
     };
   }
 
+  /**
+   * Holds off tier-2 rendering until the view has been still for `ms`.
+   *
+   * **What this is for.** A trackpad pinch arrives as a wheel event per frame
+   * and a window drag as a resize per frame, and each one is a new scale: every
+   * tile on screen is dropped, a screenful is asked for at the new zoom, and
+   * next frame all of it is withdrawn again for a scale the reader has already
+   * left. What actually reaches the renderer is `maxInFlight` tiles a frame,
+   * every one of them for a zoom that is obsolete before it is drawn.
+   *
+   * **Why the tiles are still dropped immediately.** Deferring the drop is the
+   * obvious other half and it does not work: a tile is drawn at its own pixel
+   * size at an offset computed for the box it was rendered for, so keeping the
+   * old ones across a scale change paints a mosaic of the previous zoom over
+   * part of the page --- which is worse than the placeholder underneath, and
+   * looks like a rendering fault rather than like a gesture in progress.
+   *
+   * Zero for anything that sets a zoom outright --- a zoom step, a fit, a
+   * restored place --- because those are one event and the tiles they want are
+   * the ones to ask for now.
+   */
+  private quieten(ms: number): void {
+    if (ms <= 0) return;
+    this.quietUntil = performance.now() + ms;
+  }
+
   /** Device-pixel rect of one tile within its scaled page. */
   private tileRect(
     page: number,
@@ -1557,10 +1634,20 @@ export class Scroller {
     const { top, bottom } = this.band();
     const centre = this.scrollTop + this.opts.viewport.height / 2;
 
+    // Nothing sharp is asked for while the zoom is still moving. See
+    // {@link quieten}: a pinch is one gesture arriving as forty events, and
+    // every one of them changes the scale every tile has to be rendered at.
+    const settling = now < this.quietUntil;
+
     const wanted: { key: TileKey; distance: number }[] = [];
 
     for (const page of this.pagesIn(top, bottom)) {
+      // Tier 1 is asked for throughout, and that is what makes the settle
+      // invisible rather than blank: a placeholder is rendered once at a fixed
+      // 150 px and only stretched by CSS, so it survives every scale the
+      // gesture passes through and is what the reader watches move.
       this.requestPlaceholder(page, now);
+      if (settling) continue;
 
       const box = this.boxes[page];
       if (!box) continue;

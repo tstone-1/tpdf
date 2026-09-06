@@ -18,7 +18,7 @@
  */
 
 import { call } from "./ipc";
-import type { FilePage } from "./pages";
+import { quarterTurns, type FilePage } from "./pages";
 
 /**
  * One run of text the document's own tags claim, as half-open character indices.
@@ -90,7 +90,7 @@ export function linesRunSideways(text: PageText): boolean {
  * of them share is asserted against the already-verified page mapping.
  */
 export function turnedView(text: PageText, turns: number): PageText {
-  const quarters = ((turns % 4) + 4) % 4;
+  const quarters = quarterTurns(turns);
   if (quarters === 0) return text;
 
   const { width_pt: width, height_pt: height } = text;
@@ -139,7 +139,7 @@ export function turnedView(text: PageText, turns: number): PageText {
  * turn swaps them, so the caller's page box swaps with it.
  */
 export function turnQuad(quad: Quad, turns: number, width: number, height: number): Quad {
-  switch (((turns % 4) + 4) % 4) {
+  switch (quarterTurns(turns)) {
     case 1:
       return { left: height - quad.bottom, top: quad.left, right: height - quad.top, bottom: quad.right };
     case 2:
@@ -285,6 +285,24 @@ export class TextCache {
   >();
   private readonly pending = new Map<FilePage, Promise<PageText | null>>();
   /**
+   * How many times each page's question has changed, for the pages it has.
+   *
+   * An extraction is an IPC round trip with no withdrawal: once `page_text` is
+   * on the wire the reply arrives and its continuation runs, whatever has
+   * happened here meanwhile. A crop is the one thing that can change what the
+   * *question* was --- character boxes are measured from the displayed page's
+   * corner and a crop moves that corner --- so a reply issued under the old box
+   * is not stale, it is measured in another space, and storing it would put the
+   * caret a crop's width from the glyph under the pointer.
+   *
+   * {@link forget} bumps the count; {@link load} reads it when the request goes
+   * out and again when it comes back, and drops the reply if the two disagree.
+   * Kept per page rather than as one counter because a crop is one page's, the
+   * same scope {@link setPageCrop} has, and a document-wide counter would throw
+   * away every other page's extraction with it.
+   */
+  private readonly issued = new Map<FilePage, number>();
+  /**
    * Pages whose extraction was asked for and came back with nothing.
    *
    * Held because a failure caches no text, so "not here" and "asked and there
@@ -332,7 +350,7 @@ export class TextCache {
    * document's own text; what is handed out is the view of it.
    */
   setTurns(turns: number): void {
-    const next = ((turns % 4) + 4) % 4;
+    const next = quarterTurns(turns);
     if (next === this.turns) return;
     this.turns = next;
     this.turned.clear();
@@ -353,7 +371,7 @@ export class TextCache {
    * an edit invalidates one.
    */
   setPageTurns(page: FilePage, turns: number): void {
-    const next = ((turns % 4) + 4) % 4;
+    const next = quarterTurns(turns);
     if ((this.extra.get(page) ?? 0) === next) return;
     if (next === 0) this.extra.delete(page);
     else this.extra.set(page, next);
@@ -400,6 +418,14 @@ export class TextCache {
       this.pages.delete(page);
     }
     this.turned.delete(page);
+    // And the request already on the wire, which the maps above cannot reach.
+    // Two things follow from the bump: its reply is dropped rather than stored,
+    // and the next caller is not handed a promise that will answer about the
+    // box this page no longer has. Removing the pending entry is what makes
+    // `worthAsking` say yes again --- without it the frame loop reads "already
+    // asked" and the page under the new box is never fetched at all.
+    this.issued.set(page, (this.issued.get(page) ?? 0) + 1);
+    this.pending.delete(page);
   }
 
   /** Pages held. For the check harness and the tests. */
@@ -546,12 +572,23 @@ export class TextCache {
     const existing = this.pending.get(page);
     if (existing) return existing;
 
+    // The generation this request is being sent under. Read here rather than in
+    // the continuation, which is the whole point: what it records is the crop
+    // the question was asked with.
+    const under = this.issued.get(page) ?? 0;
+    const stale = (): boolean => (this.issued.get(page) ?? 0) !== under;
+
     const request = call("page_text", {
       doc: this.doc,
       page,
       crop: this.crops.get(page) ?? null,
     })
       .then((text) => {
+        // Answered `null` rather than with the text: the caller asked about a
+        // page whose box has since moved, and text measured under the old one
+        // is a wrong answer rather than an old one. A caller on the frame loop
+        // asks again next frame, which `forget` has already made worthwhile.
+        if (stale()) return null;
         this.remember(page, text);
         // Turned on the way out rather than on the way in, so a rotation that
         // lands while the request is in flight is still honoured: the view is
@@ -559,10 +596,19 @@ export class TextCache {
         return this.view(page, text);
       })
       .catch(() => {
-        this.unreadable.add(page);
+        // A failure under the old box says nothing about the new one, so it is
+        // not recorded against a page whose question has changed --- that would
+        // be `unreadable` refusing to ask again about a box nobody has tried.
+        if (!stale()) this.unreadable.add(page);
         return null;
       })
-      .finally(() => this.pending.delete(page));
+      .finally(() => {
+        // Only if this is still the request the map is holding. `forget` may
+        // have removed it and a replacement been recorded, and an unconditional
+        // delete here takes the live one out --- after which every caller
+        // issues a duplicate extraction for a page already on the wire.
+        if (this.pending.get(page) === request) this.pending.delete(page);
+      });
 
     this.pending.set(page, request);
     return request;

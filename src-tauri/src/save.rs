@@ -78,6 +78,7 @@ use crate::edits::Plan;
 use crate::encoding::MAX_DECODE;
 use crate::fingerprint::{FileId, Fingerprint};
 use crate::pagetree::{agreed_turns, ordered_pages};
+use crate::worker_shm::Shm;
 
 /// The middle of the name of the file bytes are written to before the rename.
 ///
@@ -157,6 +158,41 @@ impl Refusal {
         Refusal {
             message: message.into(),
             changed: true,
+        }
+    }
+}
+
+/// The two failures a save reports, built from a refusal this module produced.
+///
+/// Here rather than in `lib.rs` because [`Refusal`] is this module's type and
+/// the mapping is about what it means: `changed` is what lets the window offer
+/// Reload, and it is *carried* rather than re-derived, because deciding it again
+/// at the far end would mean asking the same question twice and, worse, matching
+/// on the message to answer it.
+impl crate::failure::Failure {
+    /// Nothing was taken apart. The reader carries on with their document.
+    #[must_use]
+    pub(crate) fn refused_by(why: Refusal) -> Self {
+        Self {
+            message: why.message,
+            action: if why.changed {
+                crate::failure::Action::Reload
+            } else {
+                crate::failure::Action::Carry
+            },
+        }
+    }
+
+    /// The same, for a refusal that arrives after the document is closed.
+    #[must_use]
+    pub(crate) fn after_close_by(why: Refusal) -> Self {
+        Self {
+            message: why.message,
+            action: if why.changed {
+                crate::failure::Action::ReopenChanged
+            } else {
+                crate::failure::Action::Reopen
+            },
         }
     }
 }
@@ -953,33 +989,135 @@ pub fn write_merged(
     })
 }
 
-/// Reads every incoming document into one buffer, and says where each begins.
+/// How much of a merge's incoming documents tpdf will hold at once.
+///
+/// **A ceiling, because there was none and the quantity is the reader's to
+/// choose.** Every incoming file is held in one shared mapping, and the worker
+/// maps the same segment, so this is what a merge costs before a single object
+/// is parsed. A file dialog takes as many files as somebody cares to shift-click
+/// and this repository's own fixtures include a 337 MB scan and a 550 MB
+/// incremental document; four of the latter is more memory than the machine
+/// this was measured on has.
+///
+/// **1 GiB rather than a number fitted to anything.** It is past every fixture
+/// here and past any document a reader plausibly merges, and it is a refusal
+/// they can act on --- merge fewer files, or in two passes --- rather than the
+/// allocation failure or the swap storm that is the alternative. It bounds the
+/// *total*, not each file: ten 200 MB scans cost what two 1 GB ones do.
+const MAX_MERGE_BYTES: u64 = 1 << 30;
+
+/// Reads every incoming document into one shared mapping, and says where each
+/// begins.
 ///
 /// **The coordinator's whole part in a merge's inputs.** It opens the files the
 /// reader chose and copies their bytes; it does not parse them, and after
-/// 2026-09-01 nothing in this process does. The buffer and the spans are what
+/// 2026-09-01 nothing in this process does. The mapping and the spans are what
 /// cross to the worker --- one mapping rather than one per file, for the reason
 /// [`crate::worker::IN_FD`] gives.
 ///
+/// **Straight into the mapping, which is one copy rather than two.** This read
+/// each file into a `Vec`, concatenated those into a second `Vec`, and handed
+/// that to a `Shm::create` that copied it a third time --- so merging a gigabyte
+/// of documents peaked at two to three gigabytes in the app process, none of it
+/// bounded. Sizing from the handles first is what makes the single copy
+/// possible, and it is also what makes the ceiling checkable before anything is
+/// allocated.
+///
+/// **Opened once, and both the size and the bytes come from that handle.** A
+/// `metadata` on the path followed by a read of the path is two lookups of a
+/// name, and a file swapped between them gives a span that describes one
+/// document and bytes from another. A file that shrinks under the handle is
+/// recorded at what was actually read; one that grows is read up to the length
+/// the span was computed for, and the worker refuses the truncation.
+///
 /// # Errors
 ///
-/// A file that cannot be read, named by the name the reader saw.
-fn concatenated(others: &[PathBuf]) -> Result<(Vec<u8>, Vec<Incoming>), Refusal> {
-    let mut inputs = Vec::new();
-    let mut incoming = Vec::with_capacity(others.len());
+/// A file that cannot be opened, measured or read, named by the name the reader
+/// saw; or a set of them past [`MAX_MERGE_BYTES`].
+fn concatenated(others: &[PathBuf]) -> Result<(Shm, Vec<Incoming>), Refusal> {
+    concatenated_within(others, MAX_MERGE_BYTES)
+}
+
+/// [`concatenated`] with the ceiling supplied.
+///
+/// A parameter for [`overdue`](crate::workers)'s reason, arriving in a different
+/// area: a refusal reachable only by handing it a gigabyte of files is a refusal
+/// nothing will ever exercise, so the fixture would be the machine's disk rather
+/// than a test. The shipped ceiling is [`MAX_MERGE_BYTES`] and this is the only
+/// other caller.
+fn concatenated_within(others: &[PathBuf], ceiling: u64) -> Result<(Shm, Vec<Incoming>), Refusal> {
+    let mut opened: Vec<(std::fs::File, usize, String)> = Vec::with_capacity(others.len());
+    let mut total: u64 = 0;
     for other in others {
-        let bytes = std::fs::read(other)
-            .map_err(|e| Refusal::from(format!("could not read {}: {e}", name_of(other))))?;
+        let label = name_of(other);
+        let file = std::fs::File::open(other)
+            .map_err(|e| Refusal::from(format!("could not read {label}: {e}")))?;
+        let len = file
+            .metadata()
+            .map_err(|e| Refusal::from(format!("could not measure {label}: {e}")))?
+            .len();
+        // Saturating and checked per file rather than at the end: the sum of
+        // enough `u64` lengths wraps, and a wrapped total is a small number that
+        // passes.
+        total = total.saturating_add(len);
+        if total > ceiling {
+            return Err(Refusal::from(format!(
+                "the documents to merge come to at least {} MB, and tpdf merges at most {} MB \
+                 at once --- merge fewer files, or merge them in two passes",
+                total / (1 << 20),
+                ceiling / (1 << 20)
+            )));
+        }
+        let len = usize::try_from(len)
+            .map_err(|_| Refusal::from(format!("{label} is larger than this machine can map")))?;
+        opened.push((file, len, label));
+    }
+
+    // `max(1)` because a mapping of nothing cannot be created, and a merge of
+    // nothing is refused by `merge_update` in words about the request. Reaching
+    // the refusal needs somewhere to put it.
+    let total = usize::try_from(total).map_err(|_| {
+        Refusal::from("the documents to merge are larger than this machine can map")
+    })?;
+    let mut carried = Shm::create(total.max(1))?;
+
+    let mut incoming = Vec::with_capacity(others.len());
+    let mut at = 0;
+    for (mut file, len, label) in opened {
+        let read = read_into(&mut file, &mut carried.as_mut_slice()[at..at + len])
+            .map_err(|e| Refusal::from(format!("could not read {label}: {e}")))?;
         incoming.push(Incoming {
-            at: inputs.len(),
-            len: bytes.len(),
+            at,
+            // What was actually read, not what was measured. The two differ only
+            // when the file shrank between the two, and a span past the bytes is
+            // how a merge picks up whatever was in the mapping before it.
+            len: read,
             // The name the reader saw in the dialog, resolved here because this
             // is where the path is. See `Incoming::label`.
-            label: name_of(other),
+            label,
         });
-        inputs.extend_from_slice(&bytes);
+        at += len;
     }
-    Ok((inputs, incoming))
+    Ok((carried, incoming))
+}
+
+/// Fills `into` from `file`, and says how much arrived.
+///
+/// `Read::read` is allowed to answer short for reasons that are nothing to do
+/// with the end of the file, so a single call would leave the tail of a span
+/// holding whatever the mapping held before it. Short of the whole buffer is
+/// reported rather than refused --- the file lost bytes while it was being read,
+/// and the span says how many are real.
+fn read_into(file: &mut std::fs::File, into: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Read as _;
+    let mut filled = 0;
+    while filled < into.len() {
+        match file.read(&mut into[filled..])? {
+            0 => break,
+            read => filled += read,
+        }
+    }
+    Ok(filled)
 }
 
 /// A path as it should appear in a message to the reader.
@@ -2731,7 +2869,13 @@ pub struct Incoming {
 #[derive(Clone, Copy)]
 pub struct Inputs<'a> {
     /// Every incoming document's bytes, concatenated.
-    pub whole: &'a [u8],
+    ///
+    /// **The mapping itself rather than a slice of it**, because this is the
+    /// thing the worker is handed: `crate::worker::spawn_merging` takes a
+    /// segment, and a slice would have to be copied into one --- which is the
+    /// second copy of every incoming document that [`concatenated`] exists to
+    /// avoid. The reader of a single document's bytes is [`Inputs::bytes_of`].
+    pub whole: &'a Shm,
     /// Where each of them begins, how long it is, and what to call it.
     pub each: &'a [Incoming],
 }
@@ -2761,7 +2905,7 @@ impl<'a> Inputs<'a> {
                     self.whole.len()
                 ))
             })?;
-        Ok(&self.whole[one.at..end])
+        Ok(&self.whole.as_slice()[one.at..end])
     }
 }
 

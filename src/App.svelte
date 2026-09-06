@@ -61,6 +61,7 @@
     type Comments,
   } from "./lib/comments";
   import { touchedText } from "./lib/reading";
+  import { nextUnreadRegion } from "./lib/redactlist";
   import { noticeFor as linkNotice, type Link } from "./lib/links";
   import type { Outline } from "./lib/outline";
   import {
@@ -71,7 +72,9 @@
     NO_PAGES,
     outlineIn,
     pairPlans,
+    pageId,
     redactionRows,
+    slotOfIdIn,
     type MarkKind,
     type StampName,
     type PageId,
@@ -269,9 +272,10 @@
    * changed: two bare highlights, one answered, one page deleted, and the walk
    * returned nothing with a comment still wanting words.
    *
-   * A comment id is what the annotation carries and it does not move ---
-   * `redactionPagesRead` below reaches the same conclusion from the other end,
-   * keying on the page *id* rather than the slot for regions that carry one.
+   * A comment id is what the annotation carries and it does not move. The
+   * redaction walk below reaches the same conclusion from the other end and
+   * goes one step further: it counts what has been answered by *region* id, so
+   * that a second region drawn on a page already read is still asked about.
    * Cleared with the document, since an id means nothing across two files.
    */
   const wordsAsked = new Set<number>();
@@ -303,16 +307,6 @@
    * has not been looked at yet.
    */
   const redactionWords = new Map<number, string | null>();
-  /**
-   * Pages whose text has been read for the regions on them, **by page id**.
-   *
-   * Not by slot, which is what {@link wordsAsked} does one field up, and the
-   * difference is a defect rather than a preference: a slot is renumbered by
-   * every deletion, so a set of slots says page 4 has been read and then a
-   * deletion moves an unread page into slot 4, where it is never asked again.
-   * A `PageId` is what the region itself carries and it does not move.
-   */
-  const redactionPagesRead = new Set<number>();
   /**
    * What a removal would take from each pending region, by redaction id.
    *
@@ -809,24 +803,43 @@
       return;
     }
     if (to === "reset") {
-      await applyEdit((e) => e.crop(at, null));
+      // The slot is resolved inside the edit, for the reason `cropTo` gives
+      // below: `applyEdit` queues, so this callback can run after a deletion
+      // above this page has landed, and `at` would then name whichever page had
+      // moved into the slot --- putting the file's box back on a page nobody
+      // asked about. An id cannot move.
+      const page = edits.state.pages[at]?.id;
+      if (page === undefined) return;
+      await applyEdit((e) => {
+        const slot = slotOfIdIn(e.state.pages, page);
+        return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, null);
+      });
       return;
     }
     const view = edits.state.pages[at];
     const source = view === undefined ? undefined : baselineOf(view.source);
-    if (source === undefined) {
+    if (view === undefined || source === undefined) {
       // Two ways to get here and only one of them is worth a message: a slot
       // that is not in the document is a stale press, and a page tpdf made is a
       // reader asking a reasonable question about a page with nothing on it.
       if (view !== undefined) say("A blank page has nothing to crop to.");
       return;
     }
+    // The page's identity, taken before the measurement goes out. `at` is a
+    // slot and it is about to stop naming this page: the round trip below can
+    // land after a deletion above it, and a crop sent against the old slot
+    // crops whichever page has moved into it. `cropTo` next door does the same
+    // for the same reason; a `source` is safe to read early and a slot is not.
+    const page = view.id;
     const box = await contentBox(edits.doc, source).catch(() => null);
     if (!box) {
       say("There is nothing on this page to crop to.");
       return;
     }
-    await applyEdit((e) => e.crop(at, box));
+    await applyEdit((e) => {
+      const slot = slotOfIdIn(e.state.pages, page);
+      return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, box);
+    });
   }
 
   /**
@@ -858,10 +871,14 @@
    * crop that did nothing.
    */
   async function cropTo(
-    page: number,
+    id: number,
     rect: [number, number, number, number],
   ): Promise<void> {
     if (!edits) return;
+    // What the viewer hands over is an id, spelt as a plain `number` because
+    // that is what the callback's type says; named as one here so that the
+    // slot lookup below cannot be handed the wrong kind of page number.
+    const page = pageId(id);
     const view = edits.state.pages.find((p) => p.id === page);
     const source = view === undefined ? undefined : baselineOf(view.source);
     if (source === undefined) {
@@ -881,8 +898,8 @@
       return;
     }
     await applyEdit((e) => {
-      const slot = e.state.pages.findIndex((one) => one.id === page);
-      return slot < 0 ? Promise.resolve(e.state) : e.crop(slot, box);
+      const slot = slotOfIdIn(e.state.pages, page);
+      return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, box);
     });
   }
 
@@ -1114,10 +1131,16 @@
    * `PageText`. Answering only the one that prompted the walk would read the
    * same page again for its neighbour.
    *
-   * **Why a page that could not be read is recorded as read.** Otherwise the
-   * walk asks for it again on the next edit, forever, and the row it belongs to
-   * says *reading* for the rest of the session. It is recorded as `null`
-   * instead, which is a state the row draws as what it is.
+   * **Why a page that could not be read is still answered.** Otherwise the walk
+   * asks for it again on the next edit, forever, and the row it belongs to says
+   * *reading* for the rest of the session. Every region on it is recorded as
+   * `null` instead, which is a state the row draws as what it is.
+   *
+   * **What has been answered is counted by region and not by page.** See
+   * {@link nextUnreadRegion}: a page set is the obvious bookkeeping here, since
+   * the extraction is per page, and it is wrong in one direction --- a region
+   * drawn on a page already read is never selected, so its row says *reading*
+   * for the session and no plan is ever computed for it.
    */
   async function fillRedactionWords(): Promise<void> {
     if (fillingRedactionWords) return;
@@ -1130,11 +1153,8 @@
         // replaces `edits` mid-walk, and writing this one's words onto its rows
         // is the same failure `fillCommentWords` guards against.
         if (edits !== model) return;
-        const next = model.state.redactions.find(
-          (region) => !redactionPagesRead.has(region.page),
-        );
+        const next = nextUnreadRegion(model.state.redactions, redactionWords);
         if (!next) return;
-        redactionPagesRead.add(next.page);
         const slot = model.map.slotOfId(next.page);
         // A region whose page is in no slot. Unreachable from the model as it
         // stands --- see `RedactionRow.page` --- and answered rather than
@@ -2277,9 +2297,16 @@
 
       const openEvent = await call("launch_open_event");
       await listen<string>(openEvent, (event) => void openPath(event.payload));
-      const handed = await call("take_launch_paths");
-
-      session = await loadSession();
+      // Together rather than one after the other. Neither answer feeds the
+      // other --- one is what the launcher handed over, the other is what was on
+      // disk from last time --- and both are round trips on the path between the
+      // window appearing and the first page being asked for, which is the part
+      // of startup a reader is watching.
+      const [handed, restored] = await Promise.all([
+        call("take_launch_paths"),
+        loadSession(),
+      ]);
+      session = restored;
       // From the session already in hand, so opening the palette on the first
       // keystroke costs nothing. Refreshed from disk after that -- see
       // `refreshRecents`.
@@ -2540,7 +2567,6 @@
       commentWords.clear();
       redactionWords.clear();
       redactionPlans.clear();
-      redactionPagesRead.clear();
       properties = null;
       propertiesDialog?.close();
       rawOutline = null;

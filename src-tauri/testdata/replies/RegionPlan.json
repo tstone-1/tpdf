@@ -1,0 +1,36 @@
+{
+  "shows": [
+    1,
+    2
+  ],
+  "text_objects": 2,
+  "images": [
+    3
+  ],
+  "image_objects": 1,
+  "form_shows": [
+    [
+      4,
+      5
+    ]
+  ],
+  "form_text_objects": [
+    [
+      4,
+      6
+    ]
+  ],
+  "area": [
+    10.0,
+    20.0,
+    110.0,
+    60.0
+  ],
+  "taking": "the quick brown fox",
+  "unhandled": [
+    {
+      "at": 7,
+      "kind": "Type3"
+    }
+  ]
+}

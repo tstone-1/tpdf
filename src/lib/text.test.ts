@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { quarterTurns } from "./pages";
 import { usableRuns } from "./reading";
 import {
   caretAt,
@@ -284,7 +285,7 @@ describe("unturnQuad", () => {
     // a table here would be a second statement of the same arithmetic, and it
     // would agree with a wrong `turnQuad` as readily as with a right one.
     for (const turns of [0, 1, 2, 3, -1, 5]) {
-      const sideways = ((((turns % 4) + 4) % 4) & 1) === 1;
+      const sideways = (quarterTurns(turns) & 1) === 1;
       const [width, height] = sideways
         ? [page.height, page.width]
         : [page.width, page.height];

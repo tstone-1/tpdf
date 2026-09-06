@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "title": "Chapter one",
+      "open": true,
+      "target": {
+        "kind": "page",
+        "page": 0,
+        "top_pt": null
+      },
+      "children": [
+        {
+          "title": "A section",
+          "open": false,
+          "target": {
+            "kind": "broken"
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "total": 2,
+  "limits": {
+    "cycles": 1,
+    "too_deep": 2,
+    "over_budget": true,
+    "titles_clipped": 3
+  },
+  "walk_ms": 0.75
+}

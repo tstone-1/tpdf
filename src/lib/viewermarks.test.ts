@@ -438,3 +438,104 @@ describe("Enter with a note open", () => {
     viewer.destroy();
   });
 });
+
+describe("the mark index the frame path draws from", () => {
+  /** A canvas context that records only what a test asks about. */
+  function recorder(): { ctx: unknown; bands: number } {
+    const state = { bands: 0 };
+    const ctx = {
+      fillStyle: "",
+      strokeStyle: "",
+      lineWidth: 0,
+      lineCap: "",
+      lineJoin: "",
+      globalCompositeOperation: "",
+      fillRect: () => {
+        state.bands++;
+      },
+      strokeRect: () => {},
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      stroke: () => {},
+      save: () => {},
+      restore: () => {},
+    };
+    return {
+      ctx,
+      get bands(): number {
+        return state.bands;
+      },
+    };
+  }
+
+  /** The overlay painter, called directly: the fake DOM has no 2D context. */
+  interface Painting {
+    paintMarks(ctx: unknown, dpr: number, visible: readonly number[]): void;
+  }
+
+  it("places only the marks on the slots the frame says are on screen", () => {
+    // The whole point of the index. Every mark used to be placed --- which is a
+    // walk of the page order per mark, to answer which page it is on --- and
+    // only then tested for visibility, so a document with a few hundred marks
+    // paid for all of them sixty times a second to draw the two in front of the
+    // reader.
+    const viewer = build([mark(1, 1, 100), mark(2, 2, 100), mark(3, 3, 100)]);
+    const paint = viewer as unknown as Painting;
+
+    const one = recorder();
+    paint.paintMarks(one.ctx, 1, [0]);
+    expect(one.bands).toBe(1);
+
+    // The control: the same call over two slots draws both, so the assertion
+    // above is about the filter and not about a painter that draws nothing.
+    const two = recorder();
+    paint.paintMarks(two.ctx, 1, [0, 1]);
+    expect(two.bands).toBe(2);
+
+    viewer.destroy();
+  });
+
+  it("finds a mark under the pointer after its page has moved", () => {
+    // The cost of holding an index: it is keyed by slot, and a deletion
+    // renumbers every slot after the gap. Without the invalidation in
+    // `setPages` the mark stays filed under the slot it used to be on, so it is
+    // neither drawn nor clickable where it now is --- and is both where it is
+    // not.
+    const pages: PageView[] = [1, 2, 3, 4].map((id, at) => ({
+      id: pageId(id),
+      source: { baseline: at },
+      turns: 0,
+    }));
+    const viewer = build([mark(7, 3, 100)], pages);
+    const before = viewer.screenPoint(2, 200, 107);
+    expect(viewer.markAt({ clientX: before.x, clientY: before.y })).toBe(7);
+
+    // Page id 1 deleted: page id 3 moves from slot 2 to slot 1.
+    viewer.setPages(pages.filter((page) => page.id !== pageId(1)));
+    const after = viewer.screenPoint(1, 200, 107);
+    expect(viewer.markAt({ clientX: after.x, clientY: after.y })).toBe(7);
+
+    viewer.destroy();
+  });
+
+  it("forgets a mark the model has taken away", () => {
+    // The other half of the invalidation, and the one a reader meets on every
+    // undo: `setMarks` is called with every state.
+    //
+    // **Two marks, and only one of them removed.** With a single mark this
+    // passes whether the index is dropped or not, because `markUnder` returns
+    // early on an empty list --- a control satisfied by a guard that has
+    // nothing to do with what is being tested.
+    const viewer = build([mark(7, 1, 100), mark(8, 1, 300)]);
+    const gone = viewer.screenPoint(0, 200, 107);
+    const kept = viewer.screenPoint(0, 200, 307);
+    expect(viewer.markAt({ clientX: gone.x, clientY: gone.y })).toBe(7);
+
+    viewer.setMarks([mark(8, 1, 300)]);
+    expect(viewer.markAt({ clientX: gone.x, clientY: gone.y })).toBeNull();
+    expect(viewer.markAt({ clientX: kept.x, clientY: kept.y })).toBe(8);
+
+    viewer.destroy();
+  });
+});

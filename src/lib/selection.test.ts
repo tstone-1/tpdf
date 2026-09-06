@@ -7,7 +7,8 @@
  * the application while three layers of tests pass.
  */
 import { describe, expect, it } from "vitest";
-import { MIN_REDACTION_SIDE, areasFrom } from "./selection";
+import { MIN_REDACTION_SIDE, Selection, areasFrom } from "./selection";
+import type { PageText } from "./text";
 
 describe("areasFrom", () => {
   it("turns one run into one region", () => {
@@ -101,5 +102,97 @@ describe("areasFrom", () => {
    */
   it("drops a trailing group that is not a whole run", () => {
     expect(areasFrom([10, 20, 110, 32, 10, 40])).toEqual([[10, 20, 110, 32]]);
+  });
+});
+
+
+describe("Selection.hasText", () => {
+  /** A page of `chars` letters, each with a box, laid out left to right. */
+  function page(chars: number): PageText {
+    const codes: number[] = [];
+    const boxes: number[] = [];
+    for (let at = 0; at < chars; at++) {
+      codes.push(97 + (at % 26));
+      boxes.push(at * 10, 0, at * 10 + 10, 12);
+    }
+    return {
+      codes,
+      boxes,
+      width_pt: 600,
+      height_pt: 800,
+      quarter_turns: 0,
+      extract_ms: 0,
+    };
+  }
+
+  /** A selection from one caret to another. */
+  function from(
+    start: { page: number; index: number },
+    end: { page: number; index: number },
+  ): Selection {
+    const selection = new Selection(start);
+    selection.focus = end;
+    return selection;
+  }
+
+  it("agrees with the string it stands in for", () => {
+    // The whole contract: this exists to answer `text(look) !== ""` without
+    // building the string, so the string is the oracle rather than a set of
+    // expectations that would have to be right twice.
+    const look = (): PageText => page(20);
+    for (const [start, end] of [
+      [
+        { page: 0, index: 0 },
+        { page: 0, index: 0 },
+      ],
+      [
+        { page: 0, index: 0 },
+        { page: 0, index: 5 },
+      ],
+      [
+        { page: 0, index: 5 },
+        { page: 0, index: 0 },
+      ],
+      [
+        { page: 0, index: 3 },
+        { page: 2, index: 4 },
+      ],
+    ] as const) {
+      const selection = from(start, end);
+      expect(selection.hasText(look)).toBe(selection.text(look) !== "");
+    }
+  });
+
+  it("says nothing is selected when no page has arrived", () => {
+    // A selection over pages the cache does not hold contributes nothing, which
+    // is what `text` answers too --- and the guard that reads this must not
+    // offer a scope over text nobody can see.
+    const selection = from({ page: 0, index: 0 }, { page: 3, index: 4 });
+    expect(selection.hasText(() => null)).toBe(false);
+  });
+
+  it("stops at the first page that contributes", () => {
+    // The point of it. A select-all over a long document built every page's
+    // text in reading order, joined the lot and compared it with "" --- on the
+    // frame loop, because a menu guard reads it.
+    let asked = 0;
+    const selection = from({ page: 0, index: 0 }, { page: 400, index: 4 });
+    selection.hasText(() => {
+      asked++;
+      return page(20);
+    });
+    expect(asked).toBe(1);
+  });
+
+  it("counts the separator two empty pages would be joined by", () => {
+    // The odd case, kept rather than tidied away: a selection running from the
+    // end of one page to the start of the next holds no letters, and `text`
+    // returns the newline between them. Whether that should enable the scope
+    // toggle is a real question and a separate one --- what is asserted here is
+    // that making the guard cheap did not silently answer it.
+    const selection = from({ page: 0, index: 20 }, { page: 1, index: 0 });
+    const look = (): PageText => page(20);
+    expect(selection.text(look)).toBe("\n");
+    expect(selection.hasText(look)).toBe(true);
   });
 });

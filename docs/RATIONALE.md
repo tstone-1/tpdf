@@ -86,6 +86,18 @@ them is wrong. What actually stands behind macOS is that every harness was re-ru
 counts those runs produced belong in `BUILD.md`'s table, which is the single place they are
 written down; a count in prose goes stale the next time a check is added.
 
+**A `Handover` trait over `IN_FD`/`OUT_FD` was proposed and refused, 2026-09-06.** The
+premise was that the handover is spelled per call site. Counted: nine sites and four
+constants --- the two `pub const` declarations, the two argv constants, two argv pushes and
+two argv reads on Windows, one `installs` array driving the macOS fd shuffle, and the two
+reads in `worker_child.rs`. The 123 `cfg(` in the worker family are the subsystem's platform
+split --- spawn, sandbox, job objects, shared memory, signals --- and a trait touches none of
+them. Nine sites is a worse ratio than the thing it would replace, and they sit on the
+fork/exec shuffle and `DuplicateHandle`, where `check_windows.py`'s own recorded limit is that
+a wrong *value* passes it. Not done. Adding a third channel costs two constants, one
+`installs` entry, one argv pair and one reader --- and that is the moment to ask again, with a
+second case to shape the seam.
+
 ## The Windows port: harnesses, printing, packaging
 
 **`backend-probe` runs on Windows too, and passes** --- on `text-base14`, `text-cid`,
@@ -557,6 +569,24 @@ ceiling goes red, an allowlist entry naming a vanished title goes red, and the a
 bullet keeping its parenthetical stays green. The trap entry is *The checker tolerated the thing
 the rule forbade, and the index grew until nothing loaded it*.
 
+**And on 2026-09-06 the index left `AGENTS.md` altogether, because the ceiling was two to
+three weeks out.** The two rules above bounded what a bullet costs and stopped nothing from
+adding bullets: the corpus went from 588 entries to 639, `AGENTS.md` stood at 112,084
+characters of 130,000, and three weeks of history averaged about 130 new entries a week ---
+roughly 10 KB a week of index floor, with the rest of the file growing beside it. No edit
+inside the section bought more than a fortnight. So the table of contents moved into
+`docs/TRAPS.md` itself, where the diff now runs between one file's `## ` groups and its own
+`### ` entries, and `AGENTS.md` keeps thirteen lines naming the groups and saying when each
+is worth opening. That took the file to 62,216 characters, and takes the growth rate of the
+trap corpus off it entirely --- a new entry is now one edit in one file rather than two that
+can drift. What the move gives up is that a reader loading `AGENTS.md` no longer sees the
+titles, only the areas; the bet is that thirteen areas plus one hop is a better use of the
+budget than 639 titles, and it is a bet rather than a measurement. The group names are
+themselves diffed both ways, so an area cannot be added on one side alone. Proved red four
+ways after the move: a bullet naming no entry, an entry named by no bullet, a bullet
+regaining a parenthetical, and a group renamed in `AGENTS.md` only --- which reports both
+directions of the group diff at once.
+
 **`wiring` exists because the box shipped inert and three layers of tests said otherwise.**
 `Viewer` reports what it cannot decide through optional callbacks on `ViewerOptions`;
 `App.svelte` supplies them in one object literal. `onDrawn` was added to the interface, the
@@ -782,3 +812,14 @@ The result is `save.rs` at 3,988 lines from 14,844. What did **not** happen is t
 split by concern --- the append path, the staging and rename, the worker seam and the rewrite
 engine are all still in that one file. They are a design question rather than a file operation,
 and the first two moves are what the review's finding was about.
+
+**The next step of the same cycle work was measured and refused, 2026-09-06.**
+`worker_proto.rs` sits in the production strongly connected component because the protocol
+carries nine other modules' types by value. Moving the two that are plausibly payloads ---
+`save::{Job, Incoming, Update, Refusal}` and `print::Job` --- into a leaf removes two of those
+nine edges and **leaves the component at 20**, because the other seven keep `worker_proto`
+inside it; each of those seven is the *output* of the module named, and moving one moves a
+module's answer away from the module that computes it. Against a measured zero it puts 54
+mutation anchors under `src/save/` and several dozen re-exports at risk, so it was not made.
+What remains is a different job: `worker_proto` generic over its payloads, or every reply type
+into one `model/` tree. Both carry a real design decision.

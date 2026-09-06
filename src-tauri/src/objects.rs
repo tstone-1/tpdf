@@ -33,8 +33,153 @@ use std::collections::HashMap;
 use pdfium_render::prelude::*;
 
 use crate::progressive::RawPage;
-use crate::redact::{FormObject, FormOther, FormText, PageObject};
 use crate::text::RawTextPage;
+
+/// A rectangle in PDF page space --- `[left, bottom, right, top]`, y upwards.
+///
+/// PDFium's own convention for object bounds, which is what the caller has when
+/// it builds one of these, so nothing is converted on the way in. Note this is
+/// **not** the display space `text::to_device` produces: a page with `/Rotate
+/// 90` reports object bounds here unrotated, and a caller holding a reader's
+/// selection has to map it back. `docs/TRAPS.md` has that entry more than once.
+pub type Rect = [f32; 4];
+
+/// One object PDFium found on the page, in the order it enumerated them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageObject {
+    /// Its bounding box, as PDFium reports it.
+    pub bounds: Rect,
+    /// What PDFium calls it: `text`, `image`, `path`, or anything else.
+    ///
+    /// A string rather than an enum because the only two questions asked of it
+    /// are "is this text" and "what do I call it in a refusal", and an enum here
+    /// would be a second vocabulary to keep in step with PDFium's.
+    pub kind: String,
+}
+
+/// A text object drawn inside a Form XObject.
+///
+/// PDFium enumerates a form as **one** page object, so the text inside it is not
+/// in the page's text-object list and [`crate::redact::remove_shows`] cannot
+/// address it. It is the largest carrier a redaction cannot take that is made
+/// of ordinary text ---
+/// `docs/PLAN.md` §6 measured 9,310 of 154,095 realistic regions across 41 real
+/// documents, three times the image count.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormText {
+    /// Its box **in page space**, so it can be compared with a region directly.
+    ///
+    /// PDFium reports a form child's bounds in the *form's* own space --- measured
+    /// on `form-xobject.pdf`, where a form placed at (60, 600) reports a child at
+    /// (0.9, 19.9) --- so whoever builds one of these has already applied the
+    /// form's matrix. Doing it here rather than in the comparison keeps
+    /// [`crate::redact::covered`] free of a second coordinate system.
+    pub bounds: Rect,
+    /// What it draws, for the same reason [`PageObjects::text`]
+    /// carries it: a caller has to be able to say what a removal would take.
+    pub draws: String,
+}
+
+/// One Form XObject on a page, and the text inside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormObject {
+    /// Where the form itself sits in PDFium's enumeration of the page's objects.
+    ///
+    /// The same index [`crate::redact::Unhandled::at`] carries, and the index
+    /// that identifies *which* form a removal is aimed at ---
+    /// `remove_form_shows` finds the
+    /// form's stream by counting `Do` operations in the page's content, and this
+    /// is the position it counts to.
+    pub at: usize,
+    /// Its text objects, in PDFium's order --- which is the order the show
+    /// operators appear in the form's own content stream, and the order a
+    /// removal addresses them by.
+    pub text: Vec<FormText>,
+    /// What else is inside that this does not reach.
+    ///
+    /// **A nested form is the case that matters**: descending one level is a
+    /// decision, and text a level further down has to be reported rather than
+    /// silently missed. An image or a path inside a form is the same refusal the
+    /// page level already makes, one level down.
+    ///
+    /// **"The same refusal" is what that last sentence claimed and not what the
+    /// code did**, and it is kept because it names the defect exactly: the page
+    /// level refuses an object *the region covers*, and this level refused every
+    /// child of a form the region touched, wherever on the sheet it sat. A form
+    /// is routinely a whole-page container --- a letterhead, a header band, a
+    /// chart --- so a region over one line inside one reported every picture in
+    /// the document's furniture. Measured over 40 real documents at 2,893
+    /// word-sized regions: form children were 636 of the 1,131 refusals, 56%,
+    /// and **every image refusal in the corpus** was one --- of which **174,
+    /// 15.4% of all refusals, were about objects the region does not cover**.
+    /// Each carries its box now, and [`crate::redact::covered`] asks the same
+    /// question of it that it asks of a page object.
+    pub unreachable: Vec<FormOther>,
+}
+
+/// One thing inside a Form XObject that a removal cannot address.
+///
+/// Separate from [`crate::redact::Unhandled`] rather than a widening of it,
+/// because the two carry different things for different readers: `Unhandled`
+/// crosses the IPC
+/// boundary and says *what* a region could not take, and a box is no use to the
+/// panel that renders that sentence. This is the placement fact
+/// [`crate::redact::covered`] needs in order to decide whether to report it at
+/// all, and it never leaves
+/// the worker.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormOther {
+    /// Its box in the **page's** own space, the form's matrix already applied.
+    ///
+    /// [`FormText::bounds`]'s convention exactly, and for that field's reason:
+    /// PDFium answers in the form's space, and applying the matrix there rather
+    /// than here keeps [`crate::redact::covered`] free of a second coordinate system.
+    ///
+    /// A child PDFium enumerated and would not hand over is unmeasurable, which
+    /// overlaps every region --- so an object that cannot be placed cannot be
+    /// excluded either, and the destructive direction stays the default.
+    pub bounds: Rect,
+    /// What it is, in [`crate::redact::Unhandled::kind`]'s vocabulary.
+    pub kind: String,
+}
+
+/// A rectangle with its corners the way round the comparison below assumes.
+///
+/// PDFium reports `[left, bottom, right, top]`, and a caller's region may arrive
+/// with either pair the other way --- a drag upwards and to the left produces
+/// exactly that --- which would otherwise make an ordinary rectangle overlap
+/// nothing at all and redact nothing while reporting success.
+///
+/// One function rather than the same `min`/`max` pair written out twice: two
+/// near-copies is the shape that drifts, and it drifted here first. The mutation
+/// aimed at one copy survived, because the test that was meant to catch it
+/// reversed *both* axes and the other copy rescued it.
+#[must_use]
+fn normalised(rect: Rect) -> Rect {
+    [
+        rect[0].min(rect[2]),
+        rect[1].min(rect[3]),
+        rect[0].max(rect[2]),
+        rect[1].max(rect[3]),
+    ]
+}
+
+/// Whether two page-space rectangles share any area.
+///
+/// Strict comparisons throughout: two rectangles sharing only an edge do not
+/// overlap, so a region drawn flush against a line of text does not eat it.
+///
+/// `pub` for [`crate::ocr::control_from_page`], which has to ask the same
+/// question of the same page: which words a region covers decides what the
+/// removal takes *and* which words are left to read a control back from. Two
+/// answers to that would let the gate certify against a word the removal was
+/// supposed to have taken.
+#[must_use]
+pub fn overlaps(a: Rect, b: Rect) -> bool {
+    let a = normalised(a);
+    let b = normalised(b);
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
 
 /// A page's objects, and what the text ones draw.
 #[derive(Debug, Clone, Default, PartialEq)]

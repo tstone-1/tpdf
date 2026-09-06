@@ -232,6 +232,72 @@ export function allRows(items: OutlineItem[]): Row[] {
   return flatten(items, EXPAND_ALL);
 }
 
+/** One navigable row, reduced to where it lands and where it sits in the tree. */
+export interface Reached {
+  id: string;
+  page: number;
+  top: number;
+  /** Position in document order, which is what breaks a tie. */
+  at: number;
+}
+
+/**
+ * The navigable rows sorted by where in the document they land.
+ *
+ * Built once per outline, for {@link currentIdIn}. `currentId` next door
+ * answers the same question by walking every row, which is right for a single
+ * call and wrong for the caller that has one: `sidebar.ts` asks on every frame
+ * where the rounded scroll position moved, and a long technical manual has
+ * thousands of entries --- so the walk was a few thousand comparisons per frame
+ * for an answer that changes a handful of times a document.
+ *
+ * The sort is by `(page, top)` with document order breaking a tie, which is
+ * exactly the order {@link currentId}'s comparison ranks its candidates in ---
+ * so the answer is the last entry at or before the reader, and a binary search
+ * finds it.
+ */
+export function reachOrder(rows: readonly Row[]): Reached[] {
+  const reached: Reached[] = [];
+  for (const [at, row] of rows.entries()) {
+    if (!isNavigable(row.target)) continue;
+    reached.push({ id: row.id, page: row.target.page, top: row.target.top_pt ?? 0, at });
+  }
+  reached.sort((a, b) => a.page - b.page || a.top - b.top || a.at - b.at);
+  return reached;
+}
+
+/**
+ * {@link currentId} against a prepared {@link reachOrder}.
+ *
+ * Same answer, in `log n` comparisons rather than `n`. The two are checked
+ * against each other in `outline.test.ts` over a scrambled outline, because the
+ * only thing that makes a second implementation safe here is that something
+ * compares them --- and a rule stated twice is a rule that drifts, which this
+ * repository has an entry about.
+ */
+export function currentIdIn(
+  order: readonly Reached[],
+  page: number,
+  top: number,
+): string | null {
+  // The tolerance is only ever applied on the reader's own page: an entry on an
+  // earlier page is behind them however far down it sits. That is what makes
+  // the test below monotone along the order, and so searchable.
+  const limit = top + REACHED_TOLERANCE_PT;
+  let low = 0;
+  let high = order.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    const row = order[mid];
+    const behind =
+      row !== undefined &&
+      (row.page < page || (row.page === page && row.top <= limit));
+    if (behind) low = mid + 1;
+    else high = mid;
+  }
+  return low === 0 ? null : (order[low - 1]?.id ?? null);
+}
+
 /**
  * The entry the reader is currently inside, by id, or `null`.
  *

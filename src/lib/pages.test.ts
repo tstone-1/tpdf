@@ -10,6 +10,8 @@ import {
   outlineIn,
   PageMap,
   pageId,
+  quarterTurns,
+  slotOfIdIn,
   unedited,
   type PageView,
 } from "./pages";
@@ -24,6 +26,72 @@ function map(...views: [id: number, source: number, turns?: number][]): PageMap 
     })),
   );
 }
+
+describe("quarterTurns", () => {
+  it("leaves a turn that is already 0..3 alone", () => {
+    expect([0, 1, 2, 3].map(quarterTurns)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("brings a negative turn round to the same picture", () => {
+    // The case the double reduction exists for, and the one a bare `% 4`
+    // fails: `rotateBy(-1)` on an upright page is three quarter turns
+    // clockwise, and a raw `-1` indexes nothing in the four-entry tables that
+    // decide reading order and tile coordinates.
+    expect(quarterTurns(-1)).toBe(3);
+    expect(quarterTurns(-2)).toBe(2);
+    expect(quarterTurns(-3)).toBe(1);
+    expect(quarterTurns(-4)).toBe(0);
+    expect(quarterTurns(-9)).toBe(3);
+  });
+
+  it("reduces a turn past three", () => {
+    // Reachable by addition rather than by a press: the view's rotation plus a
+    // page's own plus an edit's is three sources of at most three each.
+    expect(quarterTurns(4)).toBe(0);
+    expect(quarterTurns(6)).toBe(2);
+    expect(quarterTurns(4001)).toBe(1);
+  });
+
+  it("agrees with a full turn in either direction, over a whole cycle", () => {
+    // The property, rather than another handful of points: adding or removing
+    // four quarter turns is the identity, which is what makes it safe for the
+    // callers to sum their rotations before normalising rather than after.
+    for (let t = -8; t <= 8; t++) {
+      expect(quarterTurns(t + 4)).toBe(quarterTurns(t));
+      expect(quarterTurns(t - 4)).toBe(quarterTurns(t));
+    }
+  });
+});
+
+describe("slotOfIdIn", () => {
+  /** The list a state reply carries, as three pages in file order. */
+  function list(...ids: number[]): PageView[] {
+    return ids.map((id, at) => ({
+      id: pageId(id),
+      source: { baseline: at },
+      turns: 0,
+    }));
+  }
+
+  it("answers where the page is now, not where it was", () => {
+    // The reason a caller asks late. Page id 3 was slot 2 when the round trip
+    // that measures it went out; a deletion above it while that was in flight
+    // makes it slot 1, and a command sent against slot 2 crops the page that
+    // followed it instead.
+    expect(slotOfIdIn(list(1, 2, 3), pageId(3))).toBe(2);
+    expect(slotOfIdIn(list(1, 3), pageId(3))).toBe(1);
+  });
+
+  it("answers nothing for a page that is no longer there", () => {
+    // Deleted while the measurement was in flight. `undefined` rather than -1,
+    // so a caller cannot use it as an index by accident.
+    expect(slotOfIdIn(list(1, 2), pageId(3))).toBeUndefined();
+  });
+
+  it("answers the first slot when one page is shown twice", () => {
+    expect(slotOfIdIn(list(3, 1, 3), pageId(3))).toBe(0);
+  });
+});
 
 describe("PageMap", () => {
   it("translates a slot to the page of the file it draws", () => {

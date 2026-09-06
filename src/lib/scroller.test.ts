@@ -21,6 +21,7 @@ import {
   blankFill,
   displayedSize,
   Scroller,
+  TIER1_WIDTH,
   type PageSize,
   type ScrollerOptions,
 } from "./scroller";
@@ -570,6 +571,146 @@ describe("Scroller geometry on a mixed-size document", () => {
     tiles.fetchTile.mockClear();
     scroller.frame(0, performance.now());
     expect(reach(1)).toEqual({ right: A3_LANDSCAPE.width_pt, columns: 3 });
+  });
+
+  it("lays the document out once for a screenful of learnt sizes", () => {
+    // The viewer learns sizes on the frame path --- every visible page's text
+    // carries its dimensions --- so the frames after a lazily opened document
+    // correct a screenful of pages at once. One call each ran a whole-document
+    // geometry pass and a relayout apiece, and every one of them but the last
+    // was undone before anything reached the screen.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 4),
+    );
+    const inner = scroller as unknown as { computeGeometry(): void };
+    const real = inner.computeGeometry.bind(scroller);
+    let passes = 0;
+    inner.computeGeometry = (): void => {
+      passes++;
+      real();
+    };
+
+    expect(
+      scroller.notePageSizes([
+        { page: 1, size: A3_LANDSCAPE },
+        { page: 2, size: A5 },
+        { page: 3, size: A3_LANDSCAPE },
+      ]),
+    ).toBe(true);
+    expect(passes).toBe(1);
+
+    // The control: the sizes actually landed, so the count above is about one
+    // pass doing the work of three rather than about a call that did nothing.
+    expect(scroller.pageTopOf(2) - scroller.pageTopOf(1)).toBeGreaterThan(
+      A5.height_pt,
+    );
+    expect(scroller.knowsPageSize(3)).toBe(true);
+  });
+
+  it("asks for no sharp tile while the zoom is still moving", async () => {
+    // A trackpad pinch is a wheel event per frame and a window drag a resize per
+    // frame, and each one is a new scale: the tiles on screen are dropped, a
+    // screenful is asked for at the new zoom, and next frame all of it is
+    // withdrawn for a scale the reader has already left. What reaches the
+    // renderer is `maxInFlight` tiles a frame, none of which is ever drawn.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 4),
+    );
+    const now = performance.now();
+    scroller.frame(0, now);
+    await settle();
+    // The control, and it is what says the fixture asks for tiles at all.
+    expect(tiles.fetchTile).toHaveBeenCalled();
+
+    tiles.fetchTile.mockClear();
+    scroller.setZoom(1.4, 100);
+    scroller.frame(0, now + 10);
+    scroller.frame(0, now + 20);
+    scroller.frame(0, now + 30);
+    await settle();
+    expect(
+      tiles.fetchTile.mock.calls.filter(
+        (call) => (call[0] as { width: number }).width > TIER1_WIDTH,
+      ),
+    ).toEqual([]);
+
+    // And asked for once it has been still. The settle is a moment rather than
+    // a flag precisely so that this is the *last* scale rather than the first.
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, now + 200);
+    await settle();
+    // Named as tier 2 rather than "anything was asked for": placeholders are
+    // asked for throughout the settle, so a bare call count here is satisfied by
+    // a settle that never ends.
+    expect(
+      tiles.fetchTile.mock.calls.filter(
+        (call) => (call[0] as { width: number }).width > TIER1_WIDTH,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("still asks for placeholders during the settle", async () => {
+    // What makes the wait invisible rather than blank. A tier-1 bitmap is
+    // rendered at a fixed width and stretched by CSS, so it survives every
+    // scale the gesture passes through --- and it is the picture the reader
+    // watches move. Holding it back too would leave the page grey for the
+    // length of the gesture.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 4),
+    );
+    const now = performance.now();
+    scroller.setZoom(1.4, 100);
+    scroller.frame(0, now);
+    await settle();
+    expect(
+      tiles.fetchTile.mock.calls.filter(
+        (call) => (call[0] as { width: number }).width === TIER1_WIDTH,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("wakes the loop when the settle ends, with nothing else outstanding", () => {
+    // `nextRetryMs` is what the viewer arms a timeout on as it goes idle. A
+    // settle that ended with nothing backed off would leave the page on its
+    // placeholder until the reader touched something else --- the same
+    // permanently unsharpened square the backoff wake exists to prevent, by a
+    // second route.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 4),
+    );
+    expect(scroller.nextRetryMs(performance.now())).toBeNull();
+    scroller.setZoom(1.4, 100);
+    // Read after the settle was armed, not before it: the deadline is set from
+    // the clock inside `setZoom`, so a reference taken earlier makes the answer
+    // the settle *plus* however long the two lines took.
+    const wait = scroller.nextRetryMs(performance.now());
+    expect(wait).not.toBeNull();
+    expect(wait ?? 0).toBeGreaterThan(0);
+    expect(wait ?? 0).toBeLessThanOrEqual(100);
+  });
+
+  it("does not lay the document out when every size is one it already had", () => {
+    // The early return `notePageSize` has, kept across the batch: `learnGeometry`
+    // skips a page whose size is known, but the model re-supplies page 1's on
+    // every open and a batch of nothing must not relay the document out.
+    const scroller = new Scroller(
+      dom.root as unknown as HTMLElement,
+      mixed([A4], 4),
+    );
+    const inner = scroller as unknown as { computeGeometry(): void };
+    const real = inner.computeGeometry.bind(scroller);
+    let passes = 0;
+    inner.computeGeometry = (): void => {
+      passes++;
+      real();
+    };
+
+    expect(scroller.notePageSizes([{ page: 0, size: A4 }])).toBe(false);
+    expect(passes).toBe(0);
   });
 });
 

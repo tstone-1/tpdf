@@ -567,3 +567,49 @@ describe("the redaction tool shares the crop's drag and nothing else", () => {
     viewer.destroy();
   });
 });
+
+describe("a crop whose geometry lands after the pages have moved", () => {
+  it("does not write the geometry into the slot the page has left", async () => {
+    // A crop costs one round trip --- the model answers with the *box*, and the
+    // displayed size and the offset inside the file's page can only be computed
+    // by the backend --- so the walk that learns them awaits per page. What is
+    // held across that await is a slot, and a slot belongs to whatever moves
+    // into it: reorder the document while the geometry is in flight and the
+    // cropped page's size is recorded against a page that was never cropped,
+    // which lays that page out at the cropped page's dimensions.
+    const geometries: ((at: CropGeometry) => void)[] = [];
+    core.invoke.mockImplementation((command: string) =>
+      command === "page_geometry"
+        ? new Promise<CropGeometry>((resolve) => geometries.push(resolve))
+        : Promise.resolve(null),
+    );
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 3,
+      pages: [PAGE],
+    });
+
+    const one: PageView = { id: pageId(1), source: { baseline: 0 }, turns: 0 };
+    const two: PageView = { id: pageId(2), source: { baseline: 1 }, turns: 0 };
+    const three: PageView = {
+      id: pageId(3),
+      source: { baseline: 2 },
+      turns: 0,
+      crop: CROP,
+    };
+    viewer.setPages([one, two, three]);
+    await settle();
+    expect(geometries.length).toBe(1);
+
+    // The cropped page moves to the front, so slot 2 now holds a page with no
+    // crop and no known size.
+    viewer.setPages([three, one, two]);
+    await settle();
+    expect(viewer.knowsPageSize(2)).toBe(false);
+
+    geometries[0]?.(GEOMETRY);
+    await settle();
+    expect(viewer.knowsPageSize(2)).toBe(false);
+    viewer.destroy();
+  });
+});

@@ -529,24 +529,41 @@ impl Walk<'_> {
 
     /// Quarter-turns a page is displayed rotated by, cached.
     ///
-    /// This is the one place in the walk that loads a page, and it is why it is
-    /// asked for lazily: `FPDFPage_GetRotation` needs an `FPDF_PAGE`, while
-    /// everything else here reads the page dictionary through
-    /// `FPDF_GetPageSizeByIndexF` and never pays a load at all. Only a
-    /// destination that actually names coordinates reaches this, and the answer
-    /// is cached per page --- so an outline of headings all pointing at the top
-    /// of their page still loads nothing.
+    /// **Out of the page tree rather than out of a loaded page**, which is what
+    /// makes this free. `FPDFPage_GetRotation` needs an `FPDF_PAGE`, so this was
+    /// the one place in the walk that loaded a page --- and an outline over four
+    /// hundred pages, each bookmark naming coordinates, loaded four hundred of
+    /// them at 44 ms apiece on a complex page, at open, before the reader had
+    /// clicked anything. Everything else here reads the page dictionary through
+    /// `FPDF_GetPageSizeByIndexF` and pays no load at all.
     ///
-    /// A page that cannot be loaded is treated as unrotated, which is what it
-    /// was before this existed.
+    /// **It is not a second reading of `/Rotate`.** `pagetree::rotations_from`
+    /// applies PDFium's own formula --- truncating division by 90, modulo 4, the
+    /// wrap for a negative --- over the same inheritance walk this module's
+    /// sibling uses for `/MediaBox`, and `outline-probe` compares the two tables
+    /// page by page on every corpus. Two rotation tables that disagree is a trap
+    /// this repository has an entry for, which is why the comparison is a check
+    /// rather than a comment.
+    ///
+    /// The page load remains as the fallback, for a document whose page tree
+    /// will not parse or disagrees with the renderer about the page count. A
+    /// page that cannot be loaded either is treated as unrotated, which is what
+    /// it was before any of this existed.
     fn turns_of(&mut self, page: u32) -> u8 {
         if let Some(&turns) = self.turns.get(&page) {
             return turns;
         }
+        let pages = self.page_count as usize;
         let turns = self
             ._borrow
-            .page(page)
-            .map(|loaded| loaded.quarter_turns())
+            .graph()
+            .rotation(page, pages)
+            .or_else(|| {
+                self._borrow
+                    .page(page)
+                    .map(|loaded| loaded.quarter_turns())
+                    .ok()
+            })
             .unwrap_or(0);
         self.turns.insert(page, turns);
         turns

@@ -7,14 +7,23 @@
  * What is here is the walk: which page to ask about next, when to stop, and how
  * to abandon a scan the moment the query changes.
  *
- * ## One page per request, sequentially
+ * ## A short run per request, sequentially
  *
  * The render thread is FIFO and shared with tiles. A single request that scanned
  * the whole document would hold it for a second and a half on the 775-page
- * corpus and every tile queued behind it would wait, so the unit is a page. They
- * are asked for one at a time rather than in parallel for the same reason there
- * is one render thread at all --- concurrent requests would not be served
- * concurrently, they would only make the queue longer and cancellation slower.
+ * corpus and every tile queued behind it would wait --- so the unit is a run of
+ * {@link RUN_PAGES} pages, which is tens of milliseconds. Runs are asked for one
+ * at a time rather than in parallel for the same reason there is one render
+ * thread at all --- concurrent requests would not be served concurrently, they
+ * would only make the queue longer and cancellation slower.
+ *
+ * **It was one page per request until 26.9.2**, and the page is still the unit
+ * wherever a run cannot be formed: the wrapped walk's last step, a scope whose
+ * pages are not contiguous, a slot whose file page is not the next one, and a
+ * run whose request failed. What a run buys is round trips --- 49 instead of 775
+ * on the dense corpus --- and the webview boundary is the expensive one. See
+ * {@link runFrom}, which decides where a run may run, and `render::run_search_range`,
+ * which decides how much of one may be answered at once.
  *
  * ## Cancellation is not asking again
  *
@@ -176,6 +185,97 @@ export interface PageMatches {
   problem?: string;
   /** This page's tail, absent when the query cannot span a break. */
   tail?: Carry;
+  /**
+   * The pages after this one, when the request asked about a run.
+   *
+   * Absent for a single-page request, and never nested more than one deep. The
+   * pages here are a **prefix** of what was asked for: the worker stops when a
+   * reply would outgrow its bound, so the walk continues from the first page it
+   * was given no answer for. Mirrors `search::PageMatches::more`.
+   */
+  more?: PageMatches[];
+}
+
+/**
+ * How many pages one request may ask about.
+ *
+ * A trade with two sides and neither of them is throughput. Larger is fewer
+ * round trips; larger is also longer that a tile queued behind the search waits,
+ * because the render thread is FIFO. Sixteen is about 30 ms on the dense corpus
+ * against the ~250 ms a whole-document request would take, and it is what turns
+ * a 775-page scan from 775 round trips into 49.
+ */
+export const RUN_PAGES = 16;
+
+/**
+ * How many entries from `at` may go into one request.
+ *
+ * A run has to be contiguous **in both vocabularies**: ascending by one in slots
+ * so that the walk's own carry rule (`carried.page === page - 1`) holds inside
+ * it, and ascending by one in file pages so that the backend's does too. On an
+ * unedited document those are the same sequence; on an edited one they are not,
+ * and a run that satisfied only the first would ask the backend to stitch two
+ * pages that do not touch.
+ *
+ * Returns the *slots*, and a run of one is the caller's signal to use the
+ * single-page path. Every entry whose scope is not the whole page ends the run
+ * before it, because a hit spanning a break is clipped against two scope entries
+ * and the run path files them the same way the single path does --- keeping the
+ * two identical is worth more than one extra page per request.
+ */
+export function runFrom(
+  plan: ScopeRange[],
+  at: number,
+  sourceOf: (slot: number) => FilePage | undefined,
+): number[] {
+  const run: number[] = [];
+  let previousSource: number | undefined;
+  for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {
+    const entry = plan[step];
+    if (entry === undefined) break;
+    const source = sourceOf(entry.page);
+    if (source === undefined) break;
+    const last = run[run.length - 1];
+    if (last !== undefined && entry.page !== last + 1) break;
+    if (previousSource !== undefined && source !== previousSource + 1) break;
+    run.push(entry.page);
+    previousSource = source;
+  }
+  return run;
+}
+
+/**
+ * Pairs a run's reply with the slots it was asked about.
+ *
+ * **A prefix, and never more pairs than there are answers.** The backend may
+ * answer fewer pages than were asked for --- a reply is bounded, so a document
+ * with hits on every line shortens the run --- and a walk that filed one answer
+ * per slot regardless would attribute page 20's hits to page 24 and report the
+ * pages in between as searched. The reverse guard matters too: a reply carrying
+ * *more* entries than were asked about is a backend defect, and the extra
+ * answers have no slot to belong to.
+ *
+ * Pure, and exported, because this is where a run can go wrong in a way that
+ * looks like a working search: `search.test.ts` is deliberately free of a mocked
+ * backend, and the alternative to extracting this was a decision reachable only
+ * by driving the real app.
+ */
+export function runAnswers(
+  slots: number[],
+  reply: PageMatches,
+): { slot: number; answer: PageMatches }[] {
+  const answers = [reply, ...(reply.more ?? [])];
+  const paired: { slot: number; answer: PageMatches }[] = [];
+  // Over the answers rather than by index, so the only guard here is the one
+  // that does something: `answers.entries()` cannot yield an undefined answer,
+  // where `answers[step]` would need a check the loop bound has already made
+  // unreachable. A guard whose deletion reddens nothing is not a guard.
+  for (const [step, answer] of answers.entries()) {
+    const slot = slots[step];
+    if (slot === undefined) break;
+    paired.push({ slot, answer });
+  }
+  return paired;
 }
 
 /** Scans a document for a query, accumulating matches as they are found. */
@@ -522,6 +622,67 @@ export class Search {
       // the search that is running now.
       if (generation !== this.generation) return false;
 
+      return file(page, result, joinsOnly);
+    };
+
+    /**
+     * Asks about a run of pages in one request, and files every answer.
+     *
+     * Returns how many pages were answered, which is **not** always how many
+     * were asked about: a reply is bounded, so the worker may stop short and the
+     * caller continues from where it stopped. Zero means the request failed, and
+     * the caller falls back to asking about the first page on its own --- a run
+     * that could not be read must not silently skip sixteen pages.
+     *
+     * `-1` is "abandon the scan", which is what `visit` says with `false`: the
+     * query was superseded, or a page reported a problem that is a property of
+     * the query rather than of the page.
+     */
+    const visitRun = async (slots: number[]): Promise<number> => {
+      const sources: FilePage[] = [];
+      for (const slot of slots) {
+        const source = this.sourceOf(slot);
+        if (source === undefined) return 0;
+        sources.push(source);
+      }
+      const first = slots[0];
+      if (first === undefined) return 0;
+      const carry = carried?.page === first - 1 ? carried.carry : undefined;
+      let reply: PageMatches | null = null;
+      try {
+        reply = await call("search_page", {
+          doc: this.doc,
+          page: sources[0] as FilePage,
+          pages: sources,
+          query,
+          options,
+          carry,
+        });
+      } catch {
+        return 0;
+      }
+      if (generation !== this.generation) return -1;
+
+      const answers = runAnswers(slots, reply);
+      for (const { slot, answer } of answers) {
+        if (!file(slot, answer, false)) return -1;
+      }
+      return answers.length;
+    };
+
+    /**
+     * Files one page's answer: the carry, the counters, and the hits in scope.
+     *
+     * Shared by the single-page and the run path so the two cannot disagree
+     * about what a page contributes --- which is the drift `docs/TRAPS.md`
+     * records as *the second copy of a gated list is the one that drifts*.
+     * Returns "keep going".
+     */
+    const file = (
+      page: number,
+      result: PageMatches | null,
+      joinsOnly: boolean,
+    ): boolean => {
       if (result?.problem) {
         // A property of the query, not of this page, so there is nothing to be
         // learned from asking about the other 774.
@@ -563,8 +724,35 @@ export class Search {
       return true;
     };
 
-    for (const { page } of plan) {
-      if (!(await visit(page))) return;
+    // The walk, in runs where the plan allows one. A run is a request per
+    // sixteen pages instead of a request per page, and on the 775-page corpus
+    // that is 49 round trips rather than 775 --- each of which crosses the
+    // webview boundary, which `AGENTS.md` records as the expensive one.
+    //
+    // **Runs are bounded at sixteen deliberately.** The render thread is FIFO
+    // and shared with tiles, so a request is also how long a reader scrolling
+    // during a search waits for the next tile: the whole document in one request
+    // would be a second and a half of that. Sixteen pages is tens of
+    // milliseconds on the dense corpus, and the cache below the search makes a
+    // repeated query far cheaper than that again.
+    let at = 0;
+    while (at < plan.length) {
+      const run = runFrom(plan, at, this.sourceOf);
+      if (run.length > 1) {
+        const answered = await visitRun(run);
+        if (answered < 0) return;
+        if (answered > 0) {
+          at += answered;
+          continue;
+        }
+        // The run failed as a whole. Fall through to the single-page path for
+        // its first page rather than skipping the run: a request that could not
+        // be made says nothing about the pages it named.
+      }
+      const entry = plan[at];
+      if (entry === undefined) break;
+      if (!(await visit(entry.page))) return;
+      at += 1;
     }
 
     // The one break a wrapped walk never looked across. Starting at page 400

@@ -38,6 +38,8 @@
 use std::cell::OnceCell;
 use std::path::PathBuf;
 
+use lopdf::Document;
+
 use crate::annots::{self, Comments};
 use crate::docinfo::{self, Properties};
 use crate::encoding::{self, PageMapping};
@@ -131,6 +133,37 @@ pub struct DocumentGraph {
     /// than the others: it is read on the path that loads a page, which is a path
     /// a reader waits on. A document that needs it pays once.
     sheets: OnceCell<Result<Vec<[f32; 4]>, String>>,
+    /// Every page's quarter-turns out of the page tree, read at most once.
+    ///
+    /// Lazy like the rest, and asked for by exactly one caller: the outline
+    /// walk, for a bookmark whose destination names coordinates. See
+    /// [`crate::pagetree::rotations_from`], which is where the `FPDF_LoadPage`
+    /// this replaces is described.
+    rotations: OnceCell<Result<Vec<u8>, String>>,
+    /// The document's object graph, parsed at most once for all six readers.
+    ///
+    /// **This was five parses of the same bytes.** Every one of the caches above
+    /// called its own `Document::load_mem_with_options`, so a reader who opened
+    /// the comments panel on a document whose links had been warmed and whose
+    /// mapping the accessibility layer had asked for paid the parse three times
+    /// --- 5.8 ms each on the 775-page document and 11.9 ms on the 337 MB scan,
+    /// which is the *whole* cost of those features, since what each of them then
+    /// does is a walk over objects already in memory.
+    ///
+    /// Lazy for the reason [`DocumentGraph::mapping`] is: nothing on the startup
+    /// path asks a question that reaches it, and 6--12 ms is a quarter of the
+    /// margin against the 300 ms target. Holding it costs the object graph's
+    /// memory for the life of the open document --- headers and dictionaries
+    /// rather than stream data, which is why the parse tracks object count and
+    /// not file size.
+    parsed: OnceCell<Result<Document, String>>,
+    /// How many times the parse above has actually run.
+    ///
+    /// **An accounting observable**, and it exists because the saving has no
+    /// other symptom: five parses and one produce identical answers and differ
+    /// by tens of milliseconds nobody is timing. Read by this module's own tests,
+    /// which is what stops the caches quietly going back to parsing per reader.
+    parses: std::cell::Cell<usize>,
 }
 
 impl DocumentGraph {
@@ -160,6 +193,34 @@ impl DocumentGraph {
     /// reach. `None` is a file that has gone or become unreadable since it was
     /// opened --- which is a real state, not a defect: see `docs/PLAN.md` §5 on
     /// external modification.
+    /// The object graph, parsed on the first question that needs it.
+    ///
+    /// # Errors
+    ///
+    /// The bytes not being readable, or `lopdf` refusing them. The error is
+    /// cloned out rather than borrowed, so every caller can hand it on.
+    fn parsed(&self) -> Result<&Document, String> {
+        self.parsed
+            .get_or_init(|| {
+                let bytes = self
+                    .bytes()
+                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+                self.parses.set(self.parses.get() + 1);
+                encoding::load(&bytes, self.password())
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    /// How many times this document's object graph has been parsed.
+    ///
+    /// At most one for the life of a graph, whatever is asked of it --- see
+    /// [`DocumentGraph::parsed`], where the reason that is worth counting is.
+    #[must_use]
+    pub fn parses(&self) -> usize {
+        self.parses.get()
+    }
+
     fn bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
         match self.source.as_ref()? {
             Source::Bytes(bytes) => Some(std::borrow::Cow::Borrowed(*bytes)),
@@ -189,10 +250,10 @@ impl DocumentGraph {
                     pages
                 ]
             };
-            let Some(bytes) = self.bytes() else {
+            let Ok(document) = self.parsed() else {
                 return unknown();
             };
-            encoding::scan(&bytes, pages, self.password()).unwrap_or_else(|_| unknown())
+            encoding::scan_from(document, pages).unwrap_or_else(|_| unknown())
         })
     }
 
@@ -204,12 +265,7 @@ impl DocumentGraph {
     /// `crate::annots`.
     pub fn comments(&self, pages: usize) -> Result<Comments, String> {
         self.comments
-            .get_or_init(|| {
-                let bytes = self
-                    .bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                annots::scan(&bytes, pages, self.password())
-            })
+            .get_or_init(|| annots::scan_from(self.parsed()?, pages))
             .clone()
     }
 
@@ -222,12 +278,7 @@ impl DocumentGraph {
     /// is better told than left clicking.
     pub fn links(&self, pages: usize) -> Result<Links, String> {
         self.links
-            .get_or_init(|| {
-                let bytes = self
-                    .bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                links::scan(&bytes, pages, self.password())
-            })
+            .get_or_init(|| links::scan_from(self.parsed()?, pages))
             .clone()
     }
 
@@ -239,10 +290,16 @@ impl DocumentGraph {
     pub fn properties(&self, pages: u32) -> Result<Properties, String> {
         self.properties
             .get_or_init(|| {
+                // The bytes as well as the graph --- see `docinfo::scan_from`,
+                // which reads the file's size, its revisions and each
+                // signature's appendix out of the stream rather than out of the
+                // objects. For a worker that is the mapping it already holds;
+                // for a probe that opened a path it is a second read of the
+                // file, paid only by a caller that opens the properties dialog.
                 let bytes = self
                     .bytes()
                     .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                docinfo::scan(&bytes, pages, self.password())
+                docinfo::scan_from(self.parsed()?, &bytes, pages, self.password())
             })
             .clone()
     }
@@ -409,6 +466,20 @@ impl DocumentGraph {
         self.sheets.get().is_some()
     }
 
+    /// One page's quarter-turns out of the page tree, parsing at most once.
+    ///
+    /// `None` when the page tree cannot answer --- it will not parse, or it
+    /// disagrees with the renderer about the page count. The caller falls back
+    /// to asking PDFium, which is what it did for every page before this.
+    #[must_use]
+    pub fn rotation(&self, index: u32, pages: usize) -> Option<u8> {
+        self.rotations
+            .get_or_init(|| pagetree::rotations_from(self.parsed()?, pages))
+            .as_ref()
+            .ok()
+            .and_then(|turns| turns.get(index as usize).copied())
+    }
+
     /// One page's box out of the page tree, parsing the document at most once.
     ///
     /// See [`DocumentGraph::sheets`] for why this is lazy and why most documents
@@ -416,14 +487,113 @@ impl DocumentGraph {
     #[must_use]
     pub fn sheet(&self, index: u32, pages: usize) -> Option<[f32; 4]> {
         self.sheets
-            .get_or_init(|| {
-                let bytes = self
-                    .bytes()
-                    .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-                pagetree::displayed_boxes(&bytes, pages, self.password())
-            })
+            .get_or_init(|| pagetree::displayed_boxes_from(self.parsed()?, pages))
             .as_ref()
             .ok()
             .and_then(|boxes| boxes.get(index as usize).copied())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DocumentGraph, Source};
+    use lopdf::{dictionary, Document, Object, ObjectId};
+
+    /// A two-page document, serialised, so the graph parses what it is given.
+    ///
+    /// Through the bytes rather than against a `Document` in hand, for the
+    /// reason `links.rs`'s own fixture builder gives: the load options are where
+    /// a bound lives, and a test that skips them exercises a path the
+    /// application does not take.
+    fn two_pages() -> &'static [u8] {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let kids: Vec<ObjectId> = (0..2)
+            .map(|_| {
+                doc.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                    "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                })
+            })
+            .collect();
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => kids.iter().map(|id| (*id).into()).collect::<Vec<Object>>(),
+                "Count" => 2,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("the fixture must save");
+        // Leaked so the graph can hold a `'static` slice, which is what a worker
+        // hands it: the mapping outlives every document opened over it.
+        Box::leak(bytes.into_boxed_slice())
+    }
+
+    /// Five questions, one parse.
+    ///
+    /// Each of these used to call `Document::load_mem_with_options` for itself,
+    /// so a reader whose links had been warmed, whose accessibility layer had
+    /// asked for the mapping and who then opened the comments panel paid the
+    /// parse three times --- 5.8 ms each on the 775-page document. There is no
+    /// other symptom: every answer is identical either way.
+    #[test]
+    fn one_parse_answers_every_question() {
+        let graph = DocumentGraph::new(Source::Bytes(two_pages()), None);
+        assert_eq!(graph.parses(), 0, "nothing is parsed until something asks");
+
+        assert_eq!(graph.mapping(2).len(), 2);
+        assert_eq!(graph.parses(), 1, "the first question pays for the parse");
+
+        graph.comments(2).expect("the fixture parses");
+        graph.links(2).expect("the fixture parses");
+        graph.properties(2).expect("the fixture parses");
+        assert!(graph.sheet(0, 2).is_some(), "the pages state a box");
+        assert_eq!(
+            graph.parses(),
+            1,
+            "five readers of one document have to share one parse"
+        );
+    }
+
+    /// Asking the same question twice does not parse twice either.
+    ///
+    /// The per-answer caches were already there and this is their control: a
+    /// shared parse that was somehow re-entered per call would still answer
+    /// correctly, and only a count can see it.
+    #[test]
+    fn asking_again_parses_nothing() {
+        let graph = DocumentGraph::new(Source::Bytes(two_pages()), None);
+        graph.comments(2).expect("parses");
+        graph.comments(2).expect("parses");
+        graph.mapping(2);
+        graph.mapping(2);
+        assert_eq!(graph.parses(), 1);
+    }
+
+    /// A graph over bytes that will not parse says so, once, to every reader.
+    ///
+    /// The direction that matters: a failed parse must not be retried per
+    /// question --- five failures of an unreadable document is five times the
+    /// work to learn the same thing --- and must not be reported as an empty
+    /// document, which is the reassuring answer.
+    #[test]
+    fn bytes_that_do_not_parse_fail_once_for_everybody() {
+        let graph = DocumentGraph::new(Source::Bytes(b"not a PDF at all"), None);
+        assert!(graph.comments(1).is_err());
+        assert!(graph.links(1).is_err());
+        assert!(graph.properties(1).is_err());
+        assert_eq!(graph.parses(), 1, "one failed parse, not three");
+        assert!(
+            graph.mapping(1).iter().all(|page| page.truncated),
+            "and the mapping is unknown rather than clean"
+        );
     }
 }

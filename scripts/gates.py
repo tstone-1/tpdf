@@ -92,9 +92,9 @@ trusted, the absent-input ones included.
 
 `traps` is the one gate whose subject is prose, and it is here because prose is
 the only artifact in this repository that nothing mutates. `docs/TRAPS.md` is
-indexed by title in `AGENTS.md`, the index is what an agent actually loads, and
-an index missing an entry answers "is there a trap about this?" with a confident
-no. The *count* had already been moved to `grep -c` authority and stopped
+indexed by title in its own table of contents, grouped the way `AGENTS.md` names
+the groups, and an index missing an entry answers "is there a trap about this?"
+with a confident no. The *count* had already been moved to `grep -c` authority and stopped
 drifting; the titles had not, and were three short on the day this was written.
 It compares the two as **sets**, which is the invariant -- a tally goes stale the
 next time an entry is added, and a set diff needs no number at all.
@@ -157,8 +157,9 @@ def gates() -> "list[tuple[str, list[str], str]]":
         (
             "traps",
             [sys.executable, str(ROOT / "scripts" / "check_trap_index.py")],
-            "the AGENTS.md trap index disagrees with docs/TRAPS.md, carries an "
-            "unallowlisted parenthetical, or AGENTS.md is over its size ceiling",
+            "the docs/TRAPS.md table of contents disagrees with its entries or with "
+            "AGENTS.md's group list, carries an unallowlisted parenthetical, or "
+            "AGENTS.md is over its size ceiling",
         ),
         (
             # Cheap, and it guards the instrument every other dated claim in the

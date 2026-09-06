@@ -377,6 +377,20 @@ def scan_copyleft(
         spdx = str(pkg.get("license") or "")
         if FORBIDDEN.search(spdx):
             problems.append(f"npm {pkg['name']} {pkg['version']}: {spdx}")
+        # The same warning the cargo loop above carries, and it was missing here
+        # for the population where the silence is worse. A lockfile entry with
+        # no `license` field comes out of `npm_shipped_packages` as the literal
+        # `UNKNOWN`, which matches nothing in `FORBIDDEN` --- so a package whose
+        # licence nobody knows passed the copyleft sweep exactly like a package
+        # known to be MIT, and shipped into the notices table saying UNKNOWN
+        # with nothing to say it had never been read. This is the licensing
+        # constraint the whole repository rests on, and an unread licence is the
+        # one case where a quiet pass is the wrong answer.
+        if not spdx or spdx == "UNKNOWN":
+            warnings.append(
+                f"npm {pkg['name']} {pkg['version']} declares no licence in "
+                "package-lock.json -- read node_modules/ before shipping it"
+            )
 
     seen_files = set()
     for label, path in pdfium:

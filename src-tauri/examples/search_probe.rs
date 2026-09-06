@@ -68,12 +68,39 @@ struct Args {
     library: PathBuf,
     file: PathBuf,
     manifest: PathBuf,
+    /// `checks` runs the manifest comparison; `scan` times a whole-document walk.
+    mode: Mode,
+    /// `scan` only: the query to walk the document for.
+    query: String,
+    /// `scan` only: how many times each arm is run.
+    rounds: usize,
+    /// `scan` only: read the query as a pattern.
+    ///
+    /// Its own flag because the compile-once arm is only interesting here: a
+    /// literal query's needle is a fold of a few characters, and a pattern is a
+    /// whole automaton bounded by `PATTERN_SIZE_LIMIT`. Measuring only the
+    /// literal case and reporting the pair as "compiling once saves nothing"
+    /// would be a claim about the cheap half.
+    regex: bool,
+}
+
+/// What this binary is being asked to do.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// The manifest comparison, which is what this probe is for.
+    Checks,
+    /// A timed whole-document walk, interleaved between the two paths.
+    Scan,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut library = PathBuf::from("../vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR);
     let mut file = PathBuf::from("../testdata/multilingual.pdf");
     let mut manifest: Option<PathBuf> = None;
+    let mut mode = Mode::Checks;
+    let mut query = "the".to_string();
+    let mut rounds = 5usize;
+    let mut regex = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -82,6 +109,20 @@ fn parse_args() -> Result<Args, String> {
             "--lib" => library = PathBuf::from(value()?),
             "--file" => file = PathBuf::from(value()?),
             "--manifest" => manifest = Some(PathBuf::from(value()?)),
+            "--mode" => {
+                mode = match value()?.as_str() {
+                    "checks" => Mode::Checks,
+                    "scan" => Mode::Scan,
+                    other => return Err(format!("unknown mode: {other}")),
+                }
+            }
+            "--query" => query = value()?,
+            "--regex" => regex = true,
+            "--rounds" => {
+                rounds = value()?
+                    .parse()
+                    .map_err(|_| "--rounds wants a number".to_string())?
+            }
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -95,6 +136,10 @@ fn parse_args() -> Result<Args, String> {
         library,
         file,
         manifest,
+        mode,
+        query,
+        rounds,
+        regex,
     })
 }
 
@@ -106,6 +151,15 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.mode == Mode::Scan {
+        match scan(&args) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("[FAIL] {e}");
+                std::process::exit(2);
+            }
+        }
+    }
     match run(&args) {
         Ok(true) => {}
         Ok(false) => std::process::exit(1),
@@ -196,6 +250,140 @@ fn options_of(value: &serde_json::Value) -> Options {
         whole_word: flag("wholeWord"),
         regex: flag("regex"),
     }
+}
+
+/// Times a whole-document search, both ways, interleaved.
+///
+/// **The two arms are the two paths, not two implementations of one path.**
+/// `extract` is what a scan did before 26.9.2 --- `text::extract` then
+/// `search::search_page`, a fresh extraction and a freshly compiled query per
+/// page. `cached` is what it does now: the characters out of
+/// `OpenDocument::page_codes` and one `search::Prepared` for the whole walk. A
+/// third arm separates the two effects, because a run that only reported the
+/// pair could not say which of them paid.
+///
+/// Interleaved round by round rather than run as two blocks, for the reason
+/// `AGENTS.md` states about proving a performance change: two blocks back to
+/// back measure the machine's drift as much as the change. What interleaving
+/// cannot control for is a machine that is slow for both arms, which is why
+/// every round is printed rather than only the summary.
+///
+/// The answers are compared as well as timed. A faster arm that finds a
+/// different number of hits has not made the search faster, and a check that
+/// only reported milliseconds could not tell.
+fn scan(args: &Args) -> Result<(), String> {
+    let bindings = bind(&args.library)?;
+    let document = OpenDocument::open(bindings, &args.file, None)?;
+    let pages = document.page_count();
+    let options = Options {
+        regex: args.regex,
+        ..Options::default()
+    };
+    println!(
+        "{} : {pages} pages, {} {:?}, {} rounds",
+        args.file.display(),
+        if args.regex { "pattern" } else { "query" },
+        args.query,
+        args.rounds
+    );
+
+    /// One walk of the whole document, returning the wall time and the hits.
+    fn timed(run: impl FnOnce() -> usize) -> (f64, usize) {
+        let began = std::time::Instant::now();
+        let hits = run();
+        (began.elapsed().as_secs_f64() * 1e3, hits)
+    }
+
+    let mut totals: Vec<(&str, Vec<f64>)> = vec![
+        ("extract  ", Vec::new()),
+        ("cached   ", Vec::new()),
+        ("recompile", Vec::new()),
+    ];
+    let mut answers: Vec<usize> = Vec::new();
+
+    for round in 0..args.rounds {
+        // The old path: a full extraction and a fresh query, per page.
+        let (extract_ms, extract_hits) = timed(|| {
+            let mut hits = 0;
+            for page in 0..pages {
+                let Ok(loaded) = document.page_cropped(page, None) else {
+                    continue;
+                };
+                let Ok(text) = text::extract(&loaded) else {
+                    continue;
+                };
+                hits += search::search_page(&text, page, &args.query, options, None)
+                    .matches
+                    .len();
+            }
+            hits
+        });
+
+        // The new path: cached characters, one compiled query.
+        let (cached_ms, cached_hits) = timed(|| {
+            let prepared = search::Prepared::new(&args.query, options).expect("the query compiles");
+            let mut hits = 0;
+            for page in 0..pages {
+                let Ok(codes) = document.page_codes(page, None) else {
+                    continue;
+                };
+                hits += prepared.search_page(&codes, page, None).matches.len();
+            }
+            hits
+        });
+
+        // The cache without the compile-once, so the two are separable.
+        let (recompile_ms, recompile_hits) = timed(|| {
+            let mut hits = 0;
+            for page in 0..pages {
+                let Ok(codes) = document.page_codes(page, None) else {
+                    continue;
+                };
+                hits += search::search_codes(&codes, page, &args.query, options, None)
+                    .matches
+                    .len();
+            }
+            hits
+        });
+
+        if extract_hits != cached_hits || cached_hits != recompile_hits {
+            return Err(format!(
+                "the arms disagree: {extract_hits} extracted, {cached_hits} cached, \
+                 {recompile_hits} recompiled --- a faster answer that is a different \
+                 answer is not a measurement"
+            ));
+        }
+        answers.push(cached_hits);
+        totals[0].1.push(extract_ms);
+        totals[1].1.push(cached_ms);
+        totals[2].1.push(recompile_ms);
+        println!(
+            "  round {round}: extract {extract_ms:8.1} ms   cached {cached_ms:8.1} ms   \
+             recompile {recompile_ms:8.1} ms   ({cached_hits} hits)"
+        );
+    }
+
+    println!(
+        "  cache holds {} characters of a {} budget",
+        document.cached_chars(),
+        tpdf_lib::textcache::BUDGET_CHARS
+    );
+    for (name, samples) in &totals {
+        let best = samples.iter().copied().fold(f64::INFINITY, f64::min);
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        // The first round is printed apart from the rest, because on the cached
+        // arm it is the round that fills the cache and is therefore the one
+        // round that measures the old cost. A mean over all of them would hide
+        // exactly the thing the cache does.
+        let after = &samples[1.min(samples.len() - 1)..];
+        let after_mean = after.iter().sum::<f64>() / after.len() as f64;
+        println!(
+            "  {name}  first {:8.1} ms   mean {mean:8.1} ms   after the first {after_mean:8.1} ms \
+             best {best:8.1} ms",
+            samples[0]
+        );
+    }
+    Ok(())
 }
 
 fn run(args: &Args) -> Result<bool, String> {

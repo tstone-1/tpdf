@@ -131,6 +131,34 @@ export function rowLineFor(words: string | null | undefined): {
   return { text: NO_TEXT, own: false };
 }
 
+/**
+ * The next region whose words still have to be read, or `undefined`.
+ *
+ * The walk that fills the panel is a loop over this, and what it is keyed on
+ * decides whether the loop ever finishes. It is a **region**, by id: a region
+ * with no entry in `words` is a row saying *reading* and there is nothing else
+ * that can produce one for it.
+ *
+ * Keyed by *page* until 2026-09-06, on the reasoning that one extraction
+ * answers every region on a page, which is true --- and it is the reason the
+ * caller answers them all at once rather than the reason to select by page. The
+ * two come apart the moment a second region is drawn on a page that has already
+ * been read: the page is recorded, so the walk never picks the new region, its
+ * entry stays absent and its row says *reading* for the rest of the session,
+ * with no plan behind it either. Every one of `rowLineFor`'s four answers is
+ * about a region, so what has been answered has to be counted the same way.
+ *
+ * A page that could not be read is still answered, as `null` for each of its
+ * regions --- which is what stops the walk asking about it again for ever, the
+ * job the page set used to do.
+ */
+export function nextUnreadRegion<T extends { id: number }>(
+  regions: readonly T[],
+  words: ReadonlyMap<number, string | null>,
+): T | undefined {
+  return regions.find((region) => !words.has(region.id));
+}
+
 /** What a redaction row needs from whoever owns the document. */
 export interface RedactListOptions {
   /** Called when a row is activated, with the redaction's id. */
