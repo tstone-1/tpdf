@@ -5155,6 +5155,8 @@ fn the_coordinator_does_not_parse_the_file_it_wrote() {
 /// shape rather than an ordering.
 struct FakeWriter {
     answer: Result<Vec<u8>, Refusal>,
+    /// Simulates a worker that writes a partial result before refusing.
+    partial_before_refusal: Vec<u8>,
     /// How many bytes to *claim* beyond what was written.
     ///
     /// Zero for an honest writer. It is here because the check it exercises
@@ -5189,6 +5191,7 @@ impl FakeWriter {
     fn writing(answer: Result<Vec<u8>, Refusal>) -> Self {
         Self {
             answer,
+            partial_before_refusal: Vec::new(),
             overstate_by: 0,
             asked: std::cell::RefCell::new(Vec::new()),
             jobs: std::cell::RefCell::new(Vec::new()),
@@ -5214,6 +5217,8 @@ impl Rewriter for FakeWriter {
             .borrow_mut()
             .push((len, password.map(str::to_string)));
         self.jobs.borrow_mut().push(job);
+        out.write_all(&self.partial_before_refusal)
+            .map_err(|e| e.to_string())?;
         let bytes = self.answer.clone()?;
         out.write_all(&bytes).map_err(|e| e.to_string())?;
         Ok(bytes.len() + self.overstate_by)
@@ -5289,6 +5294,185 @@ fn staging_subject(scratch: &Scratch, name: &str) -> Option<(PathBuf, Plan)> {
     .expect("plant the source");
     let plan = plan_opened_as(&[1, 0, 0, 0], &at);
     Some((at, plan))
+}
+
+#[test]
+fn raster_copy_refuses_a_missing_source_fingerprint() {
+    let scratch = Scratch::new("raster-missing-fingerprint");
+    let (source, mut plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+    plan.opened_as = None;
+    let out = scratch.join("copy.pdf");
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+
+    write_raster_copy(&source, &plan, &out, None, &writer)
+        .expect_err("coordinates without a source fingerprint must not be applied");
+
+    assert!(
+        writer.asked.borrow().is_empty(),
+        "refused before the worker"
+    );
+    assert!(!out.exists());
+    assert!(leftovers_beside(&out).is_empty());
+}
+
+#[test]
+fn raster_copy_refuses_changed_bytes_with_the_same_page_count() {
+    let document = |marker: &str| {
+        let mut doc = lopdf::Document::with_version("1.7");
+        let pages = doc.new_object_id();
+        let content = doc.add_object(lopdf::Stream::new(
+            Dictionary::new(),
+            marker.as_bytes().to_vec(),
+        ));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 100.into(), 200.into()],
+            "Contents" => content,
+        });
+        doc.objects.insert(
+            pages,
+            dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }
+            .into(),
+        );
+        let root = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", root);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("synthetic PDF");
+        bytes
+    };
+    let before = document("% SYNTHETIC A\n");
+    let after = document("% SYNTHETIC B\n");
+    assert_ne!(before, after);
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "length must not distinguish the files"
+    );
+    for bytes in [&before, &after] {
+        assert_eq!(
+            lopdf::Document::load_mem(bytes)
+                .expect("readable PDF")
+                .get_pages()
+                .len(),
+            1
+        );
+    }
+    let scratch = Scratch::new("raster-source-changed");
+    let source = scratch.join("source.pdf");
+    let out = scratch.join("copy.pdf");
+    std::fs::write(&source, &before).expect("original source");
+    let plan = plan_opened_as(&[0], &source);
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+    write_raster_copy(&source, &plan, &out, None, &writer).expect("unchanged control");
+    writer.asked.borrow_mut().clear();
+    let modified = std::fs::metadata(&source)
+        .expect("metadata")
+        .modified()
+        .expect("mtime");
+    std::fs::write(&source, &after).expect("replace source bytes");
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .expect("source handle")
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("retain mtime");
+
+    let why = write_raster_copy(&source, &plan, &out, None, &writer)
+        .expect_err("same-page, same-length replacement must be refused");
+
+    assert!(
+        why.changed,
+        "source drift must remain distinguishable: {}",
+        why.message
+    );
+    assert!(
+        writer.asked.borrow().is_empty(),
+        "changed source never reaches writer"
+    );
+    assert_eq!(
+        std::fs::read(&out).expect("previous copy"),
+        b"SYNTHETIC OUTPUT"
+    );
+    assert!(leftovers_beside(&out).is_empty());
+}
+
+#[test]
+fn raster_copy_never_overwrites_its_source() {
+    let scratch = Scratch::new("raster-source-overwrite");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+    let before = std::fs::read(&source).expect("source bytes");
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+
+    write_raster_copy(&source, &plan, &source, None, &writer)
+        .expect_err("the raster route only creates a separate copy");
+
+    assert!(writer.asked.borrow().is_empty());
+    assert_eq!(std::fs::read(&source).expect("source survives"), before);
+    assert!(leftovers_beside(&source).is_empty());
+}
+
+#[test]
+fn raster_copy_worker_failure_preserves_destination_and_removes_partial_output() {
+    for existing in [false, true] {
+        let scratch = Scratch::new("raster-worker-refused");
+        let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+        let out = scratch.join("copy.pdf");
+        if existing {
+            std::fs::write(&out, b"SYNTHETIC PREVIOUS FILE").expect("previous destination");
+        }
+        let mut writer = FakeWriter::writing(Err("synthetic raster verification failure".into()));
+        writer.partial_before_refusal = b"SYNTHETIC PARTIAL OUTPUT".to_vec();
+
+        let why = write_raster_copy(&source, &plan, &out, None, &writer)
+            .expect_err("a refused partial output cannot be published");
+
+        assert!(
+            why.message
+                .contains("synthetic raster verification failure"),
+            "{}",
+            why.message
+        );
+        assert_eq!(writer.jobs.borrow().as_slice(), &[Job::RasterRedact]);
+        if existing {
+            assert_eq!(
+                std::fs::read(&out).expect("previous destination"),
+                b"SYNTHETIC PREVIOUS FILE"
+            );
+        } else {
+            assert!(!out.exists());
+        }
+        assert!(leftovers_beside(&out).is_empty());
+    }
+}
+
+#[test]
+fn raster_copy_dispatches_raster_job_and_preserves_password() {
+    let scratch = Scratch::new("raster-dispatch");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+    let out = scratch.join("copy.pdf");
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC VERIFIED OUTPUT".to_vec()));
+    let source_bytes = std::fs::read(&source).expect("source bytes");
+
+    let copied = write_raster_copy(&source, &plan, &out, Some("SYNTHETIC_PASSWORD"), &writer)
+        .expect("the verified worker output is published");
+
+    assert!(!copied.changed);
+    assert_eq!(writer.jobs.borrow().as_slice(), &[Job::RasterRedact]);
+    assert_eq!(
+        writer.asked.borrow().as_slice(),
+        &[(source_bytes.len(), Some("SYNTHETIC_PASSWORD".into()))]
+    );
+    assert_eq!(
+        std::fs::read(&source).expect("unchanged source"),
+        source_bytes
+    );
+    assert_eq!(
+        std::fs::read(&out).expect("published output"),
+        b"SYNTHETIC VERIFIED OUTPUT"
+    );
+    assert!(leftovers_beside(&out).is_empty());
 }
 
 #[test]

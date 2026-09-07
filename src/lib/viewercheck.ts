@@ -3132,6 +3132,7 @@ async function appCommandChecks(
     openDocument: () => fired.push("openDocument"),
     reloadDocument: () => fired.push("reloadDocument"),
     busyOpening: () => busy,
+    busyDocument: () => false,
     printDocument: () => fired.push("printDocument"),
     focusFind: () => fired.push("focusFind"),
     toggleSearchOption: (which) => fired.push(`toggleSearchOption:${which}`),
@@ -3220,6 +3221,7 @@ async function appCommandChecks(
     isDirty: () => false,
     saveCopy: () => fired.push("saveCopy"),
     redactCopy: () => fired.push("redactCopy"),
+    redactRasterCopy: () => fired.push("redactRasterCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -4064,6 +4066,8 @@ async function appCommandChecks(
         viewer.setRedactions([region]);
         viewer.pickRedaction(region.id);
       },
+      // The stub records the command; it does not remove its synthetic region.
+      then: () => viewer.setRedactions([]),
     },
     {
       // Palette-only as well, and the two are worth aiming at separately: they
@@ -4097,6 +4101,11 @@ async function appCommandChecks(
       // --- the same argument the three ways of marking a redaction carry above.
       id: "file.redactCopy",
       ...shell("redactCopy"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.redactRasterCopy",
+      ...shell("redactRasterCopy"),
       read: () => fired.join(","),
     },
     {

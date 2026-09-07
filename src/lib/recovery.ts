@@ -40,7 +40,7 @@
  * forgetting the quiet outcome, arriving in the one place where the wrong
  * button is worse than no button.
  */
-export type Offer = "reload" | "saveCopy" | "redact";
+export type Offer = "reload" | "saveCopy" | "redact" | "rasterCopy";
 
 /**
  * The half of a refusal these rules read.
@@ -268,12 +268,32 @@ export function afterRedaction(applied: {
       // because those are different and only one of them is known. A blind spot
       // is a scan that could not look, and telling a reader their words are
       // still there when nothing said so would be its own confident lie.
-      `Redacted ${removed}, but tpdf could not prove the file is clean: ` +
+      `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. Checks before adding the black fill found: ` +
       `${applied.why.join("; ")}. Treat it as unredacted until you have checked it.`;
   if (!applied.changed) return verdict;
   return (
     `${verdict} The original also changed on disk while you had it open, so this was ` +
     "built from the newer version."
+  );
+}
+
+/** Pending regions remain available after a copy, so an unverified copy can be retried. */
+export function afterRedactionCopy(applied: Parameters<typeof afterRedaction>[0]): {
+  message: string;
+  offers: Offer[];
+} {
+  return {
+    message: afterRedaction(applied),
+    offers: !applied.verified && !applied.changed ? ["rasterCopy"] : [],
+  };
+}
+
+/** What to say after creating the deliberately image-only redaction fallback. */
+export function afterRasterRedaction(applied: { regions: number }, name: string): string {
+  return (
+    `Saved ${name}. Created an image-only PDF with ` +
+    `${count(applied.regions, "masked region")}. ` +
+    "The original is unchanged."
   );
 }
 

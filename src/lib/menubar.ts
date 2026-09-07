@@ -50,10 +50,9 @@
  * ## macOS only
  *
  * On macOS the menu bar lives outside the window and costs the reader no space,
- * which is why its emptiness was a defect. On Windows a menu bar is chrome
- * *inside* the window, and this application exists in part because the
- * alternatives put a ribbon there. The palette is that platform's route, as it
- * has been.
+ * which is why its emptiness was a defect. Both platforms also expose common
+ * actions in the compact document toolbar. The palette supplies the complete
+ * command list, including less frequent actions omitted from that toolbar.
  */
 
 import type { Command, CommandRegistry } from "./commands";
@@ -117,6 +116,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // because the reader reaching for this group most often wants the
       // ordinary one and a destructive item above it is a slip waiting to be
       // made.
+      "file.redactRasterCopy",
       "file.redactCopy",
       // After the copy, and by the same argument one line up: of the two ways to
       // redact, the one that leaves the reader an original belongs above the one

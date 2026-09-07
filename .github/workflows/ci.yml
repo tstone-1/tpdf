@@ -257,6 +257,12 @@ jobs:
       - name: The worker boundary, including the rewrite's output channel
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example worker-probe -- testdata/text-wide.pdf
 
+      - name: Image-only redaction
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example raster-redact-probe
+
+      - name: Editable redaction black fill
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example redaction-fill-probe
+
       # The hostile corpus, ruled on rather than printed. `docs/PLAN.md` Phase 3
       # states its exit criterion in terms of this harness, and until 2026-09-02
       # the harness could not fail: it printed `LEAKS`, printed `clean, lossy`,

@@ -252,6 +252,10 @@ export interface Commands {
     args: { doc: number; source: string; path: string };
     reply: Applied;
   };
+  redact_raster_copy: {
+    args: { doc: number; source: string; path: string };
+    reply: Applied;
+  };
   redact_document: { args: { doc: number; source: string }; reply: Applied };
   annot_erase: {
     args: { doc: number; mark: number; remove: number[]; sweep: number };

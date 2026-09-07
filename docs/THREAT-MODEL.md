@@ -72,20 +72,21 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- eight of which write files on its behalf (§T6.1), drives the updater's one request per launch (§T9), and can ask for a web link the document holds to be opened in the reader's browser (§T8) | No *direct* filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- nine of which write files on its behalf (§T6.1), drives the updater's one request per launch (§T9), and can ask for a web link the document holds to be opened in the reader's browser (§T8) | No *direct* filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** --- on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
 since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
-`core:default`, `dialog:allow-open`, `dialog:allow-save` and `updater:default`, and the two
-dialog permissions open panels and write nothing. But it can issue `save_copy`,
+`core:default`, `dialog:allow-open`, `dialog:allow-save`, `dialog:allow-message` and
+`updater:default`. The dialog permissions open panels and write nothing; the message
+permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
-`redact_copy` and `redact_document`, and all eight write a file at the process's authority
+`redact_copy`, `redact_document` and `redact_raster_copy`, and all nine write a file at the process's authority
 with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for eight specific writes; the flat version reads as the
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for nine specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -813,12 +814,26 @@ it was written rather than silently re-pointed, because what it is about is a co
 summary going stale, and re-pointing it every time would erase its own evidence.)
 
 **The current list lives in §3 and is the authority; do not count from this section.** It is
-**eight** as of 2026-08-30, and it reached eight without anybody adding three of them here or
+**nine** as of 2026-09-07 with `redact_raster_copy`. It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names ---
 enumerate the registered commands reaching a writer and diff the set --- rather than for
 another sentence telling the next person to remember.
+
+`redact_raster_copy` keeps the source and creates a fresh image-only PDF in a
+sandboxed rewriting worker. A digest-checked anonymous snapshot binds the marked
+regions to the opened bytes. Every page is rendered at 300 dpi, and marked pixels
+are replaced before lossless image encoding. Only generated page objects, drawing
+commands and masked RGB strips enter the output; source text, annotations, links,
+metadata and revision history do not. Encryption is preserved. Before the staged
+file replaces its destination, the worker checks the serialized object inventory
+and image digests with lopdf and renders the masked regions back with PDFium.
+The result proves removal within the marked regions, not absence of the same
+information elsewhere in the document. Failures leave the destination untouched.
+The parent bounds input snapshots to 512 MiB and ends the worker after 180 seconds;
+the worker additionally bounds page pixels, total pixels, encoded bytes and elapsed
+time. Unsupported unsandboxed platforms refuse this operation.
 
 **What bounds that is the same thing that bounds `spike_exit`, and no more.** The CSP is
 `default-src 'self'` with no `'unsafe-inline'`, so the only script that runs is the one that
@@ -2060,6 +2075,17 @@ a base-14 fixture specifically — an embedded-font document is pixel-identical 
 profile that is badly wrong.
 
 ### 5.1 A second boundary, for OCR
+
+Editable redaction verifies the uncovered output before adding its black appearance.
+The final `RedactionFill` worker job adds opaque, printable appearance streams; it
+does not perform or certify content removal. Both the structural scan and OCR gate are
+evaluated first, and their failures remain failures after filling. A fingerprint taken before
+the checks pins the final rewrite to that output, and an immutable worker snapshot
+plus a second fingerprint check before replacement rejects changed files. The
+existing path-based verification race described above remains: these checks do not
+hold one file handle throughout scanning and OCR. Remaining text stays selectable;
+removing a whole text-show operation can also remove text outside the marked region.
+This is separate from image-only redaction.
 
 Defined 2026-07-31 in `src-tauri/src/ocr.rs`, built as a process on 2026-08-27
 (`src-tauri/src/ocr_worker.rs`) and **running in production since the same day**: every

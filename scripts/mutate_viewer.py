@@ -401,6 +401,19 @@ MUTATIONS = [
         runner="viewer",
     ),
     Mutation(
+        # The remove-redaction command probe installs and picks a synthetic
+        # region, while its action stub only records the call. Without this
+        # cleanup, the region survives into the command guard sweep and the
+        # later overlay readings.
+        "viewercheck: leave the command probe's synthetic redaction behind",
+        "src/lib/viewercheck.ts",
+        "      // The stub records the command; it does not remove its synthetic region.\n"
+        "      then: () => viewer.setRedactions([]),",
+        "      // The stub records the command; it does not remove its synthetic region.",
+        "an untouched page has nothing on the overlay",
+        runner="viewer",
+    ),
+    Mutation(
         # Let the web view's own menu through. That is the state the application
         # shipped in and the reason this exists: right-clicking a page offered
         # Reload, which throws away the reader's view of the document.
@@ -650,10 +663,12 @@ MUTATIONS = [
         "a scoped search looks only inside the selection",
     ),
     Mutation(
+        # Both single-page and range replies reach this reporting step. Mutating
+        # one backend producer leaves the other able to report the same error.
         "a broken pattern reports no problem",
-        "src-tauri/src/search.rs",
-        "            problem: Some(problem),",
-        "            problem: None,",
+        "src/lib/search.ts",
+        "        this.problem = result.problem;",
+        "",
         "a pattern that does not compile says so instead of finding nothing",
     ),
     Mutation(

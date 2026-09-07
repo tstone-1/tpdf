@@ -71,7 +71,9 @@ project conventions.
   macOS prints vectors; Windows has no in-box "print this PDF" API at any layer, so it
   rasterises at 300 dpi like every other Windows PDF viewer does.
   <!-- built: file.print -->
-- Every command reachable from the command palette, which renders each shortcut from the
+- A compact toolbar exposes the editing tools, with grouped menus and contextual
+  colour and width controls. Every command is also reachable from the command palette,
+  which renders each shortcut from the
   same table the key handler matches against, so a label cannot advertise a chord that
   does nothing.
 
@@ -188,7 +190,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   been removed yet.
   <!-- built: view.showRedactions -->
 - **Redact and save as** writes a new file with the marked regions' text removed from the
-  page's instructions --- not covered over, removed --- and then reads that file back and
+  page's instructions and then reads that file back and
   tells you what it found. It says *verified*, or it says it could not prove the file is
   clean and why. It never says nothing. **That reading is visual as well as textual**: the
   area you removed is rendered and put through the system's own text recogniser, which is
@@ -201,12 +203,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   do not like the result you still have your marks. A region covering a **picture** removes
   the picture, whole and bytes included --- removing part of one would mean re-encoding it,
   so the panel says how many a region takes before you commit, and a picture the document
-  draws more than once is refused rather than half removed. A region covering a **drawing**
+  draws more than once is left in place and reported as unverified. Other removable
+  content is still taken. A region covering a **drawing**
   leaves it where it is and says so, in the panel and in the report, because a file with the
   words gone and a picture of the words still in it is worse than no redaction at all. Text a page draws through a
   reusable block --- a letterhead, a table cell, a stamp --- is removed like any other,
-  unless the document draws that block more than once, in which case it is refused rather
-  than changing pages you did not mark. It also takes whole lines ---
+  unless the document draws that block more than once, in which case it is left and
+  reported as unverified. It also takes whole lines ---
   removing part of one means removing the instruction that drew it, so a word beside the one
   you marked goes with it. On a document tagged for accessibility it takes the second copy
   of those words that the tag keeps beside them --- both where it sits beside the words and
@@ -225,6 +228,15 @@ measured the Windows render constants come out 1.5–1.8x worse.
   copy of every answer in a separate packet, so removing the fields would leave everything
   recoverable while telling you it had gone.
   <!-- built: file.redactCopy -->
+- Applied regions receive **opaque black fill after verification**. Remaining text
+  stays selectable. A saved copy can be opened from the result message; the original
+  remains on screen with its pending marks until you open another file.
+- **Redact to image-only copy** handles scans and drawings by rendering every page
+  at 300 dpi, blackening the marked pixels, and writing a fresh PDF without the
+  original text layers, annotations, links or metadata. It preserves encryption and
+  keeps the original file. Text in the copy is no longer selectable. The output is
+  checked structurally and rendered back before it is saved.
+  <!-- built: file.redactRasterCopy -->
 - **Redact selection** marks the words you selected rather than a rectangle you aimed,
   one region per line, and the review list and the removal are the same ones the drag
   feeds. Nothing is destroyed by marking it either way.

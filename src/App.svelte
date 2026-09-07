@@ -1,7 +1,14 @@
 <script lang="ts">
+  import { tick } from "svelte";
+  import Toolbar from "./Toolbar.svelte";
+  import { toolbarState } from "./lib/toolbar";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import {
+    confirm as confirmDialog,
+    open as openDialog,
+    save as saveDialog,
+  } from "@tauri-apps/plugin-dialog";
   import { runAutobenchIfRequested } from "./lib/autobench";
   import { runScrollBenchIfRequested } from "./lib/scrollbench";
   import { runStartupTimelineIfRequested } from "./lib/startup";
@@ -33,6 +40,8 @@
   import {
     afterCopy,
     afterRedaction,
+    afterRedactionCopy,
+    afterRasterRedaction,
     afterSplit,
     afterMerge,
     afterRefusal,
@@ -87,7 +96,6 @@
   } from "./lib/pages";
   import { dimensionsOf, type PageSizeName } from "./lib/pagesizes";
   import { nameOf } from "./lib/markpopup";
-  import { sweepLabel } from "./lib/markband";
   import { labelsFor, MAX_RECENTS, recentCommandId, RECENT_PREFIX } from "./lib/recents";
   import {
     clampPlace,
@@ -118,6 +126,9 @@
    */
   let offers = $state<Offer[]>([]);
   let opening = $state(false);
+  let rasterCopyBusy = $state(false);
+  let redactedCopyPath = $state<string | null>(null);
+  let blockingTask = $state<string | null>(null);
   /**
    * The open document's page edits, or null when there is none.
    *
@@ -223,6 +234,22 @@
   const degradedGate = new DegradedLabel();
   let query = $state("");
   let findField = $state<HTMLInputElement | null>(null);
+  let findShown = $state(false);
+  let zoomMenu = $state<HTMLDetailsElement | null>(null);
+
+  function closeZoomOutside(event: PointerEvent): void {
+    if (event.target instanceof Node && !zoomMenu?.contains(event.target)) {
+      zoomMenu?.removeAttribute("open");
+    }
+  }
+
+  function closeZoomOnEscape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || !zoomMenu?.open) return;
+    zoomMenu.open = false;
+    zoomMenu.querySelector("summary")?.focus();
+    event.preventDefault();
+    event.stopPropagation();
+  }
   let sidebarShown = $state(false);
 
   let viewer: Viewer | null = null;
@@ -418,7 +445,8 @@
     pageCount: () => status?.pageCount ?? 0,
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => reloadDocument(),
-    busyOpening: () => opening,
+    busyOpening: () => opening || rasterCopyBusy,
+    busyDocument: () => rasterCopyBusy,
     printDocument: () => void printDocument(),
     focusFind: () => focusFind(),
     toggleSearchOption: (which) => toggleSearchOption(which),
@@ -477,6 +505,7 @@
     isDirty: () => dirty,
     saveCopy: () => void saveCopy(),
     redactCopy: () => void redactCopy(),
+    redactRasterCopy: () => void redactRasterCopy(),
     redactDocument: () => redactDocument(),
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
@@ -995,6 +1024,7 @@
    * is to redraw what differs.
    */
   function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
+    if (rasterCopyBusy) return Promise.resolve();
     // Queued rather than started, so a reply can never be adopted after a
     // later one. See {@link editing}.
     pendingEdit = editing.run(() => runEdit(run));
@@ -1384,12 +1414,71 @@
       });
       // Cancelled, which is an answer rather than an error.
       if (!chosen) return;
-      say(afterRedaction(await edits.redactCopy(openPathName, chosen)));
+      const result = afterRedactionCopy(await edits.redactCopy(openPathName, chosen));
+      say(result.message, result.offers);
+      redactedCopyPath = chosen;
     } catch (e) {
       // Every refusal reaches here, and the one worth the room is the region
       // that covers something a removal cannot take: `lib.rs` refuses before
       // writing anything and names what and where.
       say(String(e));
+    }
+  }
+
+  /**
+   * Writes the marked regions into a fresh image-only PDF.
+   *
+   * The confirmation is mandatory because the output discards every interactive
+   * document feature even though the original stays untouched. Once confirmed,
+   * the task blocks document commands: its worker reads the current model while
+   * it renders every page, so another edit or open cannot be allowed to change
+   * what that model means halfway through the copy.
+   */
+  async function redactRasterCopy(): Promise<void> {
+    if (!edits || !openPathName || !viewer || rasterCopyBusy) return;
+    // Closing the note journals its last text synchronously. Do this before the
+    // busy guard starts refusing new edits, then wait for that queued edit below.
+    viewer.closeMark();
+    rasterCopyBusy = true;
+    refreshMenu();
+    try {
+      await pendingEdit;
+      const proceed = await confirmDialog(
+        "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
+        {
+          title: "Redact to image-only copy",
+          kind: "warning",
+          okLabel: "Create image-only copy",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!proceed || !edits || !openPathName) return;
+      const source = openPathName;
+      const suggested = basename(source).replace(/\.pdf$/i, "");
+      const chosen = await saveDialog({
+        title: "Redact to image-only copy",
+        defaultPath: `${suggested} redacted image-only.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!chosen) return;
+
+      blockingTask = "Creating image-only copy...";
+      // Give the progress line one render before the long native call occupies
+      // this command. Without the tick, a fast state change followed by IPC can
+      // leave the only visible acknowledgement until after the file exists.
+      await tick();
+      say(
+        afterRasterRedaction(
+          await edits.redactRasterCopy(source, chosen),
+          basename(chosen),
+        ),
+      );
+    } catch (e) {
+      say(`Image-only redaction failed. No verified copy was saved. ${String(e)}`);
+    } finally {
+      blockingTask = null;
+      rasterCopyBusy = false;
+      refreshMenu();
     }
   }
 
@@ -1664,6 +1753,25 @@
 
   const commands = new CommandRegistry();
   registerAppCommands(commands, appActions);
+  let toolState = $state(toolbarState(commands));
+  let toolStateKey = "";
+
+  function runToolbarCommand(id: string): void {
+    // Focus before dispatch: a command opening a dialog must keep its focus.
+    viewer?.focus();
+    runMenuCommand(commands, palette, id);
+    refreshMenu();
+  }
+
+  function finishToolbarDrawing(): void {
+    viewer?.finishDrawing();
+    viewer?.focus();
+  }
+
+  function cancelToolbarTool(): void {
+    viewer?.cancelDraw();
+    viewer?.focus();
+  }
 
   /**
    * The right-click menu, or null before the shell is built.
@@ -1753,6 +1861,13 @@
    * wrong between them.
    */
   function refreshMenu(): void {
+    // The toolbar also runs on Windows, where there is no native menu.
+    const nextTools = toolbarState(commands);
+    const nextKey = JSON.stringify(nextTools);
+    if (nextKey !== toolStateKey) {
+      toolStateKey = nextKey;
+      toolState = nextTools;
+    }
     if (!menuInstalled) return;
     const state = menuEnablement(commands);
     // Compared rather than pushed, because this is now called from the frame
@@ -1906,6 +2021,7 @@
    * clears both.
    */
   function say(message: string | null, next: Offer[] = []) {
+    redactedCopyPath = null;
     error = message;
     offers = message === null ? [] : next;
   }
@@ -2048,8 +2164,11 @@
   }
 
   function focusFind() {
-    findField?.focus();
-    findField?.select();
+    findShown = true;
+    void tick().then(() => {
+      findField?.focus();
+      findField?.select();
+    });
   }
 
   /**
@@ -2124,6 +2243,7 @@
       clearTimeout(findTimer);
       query = "";
       viewer?.clearSearch();
+      findShown = false;
       viewer?.focus();
     }
   }
@@ -2509,6 +2629,7 @@
     resuming = false,
     resume: Place | null = null,
   ): Promise<void> {
+    if (rasterCopyBusy) return Promise.resolve();
     return opens.run(() => openDocument(path, resuming, resume));
   }
 
@@ -3112,82 +3233,50 @@
    */
 </script>
 
-<svelte:window onkeydown={onWindowKey} />
+<svelte:window onkeydown={onWindowKey} onkeydowncapture={closeZoomOnEscape} onpointerdown={closeZoomOutside} />
 
 <main>
   <header>
-    <!--
-      Leftmost, and first in the tab order, because between them these two are
-      the whole of this application's mouse-reachable command surface on
-      Windows. `menu.rs` puts the native menu bar behind
-      `#[cfg(target_os = "macos")]` deliberately --- a menu bar there costs the
-      reader no window, and on Windows it would be chrome inside the window,
-      which is the ribbon this application exists to not be. The consequence
-      went unnoticed until it was reported from use: of 54 commands, the
-      toolbar and the two right-click menus reach about 19, the palette reaches
-      all of them, and nothing on screen said the palette existed. A reader who
-      did not already know ⌘K could not open the sidebar at all.
-
-      Drawn in the toolbar's own idiom --- a small flat glyph like the find
-      toggles, not a raised button --- for the reason the zoom readout is: a row
-      of buttons drawn as buttons is the ribbon again.
-    -->
-    <button
-      class="chord"
-      title="All commands ({label('app.palette')})"
-      aria-label="All commands"
-      onclick={openPaletteFromToolbar}>≡</button
-    >
+    <button title="Open a PDF" onclick={pickAndOpen} disabled={opening || rasterCopyBusy}>Open</button>
     {#if title}
-      <button
-        class="chord"
-        class:on={sidebarShown}
-        aria-pressed={sidebarShown}
-        title="Sidebar ({label('view.toggleSidebar')})"
-        aria-label="Toggle sidebar"
-        onclick={toggleSidebar}>▤</button
-      >
+      <button class="sidebar-toggle" aria-pressed={sidebarShown} title="Toggle sidebar" onclick={toggleSidebar}>Sidebar</button>
+      <button title={toolState['file.save']?.title} disabled={!toolState['file.save']?.enabled}
+        onclick={() => runToolbarCommand('file.save')}>Save</button>
+      <button class="secondary-file" disabled={!toolState['file.saveCopy']?.enabled}
+        onclick={() => runToolbarCommand('file.saveCopy')}>Save a copy</button>
+      <button class="secondary-file" disabled={!toolState['file.print']?.enabled}
+        onclick={() => runToolbarCommand('file.print')}>Print</button>
     {/if}
-    <button onclick={pickAndOpen} disabled={opening}>Open</button>
-    <span class="title">{title}</span>
-    <!--
-      Left of the spacer, where the degraded label already establishes that an
-      element appearing and disappearing costs nothing: the slack absorbs it, and
-      the find controls to the right of the spacer do not move. Unlike that one
-      it changes at most once per reader action rather than while nobody is
-      touching anything, so it needs no episode gate.
-
-      It says "Edited", not "Unsaved". The distinction is real and the shorter
-      word is the wrong one: `Save a copy` writes another file and leaves this
-      document exactly as edited as it was, so a marker that cleared on a save
-      would be claiming the open file had been written.
-    -->
-    {#if dirty}
-      <span class="edited">Edited</span>
+    <span class="document-name">
+      <span class="title" title={title}>{title || 'tpdf'}</span>
+      {#if dirty}<span class="edited">Edited</span>{/if}
+      {#if degraded && status}<span class="degraded">{degraded}</span>{/if}
+      {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
+      {:else if notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
+    </span>
+    {#if status}
+      <div class="navigation" aria-label="Page navigation">
+        <button aria-label="Previous page" disabled={!toolState['nav.previousPage']?.enabled}
+          onclick={() => runToolbarCommand('nav.previousPage')}>&lt;</button>
+        <button title="Go to page" onclick={() => runToolbarCommand('nav.goToPage')}>
+          {status.page} / {status.pageCount}</button>
+        <button aria-label="Next page" disabled={!toolState['nav.nextPage']?.enabled}
+          onclick={() => runToolbarCommand('nav.nextPage')}>&gt;</button>
+      </div>
+      <details class="zoom-menu" bind:this={zoomMenu}>
+        <summary title={describeFit(status.fit)}>{percentOf(status.zoom)}%</summary>
+        <div class="zoom-options">
+          {#each ['view.fitWidth', 'view.fitPage', 'view.actualSize', 'view.zoomIn', 'view.zoomOut', 'view.zoomTo'] as id}
+            <button disabled={!toolState[id]?.enabled} onclick={(event) => {
+              event.currentTarget.closest('details')?.removeAttribute('open');
+              runToolbarCommand(id);
+            }}>{commands.find(id)?.title}</button>
+          {/each}
+        </div>
+      </details>
+      <button aria-pressed={findShown} title="Find in document" onclick={focusFind}>Find</button>
     {/if}
-    <!--
-      Beside the document's name, and deliberately not among the find controls
-      where it used to sit. The header is one flex row, so an element that comes
-      and goes on the right displaces everything to its left: a fast scroll made
-      the whole find toolbar step sideways, and squeezed the search field, every
-      time coverage dipped. Here it grows into the slack the spacer was holding,
-      so appearing and vanishing moves nothing at all. The delay in
-      `degraded.ts` stops it strobing; this stops it shoving.
-    -->
-    {#if degraded && status}
-      <span class="degraded">{degraded} — {Math.round(status.sharp * 100)}% sharp</span>
-    {/if}
-    <span class="spacer"></span>
-    <!--
-      Left of the find controls and inside the slack, for the reason the
-      degraded label is: this appears without anybody touching the window, and
-      an element that arrives on its own must not move what a reader is aiming
-      at. `updateLabel` returns null for idle, checking, current and failed, so
-      on an ordinary launch nothing is added to the row at all.
-    -->
-    {#if notice}
-      <span class="notice" data-testid="notice">{notice}</span>
-    {/if}
+    <button title="All commands ({label('app.palette')})" onclick={openPaletteFromToolbar}>Commands</button>
     {#if updateLabel(updateState)}
       <button
         class="update"
@@ -3199,8 +3288,19 @@
         onclick={() => void updates.install()}>{updateLabel(updateState)}</button
       >
     {/if}
-    {#if title}
+  </header>
+  {#if title}
+    <Toolbar state={toolState}
+      active={status?.armed ? armedLabel(status.armed) : null}
+      drawing={status?.drawing ?? null} erasing={status?.erasing != null}
+      colourLabel={markColor.name} widthLabel={markNib.name}
+      selected={status?.selected ?? 0} run={runToolbarCommand}
+      finish={finishToolbarDrawing} cancel={cancelToolbarTool} />
+  {/if}
+    {#if title && findShown}
+      <section class="find-panel" aria-label="Find in document">
       <input
+        aria-label="Find in document"
         class="find"
         type="search"
         placeholder="Find"
@@ -3244,100 +3344,32 @@
       {#if findLabel}<span class="stat" class:problem={status?.search.problem}
           >{findLabel}</span
         >{/if}
+      <button title="Previous match" onclick={() => viewer?.prevMatch()}>Previous</button>
+      <button title="Next match" onclick={() => viewer?.nextMatch()}>Next</button>
+      <button onclick={() => { findShown = false; viewer?.focus(); }}>Close</button>
+      </section>
     {/if}
-    {#if status}
-      <!--
-        **The one mode in this application, said out loud.** Every other tool is
-        one-shot and there is nothing to be stuck in; a drawing is several
-        strokes, so a reader can be in a state where the next press draws rather
-        than selects. `viewer.ts` argues that a mode a reader cannot recognise is
-        worse than one they asked for, and this line is what pays that off ---
-        it names both keys, because Escape alone would mean the only way out is
-        to discard the work.
-      -->
-      {#if status.drawing !== null}
-        <span class="stat" data-testid="drawing">
-          {status.drawing === 0
-            ? "Drawing — press and drag"
-            : `Drawing: ${status.drawing} stroke${status.drawing === 1 ? "" : "s"}`}
-          — Enter to finish, Esc to discard
-        </span>
-      {/if}
-      <!--
-        A tool armed and waiting for the gesture that spends it.
-        **Not a mode a reader can be stuck in --- one they can be lost in.** The
-        next press draws a box, or drops a comment, instead of selecting text,
-        and until this line existed the only sign of that was a crosshair. It
-        names Escape because a reader who has forgotten what they armed needs
-        the way out more than the reader who armed it deliberately.
-        `viewer.ts` keeps ink out of this field, so it cannot collide with the
-        drawing line above.
-      -->
-      {#if status.armed !== null}
-        <span class="stat" data-testid="armed">
-          {armedLabel(status.armed)} — Esc to cancel
-        </span>
-      {/if}
-      <!--
-        The eraser's twin of the line above, and it names one key rather than
-        two: a sweep commits when the reader lifts the pointer, so there is
-        nothing waiting to be finished and Escape is the only way out of the
-        mode.
-      -->
-      {#if status.erasing !== null}
-        <span class="stat" data-testid="erasing">
-          {sweepLabel(status.erasing)}
-          — Esc to stop
-        </span>
-      {/if}
-      <!--
-        What the next mark will be drawn in, and only once a reader has chosen:
-        with nothing picked each kind keeps its own colour, which is what the
-        application has always done and is not worth a line of chrome. Once green
-        is armed it is a mode like the two above --- it outlives the gesture, and
-        the reader who set it three documents ago is exactly the one who needs
-        telling.
-      -->
-      {#if markColor.rgb !== null}
-        <span class="stat" data-testid="markcolor">
-          Marking in {markColor.name}
-        </span>
-      {/if}
-      <!--
-        The nib, on the colour's argument exactly and with its condition: shown
-        once a reader has picked something other than the default, because it
-        outlives the gesture and the pen, and the reader who set it three
-        documents ago is the one who needs telling. Silent at the default, which
-        is what the application has always drawn with and is not worth a line of
-        chrome.
-      -->
-      {#if markNib !== DEFAULT_NIB}
-        <span class="stat" data-testid="marknib">
-          Nib: {markNib.name}
-        </span>
-      {/if}
-      {#if status.selected > 0}
-        <span class="stat">{status.selected} selected</span>
-      {/if}
-      <span class="stat">{status.page} / {status.pageCount}</span>
-      <!--
-        A button rather than a readout, because the number is exactly what a
-        reader wants to change when they look at it --- and it opens the same
-        palette argument the shortcut does, so there is one implementation of
-        "ask for a zoom" rather than a second one nobody checks.
-      -->
-      <button
-        class="stat zoom"
-        title="{describeFit(status.fit)} — click to set ({label('view.zoomTo')})"
-        onclick={() => palette?.askFor("view.zoomTo")}
-        >{percentOf(status.zoom)}%</button
-      >
-    {/if}
-  </header>
+
 
   {#if error}
     <div class="problem" data-testid="problem">
-      <pre class="error">{error}</pre>
+      {#if redactedCopyPath}
+        <p>Saved {basename(redactedCopyPath)}. You are still viewing the original with its pending redaction marks.</p>
+        <button data-testid="open-redacted-copy" disabled={rasterCopyBusy}
+          onclick={async () => {
+            const path = redactedCopyPath;
+            const verdict = error;
+            if (!path) return;
+            await openPath(path);
+            if (openPathName === path) say(verdict);
+          }}>Open saved copy</button>
+      {/if}
+      {#if offers.includes("rasterCopy")}
+        <p class="error">Redaction not verified. Create an image-only copy to remove everything inside the marked regions.</p>
+        <details><summary>Technical details</summary><pre class="error">{error}</pre></details>
+      {:else}
+        <pre class="error">{error}</pre>
+      {/if}
       <!--
         The buttons a message carries, and never more than the message earns:
         `recovery.ts` decides which appear, because a Reload offered beside the
@@ -3361,15 +3393,22 @@
         <div class="offers">
           {#each offers as offer (offer)}
             {#if offer === "saveCopy"}
-              <button data-testid="offer-saveCopy" onclick={() => void saveCopy()}
+              <button data-testid="offer-saveCopy" disabled={rasterCopyBusy}
+                onclick={() => void saveCopy()}
                 >Save a copy…</button
               >
             {:else if offer === "reload"}
-              <button data-testid="offer-reload" onclick={() => reloadAnyway()}
+              <button data-testid="offer-reload" disabled={rasterCopyBusy}
+                onclick={() => reloadAnyway()}
                 >Reload from disk</button
               >
+            {:else if offer === "rasterCopy"}
+              <button data-testid="offer-rasterCopy" disabled={rasterCopyBusy}
+                onclick={() => void redactRasterCopy()}
+                >Create image-only copy...</button>
             {:else if offer === "redact"}
-              <button data-testid="offer-redact" onclick={() => void redactAnyway()}
+              <button data-testid="offer-redact" disabled={rasterCopyBusy}
+                onclick={() => void redactAnyway()}
                 >Redact this file</button
               >
             {/if}
@@ -3427,7 +3466,7 @@
   header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.25rem;
     padding: 0.4rem 0.7rem;
     border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
     flex: none;
@@ -3449,6 +3488,7 @@
      prefix is not one this can be tested on from here, and the prefix costs a
      line. */
   header,
+  .find-panel,
   .panel,
   .empty {
     -webkit-user-select: none;
@@ -3464,35 +3504,70 @@
   }
   button {
     font: inherit;
-    padding: 0.2rem 0.8rem;
-  }
-  /* The two commands that are a route rather than an action, drawn in the
-     toolbar's own idiom --- flat, like the find toggles and the zoom readout,
-     rather than raised like Open. `.toggle` is deliberately not reused: these
-     two sit left of the title and are not part of the find group, and sharing a
-     class would mean a change aimed at the find toggles moved these as well. */
-  .chord {
-    font: inherit;
-    font-size: 1.05em;
-    line-height: 1;
-    background: none;
-    border: none;
+    padding: 0.3rem 0.6rem;
+    min-height: 34px;
     color: inherit;
-    opacity: 0.6;
-    padding: 0.15rem 0.35rem;
-    border-radius: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    white-space: nowrap;
     flex: none;
-    cursor: default;
   }
-  .chord:hover {
-    opacity: 1;
-    background: color-mix(in srgb, CanvasText 10%, transparent);
+  button:hover:not(:disabled), summary:hover {
+    background: color-mix(in srgb, CanvasText 8%, Canvas);
   }
-  /* Same drawn pressed state as `.toggle.on`, and for the same reason: a
-     native `:active`-like colour disappears under a dark appearance. */
-  .chord.on {
-    opacity: 1;
-    box-shadow: inset 0 0 0 2px currentColor;
+  button:disabled { opacity: 0.4; }
+  button:focus-visible, summary:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+  button[aria-pressed="true"] {
+    background: color-mix(in srgb, Highlight 16%, Canvas);
+  }
+  .document-name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+    padding-inline: 0.7rem;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .navigation { display: flex; align-items: center; flex: none; }
+  .zoom-menu { position: relative; flex: none; }
+  summary { cursor: pointer; padding: 0.3rem 0.5rem; border-radius: 5px; }
+  .zoom-options {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 50;
+    min-width: 170px;
+    padding: 5px;
+    display: grid;
+    background: Canvas;
+    border: 1px solid color-mix(in srgb, CanvasText 20%, Canvas);
+    border-radius: 6px;
+    box-shadow: 0 5px 20px #0002;
+  }
+  .zoom-options button { text-align: left; }
+  .find-panel {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+    flex: none;
+  }
+  @media (max-width: 900px) {
+    .secondary-file { display: none; }
+  }
+  @media (max-width: 600px) {
+    .sidebar-toggle, .navigation { display: none; }
+    .document-name { padding-inline: 0.15rem; }
+    header { padding-inline: 0.3rem; gap: 0; }
+    header button { padding-inline: 0.4rem; }
   }
   /* Flex items shrink by default, so without a shrink discipline here the
      header has no fixed shape: whichever element appears last steals width from
@@ -3526,9 +3601,6 @@
     opacity: 1;
     font-weight: 700;
     box-shadow: inset 0 0 0 2px currentColor;
-  }
-  .spacer {
-    flex: 1;
   }
   .stat,
   .degraded {
@@ -3576,22 +3648,6 @@
   .stat.problem {
     opacity: 1;
     color: color-mix(in srgb, currentColor 40%, #c0392b);
-  }
-  /* Reads as the other stats do until it is pointed at: a toolbar of buttons
-     drawn as buttons is the ribbon this application exists to not be. */
-  .zoom {
-    font: inherit;
-    font-variant-numeric: tabular-nums;
-    background: none;
-    border: none;
-    padding: 0.1rem 0.2rem;
-    color: inherit;
-    cursor: default;
-  }
-  .zoom:hover {
-    opacity: 1;
-    background: color-mix(in srgb, CanvasText 10%, transparent);
-    border-radius: 4px;
   }
   .body {
     flex: 1;

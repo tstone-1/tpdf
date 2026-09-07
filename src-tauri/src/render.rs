@@ -2143,7 +2143,11 @@ pub(crate) fn run_rewrite(
     plan: &crate::edits::Plan,
     job: crate::save::Job,
 ) -> Result<Vec<u8>, crate::save::Refusal> {
-    document.graph().rewrite(plan, job)
+    if job == crate::save::Job::RasterRedact {
+        crate::raster_redact::rewrite(document, plan)
+    } else {
+        document.graph().rewrite(plan, job)
+    }
 }
 
 /// Merges the mapped document with the handed-over files on the render thread.

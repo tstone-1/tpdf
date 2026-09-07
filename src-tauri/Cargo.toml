@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.9.2"
+version = "26.9.3"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
@@ -33,7 +33,7 @@ serde_json = "1"
 # stack), so declaring it adds no package -- checked with `cargo tree`, which
 # is the standing rule for anything the licensing constraint touches.
 # MIT OR Apache-2.0.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # PDF rendering and text extraction. Settled 2026-07-27 by spikes 0.1, 0.3 and 0.5:
 # it renders, extracts and sandboxes correctly, and is not usable for redaction
@@ -71,7 +71,7 @@ anyhow = "1"
 # linked into the shipping binary rather than being a spike leftover. What is
 # still spike 0.1 is the *comparison*: the scroller and the thumbnail strip both
 # ask for `raw`, and `autobench` is what measures the two against each other.
-png = "0.17"
+png = "0.18"
 
 # getrusage, for peak RSS in the tile bench. Pdfium allocates natively, so a
 # Rust allocator hook would report almost nothing.
@@ -83,7 +83,7 @@ libc = "0.2"
 # What writes is `save_copy`, `save_document`, `extract_pages`,
 # `merge_documents` and `print_document`, whose authority `docs/THREAT-MODEL.md`
 # §T6.1 states.
-tauri-plugin-dialog = "2.7.2"
+tauri-plugin-dialog = "2.7.3"
 
 # Unicode case folding, for search. `char::to_lowercase` is the operation for
 # *displaying* text and leaves `ß` alone --- it is already lowercase --- so
@@ -105,7 +105,7 @@ caseless = "0.2.2"
 # signature is verified against a compiled-in public key before anything is
 # unpacked, which is what keeps those two archive parsers from ever seeing
 # attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version.
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-updater = "2.11"
 
 # The signer's certificate out of a signature's `/Contents`: `cms` for the CMS
 # `SignedData`, `x509-cert` for the certificate inside it, `der` underneath both.
@@ -121,6 +121,8 @@ tauri-plugin-updater = "2.10.1"
 # no chain building, and `docinfo.rs` is shaped so that no field here could
 # carry a verdict.
 cms = { version = "0.2.3", default-features = false }
+# cms 0.2.3 exposes der 0.7 and x509-cert 0.2 types in SignedData. Keep these
+# versions aligned until cms migrates; newer versions are distinct Rust types.
 der = { version = "0.7", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
 
@@ -131,7 +133,7 @@ x509-cert = { version = "0.2", default-features = false }
 # `xmp.rs`, and entity expansion is structurally impossible rather than
 # bounded, since `quick-xml` hands every `&...;` back as its own event and
 # expands nothing without a resolver, which this never supplies.
-quick-xml = "0.41"
+quick-xml = "0.42"
 
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
@@ -234,7 +236,7 @@ windows-sys = { version = "0.61", features = [
 # Same licensing and no-new-crate argument as `windows-sys` above: `windows 0.61`
 # is already in `Cargo.lock` transitively through Tauri's WebView2 stack, with
 # `windows-future` and `windows-core` beside it, and it is `MIT OR Apache-2.0`.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     # PdfDocument, PdfPage, PdfPageRenderOptions.
     "Data_Pdf",
     # Blocking on the WinRT async operations the loader returns.
@@ -277,7 +279,7 @@ windows = { version = "0.61", features = [
 # with a second worker pool. The callback feeds the same `Launch` queue and
 # emits the same `OPEN_EVENT` as every other route in, so there is one path for
 # "open this document" rather than two that can drift.
-tauri-plugin-single-instance = "2.4.3"
+tauri-plugin-single-instance = "2.4.4"
 
 [[example]]
 name = "tile-bench"
@@ -446,3 +448,11 @@ path = "examples/redact_apply_probe.rs"
 [[example]]
 name = "redact-probe"
 path = "examples/redact_probe.rs"
+
+[[example]]
+name = "raster-redact-probe"
+path = "examples/raster_redact_probe.rs"
+
+[[example]]
+name = "redaction-fill-probe"
+path = "examples/redaction_fill_probe.rs"

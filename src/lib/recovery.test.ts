@@ -4,6 +4,8 @@ import {
   afterCopy,
   afterMerge,
   afterRedaction,
+  afterRedactionCopy,
+  afterRasterRedaction,
   afterRefusal,
   beforeRedactingInPlace,
   beforeReload,
@@ -199,13 +201,14 @@ describe("the offers these rules can return", () => {
     // says, which is this repository's own note about a writer and its own
     // reader. The cost is that adding a variant edits this line, and that is
     // the point.
-    const drawn = new Set<Offer>(["saveCopy", "reload", "redact"]);
+    const drawn = new Set<Offer>(["saveCopy", "reload", "redact", "rasterCopy"]);
     const everything: Offer[] = [
       ...afterRefusal({ message: "x", changed: true }).offers,
       ...afterRefusal({ message: "x", changed: true, reopen: true }).offers,
       ...afterRefusal({ message: "x" }).offers,
       ...(beforeReload(true)?.offers ?? []),
       ...beforeRedactingInPlace("report.pdf").offers,
+      ...afterRedactionCopy({ regions: 1, shows: 0, verified: false, changed: false, why: ["synthetic unsupported graphic"] }).offers,
     ];
     // A rule that stopped offering anything would satisfy the loop below by
     // having nothing to check, which is the emptiness control every sweep here
@@ -216,6 +219,19 @@ describe("the offers these rules can return", () => {
         drawn.has(offer),
         `${offer} is offered by a rule and App.svelte has no arm for it`,
       ).toBe(true);
+    }
+  });
+});
+
+describe("afterRedactionCopy", () => {
+  it("offers an image-only retry only when verification failed on an unchanged source", () => {
+    for (const verified of [false, true]) {
+      for (const changed of [false, true]) {
+        const applied = { regions: 1, shows: 0, verified, changed, why: ["synthetic graphic"] };
+        const prompt = afterRedactionCopy(applied);
+        expect(prompt.offers).toEqual(!verified && !changed ? ["rasterCopy"] : []);
+        expect(prompt.message).toBe(afterRedaction(applied));
+      }
     }
   });
 });
@@ -308,7 +324,9 @@ describe("what to say after a redaction", () => {
       verified: false,
       why: ["page 3: object 0 is of kind image", "a stream would not decode"],
     });
+    expect(said.startsWith("Redaction not verified")).toBe(true);
     expect(said).toContain("could not prove the file is clean");
+    expect(said).toContain("Checks before adding the black fill");
     expect(said).toContain("page 3: object 0 is of kind image");
     expect(said).toContain("a stream would not decode");
     expect(said).toContain("Treat it as unredacted");
@@ -320,5 +338,18 @@ describe("what to say after a redaction", () => {
     const said = afterRedaction({ ...clean, changed: true });
     expect(said).toContain("read the file back");
     expect(said).toContain("changed on disk");
+  });
+});
+
+describe("what to say after an image-only redaction", () => {
+  it("names the masked regions and keeps the original out of the claim", () => {
+    expect(
+      afterRasterRedaction({
+        regions: 2,
+      }, "report redacted image-only.pdf"),
+    ).toBe(
+      "Saved report redacted image-only.pdf. Created an image-only PDF with 2 masked " +
+        "regions. The original is unchanged.",
+    );
   });
 });

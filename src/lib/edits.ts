@@ -723,6 +723,17 @@ export class Edits {
   }
 
   /**
+   * Writes a fresh image-only PDF with every marked region masked.
+   *
+   * The source document and this model stay untouched. Unlike
+   * {@link redactCopy}, the result deliberately carries no selectable text or
+   * interactive document objects: each output page is made only from pixels.
+   */
+  async redactRasterCopy(source: string, path: string): Promise<Applied> {
+    return await call("redact_raster_copy", { doc: this.doc, source, path });
+  }
+
+  /**
    * Removes every marked region from `source` itself, and reports what could be
    * proved about the result.
    *

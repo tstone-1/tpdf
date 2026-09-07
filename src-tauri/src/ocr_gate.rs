@@ -359,7 +359,7 @@ pub fn geometry_for(
     if wanted > MAX_SCALE {
         return Err((
             format!(
-                "the smallest thing this page removed is {control_pt:.1} pt, and a control that                  size needs {wanted:.1}x to reach {MIN_CONTROL_PX:.0} px --- past the {MAX_SCALE:.0}x                  ceiling, so no rendering of this page can prove the removal"
+                "the smallest thing this page removed is {control_pt:.1} pt, and a control that                  size needs {wanted:.1}x to reach {MIN_CONTROL_PX:.0} px \u{2014} past the {MAX_SCALE:.0}x                  ceiling, so no rendering of this page can prove the removal"
             ),
             crate::ocr::NotVerifiedCause::ControlTooSmall,
         ));
@@ -598,7 +598,7 @@ pub fn reason(page: u32, verdict: &Legibility) -> Option<String> {
             read.retain(|s| !s.is_empty());
             Some(format!(
                 "page {}: the removed area still reads as text when the written page is \
-                 rendered --- {}",
+                 rendered \u{2014} {}",
                 page + 1,
                 sample(&read)
             ))

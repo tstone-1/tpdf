@@ -94,6 +94,8 @@ export interface AppActions {
    * would be a behaviour change nobody asked for while moving code.
    */
   busyOpening(): boolean;
+  /** Whether a document-wide task currently blocks opening and editing. */
+  busyDocument?(): boolean;
   /** Hand the document to the platform print panel. */
   printDocument(): void;
   /** Put the caret in the find field. */
@@ -406,6 +408,8 @@ export interface AppActions {
    * find it by that word. Two commands is what makes both true.
    */
   redactCopy(): void;
+  /** Ask for a name and write the redactions into a fresh image-only PDF. */
+  redactRasterCopy(): void;
   /**
    * Removes every marked region from the file the reader opened.
    *
@@ -454,13 +458,15 @@ export function registerAppCommands(
    * advertised and reached no handler at all, and ⌘P turned the page as well as
    * printing, because the viewer's `p` arm tested the key without the modifier.
    */
-  const withDocument = () => actions.viewer() !== null;
+  const available = () => !(actions.busyDocument?.() ?? false);
+  const withDocument = () => actions.viewer() !== null && available();
 
   registry.register(
     {
       id: "file.open",
       title: "Open document",
       keys: label("file.open"),
+      enabled: available,
       run: () => actions.openDocument(),
     },
     {
@@ -587,7 +593,7 @@ export function registerAppCommands(
       enabled: () => {
         const viewer = actions.viewer();
         return (
-          viewer !== null && (viewer.searchScoped || viewer.hasSelection)
+          available() && viewer !== null && (viewer.searchScoped || viewer.hasSelection)
         );
       },
       run: () => actions.toggleSearchScope(),
@@ -1198,14 +1204,14 @@ export function registerAppCommands(
       id: "edit.undo",
       title: "Undo",
       keys: label("edit.undo"),
-      enabled: () => actions.viewer() !== null && actions.canUndo(),
+      enabled: () => withDocument() && actions.canUndo(),
       run: () => actions.undoEdit(),
     },
     {
       id: "edit.redo",
       title: "Redo",
       keys: label("edit.redo"),
-      enabled: () => actions.viewer() !== null && actions.canRedo(),
+      enabled: () => withDocument() && actions.canRedo(),
       run: () => actions.redoEdit(),
     },
     {
@@ -1217,7 +1223,7 @@ export function registerAppCommands(
       id: "file.save",
       title: "Save",
       keys: label("file.save"),
-      enabled: () => actions.viewer() !== null && actions.isDirty(),
+      enabled: () => withDocument() && actions.isDirty(),
       run: () => actions.saveDocument(),
     },
     {
@@ -1230,6 +1236,16 @@ export function registerAppCommands(
       keys: label("file.saveCopy"),
       enabled: withDocument,
       run: () => actions.saveCopy(),
+    },
+    {
+      // A separate fallback rather than a mode of `file.redactCopy`: the result
+      // has a different capability contract, and the title must say so before a
+      // reader chooses it. The confirmation and destination dialog live at the
+      // shell boundary in `App.svelte`.
+      id: "file.redactRasterCopy",
+      title: "Redact to image-only copy...",
+      enabled: withDocument,
+      run: () => actions.redactRasterCopy(),
     },
     {
       // **"Redact and save as", not "Redact".** Nothing here changes the open

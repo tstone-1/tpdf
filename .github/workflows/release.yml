@@ -282,6 +282,12 @@ jobs:
       - name: The worker boundary, including the rewrite's output channel
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example worker-probe -- testdata/text-wide.pdf
 
+      - name: Image-only redaction
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example raster-redact-probe
+
+      - name: Editable redaction black fill
+        run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example redaction-fill-probe
+
       # The hostile corpus, ruled on rather than printed. `docs/PLAN.md` Phase 3
       # states its exit criterion in terms of this harness, and until 2026-09-02
       # the harness could not fail: it printed `LEAKS`, printed `clean, lossy`,
@@ -406,6 +412,11 @@ jobs:
           the network either — with search, selection, an outline, thumbnails,
           session restore and printing.
 
+          **New in this release.** A compact editing toolbar groups the tools
+          with contextual colour and width controls. Windows title bars show the
+          version and identify development builds. Redaction results count removed
+          images and let you open the saved copy directly.
+
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag
           a thumbnail in the page strip, or use the command palette. Any number
@@ -433,8 +444,9 @@ jobs:
           list in a sidebar panel that says what is under each region, then
           *Redact and save as* to a copy or *Redact and save* over the file you
           opened. The words are removed from the page's own drawing
-          instructions, not covered with a black rectangle: there is nothing
-          left to uncover. It reaches further than the page, too — the alternate
+          instructions. After verification, marked regions receive opaque black
+          fill; the fill itself is never used as proof of removal. It reaches
+          further than the page, too — the alternate
           text a tagged document keeps beside the words, bookmarks that name
           what went, comments sitting on it, form answers, and the document's
           own title and author.
@@ -454,6 +466,13 @@ jobs:
           takes whole lines, because removing part of one means removing the
           instruction that drew it — so a word beside the one you marked goes
           with it.
+
+          **Image-only redaction copies.** For scans and drawings, *Redact to
+          image-only copy* renders every page at 300 dpi, blackens marked pixels,
+          and writes a fresh PDF without the original text layers, annotations,
+          links or metadata. It keeps the original file and preserves encryption.
+          Text in this copy is no longer selectable. The output is checked
+          structurally and rendered back before it is saved.
 
           **Documents behind a password.** An encrypted PDF opens: tpdf asks
           for the password and says so when it is wrong. A mark can be saved

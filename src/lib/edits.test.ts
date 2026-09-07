@@ -540,6 +540,27 @@ describe("Edits", () => {
     expect(edits.state.redactions.map((r) => r.id)).toEqual([5]);
   });
 
+  it("sends the source and destination when an image-only redacted copy is made", async () => {
+    core.invoke.mockResolvedValueOnce({
+      regions: 2,
+      shows: 0,
+      verified: true,
+      why: [],
+      changed: false,
+    });
+    const edits = new Edits(17, 3);
+
+    await expect(edits.redactRasterCopy("source.pdf", "masked.pdf")).resolves.toMatchObject({
+      regions: 2,
+      verified: true,
+    });
+    expect(core.invoke).toHaveBeenLastCalledWith("redact_raster_copy", {
+      doc: 17,
+      source: "source.pdf",
+      path: "masked.pdf",
+    });
+  });
+
   it("sends the mark's own id when one is removed", async () => {
     // A mark is addressed by identity all the way through: there is no slot
     // that names one, and its position in `marks` moves whenever an earlier
