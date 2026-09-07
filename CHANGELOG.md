@@ -19,6 +19,47 @@ have the binary.)
 
 ## [26.9.3] - Unreleased
 
+### Fixed: a logo repeated on every page made a whole redaction fail, words included
+
+Dragging a region over a document's header removed nothing at all and said so: *the picture
+you marked is drawn 22 time(s) in this document. Removing it here would leave every other
+copy, and the picture itself, in the file --- so nothing was removed.* Reported against a
+22-page standard whose letterhead is one image XObject named by all 22 pages, which is how
+every templated document is built.
+
+The refusal itself was right about the picture and wrong about everything else. Removing one
+`Do` operation hides a shared image on one page and leaves every byte of it reachable from
+the other 21, so tpdf cannot take it --- but the region's *text* was removable, and the text
+is what the reader was redacting. `redact_copy` has had the rule for this since the image
+carrier landed: an object a removal cannot take does not stop the write, it is a reason the
+file cannot be shown clean. That rule had a worked argument behind it, in as many words:
+refusing instead means tpdf can never redact anything, because a rule under a line of text
+is what almost every real document has. A shared header is the same shape, and it was the
+one case still refusing.
+
+So a shared image is now **left, reported and does not stop anything**, and the finding is
+made where the reader can still act on it. `redact::shared_draws` asks the object graph how
+many times each of a page's XObjects is drawn --- one question the graph is already parsed
+for --- and `redact::leave_shared` moves the repeated ones out of the plan and into its
+unhandled list before the plan leaves the worker. The review panel says *Also covers an image
+drawn 22 times, which a removal cannot take* before anything is written, and the verdict
+afterwards says the file could not be shown clean and why.
+
+Form XObjects are fixed with it, for the same reason and in the same place: a form's content
+stream belongs to the form, so removing text from a shared header form would edit every page
+that draws it. That case refused the whole redaction too.
+
+Measured on the reported document (22 of 22 pages name image `5 0 R`) and A/B'd on a pair of
+two-page fixtures differing only in whether the pages share one image: shared, every sampled
+region reports the picture as a carrier and the plan is incomplete; unshared, every region is
+taken whole. Ten mutations cover the new arithmetic and each is caught by the test named for
+it.
+
+Two things this deliberately does not do. It does not remove every copy --- that would take
+drawings nobody marked. And it does not yet notice that a reader who marked *all* 22 copies
+has asked for something removable; that plan is still refused by the writer, which is the
+safe direction and the next increment.
+
 ### Added: web links open, after a confirmation that shows the host as punycode
 
 `/URI` links were declined outright since the day `links.rs` was written, on the policy

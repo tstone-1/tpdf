@@ -7062,8 +7062,8 @@ MUTATIONS += [
         # case becoming the silent one.
         "form: report the unreachable only beside a hit",
         "src/redact.rs",
-        "            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {\n                    plan.unhandled.push(Unhandled {\n                        at,\n                        kind: other.kind.clone(),\n                    });\n                }\n            }",
-        "            if !plan.form_shows.is_empty() {\n            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {\n                    plan.unhandled.push(Unhandled {\n                        at,\n                        kind: other.kind.clone(),\n                    });\n                }\n            }\n            }",
+        "            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {\n                    plan.unhandled.push(Unhandled {\n                        at,\n                        kind: other.kind.clone(),\n                        drawn: None,\n                    });\n                }\n            }",
+        "            if !plan.form_shows.is_empty() {\n            for other in &form.unreachable {\n                if overlaps(other.bounds, region) {\n                    plan.unhandled.push(Unhandled {\n                        at,\n                        kind: other.kind.clone(),\n                        drawn: None,\n                    });\n                }\n            }\n            }",
         "what_the_descent_could_not_reach_is_reported_even_when_nothing_was_covered",
     ),
     Mutation(
@@ -8483,6 +8483,124 @@ MUTATIONS += [
         "    let token = urls.len() as u32;\n    urls.push(web.url);",
         "    let token = 0;\n    urls.push(web.url);",
         "each_web_target_indexes_its_own_address",
+    ),
+]
+
+# Added 2026-09-07 with the shared-XObject fix. A letterhead drawn on every page
+# used to make the *writer* refuse a redaction, which took the region's words
+# with it -- so the arithmetic that decides which drawings are shared, and the
+# translation from an image ordinal to the object a reader is told about, are
+# where a silent wrong answer costs a redaction rather than a warning.
+MUTATIONS += [
+    Mutation(
+        # Leave the picture and say nothing, which is the file that reads as
+        # redacted and is not: the words go, the logo stays, and the verdict
+        # calls it clean because nothing was reported.
+        "shared: leave a repeated picture in the plan without reporting it",
+        "src/redact.rs",
+        '        left.push(Unhandled {\n'
+        '            at: image_at.get(*ordinal).copied().unwrap_or(*ordinal),\n'
+        '            kind: "image".to_string(),\n'
+        '            drawn: Some(times),\n'
+        '        });\n'
+        "        false",
+        "        let _ = times;\n        true",
+        "a_shared_picture_is_left_and_reported_rather_than_removed",
+    ),
+    Mutation(
+        # Call every picture shared. The control, and the direction that costs a
+        # capability rather than a promise: no region would remove any picture
+        # from any document, and every check about a repeated one still passes.
+        "shared: treat an unrepeated picture as repeated",
+        "src/redact.rs",
+        "        let Some(times) = shared.images.get(*ordinal).copied().flatten() else {",
+        "        let Some(times) = shared.images.get(*ordinal).copied().flatten().or(Some(1)) else {",
+        "a_picture_that_is_not_shared_is_left_in_the_plan",
+    ),
+    Mutation(
+        # Answer positionally when the positions are in doubt. `remove_images`
+        # refuses on the same disagreement, so this is the edit that turns a
+        # refusal a reader can act on into a picture silently left behind.
+        "shared: answer from a draw count that disagrees with PDFium",
+        "src/redact.rs",
+        "    if names.len() != expected {\n        return vec![None; expected];\n    }",
+        "    if false {\n        return vec![None; expected];\n    }",
+        "an_image_count_that_disagrees_answers_nothing_at_all",
+    ),
+    Mutation(
+        # Report nothing shared, ever. The control over `shared_draws` itself:
+        # without it every check here could be satisfied by a function that
+        # always says *drawn once*, which is what the module did before.
+        "shared: report every drawing as repeated",
+        "src/redact.rs",
+        "                .and_then(|id| drawn_more_than_once(doc, id, names, name))",
+        "                .and_then(|id| drawn_more_than_once(doc, id, names, name).or(Some(2)))",
+        "a_picture_this_page_alone_draws_is_not_reported_as_shared",
+    ),
+    Mutation(
+        # Ask about the page's forms with an empty name list. Every form comes
+        # back unrepeated, so a shared header's text is planned for removal and
+        # the writer refuses the whole redaction -- the defect, restored on the
+        # half of it that is about forms.
+        "shared: ask nothing about the page's forms",
+        "src/redact.rs",
+        "            &form_draws(doc, page, &content).unwrap_or_default(),",
+        "            &[],",
+        "a_form_a_second_page_also_names_is_counted",
+    ),
+    Mutation(
+        # Name the picture by its ordinal among images rather than by its
+        # position in the page's object list. Both are small integers and they
+        # agree on a page whose only object is a picture, which is what most
+        # fixtures are.
+        "shared: report the image ordinal as the object a reader sees",
+        "src/redact.rs",
+        "            at: image_at.get(*ordinal).copied().unwrap_or(*ordinal),",
+        "            at: *ordinal,",
+        "a_finding_names_the_page_object_rather_than_the_image_ordinal",
+    ),
+    Mutation(
+        # Report a shared form once per line of its text the region covers. The
+        # count is right for a region over one line and wrong for every larger
+        # one, which is the shape `Unhandled::at` exists to prevent.
+        "shared: report a repeated form once per covered line",
+        "src/redact.rs",
+        '        if !left\n'
+        '            .iter()\n'
+        '            .any(|other| other.at == *at && other.kind == "form")\n'
+        "        {",
+        "        if true {",
+        "a_shared_form_is_one_finding_however_many_of_its_lines_are_covered",
+    ),
+    Mutation(
+        # Look up the first form for every one of them. One shared form on a
+        # page then takes every other form's text out of the plan with it, and
+        # a page with one form -- which is most of them -- cannot tell.
+        "shared: read one form's repeat count for all of them",
+        "src/redact.rs",
+        "            .position(|form| form.at == *at)",
+        "            .position(|_| true)",
+        "a_shared_form_does_not_take_another_forms_lines_with_it",
+    ),
+    Mutation(
+        # Append the findings in the order they were computed. A reader checks a
+        # page from the top, and a shared picture reported after a shading
+        # further down the sheet reads as a second page's finding.
+        "shared: leave the findings in the order they were appended",
+        "src/redact.rs",
+        "    plan.unhandled.sort_by_key(|object| object.at);",
+        "    let _ = &plan.unhandled;",
+        "findings_stay_in_page_order_when_a_shared_one_joins_them",
+    ),
+    Mutation(
+        # Say the one sentence for both reasons. A reader whose letterhead was
+        # left is told tpdf cannot handle their picture, which sends them to
+        # look for a different tool rather than at their own document.
+        "shared: explain a repeated object as one tpdf cannot handle",
+        "src/redact.rs",
+        "        let Unhandled { at, kind, drawn } = self;",
+        "        let Unhandled { at, kind, drawn: _ } = self;\n        let drawn = &None::<usize>;",
+        "a_repeated_object_says_why_it_stayed_and_an_ordinary_one_does_not",
     ),
 ]
 

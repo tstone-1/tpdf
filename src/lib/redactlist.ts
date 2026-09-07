@@ -92,7 +92,8 @@ const UNREADABLE = "Could not read the page";
  */
 export function noticeFor(rows: readonly RedactionRow[]): string {
   if (rows.length === 0) return "";
-  const many = rows.length === 1 ? "1 region marked" : `${rows.length} regions marked`;
+  const many =
+    rows.length === 1 ? "1 region marked" : `${rows.length} regions marked`;
   const lost = rows.filter((row) => row.page === null).length;
   const said = `${many}. Nothing has been removed yet.`;
   if (lost === 0) return said;
@@ -212,12 +213,24 @@ export interface RedactListOptions {
  * that from one printed thrice. `redact::Unhandled` carries the position for
  * exactly that reason; this panel has no room for it and the count says the
  * same thing.
+ *
+ * **An object that stays because the document repeats it says so**, and that is
+ * a different finding wearing the same kind. A logo on every page and a shading
+ * tpdf cannot draw are both *not taken*, and only the first has a reason a
+ * reader can act on --- crop the page, or redact a document that does not share
+ * its header. So the repeat count joins the grouping key: `an image drawn 22
+ * times` is not the same row as `an image`.
  */
 export function warningFor(plan: RegionPlan | undefined): string {
   if (!plan || plan.unhandled.length === 0) return "";
   const kinds = new Map<string, number>();
   for (const object of plan.unhandled) {
-    kinds.set(object.kind, (kinds.get(object.kind) ?? 0) + 1);
+    // The count is part of what the row says, so two pictures repeated
+    // different numbers of times are two rows rather than one wrong one.
+    const said = object.drawn
+      ? `${object.kind} drawn ${object.drawn} times`
+      : object.kind;
+    kinds.set(said, (kinds.get(said) ?? 0) + 1);
   }
   const said = [...kinds.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -225,8 +238,14 @@ export function warningFor(plan: RegionPlan | undefined): string {
     // PDFium's words and a table here would be a second list to keep in step
     // with `objects.ts` --- which is the drift this panel has already avoided
     // once by taking the kind rather than a sentence.
+    //
+    // Pluralised on the kind rather than on the whole phrase, so `an image
+    // drawn 22 times` becomes `2 images drawn 22 times` and not `2 image drawn
+    // 22 timess`.
     .map(([kind, many]) =>
-      many === 1 ? `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}` : `${many} ${kind}s`,
+      many === 1
+        ? `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`
+        : `${many} ${kind.replace(/^(\S+)/, "$1s")}`,
     )
     .join(" and ");
   return `Also covers ${said}, which a removal cannot take`;
@@ -390,7 +409,9 @@ export class RedactList {
 
     if (this.rows.length === 0) {
       this.list.appendChild(
-        placeholder("You have not marked anything for removal in this document."),
+        placeholder(
+          "You have not marked anything for removal in this document.",
+        ),
       );
       this.focused = null;
       return;
@@ -567,7 +588,9 @@ export class RedactList {
 
   /** Whether a row can be activated at all. */
   private placed(id: number): boolean {
-    return this.rows.some((row) => row.redaction.id === id && row.page !== null);
+    return this.rows.some(
+      (row) => row.redaction.id === id && row.page !== null,
+    );
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {

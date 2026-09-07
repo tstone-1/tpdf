@@ -76,7 +76,10 @@ describe("redactionRows", () => {
       { id: pageId(1), source: { baseline: 0 }, turns: 0 },
     ]);
     const rows = redactionRows(
-      [region({ id: 10, page: pageId(1) }), region({ id: 11, page: pageId(3) })],
+      [
+        region({ id: 10, page: pageId(1) }),
+        region({ id: 11, page: pageId(3) }),
+      ],
       moved,
     );
     expect(rows.map((row) => row.redaction.id)).toEqual([11, 10]);
@@ -154,7 +157,9 @@ describe("the four things a row can say about its words", () => {
   it("flattens words that ran over several lines of the page", () => {
     // A region is dragged over a block, so its words routinely arrive with the
     // page's own line breaks in them. A row is one line high.
-    expect(rowLineFor("first\nsecond\n\n third").text).toBe("first second third");
+    expect(rowLineFor("first\nsecond\n\n third").text).toBe(
+      "first second third",
+    );
   });
 
   it("treats whitespace under the region as no words at all", () => {
@@ -188,14 +193,18 @@ describe("what a row says a removal will take", () => {
   });
 
   it("counts them when there is more than one", () => {
-    expect(takesFor(taking(3))).toBe("Also removes 3 pictures it covers, whole");
+    expect(takesFor(taking(3))).toBe(
+      "Also removes 3 pictures it covers, whole",
+    );
   });
 
   it("survives a plan written before pictures were removable", () => {
     // The field is optional because a reply from an older build carries none,
     // and reading `.length` off `undefined` would break the panel rather than
     // the sentence.
-    expect(takesFor({ shows: [0], taking: "clause 4", unhandled: [] })).toBe("");
+    expect(takesFor({ shows: [0], taking: "clause 4", unhandled: [] })).toBe(
+      "",
+    );
   });
 
   it("is a different sentence from the warning, not the same one", () => {
@@ -209,7 +218,9 @@ describe("what a row says a removal will take", () => {
       images: [0],
     };
     expect(takesFor(both)).toBe("Also removes a picture it covers, whole");
-    expect(warningFor(both)).toBe("Also covers a path, which a removal cannot take");
+    expect(warningFor(both)).toBe(
+      "Also covers a path, which a removal cannot take",
+    );
   });
 });
 
@@ -256,6 +267,55 @@ describe("what a row says a removal cannot take", () => {
       "Also covers an image and 2 paths, which a removal cannot take",
     );
   });
+
+  it("says a picture stays because the document repeats it", () => {
+    // The reason a reader can act on. A letterhead drawn on every page is left
+    // where a shading is left, and only one of the two is about this document
+    // rather than about tpdf.
+    expect(
+      warningFor({
+        ...plan(["image"]),
+        unhandled: [{ at: 3, kind: "image", drawn: 22 }],
+      }),
+    ).toBe("Also covers an image drawn 22 times, which a removal cannot take");
+  });
+
+  it("keeps a repeated object apart from one of the same kind that is not", () => {
+    // The control for the grouping key. Folding these into `2 images` would
+    // print one row that is wrong about both.
+    expect(
+      warningFor({
+        ...plan([]),
+        unhandled: [
+          { at: 1, kind: "image" },
+          { at: 3, kind: "image", drawn: 22 },
+        ],
+      }),
+    ).toBe(
+      "Also covers an image and an image drawn 22 times, which a removal cannot take",
+    );
+  });
+
+  it("pluralises the kind rather than the count in the phrase", () => {
+    expect(
+      warningFor({
+        ...plan([]),
+        unhandled: [
+          { at: 1, kind: "image", drawn: 22 },
+          { at: 3, kind: "image", drawn: 22 },
+        ],
+      }),
+    ).toBe("Also covers 2 images drawn 22 times, which a removal cannot take");
+  });
+
+  it("reads a null count as no count, which is what an older reply sends", () => {
+    expect(
+      warningFor({
+        ...plan([]),
+        unhandled: [{ at: 1, kind: "image", drawn: null }],
+      }),
+    ).toBe("Also covers an image, which a removal cannot take");
+  });
 });
 
 describe("pairing plans with the regions they were asked about", () => {
@@ -271,7 +331,10 @@ describe("pairing plans with the regions they were asked about", () => {
   });
 
   it("attaches each plan to the region it was asked about", () => {
-    const paired = pairPlans([region(4), region(9)], [plan("first"), plan("second")]);
+    const paired = pairPlans(
+      [region(4), region(9)],
+      [plan("first"), plan("second")],
+    );
     expect(paired.get(4)?.taking).toBe("first");
     expect(paired.get(9)?.taking).toBe("second");
   });
@@ -283,9 +346,9 @@ describe("pairing plans with the regions they were asked about", () => {
     // words beside the wrong rectangle. Empty is what the rows said before the
     // reply arrived, which is the honest thing for them to go on saying.
     expect(pairPlans([region(4), region(9)], [plan("first")]).size).toBe(0);
-    expect(
-      pairPlans([region(4)], [plan("first"), plan("second")]).size,
-    ).toBe(0);
+    expect(pairPlans([region(4)], [plan("first"), plan("second")]).size).toBe(
+      0,
+    );
   });
 
   it("attaches nothing for no regions, which is not a mismatch", () => {
@@ -303,7 +366,9 @@ describe("what the panel says above the rows", () => {
     // be inferred from the tab being called Redactions. §6's thesis is that a
     // redaction which looks done and is not is worse than none.
     const rows = redactionRows([region({ id: 1 })], unedited(2));
-    expect(noticeFor(rows)).toBe("1 region marked. Nothing has been removed yet.");
+    expect(noticeFor(rows)).toBe(
+      "1 region marked. Nothing has been removed yet.",
+    );
   });
 
   it("counts more than one", () => {
@@ -311,7 +376,9 @@ describe("what the panel says above the rows", () => {
       [region({ id: 1 }), region({ id: 2, area: [10, 400, 90, 440] })],
       unedited(2),
     );
-    expect(noticeFor(rows)).toBe("2 regions marked. Nothing has been removed yet.");
+    expect(noticeFor(rows)).toBe(
+      "2 regions marked. Nothing has been removed yet.",
+    );
   });
 
   it("names regions that are on no page, without dropping the standing line", () => {
@@ -369,7 +436,8 @@ describe("RedactList", () => {
   it("says nothing is marked for removal, before anything is pushed at it", () => {
     const list = panel();
     expect(list.rowCount).toBe(0);
-    const text = (dom.root.children[1]?.children[0]?.textContent ?? "") as string;
+    const text = (dom.root.children[1]?.children[0]?.textContent ??
+      "") as string;
     expect(text).toContain("not marked anything for removal");
   });
 
@@ -411,8 +479,15 @@ describe("RedactList", () => {
   it("draws the warning under the words, and nothing when there is none", () => {
     const list = panel();
     words.set(7, "clause 4");
-    plans.set(7, { shows: [0], taking: "clause 4", unhandled: [{ at: 2, kind: "image" }] });
-    show(list, [region({ id: 7 }), region({ id: 8, area: [10, 400, 90, 440] })]);
+    plans.set(7, {
+      shows: [0],
+      taking: "clause 4",
+      unhandled: [{ at: 2, kind: "image" }],
+    });
+    show(list, [
+      region({ id: 7 }),
+      region({ id: 8, area: [10, 400, 90, 440] }),
+    ]);
     expect(list.rowText(7).warning).toBe(
       "Also covers an image, which a removal cannot take",
     );
@@ -437,7 +512,9 @@ describe("RedactList", () => {
       region({ id: 1, area: [10, 200, 90, 240] }),
       region({ id: 2, area: [10, 300, 90, 340] }),
     ]);
-    const tabbable = [0, 1, 2].filter((id) => list.elementFor(id)?.tabIndex === 0);
+    const tabbable = [0, 1, 2].filter(
+      (id) => list.elementFor(id)?.tabIndex === 0,
+    );
     expect(tabbable).toEqual([0]);
   });
 
@@ -472,7 +549,9 @@ describe("RedactList", () => {
     const list = panel();
     show(list, [region({ id: 3 })]);
     (
-      list.elementFor(3) as unknown as { dispatch: (t: string, e: object) => void }
+      list.elementFor(3) as unknown as {
+        dispatch: (t: string, e: object) => void;
+      }
     )?.dispatch("pointerdown", {});
     expect(picked).toEqual([3]);
   });
@@ -488,7 +567,9 @@ describe("RedactList", () => {
     const row = list.elementFor(id) as unknown as {
       children: { dataset?: { part?: string } }[];
     };
-    const found = row.children.find((child) => child.dataset?.part === "remove");
+    const found = row.children.find(
+      (child) => child.dataset?.part === "remove",
+    );
     expect(found).toBeDefined();
     return found as never;
   }
@@ -510,7 +591,9 @@ describe("RedactList", () => {
   it("names the control for what it takes off", () => {
     const list = panel();
     show(list, [region({ id: 1 })]);
-    expect(removeControl(list, 1).getAttribute("aria-label")).toBe("Remove region");
+    expect(removeControl(list, 1).getAttribute("aria-label")).toBe(
+      "Remove region",
+    );
   });
 
   it("offers the control on a region that is on no page", () => {
@@ -527,7 +610,9 @@ describe("RedactList", () => {
     const list = panel();
     show(list, [region({ id: 7, page: pageId(99) })]);
     (
-      list.elementFor(7) as unknown as { dispatch: (t: string, e: object) => void }
+      list.elementFor(7) as unknown as {
+        dispatch: (t: string, e: object) => void;
+      }
     )?.dispatch("pointerdown", {});
     dom.root.children[1]?.dispatch("keydown", {
       key: "Enter",

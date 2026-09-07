@@ -218,6 +218,7 @@ hop through the index.
 - Splitting one function into five callers of a shared parse: four of them wanted only the objects, and the fifth wanted the bytes
 - Two walks of one tree, and every bound they shared was a different number
 - A wire shape and a model type are the same distinction twice, unless one derives the other
+- A writer's refusal is total, so a fact the planner could have found belongs in the plan
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -22938,3 +22939,48 @@ into "nothing found" is the same failure one layer up.
 Generalises to any message that says *see `<script>`*: run it, on a machine where the
 condition it describes is true, and check that it says so. A script whose clean and broken
 outputs are both empty has never been shown to answer anything.
+
+### A writer's refusal is total, so a fact the planner could have found belongs in the plan
+
+`remove_images` refused a redaction whenever the marked picture was an XObject the document
+draws more than once, and the refusal was correct about the picture: deleting one `Do`
+operation hides a shared logo on one page and leaves every byte of it reachable from every
+other page, so tpdf genuinely cannot take it. What was wrong is where the sentence was said.
+A refusal from the writer takes the **whole** redaction with it --- `apply_redactions` returns
+`Err` and nothing is written --- so a reader who dragged a region over a 22-page standard's
+header was told that nothing had been removed, including the words they were actually
+redacting. The shared form case (`remove_form_shows`) did the same thing.
+
+`redact_copy`'s own doc comment had the rule, and had had it for two weeks:
+
+> An object the removal cannot take does not stop the write, and that is a decision rather
+> than an oversight. [...] Refusing instead was tried first and measured: `text-base14`'s own
+> region overlaps a path, and a rule under a line of text is what almost every real document
+> has --- so refusing means tpdf can never redact anything and the reader is told the same
+> thing with nothing to show for it.
+
+A shared letterhead is that argument's own example wearing different clothes, and it went on
+refusing for two weeks under a paragraph explaining why it must not. **A rule stated in one
+module's prose is not applied by the module three files away**, and the way this one stayed
+invisible is that the two live at different times: `covered` decides what a region takes and
+knows nothing about the object graph, and `remove_images` knows the graph and runs when the
+reader has already committed. Neither is wrong on its own.
+
+The fix is not to soften the refusal, it is to move the question earlier: `shared_draws` asks
+the graph while the plan is still being built, `leave_shared` takes the repeated objects out
+of the plan and into its unhandled list, and the writer's refusal stays exactly as it was ---
+now as a backstop for a document that changed under the plan rather than as the thing a
+reader meets.
+
+**The generalisable test, and it is worth applying to any refusal in a writer:** ask what
+else that refusal cancels. If the answer is *work the reader asked for that is unaffected by
+the reason*, the check is in the wrong place, and the question it asks can usually be asked
+of something already parsed. Here it cost nothing at all --- the object graph is parsed once
+per document for the comments, links, properties and character mapping, and this is a walk
+over objects already in memory.
+
+Two things the fix deliberately does not do, both because they change what a redaction
+means rather than where a check lives. It does not remove every copy of the picture, which
+would take drawings nobody marked. And it does not yet notice that a reader who marked
+**all** the copies has asked for something removable --- that plan is still refused, which is
+the safe direction, and `drawn_more_than_once` is blind to the plan by construction.
