@@ -62,6 +62,7 @@ function harness(
   // let a mutation that swapped `edit.removeMark`'s guard for this one survive.
   // Default false because a document opens with nothing picked.
   redactionPicked = false,
+  busyDocument = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -85,6 +86,7 @@ function harness(
     openDocument: () => fired.push("openDocument"),
     reloadDocument: () => fired.push("reloadDocument"),
     busyOpening: () => false,
+    busyDocument: () => busyDocument,
     printDocument: () => fired.push("printDocument"),
     focusFind: () => fired.push("focusFind"),
     toggleSearchOption: (which) => fired.push(`toggleSearchOption:${which}`),
@@ -154,6 +156,7 @@ function harness(
     isDirty: () => dirty,
     saveCopy: () => fired.push("saveCopy"),
     redactCopy: () => fired.push("redactCopy"),
+    redactRasterCopy: () => fired.push("redactRasterCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -623,12 +626,34 @@ describe("the page operations", () => {
     expect(fired).toEqual(["redactDocument"]);
   });
 
-  it("offers both ways to redact, and never one instead of the other", () => {
+  it("creates the image-only fallback through its own command", () => {
+    const { registry, fired } = harness();
+    const command = registry.all().find((entry) => entry.id === "file.redactRasterCopy");
+    expect(command?.title).toBe("Redact to image-only copy...");
+    expect(registry.run("file.redactRasterCopy")).toBe(true);
+    expect(fired).toEqual(["redactRasterCopy"]);
+  });
+
+  it("withholds document commands while an image-only copy is being made", () => {
+    const { registry, fired } = harness(
+      true, {}, { undo: true, redo: true }, true, false, true, {}, false,
+      false, false, false, false, true,
+    );
+    expect(registry.run("file.redactRasterCopy")).toBe(false);
+    expect(registry.run("edit.redactRegion")).toBe(false);
+    expect(registry.run("file.save")).toBe(false);
+    expect(registry.run("edit.undo")).toBe(false);
+    expect(registry.run("file.open")).toBe(false);
+    expect(fired).toEqual([]);
+  });
+
+  it("offers all three redaction outputs together", () => {
     // The palette is where a reader chooses between destroying their file and
     // writing a new one, so both have to be there to choose from. A registry
     // holding one of them reads as a complete feature.
     const { registry } = harness();
     const ids = registry.all().map((command) => command.id);
+    expect(ids).toContain("file.redactRasterCopy");
     expect(ids).toContain("file.redactCopy");
     expect(ids).toContain("file.redactDocument");
   });
@@ -1078,6 +1103,7 @@ describe("the window shortcuts for editing", () => {
       openDocument: () => fired.push("openDocument"),
       reloadDocument: () => fired.push("reloadDocument"),
       busyOpening: () => false,
+      busyDocument: () => false,
       printDocument: () => fired.push("printDocument"),
       focusFind: () => fired.push("focusFind"),
       toggleSearchOption: (which) => fired.push(`toggleSearchOption:${which}`),
@@ -1131,6 +1157,7 @@ describe("the window shortcuts for editing", () => {
       isDirty: () => dirty,
       saveCopy: () => fired.push("saveCopy"),
       redactCopy: () => fired.push("redactCopy"),
+      redactRasterCopy: () => fired.push("redactRasterCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>

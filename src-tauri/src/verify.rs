@@ -286,7 +286,7 @@ pub fn structure(bytes: &[u8]) -> Vec<String> {
         0 => wrong.push("the file has no %%EOF marker".to_string()),
         1 => {}
         many => wrong.push(format!(
-            "the file has {many} %%EOF markers, so it holds more than one revision --- a rewrite writes exactly one, and an earlier revision is content no parser will show and no scan can decode"
+            "the file has {many} %%EOF markers, so it holds more than one revision \u{2014} a rewrite writes exactly one, and an earlier revision is content no parser will show and no scan can decode"
         )),
     }
 
@@ -446,7 +446,7 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                         if deferred_objects <= MAX_OBJECT_REASONS {
                             report.deferred.push(format!(
                                 "object {} is a {filter} image, so its encoded bytes were \
-                                 scanned and its picture was not read --- text visible only as \
+                                 scanned and its picture was not read \u{2014} text visible only as \
                                  pixels needs OCR",
                                 id.0
                             ));

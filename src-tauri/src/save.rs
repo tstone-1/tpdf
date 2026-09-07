@@ -308,6 +308,11 @@ pub struct Staged {
 pub enum Job {
     /// The document, stored. Its encryption is kept and the view adds nothing.
     Save,
+    /// A fresh image-only document with marked pixels removed before encoding.
+    /// Only the sandboxed renderer implements this job.
+    RasterRedact,
+    /// Paint the already-checked removal regions on the resulting document.
+    RedactionFill,
     /// Paper, turned by the reader's own rotation in quarter turns clockwise.
     ///
     /// **Refused for an encrypted document**, and neither answer a rewrite can
@@ -326,7 +331,7 @@ impl Job {
     #[must_use]
     pub fn view(self) -> u8 {
         match self {
-            Self::Save => 0,
+            Self::Save | Self::RasterRedact | Self::RedactionFill => 0,
             Self::Print { view } => view,
         }
     }
@@ -697,6 +702,89 @@ pub fn write_copy(
     Ok(Copied {
         changed: ready.changed,
     })
+}
+
+/// Writes a verified image-only redaction to a separate file.
+///
+/// The source must match the document the regions were marked on. The worker
+/// snapshots and checks those bytes again before parsing, and verifies its
+/// fresh output before returning. A failure never replaces the destination.
+pub fn write_raster_copy(
+    source: &Path,
+    plan: &Plan,
+    out: &Path,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+) -> Result<Copied, Refusal> {
+    if same_file(source, out) {
+        return Err(
+            "Choose a different name for the image-only copy; the original must be kept".into(),
+        );
+    }
+    let expected = plan.opened_as.as_ref().ok_or_else(|| {
+        Refusal::from("The source could not be fingerprinted. Reopen it before redacting")
+    })?;
+    let (mut reading, len) = opened_to_rewrite(source)?;
+    let actual = Fingerprint::of_open(&reading, source)?;
+    if actual.len != expected.len || actual.digest != expected.digest {
+        return Err(Refusal::changed(
+            "The source changed since it was opened. Reopen it and mark the regions again",
+        ));
+    }
+    let staged = stage(out, |writing| {
+        staged_rewrite(
+            rewriter,
+            &mut reading,
+            len,
+            writing,
+            plan,
+            Job::RasterRedact,
+            password,
+        )?;
+        // The snapshot is stable, but do not present an old version as a copy
+        // of a source that was replaced while rendering.
+        expected.agrees_with(source).map_err(Refusal::changed)?;
+        Ok(())
+    })?;
+    commit(&staged, out)?;
+    Ok(Copied { changed: false })
+}
+
+/// Adds opaque black appearances only after the removal output was checked.
+/// The fingerprint binds this pass to those exact checked bytes.
+pub fn fill_redactions(
+    path: &Path,
+    original_plan: &Plan,
+    expected: &Fingerprint,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+) -> Result<(), Refusal> {
+    let mut plan = crate::redaction_fill::output_plan(original_plan)?;
+    plan.opened_as = Some(expected.clone());
+    let (mut reading, len) = opened_to_rewrite(path)?;
+    let actual = Fingerprint::of_open(&reading, path)?;
+    if actual.len != expected.len || actual.digest != expected.digest {
+        return Err(Refusal::changed(
+            "The redaction output changed before its black fill was written",
+        ));
+    }
+    let staged = stage(path, |writing| {
+        staged_rewrite(
+            rewriter,
+            &mut reading,
+            len,
+            writing,
+            &plan,
+            Job::RedactionFill,
+            password,
+        )?;
+        expected.agrees_with(path).map_err(Refusal::changed)?;
+        Ok(())
+    })?;
+    // Windows cannot replace a file while our read handle remains open.
+    drop(reading);
+    commit(&staged, path)?;
+    Ok(())
 }
 
 /// A split that was written: the files, and whether the source had changed.
@@ -2811,6 +2899,9 @@ pub fn rewrite_update(
     job: Job,
     password: Option<&str>,
 ) -> Result<Vec<u8>, Refusal> {
+    if job == Job::RasterRedact {
+        return Err("Image-only redaction requires the sandboxed rendering worker".into());
+    }
     let checked = checked(original, plan, job.view(), password)?;
     // **Between the phases, which is where the answer is.** `checked` holds the
     // encryption state it took off the document, so this reads what has already
@@ -2831,7 +2922,7 @@ pub fn rewrite_update(
                 .into(),
         );
     }
-    rewrite(plan, checked)
+    rewrite(plan, checked, job)
 }
 
 /// One document going into a merge: where its bytes are, and what to call it.
@@ -3286,7 +3377,7 @@ fn checked(
 ///
 /// A page tree that cannot be rebuilt, a mark that maps to nothing, two pages
 /// that are one object and disagree, or a document `lopdf` will not serialise.
-fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
+fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> {
     let Checked {
         mut doc,
         pages,
@@ -3400,7 +3491,12 @@ fn rewrite(plan: &Plan, checked: Checked) -> Result<Vec<u8>, Refusal> {
     // a turn and a crop write entries in the page dictionary. Not one of them
     // touches a content stream, which is the property that makes the ordinals
     // still true here.
-    let redacted = apply_redactions(&mut doc, &pages, &plan.redactions)?;
+    let redacted = if job == Job::RedactionFill {
+        crate::redaction_fill::paint(&mut doc, &pages, &plan.redactions)?;
+        apply_redactions(&mut doc, &pages, &[])?
+    } else {
+        apply_redactions(&mut doc, &pages, &plan.redactions)?
+    };
 
     // **Only what this rewrite orphaned, and only when it orphaned something.**
     // `drop_pages` unlinks a page object and every reference to it, and

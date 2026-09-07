@@ -2074,8 +2074,10 @@ MUTATIONS = [
         # baseline that no longer exists.
         "save: allow writing over the source",
         "src/save.rs",
-        "    if same_file(source, out) {",
-        "    if false {",
+        '    if same_file(source, out) {\n        return Err(\n'
+        '            "tpdf cannot save over the document it is reading --- choose another name".into(),',
+        '    if false {\n        return Err(\n'
+        '            "tpdf cannot save over the document it is reading --- choose another name".into(),',
         "saving_over_the_open_document_is_refused",
     ),
     Mutation(
@@ -4148,8 +4150,10 @@ MUTATIONS = [
         # notice is a source this process cannot read.
         "save: copy in the coordinator instead of the worker",
         "src/save.rs",
-        "    let staged = stage(out, |writing| {\n        staged_rewrite(\n            rewriter,",
-        "    let staged = stage(out, |writing| {\n        staged_rewrite(\n            &Here,",
+        "    let staged = stage(out, |writing| {\n        staged_rewrite(\n            rewriter,\n"
+        "            &mut reading,\n            len,\n            writing,\n            plan,\n            Job::Save,",
+        "    let staged = stage(out, |writing| {\n        staged_rewrite(\n            &Here,\n"
+        "            &mut reading,\n            len,\n            writing,\n            plan,\n            Job::Save,",
         "the_coordinator_does_not_parse_the_document_it_copies",
     ),
     Mutation(
@@ -5387,13 +5391,13 @@ MUTATIONS += [
         "xmp: take the first fragment of a value as the whole value",
         "src/xmp.rs",
         """                if let Some((_, _, buffer)) = &mut pending {
-                    append(buffer, &value, &mut out.unread);
+                    append(buffer, &text, &mut out.unread);
                 }
             }
             Ok(Event::GeneralRef(reference)) => {""",
         """                if let Some((_, _, buffer)) = &mut pending {
                     if buffer.is_empty() {
-                        append(buffer, &value, &mut out.unread);
+                        append(buffer, &text, &mut out.unread);
                     }
                 }
             }
@@ -7491,6 +7495,14 @@ MUTATIONS += [
 # inside a `#[tauri::command]`'s private helper.
 MUTATIONS += [
     Mutation(
+        # Image-only selections used to report zero despite removing image draws.
+        "redact: omit image draws from the removal count",
+        "src/redact.rs",
+        "    total += images.len();",
+        "    total += 0;",
+        "image_draws_are_merged_and_counted_without_a_text_layer",
+    ),
+    Mutation(
         # Stop merging the operators two overlapping regions both name. The
         # reader is then told a page has more removals in it than it has.
         "redact: count one show operator once per region that names it",
@@ -8601,6 +8613,25 @@ MUTATIONS += [
         "        let Unhandled { at, kind, drawn } = self;",
         "        let Unhandled { at, kind, drawn: _ } = self;\n        let drawn = &None::<usize>;",
         "a_repeated_object_says_why_it_stayed_and_an_ordinary_one_does_not",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        "raster: accept a snapshot whose digest differs from the opened source",
+        "src/save_outside.rs",
+        "    if digest != expected.digest {",
+        "    if false && digest != expected.digest {",
+        "raster_snapshot_binds_bytes_and_survives_source_changes",
+    ),
+    Mutation(
+        "raster: allow overwriting the source with an image-only copy",
+        "src/save.rs",
+        '    if same_file(source, out) {\n        return Err(\n'
+        '            "Choose a different name for the image-only copy; the original must be kept".into(),',
+        '    if false {\n        return Err(\n'
+        '            "Choose a different name for the image-only copy; the original must be kept".into(),',
+        "raster_copy_never_overwrites_its_source",
     ),
 ]
 

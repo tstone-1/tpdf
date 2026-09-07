@@ -14,6 +14,36 @@ use super::{await_reply, outside_of, password_for, reply_channel};
 use crate::render::RenderService;
 use crate::{edits, ocr_gate, redact, save, verify, with_close_note, SaveFailure};
 
+// Paint only after both verification passes read the uncovered result. The
+// fingerprint prevents applying that verdict to a file changed in between.
+async fn finish_redaction_fill(
+    app: &tauri::AppHandle,
+    service: &RenderService,
+    path: String,
+    plan: edits::Plan,
+    fingerprint: crate::fingerprint::Fingerprint,
+    password: Option<String>,
+) -> Result<(), String> {
+    let writer = outside_of(app, service.backend());
+    tauri::async_runtime::spawn_blocking(move || {
+        save::fill_redactions(
+            Path::new(&path),
+            &plan,
+            &fingerprint,
+            password.as_deref(),
+            &*writer,
+        )
+    })
+    .await
+    .map_err(|e| format!("The black fill did not run: {e}"))?
+    .map_err(|e| {
+        format!(
+            "Content removal finished, but the black fill could not be saved: {}",
+            e.message
+        )
+    })
+}
+
 /// Scans a file this build just wrote for the words a redaction removed.
 ///
 /// **One statement of the read-back, for the two commands that redact.** Both
@@ -229,6 +259,37 @@ async fn gate_written_file(
     })
 }
 
+/// Creates a fresh image-only copy; verification finishes before publication.
+#[tauri::command]
+pub async fn redact_raster_copy(
+    app: tauri::AppHandle,
+    edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    source: String,
+    path: String,
+) -> Result<redact::Applied, String> {
+    let asked = ask_redactions(&edits, &service, doc).await?;
+    let password = password_for(&service, doc, "redact_raster_copy").await;
+    let writing = outside_of(&app, service.backend());
+    let from = std::path::PathBuf::from(source);
+    let out = std::path::PathBuf::from(path);
+    let regions = asked.regions;
+    tauri::async_runtime::spawn_blocking(move || {
+        save::write_raster_copy(&from, &asked.plan, &out, password.as_deref(), &*writing)
+    })
+    .await
+    .map_err(|e| format!("The image-only copy did not run: {e}"))?
+    .map_err(|why| why.message)?;
+    Ok(redact::Applied {
+        regions,
+        shows: 0,
+        changed: false,
+        verified: true,
+        why: Vec::new(),
+    })
+}
+
 /// Writes a copy of the document with every marked region removed, and verifies it.
 ///
 /// **The destructive step, pointed at a new file.** `docs/PLAN.md` §6 describes
@@ -312,8 +373,10 @@ pub async fn redact_copy(
     // parse is the one that most wants to be somewhere that cannot reach their
     // files.
     let writing = outside_of(&app, service.backend());
-    let copied = tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(&from, &plan, &out, password.as_deref(), &*writing)
+    let (copied, fingerprint) = tauri::async_runtime::spawn_blocking(move || {
+        let copied = save::write_copy(&from, &plan, &out, password.as_deref(), &*writing)?;
+        let fingerprint = crate::fingerprint::Fingerprint::of(&out)?;
+        Ok::<_, save::Refusal>((copied, fingerprint))
     })
     .await
     .map_err(|e| format!("the redaction did not run: {e}"))?
@@ -355,7 +418,8 @@ pub async fn redact_copy(
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
-    why.extend(gate_written_file(&app, out_path, asked.gate, key).await);
+    why.extend(gate_written_file(&app, out_path.clone(), asked.gate, key.clone()).await);
+    finish_redaction_fill(&app, &service, out_path, asked.plan, fingerprint, key).await?;
     Ok(redact::Applied {
         regions,
         shows: shows_total,
@@ -465,16 +529,20 @@ pub async fn redact_document(
         // Read back rather than verified from what was written, which is the
         // rule the copy and the append both follow: what matters is the file on
         // disk, and the buffer that produced it agrees with itself.
-        scan_written_file(&*scanning, at, &needles, verifying.as_deref()).map_err(|why| {
-            SaveFailure::after_close(format!(
-                "the file was written but could not be read back to check it: {why}"
-            ))
-        })
+        let fingerprint =
+            crate::fingerprint::Fingerprint::of(at).map_err(SaveFailure::after_close)?;
+        let report =
+            scan_written_file(&*scanning, at, &needles, verifying.as_deref()).map_err(|why| {
+                SaveFailure::after_close(format!(
+                    "the file was written but could not be read back to check it: {why}"
+                ))
+            })?;
+        Ok::<_, SaveFailure>((report, fingerprint))
     })
     .await
     .map_err(|e| SaveFailure::after_close(format!("the redaction did not finish: {e}")))?;
 
-    let report = landed.map_err(|why| with_close_note(why, closed))?;
+    let (report, fingerprint) = landed.map_err(|why| with_close_note(why, closed))?;
 
     // The objects the removal could not take come first, because they are the
     // finding a reader can act on --- see `redact_copy`, which orders them the
@@ -485,7 +553,10 @@ pub async fn redact_document(
     }
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
-    why.extend(gate_written_file(&app, source, asked.gate, key).await);
+    why.extend(gate_written_file(&app, source.clone(), asked.gate, key.clone()).await);
+    finish_redaction_fill(&app, &service, source, asked.plan, fingerprint, key)
+        .await
+        .map_err(SaveFailure::after_close)?;
     Ok(redact::Applied {
         regions: asked.regions,
         shows: asked.shows,

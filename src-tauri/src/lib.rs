@@ -56,8 +56,10 @@ pub mod print_win;
 pub mod progressive;
 mod protocol;
 mod queue;
+pub mod raster_redact;
 pub mod recentdocs;
 pub mod redact;
+pub mod redaction_fill;
 pub mod render;
 /// One serialised sample of every named reply payload, which
 /// `src/lib/replyshapes.test.ts` checks the TypeScript mirror against.
@@ -753,6 +755,11 @@ pub fn run() {
                 // what to load, not once it has loaded it.
                 startup::mark("window built");
             }
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                let suffix = if tauri::is_dev() { " DEV" } else { "" };
+                window.set_title(&format!("tpdf v{}{suffix}", env!("CARGO_PKG_VERSION")))?;
+            }
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("tile", |ctx, request, responder| {
@@ -775,6 +782,7 @@ pub fn run() {
             redact_remove,
             redaction_plans,
             redact_copy,
+            redact_raster_copy,
             redact_document,
             annot_erase,
             annot_note,

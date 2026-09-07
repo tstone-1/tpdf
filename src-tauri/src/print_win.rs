@@ -162,10 +162,10 @@ fn rotation_degrees(page: &PdfPage) -> Option<i64> {
 /// other platform.
 fn parse(bytes: &[u8]) -> Option<PdfDocument> {
     let stream = to_stream(bytes)?;
-    // `.get()` blocks. That is correct here and not laziness: every caller is
+    // `.join()` blocks. That is correct here and not laziness: every caller is
     // either a test or a command already running off the UI thread, and a print
     // panel must not open before the document behind it has been read.
-    PdfDocument::LoadFromStreamAsync(&stream).ok()?.get().ok()
+    PdfDocument::LoadFromStreamAsync(&stream).ok()?.join().ok()
 }
 
 /// Copies a slice into a fresh WinRT in-memory stream, rewound to the start.
@@ -177,8 +177,8 @@ fn to_stream(bytes: &[u8]) -> Option<InMemoryRandomAccessStream> {
     // Without this the bytes sit in the writer and the stream is empty, which
     // presents as a document the parser refuses rather than as a programming
     // mistake.
-    writer.StoreAsync().ok()?.get().ok()?;
-    writer.FlushAsync().ok()?.get().ok()?;
+    writer.StoreAsync().ok()?.join().ok()?;
+    writer.FlushAsync().ok()?.join().ok()?;
     // **Load-bearing, and the omission of it is invisible.** A `DataWriter` owns the
     // output stream it was created over and closes it when the last reference goes
     // away --- which, in Rust, is the end of this function. Without the detach the
@@ -247,7 +247,7 @@ fn render_page_of(page: &PdfPage, dpi: f32) -> Result<Vec<u8>, String> {
     let stream = InMemoryRandomAccessStream::new().map_err(|e| format!("render stream: {e}"))?;
     page.RenderWithOptionsToStreamAsync(&stream, &options)
         .map_err(|e| format!("render: {e}"))?
-        .get()
+        .join()
         .map_err(|e| format!("render: {e}"))?;
     read_stream(&stream)
 }
@@ -270,7 +270,7 @@ fn read_stream(stream: &InMemoryRandomAccessStream) -> Result<Vec<u8>, String> {
     let got = reader
         .LoadAsync(len as u32)
         .map_err(|e| e.to_string())?
-        .get()
+        .join()
         .map_err(|e| e.to_string())? as usize;
     if got != len {
         return Err(format!("stream gave {got} of {len} bytes"));

@@ -209,12 +209,8 @@ pub fn scan(packet: &[u8]) -> Xmp {
                 // Text events carry **no** entities: quick-xml delivers every
                 // `&...;` as a separate `GeneralRef`, measured rather than
                 // assumed. So there is nothing to unescape here.
-                let Ok(value) = text.decode() else {
-                    out.unread = true;
-                    continue;
-                };
                 if let Some((_, _, buffer)) = &mut pending {
-                    append(buffer, &value, &mut out.unread);
+                    append(buffer, &text, &mut out.unread);
                 }
             }
             Ok(Event::GeneralRef(reference)) => {
@@ -226,10 +222,7 @@ pub fn scan(packet: &[u8]) -> Xmp {
                 // the refusal is reported rather than silently dropping the
                 // character, because a value quietly shortened is a value the
                 // document did not state.
-                let Ok(name) = reference.decode() else {
-                    out.unread = true;
-                    continue;
-                };
+                let name: &str = &reference;
                 let spelled = format!("&{name};");
                 let Ok(resolved) = quick_xml::escape::unescape(&spelled) else {
                     out.unread = true;
@@ -256,13 +249,11 @@ pub fn scan(packet: &[u8]) -> Xmp {
 }
 
 /// The property a resolved element name identifies.
-fn named(resolved: ResolveResult, local: &[u8]) -> Option<Property> {
+fn named(resolved: ResolveResult, local: &str) -> Option<Property> {
     let ResolveResult::Bound(namespace) = resolved else {
         return None;
     };
-    let namespace = std::str::from_utf8(namespace.as_ref()).ok()?;
-    let local = std::str::from_utf8(local).ok()?;
-    property_of(namespace, local)
+    property_of(namespace.as_ref(), local)
 }
 
 /// Reads the properties an element states as attributes rather than children.

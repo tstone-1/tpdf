@@ -251,6 +251,31 @@ impl InWorker {
 
 impl Outside for InWorker {}
 
+// A mapped source can change underneath a renderer. Raster redaction instead
+// hands the worker an immutable snapshot of exactly the bytes that were opened.
+fn raster_snapshot(source: &mut std::fs::File, len: usize, plan: &Plan) -> Result<Shm, Refusal> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Seek, SeekFrom};
+    let expected = plan.opened_as.as_ref().ok_or_else(|| {
+        Refusal::from("Reopen the source before creating an image-only redaction")
+    })?;
+    if len > 512 * 1024 * 1024 || len as u64 != expected.len {
+        return Err("The source is too large or has changed since it was opened".into());
+    }
+    let mut mapped = Shm::create(len)?;
+    source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    source
+        .read_exact(mapped.as_mut_slice())
+        .map_err(|e| e.to_string())?;
+    let digest: [u8; 32] = Sha256::digest(mapped.as_slice()).into();
+    if digest != expected.digest {
+        return Err(Refusal::changed(
+            "The source changed. Reopen it and mark the regions again",
+        ));
+    }
+    Ok(mapped)
+}
+
 impl Rewriter for InWorker {
     fn write(
         &self,
@@ -262,7 +287,11 @@ impl Rewriter for InWorker {
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         // The handles, never the pathnames. See [`Rewriter`].
-        let mapped = Shm::map_open_file(source, len)?;
+        let mapped = if matches!(job, Job::RasterRedact | Job::RedactionFill) {
+            raster_snapshot(source, len, plan)?
+        } else {
+            Shm::map_open_file(source, len)?
+        };
         let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?;
 
         // **Asked on a thread so the answer can be waited for with a bound**, as
@@ -277,7 +306,12 @@ impl Rewriter for InWorker {
         let rx = asked_on_a_thread(worker, move |worker| {
             Self::ask_rewrite(worker, &plan, job, key.as_deref())
         });
-        awaited(&rx, DEFAULT_DEADLINE, pid)?
+        let deadline = if job == Job::RasterRedact {
+            std::time::Duration::from_secs(180)
+        } else {
+            DEFAULT_DEADLINE
+        };
+        awaited(&rx, deadline, pid)?
     }
 
     fn merge(
@@ -479,6 +513,46 @@ impl InWorker {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn raster_snapshot_binds_bytes_and_survives_source_changes() {
+        use std::io::{Seek, SeekFrom, Write};
+        let path =
+            std::env::temp_dir().join(format!("tpdf-raster-snapshot-{}", std::process::id()));
+        let mut source = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        source.write_all(b"synthetic original").unwrap();
+        let fingerprint = crate::fingerprint::Fingerprint::of_open(
+            &source,
+            std::path::Path::new("synthetic-source"),
+        )
+        .unwrap();
+        let mut plan = crate::edits::Plan {
+            baseline: 0,
+            opened_as: Some(fingerprint),
+            pages: vec![],
+            marks: vec![],
+            redactions: vec![],
+            notes: vec![],
+            discards: vec![],
+        };
+        let snapshot = super::raster_snapshot(&mut source, 18, &plan).unwrap();
+        source.seek(SeekFrom::Start(0)).unwrap();
+        source.write_all(b"synthetic replaced").unwrap();
+        assert_eq!(snapshot.as_slice(), b"synthetic original");
+        let error = super::raster_snapshot(&mut source, 18, &plan)
+            .err()
+            .unwrap();
+        assert!(error.changed);
+        plan.opened_as = None;
+        assert!(super::raster_snapshot(&mut source, 18, &plan).is_err());
+        drop(source);
+        std::fs::remove_file(path).unwrap();
+    }
+
     // **Gated the same way the tests below are, and `use super::*` is what does
     // not work here.** Both tests need a real process to stand in for a worker,
     // so both are `#[cfg(unix)]` --- which leaves this module empty on Windows,

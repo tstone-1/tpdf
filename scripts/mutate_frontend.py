@@ -80,6 +80,13 @@ class Mutation:
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
     Mutation(
+        "toolbar: ignore command enablement",
+        "src/lib/toolbar.ts",
+        "enabled: command !== undefined && (command.enabled?.() ?? true)",
+        "enabled: command !== undefined",
+        "updates selection, save, undo, redo and search guards in both directions",
+    ),
+    Mutation(
         # Pan on any button. The primary one then fights the text selection and
         # every drawing tool for the same press, which is the direction that
         # looks like the viewer ignoring a gesture rather than adding one.
@@ -1515,7 +1522,7 @@ MUTATIONS = [
         # the reader did not change.
         "commands: offer Save whenever a document is open",
         "src/lib/appcommands.ts",
-        "      enabled: () => actions.viewer() !== null && actions.isDirty(),",
+        "      enabled: () => withDocument() && actions.isDirty(),",
         "      enabled: withDocument,",
         "offer Save only once there is something to save",
     ),
@@ -1525,7 +1532,7 @@ MUTATIONS = [
         # variable and nothing clears it.
         "commands: guard Save on the journal alone",
         "src/lib/appcommands.ts",
-        "      enabled: () => actions.viewer() !== null && actions.isDirty(),",
+        "      enabled: () => withDocument() && actions.isDirty(),",
         "      enabled: () => actions.isDirty(),",
         "withholds Save with no document, however dirty the model claims to be",
     ),
@@ -1554,7 +1561,7 @@ MUTATIONS = [
         # that the command does nothing.
         "commands: offer Undo whenever a document is open",
         "src/lib/appcommands.ts",
-        "      enabled: () => actions.viewer() !== null && actions.canUndo(),",
+        "      enabled: () => withDocument() && actions.canUndo(),",
         "      enabled: withDocument,",
         "are withheld while the journal is empty",
     ),
@@ -1563,8 +1570,8 @@ MUTATIONS = [
         # nothing undone then offers Redo as well.
         "commands: guard Redo on there being something to undo",
         "src/lib/appcommands.ts",
-        "      enabled: () => actions.viewer() !== null && actions.canRedo(),",
-        "      enabled: () => actions.viewer() !== null && actions.canUndo(),",
+        "      enabled: () => withDocument() && actions.canRedo(),",
+        "      enabled: () => withDocument() && actions.canUndo(),",
         "are offered separately, each on its own half of the journal",
     ),
     Mutation(
@@ -5101,6 +5108,7 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",

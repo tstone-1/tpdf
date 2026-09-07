@@ -62,6 +62,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # of these has written to a path; anything reaching none of them has not.
 TERMINAL = [
     "write_copy",
+    "write_raster_copy",
+    "fill_redactions",
     "write_split",
     "write_merged",
     "commit_in_place",

@@ -341,8 +341,9 @@ fn size_no_easier_than(boxes: &[[f32; 4]]) -> Result<f32, ControlTooEasy> {
         .fold(f32::INFINITY, f32::min);
     if !smallest.is_finite() {
         return Err(ControlTooEasy(
-            "no redacted box had a usable height, so there is nothing to size a control \
-             against; refusing rather than picking one"
+            "the selected area has no extracted word boxes with a usable height (for example, \
+             its visible words may be images), leaving nothing to size a control against; \
+             OCR verification cannot certify this removal"
                 .into(),
             NotVerifiedCause::ControlNoSize,
         ));

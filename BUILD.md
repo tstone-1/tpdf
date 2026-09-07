@@ -5401,6 +5401,12 @@ starts at 0 and increments within the month.
    reverses the token-length argument in the ⚠ paragraph above; that paragraph now carries
    the platform label it lacked.
 
+   **Windows x64, 26.9.3 release check, 2026-09-07:** 117 documents opened, none
+   refused; 9,808 regions sampled, 6,399 taken whole (65.2%). The gate read back
+   5,775 regions on 211 pages and showed 2,256 unreadable (39.06%), in 48.5 seconds.
+   No arithmetic warnings were reported. This is the current local corpus, not a
+   controlled comparison with the earlier run.
+
    **The state line stays, because the debt is now a different one.** The run separates
    nothing: the two corpora share no document, so a more permissive engine and a corpus of
    cleaner type explain the Windows figures equally well, and §6 records that as open.

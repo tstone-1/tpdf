@@ -178,7 +178,7 @@ impl Unhandled {
             Some(times) => format!(
                 "object {at} is of kind {kind} and is drawn {times} time(s) in this document; \
                  removing it here would leave every other copy, and the object itself, in the \
-                 file --- so it was left"
+                 file \u{2014} so it was left"
             ),
             None => format!(
                 "object {at} is of kind {kind} and overlaps the region; only text is removed here"
@@ -318,7 +318,7 @@ impl Plan {
 pub struct Applied {
     /// How many regions were removed from.
     pub regions: usize,
-    /// How many text-showing operations went.
+    /// How many distinct text-showing operations and image draws went.
     ///
     /// Not the same as `regions`, in either direction: one region can cover
     /// several operations, and two regions on one line cover the same one.
@@ -1504,7 +1504,7 @@ pub fn remove_images(
         if let Some(times) = drawn_more_than_once(doc, id, &here, name) {
             return Err(format!(
                 "the picture you marked is drawn {times} time(s) in this document. Removing it \
-                 here would leave every other copy, and the picture itself, in the file --- so \
+                 here would leave every other copy, and the picture itself, in the file \u{2014} so \
                  nothing was removed."
             ));
         }
@@ -2326,8 +2326,8 @@ pub struct PageAggregate {
     pub concerns: Vec<String>,
     /// The strings the removal takes, for the whole-file verification.
     pub needles: Vec<String>,
-    /// How many distinct show operations this page contributes, page text and
-    /// form text together --- the number a reader is shown before committing.
+    /// How many distinct removals this page contributes: page text, form text
+    /// and image draws --- the number a reader is shown before committing.
     pub shows: usize,
 }
 
@@ -2418,6 +2418,7 @@ pub fn aggregate(
     // removing it once.
     images.sort_unstable();
     images.dedup();
+    total += images.len();
 
     let (words, width_pt, height_pt) = match text {
         Some(text) => (
@@ -2512,6 +2513,36 @@ mod tests {
             one.shows, 2,
             "page text and form text land in one number, because a reader is being told how \
              many removals there are rather than where they live"
+        );
+    }
+
+    #[test]
+    fn image_draws_are_merged_and_counted_without_a_text_layer() {
+        let mut first = plan_of(&[], "");
+        first.images = vec![4, 1];
+        first.image_objects = 8;
+        let mut second = plan_of(&[], "");
+        second.images = vec![4, 7];
+        second.image_objects = 8;
+        let one = super::aggregate(0, vec![[0.0; 4]; 2], vec![first, second], None);
+        assert_eq!(one.planned.images, vec![1, 4, 7]);
+        assert_eq!(
+            one.shows, 3,
+            "image-only removals must not be reported as zero"
+        );
+        assert!(one.needles.is_empty());
+    }
+
+    #[test]
+    fn removal_count_adds_images_page_text_and_form_text() {
+        let mut plan = plan_of(&[1], "synthetic");
+        plan.form_shows = vec![(1, 1)];
+        plan.images = vec![1];
+        plan.image_objects = 2;
+        let one = super::aggregate(0, vec![[0.0; 4]], vec![plan], None);
+        assert_eq!(
+            one.shows, 3,
+            "matching ordinals name different kinds of removals"
         );
     }
 

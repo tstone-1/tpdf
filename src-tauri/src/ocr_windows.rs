@@ -263,7 +263,7 @@ impl Recogniser for WindowsOcr {
             .engine
             .RecognizeAsync(&bitmap)
             .map_err(|e| RecogniseError::Crashed(format!("RecognizeAsync: {e}")))?
-            .get()
+            .join()
             .map_err(|e| RecogniseError::Crashed(format!("awaiting RecognizeAsync: {e}")))?;
 
         let lines = result

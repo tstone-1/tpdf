@@ -17,7 +17,25 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.3] - Unreleased
+## [26.9.3] - 2026-09-07
+
+### Toolbar and redaction improvements
+
+- A compact toolbar exposes selection, highlighting, comments, text, drawing,
+  page operations and redaction, with contextual colour and width controls.
+- Windows title bars show the application version and identify development builds.
+- Applied redactions receive opaque black fill after removal verification. Text
+  that survives the removal remains selectable.
+- A new image-only redaction copy renders every page at 300 dpi and removes the
+  marked pixels before writing a fresh PDF. It keeps the original file, preserves
+  encryption, and discards text layers and interactive document features.
+- Unverified copies offer the image-only option and keep diagnostics under
+  Technical details. The saved copy can be opened directly, with its verification
+  warning retained; the original keeps its pending marks.
+- Removal counts include images, and OCR diagnostics explain when a selected area
+  has no extracted word sizes. Diagnostic separators render as em dashes.
+- Updated compatible dependencies, including Windows APIs and XML parsing. The
+  viewer checks now clear the synthetic region left by the removal-command stub.
 
 ### Fixed: a region you dragged could not be taken off by right-clicking it
 
