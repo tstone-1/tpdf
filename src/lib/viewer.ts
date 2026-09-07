@@ -872,6 +872,17 @@ const REDACT_FILL = "rgba(190, 30, 45, 0.30)";
  * definite boundary a reader can judge an over-selection against. */
 const REDACT_EDGE = "rgba(190, 30, 45, 0.95)";
 /**
+ * How much heavier the picked region's edge is drawn.
+ *
+ * Weight rather than a second colour, because the colour is the whole of what
+ * says *this is a redaction* --- a picked region drawn in another ink would
+ * read as a different kind of thing rather than as the same thing named. The
+ * factor is chosen rather than measured: it has to survive `Math.max(1, ...)`
+ * at low zoom, where the unpicked edge is already clamped to one device pixel
+ * and any factor below about three leaves the two indistinguishable.
+ */
+const PICKED_EDGE_SCALE = 3;
+/**
  * The outline a committed comment's bubble is drawn with.
  *
  * A parameter of {@link drawBubble} with this as its default rather than a
@@ -4040,6 +4051,69 @@ export class Viewer {
   }
 
   /**
+   * The id of the pending redaction at a point on screen, or `null`.
+   *
+   * {@link markAt}'s twin, and a separate method rather than one hit test over
+   * both lists, for the reason {@link setRedactions} is separate from
+   * {@link setMarks}: a mark is written into the saved file and a region never
+   * is, and one answer covering both would be the first place that distinction
+   * could be lost.
+   *
+   * It exists because a right-click on a region a reader had just dragged
+   * offered the *selection* menu --- copy, mark, find --- so the only route off
+   * that region was the review panel's remove control, which the reader had to
+   * know to open, or undo, which is chronological and cannot reach the second
+   * of six. Reported from use, and the same finding {@link markAt} records one
+   * increment earlier.
+   *
+   * Placed through {@link viewRectOn} and answered by {@link hitTest}, which
+   * are what `paintRedactions` draws with and what marks, comments and links
+   * are already hit-tested with --- a second copy of the crop-and-turn rule is
+   * a second thing to get wrong at every `/Rotate`, which the mark subsystem
+   * has done here once already.
+   */
+  redactionAt(point: ScreenPoint): number | null {
+    if (this.redactions.length === 0) return null;
+    const { page, x, y } = this.pageAndPoint(point);
+    const here: { page: number; rect: [number, number, number, number]; id: number }[] = [];
+    for (const region of this.redactions) {
+      // `page` here is a **slot**, which is what `pageAndPoint` answers and what
+      // `hitTest` compares; `region.page` is an id. Comparing the two directly
+      // is the confusion `RedactionView.page`'s own note exists to prevent, and
+      // it agrees for every document until the first page deletion.
+      if (this.pages.slotOfId(region.page) !== page) continue;
+      const quad = this.viewRectOn(page, region.area);
+      here.push({
+        page,
+        rect: [quad.left, quad.top, quad.right, quad.bottom],
+        id: region.id,
+      });
+    }
+    return hitTest(here, page, x, y)?.id ?? null;
+  }
+
+  /**
+   * Names the region a command that takes one acts on, or clears it.
+   *
+   * The redaction equivalent of a mark's open note, and it exists for exactly
+   * the reason that one does: `edit.removeRedaction` has no second way to be
+   * told which region it means. `contextmenu.ts` argues that rule at length for
+   * `edit.removeMark`, and a redaction has no note box to open, so the pick is
+   * what stands in for one --- it is drawn heavier, so the region the menu is
+   * about is the region under the reader's eyes.
+   */
+  pickRedaction(id: number | null): void {
+    this.picked = id;
+    // `wake` rather than a repaint, for {@link setMarks}' reason.
+    this.wake();
+  }
+
+  /** The picked region's id, or -1. {@link markOpen}'s twin. */
+  get redactionPicked(): number {
+    return this.picked ?? -1;
+  }
+
+  /**
    * Where a new comment would go, as the page and the one quad it needs.
    *
    * **One rule with two entry points, rather than two rules.** A right-click
@@ -5315,6 +5389,16 @@ export class Viewer {
   private redactions: readonly RedactionView[] = [];
 
   /**
+   * The region a right-click named, by id, or `null`.
+   *
+   * By **id** and not by an index into {@link redactions}: the model rebuilds
+   * that list on every edit, and `docs/TRAPS.md` records state keyed by a
+   * position belonging to whatever moves into that position. See
+   * {@link pickRedaction}.
+   */
+  private picked: number | null = null;
+
+  /**
    * Each cropped page's geometry, by page **id**.
    *
    * By id and not by slot, because a page moves and its crop moves with it ---
@@ -5423,6 +5507,14 @@ export class Viewer {
    */
   setRedactions(regions: readonly RedactionView[]): void {
     this.redactions = regions;
+    // A pick whose region the model no longer lists is dropped --- the region
+    // was removed, or an undo took it back. Dropped here rather than on every
+    // state, because this runs after every edit and clearing unconditionally
+    // would take the pick off a region a reader had just named whenever some
+    // *other* edit landed.
+    if (this.picked !== null && !regions.some((region) => region.id === this.picked)) {
+      this.picked = null;
+    }
     // `wake` rather than a repaint, for {@link setMarks}' reason.
     this.wake();
   }
@@ -5573,10 +5665,20 @@ export class Viewer {
     ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = REDACT_FILL;
     ctx.strokeStyle = REDACT_EDGE;
-    ctx.lineWidth = Math.max(1, OUTLINE_WIDTH * this.zoom * dpr);
     for (const region of this.redactions) {
       const slot = this.pages.slotOfId(region.page);
       if (slot === undefined || !visible.has(slot)) continue;
+      // **Set per region, not once for the loop.** The picked one is drawn with
+      // a heavier edge, which is the whole of what tells a reader which region
+      // the menu they just opened is about --- a redaction has no note box to
+      // open, so this stands in for the one `edit.removeMark` relies on. See
+      // {@link pickRedaction}. Hoisting this out of the loop is how every mark
+      // came to be drawn as a highlight once; the same mistake here would draw
+      // every region as picked.
+      ctx.lineWidth = Math.max(
+        1,
+        (region.id === this.picked ? PICKED_EDGE_SCALE : 1) * OUTLINE_WIDTH * this.zoom * dpr,
+      );
       const quad = this.viewRectOn(slot, region.area);
       const origin = this.scroller.pageOrigin(slot);
       const x = (origin.left + quad.left * this.zoom) * dpr;

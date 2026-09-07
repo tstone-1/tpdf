@@ -264,6 +264,13 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.redactRegion",
       "edit.redactSelection",
       "edit.redactMatches",
+      // Last of the four and inside the same group, because it is the way back
+      // off what the three above put on. Greyed on a document with nothing
+      // picked, which is most of the time --- and that is the menu bar's job
+      // rather than the context menu's: a menu bar is a stable map of the
+      // application, so a reader who has dragged a region and lost track of how
+      // to undo it finds the answer here whether or not it is currently live.
+      "edit.removeRedaction",
       "edit.deletePage",
     ],
   },

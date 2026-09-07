@@ -57,6 +57,11 @@ function harness(
   // stronger with each: three guards that agree today, and one flag driving all
   // three would make a mutation that swaps any two of them survive.
   commentDeletable = false,
+  // A fourth flag, for the third's reason: a picked region and an open note are
+  // different states of different subsystems, and one flag driving both would
+  // let a mutation that swapped `edit.removeMark`'s guard for this one survive.
+  // Default false because a document opens with nothing picked.
+  redactionPicked = false,
 ) {
   const fired: string[] = [];
   const actions: AppActions = {
@@ -130,10 +135,12 @@ function harness(
     // so the withheld direction is what a test that says nothing about a mark
     // exercises.
     removeMark: () => fired.push("removeMark"),
+    removeRedaction: () => fired.push("removeRedaction"),
     setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
     setNib: (id: string) => fired.push(`setNib:${id}`),
     markColor: () => "default",
     hasOpenMark: () => markOpen,
+    hasPickedRedaction: () => redactionPicked,
     canEditComment: () => commentEditable,
     editComment: () => fired.push("editComment"),
     canReplyToComment: () => commentReplyable,
@@ -429,6 +436,9 @@ describe("every registered command", () => {
       // two commands' guards pass unnoticed.
       true,
       // And a deletable one, for `edit.deleteComment`. Third flag, same reason.
+      true,
+      // And a picked region, so `edit.removeRedaction` is allowed to run.
+      // Fourth flag, same reason again.
       true,
     );
     const shell = registry
@@ -1105,10 +1115,12 @@ describe("the window shortcuts for editing", () => {
     erase: () => fired.push("erase"),
       hasSelection: () => false,
       removeMark: () => fired.push("removeMark"),
+      removeRedaction: () => fired.push("removeRedaction"),
       setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
       setNib: (id: string) => fired.push(`setNib:${id}`),
       markColor: () => "default",
       hasOpenMark: () => false,
+      hasPickedRedaction: () => false,
       canEditComment: () => false,
       editComment: () => 0,
       canReplyToComment: () => false,

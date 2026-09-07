@@ -20,6 +20,7 @@ import {
   MARK_MENU,
   menuForSurface,
   PAGE_MENU,
+  REDACTION_MENU,
   SELECTION_MENU,
   SEPARATOR,
   type Entry,
@@ -112,6 +113,9 @@ describe("the surface lists", () => {
     // is exempt from the emptiness check is a list that can quietly become
     // empty. What a mark can be asked to do is exactly this, for now.
     expect(ids(MARK_MENU).length).toBeGreaterThan(0);
+    // And the region's, for the mark menu's reason: it is one entry, so it is
+    // the list most easily emptied by a rename nobody notices.
+    expect(ids(REDACTION_MENU).length).toBeGreaterThan(0);
   });
 
   it("offer no command that takes a value", () => {
@@ -119,7 +123,12 @@ describe("the surface lists", () => {
     // right for a menu bar and strange for a menu that appeared because the
     // reader pointed at one specific thing.
     const { commands } = registry();
-    for (const id of [...ids(PAGE_MENU), ...ids(SELECTION_MENU), ...ids(MARK_MENU)]) {
+    for (const id of [
+      ...ids(PAGE_MENU),
+      ...ids(SELECTION_MENU),
+      ...ids(MARK_MENU),
+      ...ids(REDACTION_MENU),
+    ]) {
       expect(commands.find(id)?.argument, id).toBeUndefined();
     }
   });
@@ -127,11 +136,11 @@ describe("the surface lists", () => {
 
 describe("which menu a right-click on the page gets", () => {
   it("offers the mark's menu when the pointer is on a mark", () => {
-    expect(menuForSurface(7)).toBe(MARK_MENU);
+    expect(menuForSurface(7, null)).toBe(MARK_MENU);
   });
 
   it("offers the selection's menu when it is not", () => {
-    expect(menuForSurface(null)).toBe(SELECTION_MENU);
+    expect(menuForSurface(null, null)).toBe(SELECTION_MENU);
   });
 
   it("treats mark 0 as a mark", () => {
@@ -139,14 +148,48 @@ describe("which menu a right-click on the page gets", () => {
     // from the model and there is nothing stopping the first one being 0, at
     // which point a right-click on it silently offers the selection menu ---
     // the exact defect this replaced, back again for one mark in the document.
-    expect(menuForSurface(0)).toBe(MARK_MENU);
+    expect(menuForSurface(0, null)).toBe(MARK_MENU);
   });
 
   it("gives the two cases different menus", () => {
     // The discrimination itself. A rule returning one list for both satisfies
     // neither of the first two on its own, and this says so in one assertion
     // that cannot be passed by a constant.
-    expect(menuForSurface(1)).not.toBe(menuForSurface(null));
+    expect(menuForSurface(1, null)).not.toBe(menuForSurface(null, null));
+  });
+
+  it("offers the region's menu when the pointer is on a pending redaction", () => {
+    // The defect this pair was written for: dragging a region and right-clicking
+    // it offered the selection menu, so the only way off the region was the
+    // review panel or an undo of everything since.
+    expect(menuForSurface(null, 3)).toBe(REDACTION_MENU);
+  });
+
+  it("treats region 0 as a region", () => {
+    // `menuForSurface(0, ...)` above, in the other argument. Redaction ids come
+    // from the same model and the first one in a fresh document is as likely to
+    // be 0 as a mark's is.
+    expect(menuForSurface(null, 0)).toBe(REDACTION_MENU);
+  });
+
+  it("lets the region win over a mark under the same point", () => {
+    // A highlight under a region is ordinary --- a reader marks a line and then
+    // decides it has to go --- and the region is what is drawn on top, so it is
+    // what the right-click is about. Without this the pair returns the mark's
+    // menu and the entry the reader came for is not in it.
+    expect(menuForSurface(7, 3)).toBe(REDACTION_MENU);
+  });
+
+  it("gives all three cases different menus", () => {
+    // The discrimination over the whole domain rather than pairwise. A rule that
+    // answered the region menu for everything passes each of the three positive
+    // cases above and fails here.
+    const menus = [
+      menuForSurface(null, null),
+      menuForSurface(1, null),
+      menuForSurface(null, 1),
+    ];
+    expect(new Set(menus).size).toBe(3);
   });
 });
 

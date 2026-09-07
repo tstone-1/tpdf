@@ -19,6 +19,29 @@ have the binary.)
 
 ## [26.9.3] - Unreleased
 
+### Fixed: a region you dragged could not be taken off by right-clicking it
+
+Marking a region with *Redact region by dragging* and then right-clicking that region
+offered the selection menu --- Copy, the three marks, Find --- and nothing about the region
+under the pointer. Reported from use.
+
+There were two routes off a marked region and neither is the one a hand reaches for. The
+review panel has a remove control per row, which a reader has to know to open; and undo
+works, but it is chronological, so a reader who dragged six regions and wants the second one
+back cannot get there without undoing the four after it. Right-clicking the region is the
+gesture that says *this one*, and it was the one gesture that did nothing.
+
+A right-click on a pending region now offers **Remove this redaction**, which is also in the
+Edit menu beside the three ways of marking one. The region wins over a mark under the same
+point, matching what is drawn: a pending redaction is painted over every mark, and the thing
+on top is the thing the click is about. The region under the pointer is drawn with a heavier
+edge while the menu is open, which is what a redaction has instead of the note box a mark
+opens --- there is no second way to name which region the command means, exactly as there is
+none for *Remove mark*.
+
+Nothing about what a redaction *is* changed. Removing a region un-marks it; it destroys
+nothing either way, the region leaves the review list, and undo takes it back.
+
 ### Fixed: a logo repeated on every page made a whole redaction fail, words included
 
 Dragging a region over a document's header removed nothing at all and said so: *the picture

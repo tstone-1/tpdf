@@ -95,6 +95,34 @@ export const PAGE_MENU: Entry[] = [
 export const MARK_MENU: Entry[] = ["edit.removeMark"];
 
 /**
+ * What a right-click on a region marked for removal offers.
+ *
+ * {@link MARK_MENU}'s twin, and it exists for that entry's reason one step
+ * stronger. A right-click on a region a reader had just dragged offered
+ * {@link SELECTION_MENU} --- a menu about the selection, and on a region there
+ * usually is not one --- so the only route off the region was the review
+ * panel's remove control, which the reader had to know to open, or undo, which
+ * is chronological and so cannot reach the second of six regions. Reported from
+ * use.
+ *
+ * **How it knows which region.** As with the mark menu, it does not address
+ * one: `App.svelte` picks the region under the pointer first and then shows
+ * this, so `edit.removeRedaction` acts on the picked region exactly as it does
+ * from the palette. The pick is what a redaction has instead of an open note
+ * --- there is no box to open --- and `Viewer.pickRedaction` draws it with a
+ * heavier edge so the region the menu is about is the one under the reader's
+ * eyes.
+ *
+ * **One entry, and the two other things a region could be asked are not
+ * missing.** It cannot be resized or moved: neither command exists, and both
+ * are real features rather than omissions here. Applying is deliberately
+ * absent --- that destroys content, it is a whole-document act rather than one
+ * about the region under the pointer, and `docs/PLAN.md` §6 puts the review
+ * list between marking and applying on purpose.
+ */
+export const REDACTION_MENU: Entry[] = ["edit.removeRedaction"];
+
+/**
  * What a right-click on the document surface offers.
  *
  * Copy first, because that is what a right-click on selected text is for
@@ -158,8 +186,22 @@ export const SELECTION_MENU: Entry[] = [
  * The mark wins when there is one. A reader who right-clicks a highlight is
  * asking about that highlight, and a selection they made earlier is not what
  * the pointer is on.
+ *
+ * **And a region wins over a mark**, which is the same rule one step further
+ * and matches what the reader can see: `paintRedactions` draws a region over
+ * every mark, because a pending redaction names content that is about to stop
+ * existing and nothing a reader is merely looking through may sit on top of it.
+ * The thing on top is the thing the right-click is about.
+ *
+ * Both parameters are required rather than defaulted. A default would let a
+ * caller that has not been taught about regions compile and silently offer the
+ * selection menu on one, which is the defect this function was extended to fix.
  */
-export function menuForSurface(markUnderPointer: number | null): Entry[] {
+export function menuForSurface(
+  markUnderPointer: number | null,
+  redactionUnderPointer: number | null,
+): Entry[] {
+  if (redactionUnderPointer !== null) return REDACTION_MENU;
   return markUnderPointer === null ? SELECTION_MENU : MARK_MENU;
 }
 

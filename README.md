@@ -236,6 +236,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   five hundred matches it refuses and asks you to narrow the search, rather than marking
   some of them and telling you it was done.
   <!-- built: edit.redactMatches -->
+- **Remove this redaction** takes one marked region back off, by right-clicking the region
+  itself. The review list has always had a remove control per row, and undo has always
+  worked; neither reaches the second of six regions without either opening a panel or
+  undoing the four after it. Right-clicking the region is the gesture that says *this one*.
+  <!-- built: edit.removeRedaction -->
 - **Redact and save** does all of that to the file you opened, rather than to a new one.
   It warns first and offers to save you a copy, because there is no undo across it and no
   original left afterwards: the document is closed by the write, reopened from disk, and

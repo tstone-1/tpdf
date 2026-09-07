@@ -5207,6 +5207,11 @@ TEST_FILES = [
     # Added 2026-08-18 with the crop, before writing the mutations.
     "src/lib/crop.test.ts",
     "src/lib/viewercrop.test.ts",
+    # Moved out of UNMUTATED 2026-09-07 with the region right-click: the
+    # menu that a right-click on a pending redaction gets is now decided in
+    # `contextmenu.ts`, so there is a mutation aimed at that module and the
+    # suite has to run for it to be killed.
+    "src/lib/contextmenu.test.ts",
     # Added 2026-08-19 with the mark bands, before writing the mutations. The
     # rule it covers shipped wrong --- every kind drawn as a highlight while the
     # document was open --- so the point of the entries below is that the exact
@@ -5320,7 +5325,6 @@ UNMUTATED = {
     # it, which is the twelve-times failure caught before the run rather than
     # twenty minutes into it.
     "src/lib/backoff.test.ts": "no mutation aims at src/lib/backoff.ts",
-    "src/lib/contextmenu.test.ts": "no mutation aims at src/lib/contextmenu.ts",
     "src/lib/degraded.test.ts": "no mutation aims at src/lib/degraded.ts",
     "src/lib/lifetime.test.ts": "no mutation aims at src/lib/lifetime.ts",
     "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
@@ -7294,6 +7298,58 @@ MUTATIONS += [
         "    }\n",
         "",
         "reports an outline web link instead of navigating, and does not grey it",
+    ),
+]
+
+MUTATIONS += [
+    # Right-clicking a pending redaction, 2026-09-07. Four mutations, each
+    # proved to redden the test named for it before being written down.
+    Mutation(
+        # Fall through to the mark and selection rule, which is what the
+        # function did before regions were hit-tested at all --- and is exactly
+        # the defect reported: a right-click on a region a reader had just
+        # dragged offered Copy, the marks and Find, and no way off the region.
+        "contextmenu: ignore a region under the pointer",
+        "src/lib/contextmenu.ts",
+        "  if (redactionUnderPointer !== null) return REDACTION_MENU;\n",
+        "",
+        "offers the region's menu when the pointer is on a pending redaction",
+    ),
+    Mutation(
+        # Answer nothing, always. The guard reads as an emptiness check and the
+        # comparison is what makes it one, so this is the shape a typo takes ---
+        # and with it every right-click on a region gets the selection menu
+        # while the region list, the painting and the panel all stay correct.
+        "viewer: answer no region for every point",
+        "src/lib/viewer.ts",
+        "    if (this.redactions.length === 0) return null;",
+        "    if (this.redactions.length >= 0) return null;",
+        "finds the region under the point the drag covered, and nothing outside it",
+    ),
+    Mutation(
+        # Clear the pick on every state rather than only when the model has
+        # stopped listing the region. `setRedactions` runs after every edit, so
+        # this takes the pick off a region the reader has just right-clicked
+        # whenever anything else lands --- and the menu is already open.
+        "viewer: clear the picked region on every edit",
+        "src/lib/viewer.ts",
+        "    if (this.picked !== null && !regions.some((region) => region.id === this.picked)) {\n"
+        "      this.picked = null;\n"
+        "    }\n",
+        "    this.picked = null;\n",
+        "holds the picked region until it is cleared or the model drops it",
+    ),
+    Mutation(
+        # Never clear it. The pick then outlives the region it names, so
+        # `edit.removeRedaction` stays offered and acts on an id the model no
+        # longer has --- a command that is live and does nothing.
+        "viewer: keep a pick whose region the model has dropped",
+        "src/lib/viewer.ts",
+        "    if (this.picked !== null && !regions.some((region) => region.id === this.picked)) {\n"
+        "      this.picked = null;\n"
+        "    }\n",
+        "",
+        "holds the picked region until it is cleared or the model drops it",
     ),
 ]
 
