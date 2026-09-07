@@ -462,6 +462,8 @@
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
+    removeRedaction: () => removeRedaction(),
+    hasPickedRedaction: () => (viewer?.redactionPicked ?? -1) >= 0,
     canEditComment: () => viewer?.commentEditable ?? false,
     editComment: () => viewer?.editComment(),
     canReplyToComment: () => viewer?.commentReplyable ?? false,
@@ -717,6 +719,24 @@
    */
   function removeMark(): void {
     viewer?.removeOpenMark();
+  }
+
+  /**
+   * Takes the picked region out of the list of what is to be removed.
+   *
+   * {@link removeMark}'s twin, and *which* region is the viewer's answer for
+   * that function's reason exactly: the pick is where a reader says which one
+   * they mean, and a second way to name it is how the two come to disagree.
+   *
+   * `applyEdit` and `unredact` are the same path the review panel's remove
+   * control takes, so this journals, undoes and refreshes the panel exactly as
+   * that does --- and the pick clears itself when the model stops listing the
+   * region, which `Viewer.setRedactions` does rather than this.
+   */
+  function removeRedaction(): void {
+    const id = viewer?.redactionPicked ?? -1;
+    if (id < 0) return;
+    void applyEdit((e) => e.unredact(id));
   }
 
   /**
@@ -2240,7 +2260,14 @@
         const inside = (event.target as HTMLElement | null)?.closest?.(
           ".context-menu",
         );
-        if (!inside) contextMenu.close();
+        if (inside) return;
+        contextMenu.close();
+        // The pick goes with the menu it was made for. It is not a selection a
+        // reader can build on --- nothing else reads it, and leaving a region
+        // drawn heavy after the menu is gone would say the application is still
+        // pointing at it. A press *inside* the menu is the one that chooses a
+        // row, so the pick has to outlive that one.
+        viewer?.pickRedaction(null);
       });
       // The web view's own menu, everywhere it is not replaced. Its one entry
       // reloads the frontend, which drops the reader's view of the document --
@@ -2266,11 +2293,19 @@
           // it means, so `edit.removeMark` needs no second way to be told which
           // one. The strip does the same thing by navigating to the page.
           const own = viewer?.markAt(event) ?? null;
+          // A pending region wins over a mark, for the reason `menuForSurface`
+          // gives: it is drawn over every mark, and the thing on top is the
+          // thing the right-click is about. Picked rather than passed to the
+          // menu, which is how the mark below names itself and how the page
+          // strip names a page --- see `edit.removeRedaction`, which has no
+          // second way to be told which region it means.
+          const region = viewer?.redactionAt(event) ?? null;
+          viewer?.pickRedaction(region);
           // Without the keyboard: the menu is what the reader is about to arrow
           // through, and `showMark`'s default puts the caret in the note's text
           // field, which would eat every key the menu needs.
-          if (own !== null) viewer?.showMark(own, false);
-          openContextMenu(menuForSurface(own), at);
+          if (region === null && own !== null) viewer?.showMark(own, false);
+          openContextMenu(menuForSurface(own, region), at);
         }
       });
 

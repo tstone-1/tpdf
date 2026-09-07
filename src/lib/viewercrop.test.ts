@@ -568,6 +568,117 @@ describe("the redaction tool shares the crop's drag and nothing else", () => {
   });
 });
 
+describe("right-clicking a region a reader dragged out", () => {
+  it("finds the region under the point the drag covered, and nothing outside it", async () => {
+    // **The defect this pair was written for.** A dragged region was reachable
+    // only from the review panel and from undo, because nothing hit-tested one
+    // --- so a right-click on it fell through to the selection menu.
+    //
+    // The rectangle is the one the drag itself produced, fed straight back as
+    // the model would report it, so this is a round trip rather than a
+    // transcribed number: the drag reports in the file's display space and this
+    // asserts that the hit test reads that same space.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    const area = redacted[0]?.rect;
+    expect(area).toBeDefined();
+    viewer.setRedactions([{ id: 77, page: pageId(1), area: area as [number, number, number, number] }]);
+
+    expect(viewer.redactionAt({ clientX: 220, clientY: 240 })).toBe(77);
+    // The control, and the half that fails if the hit test answers the first
+    // region whatever the point: a press well outside the dragged rectangle.
+    expect(viewer.redactionAt({ clientX: 420, clientY: 440 })).toBeNull();
+    viewer.destroy();
+  });
+
+  it("answers nothing when no region has been marked", async () => {
+    // The empty case, which is what a right-click on ordinary paper hits. A hit
+    // test that answered an id here would put the region menu on every page.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    expect(viewer.redactionAt({ clientX: 220, clientY: 240 })).toBeNull();
+    viewer.destroy();
+  });
+
+  it("reads the crop, like every other rectangle on the page", async () => {
+    // The differential this file exists for, one subsystem later: the region is
+    // stated in the file's display space and the page is cropped, so a hit test
+    // that skipped the translation would answer for a point 100 points to the
+    // left and 150 above the one the reader pressed. Both directions, because
+    // the miss alone passes on a hit test that answers null for everything.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    const area = redacted[0]?.rect;
+    expect(area).toBeDefined();
+    // The drag starts left of the crop and is clamped to it, so this lands on
+    // the crop's own left edge --- and it is `GEOMETRY.left` rather than 0,
+    // which is what says the rectangle is stated in the file's space rather
+    // than in the cropped page's.
+    expect(area?.[0]).toBe(GEOMETRY.left);
+    viewer.setRedactions([{ id: 5, page: pageId(1), area: area as [number, number, number, number] }]);
+
+    expect(viewer.redactionAt({ clientX: 220, clientY: 240 })).toBe(5);
+    expect(viewer.redactionAt({ clientX: 420, clientY: 440 })).toBeNull();
+    viewer.destroy();
+  });
+
+  it("holds the picked region until it is cleared or the model drops it", async () => {
+    // The pick is what `edit.removeRedaction` reads --- there is no note box to
+    // open --- so all three transitions are asserted. The last one is the
+    // interesting one: a pick left pointing at a region that has been removed
+    // would make the command act on nothing while claiming to be available.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    const region = { id: 9, page: pageId(1), area: [10, 10, 100, 100] as [number, number, number, number] };
+    viewer.setRedactions([region]);
+    expect(viewer.redactionPicked).toBe(-1);
+
+    viewer.pickRedaction(9);
+    expect(viewer.redactionPicked).toBe(9);
+
+    // A state that still lists the region leaves the pick alone, which is the
+    // control: clearing on every state would take the pick off whenever some
+    // unrelated edit landed.
+    viewer.setRedactions([region]);
+    expect(viewer.redactionPicked).toBe(9);
+
+    viewer.setRedactions([]);
+    expect(viewer.redactionPicked).toBe(-1);
+    viewer.destroy();
+  });
+
+  it("keeps a pick of region 0, which a truthiness test would lose", async () => {
+    // Redaction ids come from the model and the first one can be 0. Written as
+    // `if (id)` the pick would be dropped on exactly the region a reader in a
+    // fresh document is most likely to right-click.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    viewer.setRedactions([{ id: 0, page: pageId(1), area: [10, 10, 100, 100] }]);
+    viewer.pickRedaction(0);
+    expect(viewer.redactionPicked).toBe(0);
+    viewer.destroy();
+  });
+});
+
 describe("a crop whose geometry lands after the pages have moved", () => {
   it("does not write the geometry into the slot the page has left", async () => {
     // A crop costs one round trip --- the model answers with the *box*, and the

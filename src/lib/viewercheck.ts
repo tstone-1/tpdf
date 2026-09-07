@@ -69,6 +69,7 @@ import {
   unedited,
   type MarkKind,
   type MarkView,
+  type RedactionView,
   type StampName,
   type RegionPlan,
 } from "./pages";
@@ -3186,10 +3187,15 @@ async function appCommandChecks(
     // remove *is* the open note, so pinning this true would take the only
     // interesting thing about the command out of the check.
     removeMark: () => fired.push("removeMark"),
+    // And the same again for the third viewer-read guard: which region to
+    // remove *is* the pick, so pinning this true would take the only
+    // interesting thing about the command out of the check.
+    removeRedaction: () => fired.push("removeRedaction"),
     setMarkColor: (id: string) => fired.push(`setMarkColor:${id}`),
     setNib: (id: string) => fired.push(`setNib:${id}`),
     markColor: () => "default",
     hasOpenMark: () => viewer.markOpen >= 0,
+    hasPickedRedaction: () => viewer.redactionPicked >= 0,
     canEditComment: () => viewer.commentEditable,
     editComment: () => {
       viewer.editComment();
@@ -4036,6 +4042,30 @@ async function appCommandChecks(
       },
     },
     {
+      // The third viewer-guarded command, and its `from` makes its own state
+      // for `edit.removeMark`'s reason exactly: a region, and that region
+      // picked. Nothing else in this phase leaves a pick, which the sweep below
+      // depends on --- a pick left by an earlier probe would make "a document
+      // alone does not offer this" read as a broken guard.
+      //
+      // The region is put into the overlay directly rather than dragged out,
+      // because a drag is the *tool's* behaviour and `viewercrop.test.ts` owns
+      // that; what this reads is that the palette entry reaches this action and
+      // no other. Aimed separately from the three marking commands above for
+      // the reason they are aimed separately from each other: this one is the
+      // way back off, and a copy-and-paste that left it calling `redactRegion`
+      // would arm a drag on a reader asking to undo one.
+      id: "edit.removeRedaction",
+      ...shell("removeRedaction"),
+      read: () => fired.join(","),
+      from: () => {
+        viewer.goToPage(0);
+        const region = syntheticRedaction(viewer, 4244);
+        viewer.setRedactions([region]);
+        viewer.pickRedaction(region.id);
+      },
+    },
+    {
       // Palette-only as well, and the two are worth aiming at separately: they
       // are one action taking a sign, so a copy-and-paste that left both at -1
       // gives a reader a "move down" that moves up, which is not a wiring
@@ -4404,6 +4434,11 @@ async function appCommandChecks(
     // Guarded on there being search matches, which a document nobody has
     // searched has none of. Declared with the command, as the one above was.
     "edit.redactMatches",
+    // Guarded on a region being picked, which is how a reader names the region
+    // they mean --- a document nobody has right-clicked a region on has none.
+    // Declared with the command, as the two above were, rather than after the
+    // harness went red for it.
+    "edit.removeRedaction",
     // Guarded on the document being edited, which an untouched one is not. It
     // joined this list late: the guard landed with "Save over the file the
     // reader opened" and turned this check red, and the red went unread because
@@ -4585,6 +4620,28 @@ function syntheticMark(
     color: [1, 0.9, 0.2],
     width: INK_WIDTH,
     note,
+  };
+}
+
+/**
+ * One pending region on the first page, for a probe that needs one to exist.
+ *
+ * {@link syntheticMark}'s twin and placed the same way --- a band across the top
+ * of the page, in the page's display space, which is the space
+ * `RedactionView.area` is in. The *id* of the first page for that helper's
+ * reason: a slot here would name no page and the region would not be drawn.
+ */
+function syntheticRedaction(viewer: Viewer, id: number): RedactionView {
+  const size = viewer.pageSize(0);
+  return {
+    id,
+    page: pageId(1),
+    area: [
+      size.width_pt * 0.15,
+      size.height_pt * 0.06,
+      size.width_pt * 0.6,
+      size.height_pt * 0.11,
+    ],
   };
 }
 

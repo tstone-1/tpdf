@@ -317,6 +317,25 @@ export interface AppActions {
   /** Whether a mark's note is open, which is what names the mark to remove. */
   hasOpenMark(): boolean;
   /**
+   * Takes the picked region out of the list of what is to be removed.
+   *
+   * {@link removeMark}'s twin and named the way it is named for that command's
+   * reason: this takes a *pending* region off, so it is the opposite of
+   * applying and must not be reachable by anybody looking for it. Nothing is
+   * destroyed either way --- `docs/PLAN.md` §6 keeps applying behind a command
+   * of its own.
+   */
+  removeRedaction(): void;
+  /**
+   * Whether a region is picked, which is what names the region to remove.
+   *
+   * {@link hasOpenMark}'s twin. A redaction has no note box, so a right-click
+   * on one picks it and the pick is what this reads --- see
+   * `Viewer.pickRedaction`, and `contextmenu.ts` for why there is no second way
+   * to name it.
+   */
+  hasPickedRedaction(): boolean;
+  /**
    * Whether the comment on show is one the reader can rewrite.
    *
    * Two conditions, not one: a comment popup has to be open, and its annotation
@@ -1030,6 +1049,31 @@ export function registerAppCommands(
       title: "Redact every search result",
       enabled: () => withDocument() && actions.matchCount() > 0,
       run: () => actions.redactMatches(),
+    },
+    {
+      // **The way back off**, and until it existed there were only two: the
+      // review panel's remove control, which a reader had to know to open, and
+      // undo, which is chronological --- a reader who dragged six regions and
+      // wants the second one back cannot get there by undoing. Right-clicking
+      // the region is the gesture that says *this one*, and it produced a menu
+      // about the selection instead. Reported from use.
+      //
+      // Guarded on a region being picked, exactly as "Remove mark" is guarded
+      // on a note being open, and for that command's reason rather than by
+      // copying it: with nothing picked it would remove nothing, and a command
+      // that runs and does nothing reads as a broken command.
+      //
+      // No keyboard binding, for the reason "Redact region by dragging" has
+      // none: every command in this workflow is one keystroke more expensive
+      // than it could be, on purpose.
+      //
+      // "Remove" rather than "Unredact" or "Cancel": the review panel's control
+      // already says *Remove region*, and one act with two names in two places
+      // is worse than the slight asymmetry with the verb "Redact" above it.
+      id: "edit.removeRedaction",
+      title: "Remove this redaction",
+      enabled: () => withDocument() && actions.hasPickedRedaction(),
+      run: () => actions.removeRedaction(),
     },
     {
       // **Crop by dragging.** The one page operation only the reader can decide:
