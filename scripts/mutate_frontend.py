@@ -4815,9 +4815,31 @@ MUTATIONS += [
         # tell three findings from one printed thrice.
         "redactlist: repeat a kind rather than counting it",
         "src/lib/redactlist.ts",
-        "    kinds.set(object.kind, (kinds.get(object.kind) ?? 0) + 1);",
-        "    kinds.set(`${object.kind}${object.at}`, 1);",
+        "    kinds.set(said, (kinds.get(said) ?? 0) + 1);",
+        "    kinds.set(`${said}${object.at}`, 1);",
         "counts objects of a kind rather than repeating the sentence",
+    ),
+    Mutation(
+        # Say only what kind an object is, never that the document repeats
+        # it. A letterhead left behind then reads as a picture tpdf cannot
+        # handle, which sends a reader looking for another tool rather than
+        # at their own document -- and the sentence is right for every other
+        # finding, so nothing else in the panel can tell.
+        "redactlist: drop the repeat count from what a warning says",
+        "src/lib/redactlist.ts",
+        '    const said = object.drawn\n      ? `${object.kind} drawn ${object.drawn} times`\n      : object.kind;',
+        "    const said = object.kind;",
+        "says a picture stays because the document repeats it",
+    ),
+    Mutation(
+        # Pluralise the whole phrase rather than the kind inside it. `2
+        # image drawn 22 timess` reads as a typo rather than as a count, and
+        # the row saying it is the row a reader is deciding on.
+        "redactlist: pluralise the phrase rather than the kind in it",
+        "src/lib/redactlist.ts",
+        '        : `${many} ${kind.replace(/^(\\S+)/, "$1s")}`,',
+        "        : `${many} ${kind}s`,",
+        "pluralises the kind rather than the count in the phrase",
     ),
     Mutation(
         # Leave the kinds in PDFium's enumeration order, so two regions covering

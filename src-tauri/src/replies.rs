@@ -453,6 +453,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             unhandled: vec![redact::Unhandled {
                 at: 7,
                 kind: "Type3".into(),
+                drawn: Some(3),
             }],
         },
     );

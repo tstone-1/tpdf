@@ -30,7 +30,8 @@
   "unhandled": [
     {
       "at": 7,
-      "kind": "Type3"
+      "kind": "Type3",
+      "drawn": 3
     }
   ]
 }

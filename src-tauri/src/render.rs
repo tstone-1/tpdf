@@ -1836,24 +1836,38 @@ pub fn redaction_plans_of(
     page: u32,
     regions: &[[f32; 4]],
 ) -> Result<Vec<redact::RegionPlan>, String> {
+    let index = page;
     let page = document.page(page)?;
     let objects = crate::objects::read(&page)?;
     let turns = page.quarter_turns();
     let (width, height) = (page.width_pt(), page.height_pt());
     let file_box = page.crop_pt();
+    let image_objects = objects
+        .all
+        .iter()
+        .filter(|object| object.kind == "image")
+        .count();
+    // **What PDFium cannot answer, asked once for the page rather than once per
+    // region.** Whether the picture under a region is this page's own or a
+    // letterhead drawn on all of them is a fact about the object graph, and the
+    // graph is parsed at most once for the life of the document --- so this costs
+    // a content-stream decode, and the regions on a page share it.
+    let shared = document
+        .graph()
+        .shared_draws(index, image_objects, objects.forms.len());
     Ok(regions
         .iter()
         .map(|region| {
             let want = crop_from_display(turns, width, height, file_box, *region);
-            let plan = redact::covered(&objects.all, &objects.forms, want);
+            let mut plan = redact::covered(&objects.all, &objects.forms, want);
+            // **Before the plan leaves this process**, so a shared object is
+            // reported to the reader reviewing the removal rather than refused
+            // by the writer afterwards. See `redact::leave_shared`.
+            redact::leave_shared(&mut plan, &shared, &objects.all, &objects.forms);
             redact::RegionPlan {
                 text_objects: objects.text.len(),
                 images: plan.images.clone(),
-                image_objects: objects
-                    .all
-                    .iter()
-                    .filter(|object| object.kind == "image")
-                    .count(),
+                image_objects,
                 form_shows: plan.form_shows.clone(),
                 // Every form on the page, whether or not this region touches it.
                 // See the field: a plan merges a page's regions, and a count

@@ -247,8 +247,13 @@ export interface RegionPlan {
    * Non-empty means the region is **not** redactable, which is the single most
    * important thing this panel can say: the words gone and the picture of the
    * words still there is the confident lie `docs/PLAN.md` §6 forbids.
+   *
+   * `drawn` is `redact::Unhandled::drawn`: how many times the document draws
+   * the object, when *that* is why it stays rather than tpdf not knowing how to
+   * take it. Optional because most findings have no such number and because a
+   * reply from an older build carries none.
    */
-  unhandled: { at: number; kind: string }[];
+  unhandled: { at: number; kind: string; drawn?: number | null }[];
   /**
    * Which of the page's images the removal would delete.
    *
@@ -772,8 +777,11 @@ export function markWalk(
   items: readonly MarkView[],
   pages: PageMap,
 ): { id: number; page: number; rect: [number, number, number, number] }[] {
-  const walk: { id: number; page: number; rect: [number, number, number, number] }[] =
-    [];
+  const walk: {
+    id: number;
+    page: number;
+    rect: [number, number, number, number];
+  }[] = [];
   for (const mark of items) {
     const slot = pages.slotOfId(mark.page);
     if (slot === undefined) continue;
@@ -847,7 +855,10 @@ export interface MarkRow {
  * cannot place, which is right for stepping --- there is nowhere to step to ---
  * and wrong for a list, so those come last with no page against them.
  */
-export function markRows(items: readonly MarkView[], pages: PageMap): MarkRow[] {
+export function markRows(
+  items: readonly MarkView[],
+  pages: PageMap,
+): MarkRow[] {
   const left = new Map<number, MarkView>(items.map((mark) => [mark.id, mark]));
   const rows: MarkRow[] = [];
   for (const step of markWalk(items, pages)) {
@@ -932,7 +943,12 @@ export function redactionRows(
       lost.push({ redaction, page: null });
       continue;
     }
-    placed.push({ id: redaction.id, page: slot, rect: redaction.area, redaction });
+    placed.push({
+      id: redaction.id,
+      page: slot,
+      rect: redaction.area,
+      redaction,
+    });
   }
   const rows: RedactionRow[] = inPageOrder(placed).map((step) => ({
     redaction: step.redaction,

@@ -263,6 +263,16 @@ async fn gate_written_file(
 /// and the reader is told the same thing with nothing to show for it. One rule,
 /// *never claim clean*, beats two.
 ///
+/// **Two classes of object reach that rule and only one of them is about tpdf.**
+/// A path or a shading is left because nothing here knows how to take it. A
+/// picture or a form the document draws more than once is left because taking
+/// the one drawing the reader marked would leave every other copy, and the
+/// object itself, in the file --- so the count saying how many times it is drawn
+/// travels with the finding, and `redact::Unhandled::sentence` says the two
+/// differently. The second class refused the whole write until 2026-09-07, which
+/// is this paragraph's own argument arriving as a defect report: a logo on all
+/// 22 pages of a standard made a region over the header remove nothing at all.
+///
 /// # Errors
 ///
 /// Nothing marked; the worker refusing to read a page; anything

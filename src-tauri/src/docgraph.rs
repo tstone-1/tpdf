@@ -45,6 +45,7 @@ use crate::docinfo::{self, Properties};
 use crate::encoding::{self, PageMapping};
 use crate::links::{self, Links};
 use crate::pagetree;
+use crate::redact;
 
 /// Where a document's bytes came from, so its object graph can be read as well
 /// as rendered.
@@ -484,6 +485,31 @@ impl DocumentGraph {
     ///
     /// See [`DocumentGraph::sheets`] for why this is lazy and why most documents
     /// never reach it.
+    /// How many times the document draws each XObject one page draws.
+    ///
+    /// What a redaction plan needs and PDFium cannot answer: whether the
+    /// picture under the reader's region is this page's alone or a letterhead
+    /// on all of them. `images` and `forms` are how many of each PDFium
+    /// enumerated on the page, and the answer is positional against those.
+    ///
+    /// Parsed at most once for the life of the document, like every other
+    /// question here --- and a graph that will not parse, or a page index the
+    /// page tree cannot place, answers `unknown` throughout rather than
+    /// guessing. `redact::SharedDraws` says why that is the safe direction.
+    #[must_use]
+    pub fn shared_draws(&self, index: u32, images: usize, forms: usize) -> redact::SharedDraws {
+        let Ok(document) = self.parsed() else {
+            return redact::SharedDraws::unknown(images, forms);
+        };
+        let Some(page) = pagetree::ordered_pages(document)
+            .get(index as usize)
+            .copied()
+        else {
+            return redact::SharedDraws::unknown(images, forms);
+        };
+        redact::shared_draws(document, page, images, forms)
+    }
+
     #[must_use]
     pub fn sheet(&self, index: u32, pages: usize) -> Option<[f32; 4]> {
         self.sheets
