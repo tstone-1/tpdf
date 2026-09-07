@@ -383,6 +383,17 @@ function namedPayload(text: string): string | null {
  * the field it excuses.
  */
 const UNMIRRORED: Partial<Record<keyof typeof SCHEMA, Record<string, string>>> = {
+  Links: {
+    urls:
+      "every web link's address, which `document_links` **drains** into " +
+      "`webopen::Registry` before the reply continues --- so what the webview " +
+      "receives is an empty list and the mirror has no field for it. The sample " +
+      "is non-empty because it is the worker's reply, which is where the " +
+      "addresses really are. See `webopen.rs`",
+  },
+  Outline: {
+    urls: "the outline's own address list, drained by `document_outline` for the reason above",
+  },
   RegionPlan: {
     text_objects: "how many text operations, which only the writer's refusal reads",
     image_objects: "the same count for images, and the same reader",

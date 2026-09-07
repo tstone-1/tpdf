@@ -51,6 +51,11 @@
   import { Palette } from "./lib/palette";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
+  import {
+    WebLinkDialog,
+    confirmAndOpen,
+    type WebLinkSource,
+  } from "./lib/weblinkdialog";
   import type { Properties } from "./lib/properties";
   import { basename } from "./lib/paths";
   import { Sidebar, type Tab } from "./lib/sidebar";
@@ -63,7 +68,7 @@
   import { touchedText } from "./lib/reading";
   import { nextUnreadRegion } from "./lib/redactlist";
   import { noticeFor as linkNotice, type Link } from "./lib/links";
-  import type { Outline } from "./lib/outline";
+  import type { Outline, WebTarget } from "./lib/outline";
   import {
     commentsIn,
     linksIn,
@@ -225,6 +230,36 @@
   let sidebar: Sidebar | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
+  let webLinkDialog: WebLinkDialog | null = null;
+
+  /**
+   * Asks about a web link and opens it if the reader says so.
+   *
+   * The whole of what this adds over `confirmAndOpen` is the three things only
+   * the component knows: which document is open, which dialog to ask with, and
+   * where an error goes. The decisions --- ask first, do not report a
+   * cancellation, use the backend's wording --- are in `weblinkdialog.ts`
+   * where a test can reach them.
+   *
+   * A missing dialog is a refusal rather than a silent open. It cannot happen
+   * once the component is mounted; what it rules out is the ordering where a
+   * link is somehow activated before `onMount`, opening an address nobody was
+   * shown.
+   */
+  async function followWebLink(
+    source: WebLinkSource,
+    target: WebTarget,
+  ): Promise<void> {
+    const dialog = webLinkDialog;
+    const doc = openDoc;
+    if (!dialog || doc < 0) return;
+    await confirmAndOpen(doc, source, target, {
+      ask: (address) => dialog.ask(address),
+      open: (id, from, token) =>
+        call("open_web_link", { doc: id, source: from, token }),
+      onError: (message) => say(message),
+    });
+  }
   /**
    * What the document says about itself, once anybody has asked.
    *
@@ -2173,6 +2208,12 @@
       // `passworddialog.ts`.
       passwordDialog = new PasswordDialog(document.body);
 
+      // And beside that. A web link is asked about rather than followed, and
+      // the dialog is the whole of the confirmation --- see
+      // `weblinkdialog.ts`, which is where the reasoning about what a reader
+      // may be shown lives.
+      webLinkDialog = new WebLinkDialog(document.body);
+
       // On `document.body`, not inside a panel: a menu opened on the last row
       // of the page strip would otherwise be clipped by that panel's scroll
       // box. Runs a chosen command through the registry, exactly as the palette
@@ -2575,6 +2616,10 @@
           viewer?.goToDestination(target, top);
           viewer?.focus();
         },
+        // `outline`, not `links`: the two scans number their tokens
+        // independently, so the wrong word here opens a different address
+        // rather than failing. See `webopen::Source`.
+        onWebLink: (target) => void followWebLink("outline", target),
         results: {
           // Focus stays where it was, unlike an outline row. A reader picking
           // hits off this list is comparing them, and taking focus to the page
@@ -2864,6 +2909,10 @@
         onError: (message) => {
           say(message);
         },
+        // `links`, not `outline`: a target from a page rectangle is numbered by
+        // the links scan, and the two scans number independently --- the wrong
+        // word here opens a different address rather than failing.
+        onWebLink: (target) => void followWebLink("links", target),
         // The one message here nobody asked for. It fires while someone is
         // reading, because a process outside the application shortened the file
         // underneath them --- so it goes to the same surface as the errors they

@@ -54,6 +54,22 @@
       "target": {
         "kind": "none"
       }
+    },
+    {
+      "id": 5,
+      "page": 1,
+      "rect": [
+        0.0,
+        0.0,
+        10.0,
+        10.0
+      ],
+      "target": {
+        "kind": "web",
+        "token": 0,
+        "host": "example.com",
+        "rest": "/spec#section-4"
+      }
     }
   ],
   "limits": {
@@ -63,5 +79,8 @@
     "unresolved_names": 3,
     "pages_missed": 4
   },
-  "scan_ms": 2.25
+  "scan_ms": 2.25,
+  "urls": [
+    "https://example.com/spec#section-4"
+  ]
 }

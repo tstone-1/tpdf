@@ -17,6 +17,79 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.3] - Unreleased
+
+### Added: web links open, after a confirmation that shows the host as punycode
+
+`/URI` links were declined outright since the day `links.rs` was written, on the policy
+`outline.rs` had always had. The cost was not hypothetical: the EU packaging regulation
+measured in `docs/PLAN.md` §11 carries 2,608 of them and every one was dead, where Preview
+and Acrobat both open them. `docs/PLAN.md` §11 decided on 2026-08-31 that tpdf would open
+them; this is that work.
+
+What a reader sees: clicking a web link on a page, or activating one in the outline, raises
+a dialog naming the site. Open opens it in whatever browser they use; Cancel, Escape, Enter
+and a click outside all decline. **Enter cancels and Cancel has focus**, which is the
+opposite of an ordinary dialog and is deliberate --- the confirmation exists to interrupt a
+reader who clicked expecting a cross-reference, and a dialog whose Open button answers that
+reflex has interrupted nothing.
+
+What is refused, and stays refused with the wording it had: every scheme but `http` and
+`https`. `javascript:`, `file:`, `data:`, `ms-msdt:` and anything a locally installed
+application registered are all declined, by allowlist rather than by denylist, applied to
+the **parsed** scheme rather than to the string's prefix. So are a URL carrying an embedded
+credential, one carrying a control character or a bidi override, and one over 4 KB.
+
+Three decisions worth knowing because each could reasonably have gone the other way. There
+is **no setting** and therefore no settings surface --- the confirmation is what carries the
+safety, so a switch would only disable the part doing the work. The confirmation is **per
+link, never per domain**: an "always allow this site" grant established from a document a
+stranger sent is a standing capability nobody is asked about again. And the host is shown
+**as punycode** --- `xn--80ak6aa92e.com`, never the lookalike it renders to --- because
+drawing the Unicode form is drawing the homoglyph attack on the attacker's behalf.
+
+The security shape is in `docs/THREAT-MODEL.md` §T8, and the part worth repeating here is
+that **the webview never receives an address**. `Target::Web` carries a token and two
+display strings; the URL stays in the app process (`webopen.rs`), and `open_web_link` takes
+the token. So the widest thing a compromised webview could ask for is an address the
+document already contained --- which matters more than it does for printing or saving,
+because a URL is an outbound request to a host of the caller's choosing.
+
+No new dependency. `url` was already in the tree through the updater's `reqwest`,
+`ShellExecuteW` needs a `windows-sys` feature that was already enabled, and `NSWorkspace` is
+a feature flip on a crate already linked.
+
+### Changed: the sinks gate covers navigation, and is linked to the Rust type for one arm
+
+`scripts/check_webview_sinks.py` rested its sufficiency argument on there being no
+URL-bearing element to assign to, and admitted in its own header that nothing linked it to
+the Rust side. Web links retire the first half of that --- a document-written host and path
+now cross the boundary --- so the gate gained two checks. One refuses a call that navigates
+without an element (`window.open`, `location.assign`, `location.replace`), which every
+existing rule was blind to. The other reads `src/lib/outline.ts`'s `Target` union and fails
+if the `web` arm ever declares an address, **or** if the arm cannot be found at all. All
+three failure paths were proved by mutation before the gate was trusted.
+
+### Fixed: `scripts/stray.py` had no entry point, so running it always answered clean
+
+`viewer_check.py` fails with a message naming this script --- a stray instance absorbs the
+launch through `tauri-plugin-single-instance`, so the harness writes nothing and looks like
+it hung. Running the script printed nothing and exited 0 with three `tpdf.exe` alive: it was
+a library with no `__main__`, and a Python module without one is silent and successful
+whatever the machine is doing. It now reports what holds the slot and exits 1 when something
+does, 2 when the probe itself could not answer, and **does not kill** --- the harness owns
+that, because it knows which binary is under test. Both directions were proved by running it
+against a real instance. `docs/TRAPS.md` has the entry.
+
+### Fixed: the macOS arm of a new platform split had never been compiled
+
+`opener.rs`'s macOS half carried an unnecessary `unsafe` around `NSURL::URLWithString`.
+Every gate on the Windows desktop was green, because a Windows compiler never parses a
+`#[cfg(target_os = "macos")]` line, and `unused_unsafe` under `-D warnings` would have
+turned the macOS CI leg red. `scripts/check_windows.py` is the mirror of this check and runs
+only Mac-to-Windows; there is no counterpart. Found by copying the tree to the Mac mini over
+`ssh` and compiling it there. `docs/TRAPS.md` has the entry.
+
 ## [26.9.2] - 2026-09-06
 
 Everything under this heading so far **shipped in 26.9.1** and was not recorded there. The

@@ -62,6 +62,7 @@ import {
   type Outline,
   type Reached,
   type Row,
+  type WebTarget,
 } from "./outline";
 import { CommentList, type CommentListOptions } from "./commentlist";
 import type { Comments } from "./comments";
@@ -89,6 +90,16 @@ export type Tab =
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
   onNavigate: (page: number, top: number | null) => void;
+  /**
+   * Called when an activated row is a web link rather than a destination.
+   *
+   * **Required, not optional**, for the reason {@link SidebarOptions.onTab}
+   * gives: this interface has no wiring gate behind it, so the type is the only
+   * thing that can refuse a caller who forgot. `ViewerOptions.onWebLink` is
+   * optional precisely because `scripts/check_viewer_wiring.py` does cover
+   * that one.
+   */
+  onWebLink: (target: WebTarget) => void;
   /** What the results tab needs. */
   results: ResultsOptions;
   /** What the comments tab needs. */
@@ -563,7 +574,10 @@ export class Sidebar {
   }
 
   private build(row: Row): HTMLElement {
-    const navigable = isNavigable(row.target);
+    // A web row does something, so it must not be greyed or marked disabled ---
+    // `isNavigable` answers "is a place in this document", which is the wrong
+    // question for a row whose whole point is that it leaves the document.
+    const navigable = isNavigable(row.target) || row.target.kind === "web";
     const element = document.createElement("div");
     element.setAttribute("role", "treeitem");
     element.setAttribute("aria-level", String(row.depth + 1));
@@ -644,10 +658,18 @@ export class Sidebar {
     this.elements.get(target.id)?.focus();
   }
 
-  /** Navigates to a row, if it points anywhere. */
+  /** Navigates to a row, or reports it as a web link, if it points anywhere. */
   private activate(id: string): void {
     const row = this.rows.find((candidate) => candidate.id === id);
-    if (!row || !isNavigable(row.target)) return;
+    if (!row) return;
+    // Before the navigable test, which a web target fails --- falling through
+    // it would make an outline web entry the one place in tpdf where a click
+    // does nothing and says nothing.
+    if (row.target.kind === "web") {
+      this.opts.onWebLink(row.target);
+      return;
+    }
+    if (!isNavigable(row.target)) return;
     this.opts.onNavigate(row.target.page, row.target.top_pt);
   }
 

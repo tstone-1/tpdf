@@ -1029,6 +1029,7 @@ mod tests {
                 items: Vec::new(),
                 limits: crate::links::Limits::default(),
                 scan_ms: 1.5,
+                urls: Vec::new(),
             }),
             Reply::Mapping(Vec::new()),
             // The boxed one. Serde writes a `Box<T>` as its `T`, so this asserts

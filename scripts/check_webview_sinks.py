@@ -178,7 +178,70 @@ RULES = [
         "assignment to a navigating property",
         re.compile(rf"\.(?:{URL_PROPS})\s*=(?!=)"),
     ),
+    (
+        # Navigation with no element and no property assignment involved, which
+        # every rule above is blind to. Added 2026-09-07 with web links: until
+        # then no document-derived URL crossed the boundary at all, so "with no
+        # `<a>` in existence there is nothing for a URL to be assigned to" was
+        # the whole argument. It is not any more --- `Target::Web` sends the
+        # webview a host and a path a stranger wrote --- and these are the calls
+        # that turn a string into a request without ever touching the DOM.
+        #
+        # `window.open` is the one worth naming: it takes a URL directly, it is
+        # not an assignment, and it needs no element to exist.
+        "a call that navigates",
+        re.compile(
+            r"\bwindow\.open\s*\(|"
+            r"\blocation\.(?:assign|replace)\s*\(|"
+            r"\bwindow\.location\b|"
+            r"\bdocument\.location\b"
+        ),
+    ),
 ]
+
+# Where the frontend's `Target` union is declared, and what its `web` arm may
+# not carry.
+#
+# **The one check here that reads a specific declaration rather than scanning
+# for a pattern, and it exists because of what this file's header used to
+# admit**: the sufficiency argument rested on `outline.rs` refusing `/URI`
+# outright, "and nothing links the two, so a Rust change cannot turn this check
+# red". Since 2026-09-07 that refusal is gone --- a web link is followed --- so
+# the property standing in its place is narrower and still checkable: the arm
+# carries a token and two display halves, and never an address.
+#
+# Two directions, because one of them is the reassuring one. A field named `url`
+# in the arm is a failure; so is the arm not being found at all, which is what a
+# rewrite of the union into a shape this pattern does not match would look like.
+# `AGENTS.md`: a query with a predicate the data does not use answers zero, and
+# an absence that reads as a pass is how a gate stops gating.
+TARGET_UNION = ROOT / "src" / "lib" / "outline.ts"
+WEB_ARM = re.compile(r"\|\s*\{\s*kind:\s*\"web\"\s*;([^}]*)\}")
+WEB_ARM_FORBIDDEN = re.compile(r"\b(?:url|uri|href|address)\s*[?:]")
+
+
+def check_target_arm() -> "list[str]":
+    """Returns what is wrong with the `web` arm of `Target`, or nothing."""
+    if not TARGET_UNION.is_file():
+        return [f"{TARGET_UNION} is missing: the Target union could not be read"]
+    text = TARGET_UNION.read_text(encoding="utf-8")
+    arm = WEB_ARM.search(text)
+    if not arm:
+        return [
+            f"{TARGET_UNION.name}: no `| {{ kind: \"web\"; ... }}` arm found. Either "
+            "the arm is gone, or the union was rewritten into a shape this check "
+            "cannot see -- which is not the same as it being safe."
+        ]
+    fields = arm.group(1)
+    bad = WEB_ARM_FORBIDDEN.findall(fields)
+    if bad:
+        return [
+            f"{TARGET_UNION.name}: the web arm declares {sorted(set(bad))}. "
+            "It may carry a token and display halves only -- an address here is "
+            "one the webview could hand back to `open_web_link`, or navigate to "
+            "the day a sink appears. See `webopen.rs`."
+        ]
+    return []
 
 
 def sources() -> "list[Path]":
@@ -311,7 +374,25 @@ def main() -> int:
             print(f"       {hit}", file=sys.stderr)
         return 1
 
-    print("[OK] no markup sink in the frontend; document text can only be data.")
+    # After the sink scan and reported separately, because it answers a
+    # different question: the scan says nothing can *render* a document's bytes
+    # as markup or navigate with them, and this says the bytes that cross the
+    # boundary are not an address in the first place.
+    arm = check_target_arm()
+    if arm:
+        print(
+            "[FAIL] the `web` arm of the frontend's `Target` is not what "
+            "docs/THREAT-MODEL.md T8\n       rests on:",
+            file=sys.stderr,
+        )
+        for line in arm:
+            print(f"       {line}", file=sys.stderr)
+        return 1
+
+    print(
+        "[OK] no markup sink in the frontend; document text can only be data, "
+        "and Target's web arm carries no address."
+    )
     return 0
 
 

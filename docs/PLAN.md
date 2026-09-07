@@ -4625,8 +4625,9 @@ Links are **not** in the tab order. Tab through a page carrying the per-page max
 them would be a trap, which is the same reason the page article is focusable only
 programmatically; `⌥⌘L` is the traversal.
 
-**What is still not here:** creating, editing or deleting a link, and opening a web link in a
-browser (§10).
+**What is still not here:** creating, editing or deleting a link. **Opening a web link was on
+this list until 2026-09-07 and is built** --- §11 has the decision, the three sub-choices it
+turned on, and what each file does.
 
 **Evidence.** 23 unit tests in `links.rs`, 49 in `links.test.ts` and 13 in `a11y.test.ts`;
 11 Rust mutations and 25 frontend ones, each caught by the test named for it (68 and 134 across
@@ -13575,13 +13576,46 @@ that it presented several genuinely unresolved questions as settled architecture
     navigation. That property wants the `sinks` gate extended to cover it, in the same
     commit as the feature and not after it.
 
-    **Still open, and each is a decision rather than a detail:** whether a reader may
-    switch the whole feature off in settings and what the default is on first run; whether
-    the confirmation names a browser or lets the OS choose; and whether a URL that is
-    already unreadable to a human --- mixed scripts, an embedded credential, an
-    unprintable --- is refused outright rather than shown with a flag beside it. The first
-    is the one worth answering before any of this is built, because it decides whether
-    there is a settings surface at all.
+    **Answered 2026-09-07, and built.** All three sub-choices went the conservative way,
+    and each is stated here as a decision that can be revisited rather than as the only
+    possibility:
+
+    - **No setting, and therefore no settings surface.** The confirmation is what carries
+      the safety, so a switch would only let a reader turn off the part doing the work ---
+      and the feature has one code path and no persisted state as a result. This was the
+      one that had to be answered first, and it is the one most worth re-opening if a
+      reader working through a specification finds the confirmation intolerable.
+    - **The OS chooses the browser.** `opener.rs` calls `NSWorkspace openURL:` or
+      `ShellExecuteW`; naming a browser would mean a setting, which the line above rules
+      out, and a path or command line, which the "never interpolate into a shell"
+      constraint rules out separately.
+    - **An unreadable URL is refused, not flagged.** An embedded credential, a control
+      character and a bidi override are all `None` from `weburl::Web::parse`, so the link
+      keeps the refusal `/URI` always had. Refusing is the direction that can be loosened
+      later without breaking a reader who came to rely on it; flagging is not.
+
+    **One choice was not on the list and had to be made anyway: Cancel has focus, and
+    Enter cancels.** An ordinary dialog does the opposite. This one exists to interrupt a
+    reflex --- a reader who clicked expecting a cross-reference --- and a dialog whose
+    affirmative button answers the Enter that reflex is about to press has interrupted
+    nothing. The cost is one extra action per link, and it falls on the reader who wants to
+    go rather than on the one who did not. `weblinkdialog.ts` states it and a test pins it,
+    so a later "fix" of the convention is a red suite rather than a quiet regression.
+
+    **What was built**, in the order the bytes travel: `weburl.rs` is the allowlist and the
+    split into what a reader is shown; `links.rs` and `outline.rs` each read their own
+    `/URI` and produce `Target::Web { token, host, rest }`; `webopen.rs` holds the addresses
+    in the app process and `document_links` / `document_outline` **drain** them out of the
+    reply before it reaches the webview; `open_web_link` takes a token; `opener.rs` hands
+    the result to the platform. `weblinkdialog.ts` is the confirmation and the join.
+
+    **T8 was the part that needed work and it got it**, in the same commit as the feature
+    rather than after it, which is what the paragraph above asked for: the `sinks` gate
+    gained a rule for calls that navigate without an element, and a second one that reads
+    the frontend's `Target` union and fails if the `web` arm ever declares an address. Both
+    were proved by mutation before being trusted. `docs/THREAT-MODEL.md` §T8 has the three
+    facts that replaced "no document-derived URL crosses the boundary at all", which is the
+    sentence this feature retired.
 
 #### The OS's own renderer draws them too --- measured 2026-08-31
 

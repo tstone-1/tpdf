@@ -351,6 +351,19 @@ fn samples() -> BTreeMap<&'static str, String> {
                     rect: [0.0, 0.0, 10.0, 10.0],
                     target: outline::Target::None,
                 },
+                // The fifth arm, and the sample carries it for the reason the
+                // header gives: an arm no sample mentions is one the mirror can
+                // be wrong about indefinitely.
+                links::Link {
+                    id: 5,
+                    page: 1,
+                    rect: [0.0, 0.0, 10.0, 10.0],
+                    target: outline::Target::Web {
+                        token: 0,
+                        host: "example.com".into(),
+                        rest: "/spec#section-4".into(),
+                    },
+                },
             ],
             limits: links::Limits {
                 crowded_pages: 1,
@@ -360,6 +373,12 @@ fn samples() -> BTreeMap<&'static str, String> {
                 pages_missed: 4,
             },
             scan_ms: 2.25,
+            // Non-empty, so the key is in the bytes and `UNMIRRORED`'s entry
+            // for it names a field that is really sent. What the *frontend*
+            // receives is empty, because `document_links` drains it --- see
+            // `webopen::Registry::adopt`, which is where that guarantee lives
+            // rather than here.
+            urls: vec!["https://example.com/spec#section-4".into()],
         },
     );
 
@@ -373,14 +392,29 @@ fn samples() -> BTreeMap<&'static str, String> {
                     page: 0,
                     top_pt: None,
                 },
-                children: vec![outline::OutlineItem {
-                    title: "A section".into(),
-                    open: false,
-                    target: outline::Target::Broken,
-                    children: Vec::new(),
-                }],
+                children: vec![
+                    outline::OutlineItem {
+                        title: "A section".into(),
+                        open: false,
+                        target: outline::Target::Broken,
+                        children: Vec::new(),
+                    },
+                    // A web entry here too: the outline's `Target` is the same
+                    // type as a link's, and a sample that exercised the arm on
+                    // one side only would leave the other's mirror untested.
+                    outline::OutlineItem {
+                        title: "Further reading".into(),
+                        open: false,
+                        target: outline::Target::Web {
+                            token: 0,
+                            host: "example.org".into(),
+                            rest: "/further".into(),
+                        },
+                        children: Vec::new(),
+                    },
+                ],
             }],
-            total: 2,
+            total: 3,
             limits: outline::Limits {
                 cycles: 1,
                 too_deep: 2,
@@ -388,6 +422,9 @@ fn samples() -> BTreeMap<&'static str, String> {
                 titles_clipped: 3,
             },
             walk_ms: 0.75,
+            // Non-empty for `Links::urls`'s reason, and its own list: the two
+            // scans number their tokens independently.
+            urls: vec!["https://example.org/further".into()],
         },
     );
 

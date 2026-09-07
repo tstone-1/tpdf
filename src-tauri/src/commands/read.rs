@@ -9,7 +9,8 @@
 
 use super::{await_reply, reply_channel};
 use crate::render::RenderService;
-use crate::{annots, docinfo, encoding, links, outline, search, text};
+use crate::webopen::{Registry, Source};
+use crate::{annots, docinfo, encoding, links, opener, outline, search, text};
 
 /// Extracts one page's characters and their positions.
 ///
@@ -80,11 +81,14 @@ pub async fn search_page(
 #[tauri::command]
 pub async fn document_outline(
     service: tauri::State<'_, RenderService>,
+    web: tauri::State<'_, Registry>,
     doc: u32,
 ) -> Result<outline::Outline, String> {
     let (reply, rx) = reply_channel();
     service.outline(doc, reply);
-    await_reply("document_outline", rx).await
+    let mut answer: outline::Outline = await_reply("document_outline", rx).await?;
+    web.adopt(doc, Source::Outline, &mut answer.urls);
+    Ok(answer)
 }
 
 /// Reads every comment in a document --- notes, highlights, replies.
@@ -121,11 +125,57 @@ pub async fn document_comments(
 #[tauri::command]
 pub async fn document_links(
     service: tauri::State<'_, RenderService>,
+    web: tauri::State<'_, Registry>,
     doc: u32,
 ) -> Result<links::Links, String> {
     let (reply, rx) = reply_channel();
     service.links(doc, reply);
-    await_reply("document_links", rx).await
+    let mut answer: links::Links = await_reply("document_links", rx).await?;
+    // Before the answer is returned, and that ordering is the whole guarantee:
+    // `adopt` **drains** the addresses, so what serializes to the webview is an
+    // empty list rather than every URL in the document. See `webopen.rs`.
+    web.adopt(doc, Source::Links, &mut answer.urls);
+    Ok(answer)
+}
+
+/// Opens a web link the reader has confirmed.
+///
+/// **Takes a token, never an address.** The URL is not a parameter and cannot
+/// be: it lives in `webopen::Registry`, which the webview has no route to, and
+/// `token` is an index into the scan named by `source`. So the widest thing a
+/// caller can ask for is "open the link that was at position N of this
+/// document's links", which is an address the document already contained ---
+/// and `docs/THREAT-MODEL.md` §T9.1 is the worked-out version of why that
+/// matters.
+///
+/// **The confirmation is the frontend's and is not enforced here**, which is
+/// worth stating rather than leaving to be discovered: a script in the webview
+/// can reach this command without showing anybody a dialog. That is residual
+/// risk 7's shape and not a new hole --- the same script can already print and
+/// save --- and it is why the *allowlist* is on this side of the boundary
+/// rather than beside the dialog.
+///
+/// Blocking, on a pool thread. `ShellExecuteW` starting a cold browser takes
+/// long enough to be worth keeping off the async runtime's threads, and the
+/// macOS arm is a window-server round trip.
+#[tauri::command]
+pub async fn open_web_link(
+    web: tauri::State<'_, Registry>,
+    doc: u32,
+    source: Source,
+    token: u32,
+) -> Result<(), String> {
+    let Some(address) = web.address(doc, source, token) else {
+        // One message for every way a token can name nothing --- see
+        // `Registry::address`. A reader who clicks a link in a document that
+        // has just been closed and one who meets an entry the boundary check
+        // rejected are in the same position: there is nothing to open, and the
+        // difference between the two is not theirs to act on.
+        return Err("this link is no longer available".into());
+    };
+    tauri::async_runtime::spawn_blocking(move || opener::open(&address))
+        .await
+        .map_err(|e| format!("could not reach the system opener: {e}"))?
 }
 
 /// Reads what a document says about itself: properties, encryption, signatures.

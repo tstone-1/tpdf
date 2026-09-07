@@ -23,7 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setMacSpelling } from "./keys";
-import { DESTINATION_MARGIN_PT } from "./outline";
+import { DESTINATION_MARGIN_PT, type WebTarget } from "./outline";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { TEXT_CACHE_CHARS, type PageText } from "./text";
 import { Viewer, type ViewerOptions, type ViewerStatus } from "./viewer";
@@ -1044,6 +1044,51 @@ describe("Viewer history", () => {
     });
     return { viewer, said: () => count };
   }
+
+  /**
+   * A web link is reported, and is not treated as a refusal or as a jump.
+   *
+   * Three assertions because there are three wrong answers available and the
+   * code takes each of them if one line is out of order: the branch sits
+   * *before* the refusal test, so moving it after would report a working link
+   * as one that goes nowhere; and a web target is not navigable, so no
+   * position may move and the history must not grow a place to go Back to.
+   */
+  it("reports a web link rather than jumping or refusing", () => {
+    let said: WebTarget | null = null;
+    const errors: string[] = [];
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 8,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onWebLink: (target) => {
+        said = target;
+      },
+      onError: (message) => errors.push(message),
+    });
+    viewer.setLinks([
+      {
+        id: 9,
+        page: 0,
+        rect: [0, 0, 10, 10],
+        target: { kind: "web", token: 2, host: "example.org", rest: "/a" },
+      },
+    ]);
+
+    viewer.followLink(9);
+
+    expect(said).toEqual({
+      kind: "web",
+      token: 2,
+      host: "example.org",
+      rest: "/a",
+    });
+    // Not a refusal: the reader is not told this link goes nowhere.
+    expect(errors).toEqual([]);
+    // And nothing moved, so Back has nowhere to go.
+    expect(viewer.canGoBack).toBe(false);
+    viewer.destroy();
+  });
 
   it("says nothing until the history moves", () => {
     // The control for the four below. Without it, a viewer that announced on

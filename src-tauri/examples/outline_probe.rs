@@ -178,6 +178,7 @@ fn describe(target: &Target) -> String {
         },
         Target::Broken => "broken destination".to_string(),
         Target::Refused { action } => format!("refused: {action}"),
+        Target::Web { host, rest, .. } => format!("web: {host}{rest}"),
         Target::None => "no destination".to_string(),
     }
 }

@@ -3291,7 +3291,7 @@ MUTATIONS = [
         # -- and `links-probe --mode agree` compares two lists positionally.
         "links: walk the outline siblings-first rather than pre-order",
         "src/links.rs",
-        "        if let Ok(Object::Reference(child)) = dict.get(b\"First\") {\n            walk_outline(\n                document,\n                *child,\n                numbers,\n                geometry,\n                seen,\n                out,\n                limits,\n                depth - 1,\n            );\n        }\n        node = match dict.get(b\"Next\") {",
+        "        if let Ok(Object::Reference(child)) = dict.get(b\"First\") {\n            walk_outline(\n                document,\n                *child,\n                numbers,\n                geometry,\n                seen,\n                out,\n                limits,\n                urls,\n                depth - 1,\n            );\n        }\n        node = match dict.get(b\"Next\") {",
         "        node = match dict.get(b\"Next\") {",
         "the_outline_walk_is_pre_order",
     ),
@@ -8382,6 +8382,107 @@ MUTATIONS += [
         '            .map_err(|e| format!("could not open {} to fingerprint it: {e}", what.display()))?;\n'
         "        let meta = file",
         "a_fingerprint_through_a_handle_is_of_the_file_that_was_opened",
+    ),
+]
+
+# Web links, added 2026-09-07 with the feature. The four in `weburl.rs` are the
+# allowlist and the three refusals beside it; the three in `webopen.rs` are the
+# app process keeping the addresses away from the webview, which is the property
+# `docs/THREAT-MODEL.md` T8 now rests on and which no behaviour a reader can see
+# would report if it stopped holding.
+MUTATIONS += [
+    Mutation(
+        # Open every scheme. The allowlist is the whole of the difference
+        # between "tpdf opens web links" and "tpdf opens whatever a document
+        # names", and on Windows the interesting schemes are the ones nobody
+        # has heard of.
+        "weburl: accept every scheme rather than http and https",
+        "src/weburl.rs",
+        '        if !matches!(url.scheme(), "http" | "https") {\n'
+        "            return None;\n"
+        "        }",
+        "",
+        "every_other_scheme_is_refused",
+    ),
+    Mutation(
+        # Allow an embedded credential through. `https://bank.example@evil/` is
+        # the one case where the host a reader picks out of the raw text is not
+        # the host the request reaches.
+        "weburl: allow a URL carrying a username or password",
+        "src/weburl.rs",
+        "        if !url.username().is_empty() || url.password().is_some() {\n"
+        "            return None;\n"
+        "        }",
+        "",
+        "an_embedded_credential_is_refused",
+    ),
+    Mutation(
+        # Check for control characters only *after* the parse. `Url::parse`
+        # strips tabs and newlines rather than refusing them, so the survivor of
+        # this edit is a URL whose displayed form differs from the file's with
+        # nothing reporting it.
+        "weburl: look for control characters only after the parser has run",
+        "src/weburl.rs",
+        "        if raw.chars().any(is_unsafe_display) {\n"
+        "            return None;\n"
+        "        }\n\n"
+        "        let url = Url::parse(raw).ok()?;",
+        "        let url = Url::parse(raw).ok()?;",
+        "a_control_character_is_refused_even_though_the_parser_strips_it",
+    ),
+    Mutation(
+        # Show the whole path. The truncation is what keeps a reader's eye on
+        # the host rather than on a reassuring string a stranger wrote.
+        "weburl: show the path in full rather than cutting it",
+        "src/weburl.rs",
+        "    let mut out: String = rest.chars().take(MAX_REST_CHARS).collect();\n"
+        "    if rest.chars().nth(MAX_REST_CHARS).is_some() {\n"
+        "        out.push(ELLIPSIS);\n"
+        "    }\n"
+        "    out",
+        "    rest.to_string()",
+        "a_long_path_is_cut_and_says_so",
+    ),
+    Mutation(
+        # Copy the addresses instead of taking them, so every URL in the
+        # document continues to the webview. Nothing a reader can see changes:
+        # links open, the dialog says the same thing, and the property T8 rests
+        # on is gone.
+        "webopen: copy the addresses out of the reply instead of draining them",
+        "src/webopen.rs",
+        "        let parsed: Addresses = std::mem::take(urls)\n            .iter()",
+        "        let parsed: Addresses = urls\n            .iter()",
+        "adopting_empties_the_list_the_frontend_would_receive",
+    ),
+    Mutation(
+        # Drop the entries that do not parse rather than leaving a hole. The
+        # list shortens, so every token after the hole names somebody else's
+        # address -- the one failure here that opens the wrong page rather than
+        # none.
+        "webopen: drop an unparseable address instead of leaving a hole",
+        "src/webopen.rs",
+        "            .map(|raw| Web::parse(raw))\n            .collect();",
+        "            .filter_map(|raw| Web::parse(raw))\n            .map(Some)\n            .collect();",
+        "an_address_that_does_not_parse_leaves_a_hole_and_does_not_shift_the_rest",
+    ),
+    Mutation(
+        # Forget only the links, leaving the outline's addresses behind under a
+        # document number the service is about to reuse.
+        "webopen: forget a document's links but not its outline",
+        "src/webopen.rs",
+        "        held.remove(&(document, Source::Links));\n"
+        "        held.remove(&(document, Source::Outline));",
+        "        held.remove(&(document, Source::Links));",
+        "forgetting_a_document_makes_its_tokens_name_nothing",
+    ),
+    Mutation(
+        # Give every web target token 0. One link works and every other one
+        # opens the first link's address.
+        "links: number every web target zero rather than by position",
+        "src/links.rs",
+        "    let token = urls.len() as u32;\n    urls.push(web.url);",
+        "    let token = 0;\n    urls.push(web.url);",
+        "each_web_target_indexes_its_own_address",
     ),
 ]
 

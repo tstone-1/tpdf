@@ -129,10 +129,26 @@
           647
         ],
         "target": {
+          "kind": "web",
+          "token": 0,
+          "host": "example.invalid",
+          "rest": "/tracker?doc=42"
+        },
+        "note": "a web link, on a scheme tpdf opens"
+      },
+      {
+        "page": 2,
+        "rect": [
+          60,
+          454,
+          360,
+          467
+        ],
+        "target": {
           "kind": "refused",
           "action": "uri"
         },
-        "note": "a web link"
+        "note": "a /URI whose scheme is not on the allowlist"
       },
       {
         "page": 2,
@@ -292,7 +308,7 @@
     ],
     "crowd_page": 5,
     "crowd": 40,
-    "total": 60,
+    "total": 61,
     "limits": {
       "crowded_pages": 0,
       "over_budget": false,
@@ -343,8 +359,9 @@
       {
         "title": "A web link",
         "target": {
-          "kind": "refused",
-          "action": "uri"
+          "kind": "web",
+          "host": "example.invalid",
+          "rest": "/tracker?doc=42"
         }
       }
     ]

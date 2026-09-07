@@ -49,6 +49,7 @@ import type { Links } from "./links";
 import type { MarkColor } from "./markcolors";
 import type { SectionSpec } from "./menubar";
 import type { Outline } from "./outline";
+import type { WebLinkSource } from "./weblinkdialog";
 import type {
   FilePage,
   MarkKind,
@@ -339,6 +340,19 @@ export interface Commands {
   document_outline: { args: { doc: number }; reply: Outline };
   document_comments: { args: { doc: number }; reply: Comments };
   document_links: { args: { doc: number }; reply: Links };
+  /**
+   * Opens a web link the reader confirmed.
+   *
+   * **There is no `url` argument and there cannot be one.** `token` indexes a
+   * list the app process keeps and this side never receives, so the widest
+   * thing this can ask for is an address the document already contained ---
+   * see `webopen.rs`. `source` says which scan numbered the token, because the
+   * two number independently.
+   */
+  open_web_link: {
+    args: { doc: number; source: WebLinkSource; token: number };
+    reply: void;
+  };
   document_properties: { args: { doc: number }; reply: Properties };
   document_mapping: { args: { doc: number }; reply: PageMapping[] };
   /** The reply is the name of the event a double-click delivers a path on. */

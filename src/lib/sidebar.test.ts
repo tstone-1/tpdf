@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Outline, OutlineItem } from "./outline";
+import type { Outline, OutlineItem, WebTarget } from "./outline";
 import { Sidebar } from "./sidebar";
-import { installFakeDom, type FakeDom } from "./testdom";
+import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 import { pageId, redactionRows, unedited } from "./pages";
 
 /** What the redactions panel is told each region covers, by id. */
@@ -47,9 +47,14 @@ describe("Sidebar keyboard activation", () => {
     dom.restore();
   });
 
-  function tree(navigated: number[], tabs: string[] = []): Sidebar {
+  function tree(
+    navigated: number[],
+    tabs: string[] = [],
+    webbed: WebTarget[] = [],
+  ): Sidebar {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       onNavigate: (page: number) => navigated.push(page),
+      onWebLink: (target: WebTarget) => webbed.push(target),
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
       marks: { onPick: () => {}, onRemove: () => {}, coveredFor: () => "" },
@@ -121,6 +126,50 @@ describe("Sidebar keyboard activation", () => {
     expect(bar.redactions.rowText(4).words).toBe("clause 4");
   });
 
+  /**
+   * A web row reports rather than navigating, and is not drawn as inert.
+   *
+   * Two assertions and both are load-bearing. `isNavigable` answers "is a page
+   * in this document", which a web target is not, so the natural writing of
+   * both `build` and `activate` greys the row out and then swallows its click
+   * --- which is exactly the shape `docs/TRAPS.md` records as a feature that
+   * ships inert with the tests green.
+   */
+  it("reports an outline web link instead of navigating, and does not grey it", () => {
+    const navigated: number[] = [];
+    const webbed: WebTarget[] = [];
+    const bar = tree(navigated, [], webbed);
+    bar.setOutline({
+      items: [
+        {
+          title: "Further reading",
+          open: false,
+          target: { kind: "web", token: 4, host: "example.org", rest: "/spec" },
+          children: [],
+        },
+      ],
+      total: 1,
+      limits: { cycles: 0, too_deep: 0, over_budget: false, titles_clipped: 0 },
+      walk_ms: 0,
+    });
+
+    const row = bar.elementFor("0") as unknown as
+      | (FakeElement & { parent: FakeElement })
+      | null;
+    expect(row).not.toBeNull();
+    // Not disabled: a row that does something must not be drawn as one that
+    // does not.
+    expect(row!.getAttribute("aria-disabled")).toBeNull();
+
+    row!.parent.dispatch("keydown", { key: "Enter", target: row });
+
+    expect(webbed).toEqual([
+      { kind: "web", token: 4, host: "example.org", rest: "/spec" },
+    ]);
+    expect(navigated).toEqual([]);
+    bar.destroy();
+  });
+
   it("activates the row the key reached, not the one it last tracked", () => {
     // The same defect the page strip had, in the class beside it: `focused` is
     // a mirror of the DOM's focus kept by the `focusin` listener, and a
@@ -155,6 +204,7 @@ describe("Sidebar keyboard activation", () => {
   function nestedTree(): Sidebar {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       onNavigate: () => {},
+      onWebLink: () => {},
       results: { onPick: () => {} },
       comments: { onPick: () => {} },
       marks: { onPick: () => {}, onRemove: () => {}, coveredFor: () => "" },

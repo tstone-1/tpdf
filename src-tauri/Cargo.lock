@@ -4822,6 +4822,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "url",
  "windows",
  "windows-sys 0.61.2",
  "x509-cert",

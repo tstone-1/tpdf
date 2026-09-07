@@ -16,16 +16,30 @@
             "kind": "broken"
           },
           "children": []
+        },
+        {
+          "title": "Further reading",
+          "open": false,
+          "target": {
+            "kind": "web",
+            "token": 0,
+            "host": "example.org",
+            "rest": "/further"
+          },
+          "children": []
         }
       ]
     }
   ],
-  "total": 2,
+  "total": 3,
   "limits": {
     "cycles": 1,
     "too_deep": 2,
     "over_budget": true,
     "titles_clipped": 3
   },
-  "walk_ms": 0.75
+  "walk_ms": 0.75,
+  "urls": [
+    "https://example.org/further"
+  ]
 }
