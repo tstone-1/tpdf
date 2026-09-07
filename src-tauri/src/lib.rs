@@ -40,6 +40,12 @@ pub mod ocr_vision;
 #[cfg(windows)]
 pub mod ocr_windows;
 pub mod ocr_worker;
+// The OS opener, and the one place a `/URI` string is judged. Separate modules
+// because they are separate questions: `weburl` decides whether an address may
+// be opened and what a reader is shown, `opener` hands the result to the
+// platform. The split is what lets the first be tested without the second
+// reaching the window server.
+pub mod opener;
 pub mod outline;
 pub mod pagetree;
 pub mod print;
@@ -78,6 +84,8 @@ pub mod verify;
 #[cfg(test)]
 mod testutil;
 pub mod textbox;
+pub mod webopen;
+pub mod weburl;
 pub mod worker;
 pub mod xmp;
 // The four modules `worker.rs` was split into at 2,861 lines. Public, and
@@ -594,6 +602,11 @@ pub fn run() {
         // library directory --- and because `RunEvent::Opened` can fire before
         // the hook runs, which is the trap the render service works around.
         .manage(edits::Edits::default())
+        // The addresses behind a document's web links, which the webview is
+        // given a token for and never receives. Managed on the builder for the
+        // same reason the edit models are: it needs nothing from the app, and a
+        // document can be opened before the setup hook runs.
+        .manage(webopen::Registry::default())
         .plugin(tauri_plugin_dialog::init())
         // The one place tpdf talks to the network, and the only code path that
         // can replace the binary. It is deliberately inert until the frontend
@@ -787,6 +800,7 @@ pub fn run() {
             document_outline,
             document_comments,
             document_links,
+            open_web_link,
             document_properties,
             document_mapping,
             launch_open_event,

@@ -49,7 +49,7 @@ import {
   type Properties,
 } from "./properties";
 import type { Link, Links } from "./links";
-import { allRows, isNavigable, type Outline, type Row } from "./outline";
+import { allRows, isNavigable, type Outline, type Row, type WebTarget } from "./outline";
 import { Palette } from "./palette";
 import { MAX_RESULT_ROWS } from "./results";
 import { PLAIN_SEARCH } from "./search";
@@ -386,11 +386,19 @@ async function run(path: string): Promise<void> {
   const regionsCovered = new Map<number, string | null | undefined>();
   /** Every tab the sidebar has reported showing, in order. */
   const tabsSeen: string[] = [];
+  /** Web targets the outline or a page reported, newest last. */
+  const webLinksActivated: WebTarget[] = [];
   const panel = document.createElement("div");
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
   const sidebar = new Sidebar(panel, {
     onNavigate: (target, top) => viewer.goToDestination(target, top),
+    // Recorded, never opened. A check that handed an address to the operating
+    // system would put a browser window over the one this harness is measuring
+    // --- and `AGENTS.md` records that a locked or occluded screen is enough to
+    // stop a check running at all. What the recording is for is the assertion
+    // below: that activating a web row reports it rather than doing nothing.
+    onWebLink: (target) => webLinksActivated.push(target),
     results: { onPick: (index) => viewer.showMatch(index) },
     comments: { onPick: (id) => viewer.showComment(id) },
     marks: {
@@ -632,7 +640,7 @@ async function run(path: string): Promise<void> {
   await paletteChecks(viewer, doc.page_count);
   await appCommandChecks(viewer, doc);
   await accessibilityChecks(root, viewer, doc, seen);
-  await outlineChecks(viewer, sidebar, doc);
+  await outlineChecks(viewer, sidebar, doc, webLinksActivated);
   // Before `rotationChecks`, which leaves the view turned: `screenPoint` maps a
   // page-space point without the view's own rotation, so a press aimed through
   // it lands somewhere else once the reader has turned the page. That is a
@@ -6147,6 +6155,14 @@ async function outlineChecks(
   viewer: Viewer,
   sidebar: Sidebar,
   doc: DocumentInfo,
+  /**
+   * Where the sidebar's `onWebLink` records, so `webLinkCheck` can read it.
+   *
+   * Passed in rather than read from a module-level array: the recorder belongs
+   * to the run that built the sidebar, and a shared one would carry an earlier
+   * document's activations into this one's count.
+   */
+  webLinksActivated: WebTarget[],
 ): Promise<void> {
   let outline: Outline;
   try {
@@ -6180,6 +6196,7 @@ async function outlineChecks(
       "a destination's y is measured from the page top",
       "scrolling moves the highlight to the right entry",
       "a refused action is drawn but does nothing",
+      "a web link is reported rather than followed",
     ]) {
       skip(name, why);
     }
@@ -6274,6 +6291,7 @@ async function outlineChecks(
   }
 
   await destinationOffsetCheck(viewer, sidebar, rows);
+  webLinkCheck(viewer, sidebar, rows, webLinksActivated);
   await highlightCheck(viewer, sidebar, rows);
   refusalCheck(viewer, sidebar, rows);
 }
@@ -6415,6 +6433,53 @@ function refusalCheck(viewer: Viewer, sidebar: Sidebar, rows: Row[]): void {
       element.getAttribute("aria-disabled") === "true" &&
       viewer.offset === before,
     `"${preview(refused.title)}" disabled=${element?.getAttribute("aria-disabled")}, ` +
+      `offset ${before.toFixed(0)} -> ${viewer.offset.toFixed(0)}`,
+  );
+}
+
+/**
+ * An entry carrying a web link is drawn live, reports, and moves nothing.
+ *
+ * The counterpart of {@link refusalCheck}, and the three assertions are the
+ * three ways this shipped wrong in the unit tests before they were written.
+ * The row must **not** be `aria-disabled`, because `isNavigable` answers "is a
+ * page in this document" and a web target is not one --- the natural writing
+ * greys it. The activation must reach `onWebLink`, which is what says the
+ * branch runs before the refusal test rather than after it. And the viewer must
+ * not have moved, because a web link is not a jump.
+ *
+ * Nothing opens: the harness's `onWebLink` records rather than calling
+ * `open_web_link`, so no browser window arrives over the window this is
+ * measuring. What is *not* covered here is the dialog and the OS opener ---
+ * `weblinkdialog.test.ts` has the first and nothing automated has the second.
+ */
+function webLinkCheck(
+  viewer: Viewer,
+  sidebar: Sidebar,
+  rows: Row[],
+  activated: WebTarget[],
+): void {
+  const name = "a web link is reported rather than followed";
+  const web = rows.find((row) => row.target.kind === "web");
+  if (!web) {
+    skip(name, "this outline has no http or https /URI entry");
+    return;
+  }
+
+  sidebar.reveal(web.id);
+  const element = sidebar.elementFor(web.id);
+  const before = viewer.offset;
+  const seen = activated.length;
+  element?.focus();
+  if (element) key(element, "Enter");
+  check(
+    name,
+    element !== null &&
+      element.getAttribute("aria-disabled") === null &&
+      activated.length === seen + 1 &&
+      viewer.offset === before,
+    `"${preview(web.title)}" disabled=${element?.getAttribute("aria-disabled")}, ` +
+      `reported ${activated.length - seen}, ` +
       `offset ${before.toFixed(0)} -> ${viewer.offset.toFixed(0)}`,
   );
 }

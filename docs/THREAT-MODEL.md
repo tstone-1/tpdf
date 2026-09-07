@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- eight of which write files on its behalf (§T6.1), and drives the updater's one request per launch (§T9) | No *direct* filesystem access, no network reach of its own, no PDF parsing |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- eight of which write files on its behalf (§T6.1), drives the updater's one request per launch (§T9), and can ask for a web link the document holds to be opened in the reader's browser (§T8) | No *direct* filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** --- on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -1760,6 +1760,16 @@ It also changes a property that held until 26.8.2: **tpdf made no network reques
 That was worth something and it is now spent. It is spent narrowly, and the narrowness is
 the mitigation rather than a footnote — see below.
 
+**Web links, from 2026-09-07, are a second thing that causes traffic, and they are not a
+second network authority — the distinction is worth stating rather than blurring.** tpdf
+opens no socket for them: `opener.rs` hands the address to `NSWorkspace openURL:` or
+`ShellExecuteW`, and the request is made by the reader's browser, in the browser's own
+process, with the browser's own sandbox and cookie jar. So this section's inventory of what
+*this application* speaks to is unchanged — one endpoint, one request per launch — and
+what changed is that tpdf can now cause a request somewhere else. The three things bounding
+that are in §T8: the scheme allowlist, the per-link confirmation, and the token that keeps a
+caller to addresses the document already held.
+
 **What stops it.**
 
 - **The payload is verified before it is unpacked.** `tauri-plugin-updater` checks a
@@ -1906,11 +1916,54 @@ others nearly moot — **no URL-bearing element is ever created**. With no `<a>`
 and `this.onChange = onChange` — an ordinary field, not a DOM handler — was proved *not* to,
 which is what says the rule discriminates rather than matching everything.
 
-The backend half is enforced by the type. `outline.rs` refuses `/URI`, `/Launch` and `/GoToR`
-into `Target::Refused { action }`, whose string is one of five literals chosen in that file;
+The backend half is enforced by the type. `outline.rs` refuses `/Launch` and `/GoToR` into
+`Target::Refused { action }`, whose string is one of five literals chosen in that file;
 `no_target_variant_may_carry_a_url` matches `Target` exhaustively, so adding a URL-bearing
 variant is `error[E0004]` rather than a test failure. What is *not* enforced is the link
 between the two halves — see residual risk 7.
+
+**`/URI` is the one that changed, on 2026-09-07, and it changed the shape of this section's
+argument rather than merely adding a case.** Web links are followed now (`docs/PLAN.md` §11),
+so a document-written string *does* cross into the webview: `Target::Web` carries a `host` and
+a `rest`. Until then the sentence above could say no document-derived URL crossed at all, and
+that sentence is retired.
+
+What replaces it is narrower and is stated as three separate facts, because each fails
+differently:
+
+1. **What crosses is not an address.** `Target::Web` carries `token`, `host` and `rest`. The
+   URL itself never leaves the app process: `links::Links::urls` holds it, `document_links`
+   **drains** that list into `webopen::Registry` before the reply is serialised, and
+   `open_web_link` takes a token and looks it up. So the widest thing a compromised webview
+   can ask for is *an address this document already contained*, which an attacker who wrote
+   the document had anyway. That matters more than it does for the other commands because a
+   URL is an outbound request to a host of the caller's choosing — an exfiltration channel
+   that printing and saving are not.
+2. **What crosses cannot be rendered as anything but text.** The sink argument above is
+   unchanged and now covers one more route: `check_webview_sinks.py` gained a rule for calls
+   that navigate without an element — `window.open`, `location.assign`, `location.replace` —
+   which every earlier rule was blind to because they are neither an attribute nor a property
+   assignment. Proved to fire by planting a `window.open` and reading the exit code.
+3. **The two halves are linked, for this arm.** The gap admitted above — a Rust change cannot
+   turn the frontend check red — is closed for the one arm where it now matters: the same
+   gate reads `src/lib/outline.ts`'s `Target` union and fails if the `web` arm declares a
+   field named `url`, `uri`, `href` or `address`, **and** fails if the arm cannot be found at
+   all. Both directions were proved by mutation. The rest of residual risk 7 stands.
+
+**What is not enforced anywhere is the confirmation.** `weblinkdialog.ts` asks before
+`open_web_link` is called, and a script running in the webview can call the command directly
+without showing anybody a dialog. That is residual risk 7's shape rather than a new hole — the
+same script can already print and save — and it is why the scheme allowlist lives in
+`weburl.rs`, on the backend side of the boundary, rather than beside the dialog. A caller that
+skips the dialog still cannot open a `javascript:` URL, and still cannot open an address that
+was not in the document.
+
+**The dialog is itself a surface, and the three rules it follows are in `weblinkdialog.ts`'s
+header.** The short version: the host is shown as punycode because rendering the Unicode form
+is drawing the homoglyph attack on the attacker's behalf; the path is secondary and truncated
+because that is where a stranger writes something reassuring; and the confirmation is per
+link, never per domain, because a domain grant established from a document a stranger sent is
+a standing capability nobody is asked about again.
 
 **Comments raised the stakes on all of this on 2026-08-16 without changing the argument.** A
 document's annotations are the largest body of attacker-chosen prose tpdf has ever put on

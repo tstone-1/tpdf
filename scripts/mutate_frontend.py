@@ -5244,6 +5244,13 @@ TEST_FILES = [
     # the gate said so before the run rather than after it.
     "src/lib/outline.test.ts",
     "src/lib/sidebar.test.ts",
+    # Added 2026-09-07 with web links, and *after* the mutations: the run
+    # refused all three under `weblinkdialog.ts` with "no test here is named
+    # ...", for tests the file plainly defines. That is the pattern the notes
+    # above predict --- the tests are written first, this list is edited by
+    # whoever writes the mutations --- and the guard caught it again with no
+    # SURVIVED. The argument for a glob is one entry stronger.
+    "src/lib/weblinkdialog.test.ts",
     # Added 2026-08-30 with the slot-versus-page mutations, in the same edit.
     # Eleventh time, and for once the list was grown by the person who wrote the
     # tests rather than a step later --- because this suite is new and the guard
@@ -7181,6 +7188,90 @@ MUTATIONS += [
         "    return this.text(look) !== \"\";\n"
         "    const { start, end } = this.ordered;",
         "stops at the first page that contributes",
+    ),
+]
+
+# Web links, added 2026-09-07 with the feature. Three of the five are about the
+# confirmation being real -- the dialog is the whole of what stands between a
+# click and a request to a host a stranger chose -- and two are the branch
+# *order* in the viewer and the sidebar, where a web target that falls through
+# to the navigable test is reported to a reader as a link that goes nowhere.
+MUTATIONS += [
+    Mutation(
+        # Open on Enter, which is what an ordinary dialog does and is exactly
+        # the reflex this one exists to interrupt.
+        "weblink: let Enter open the address instead of cancelling",
+        "src/lib/weblinkdialog.ts",
+        "        event.preventDefault();\n"
+        "        event.stopPropagation();\n"
+        "        this.settle(false);\n"
+        "      }\n"
+        "    });\n"
+        "  }\n"
+        "\n"
+        "  /** Whether it is on screen. */",
+        "        event.preventDefault();\n"
+        "        event.stopPropagation();\n"
+        "        this.settle(true);\n"
+        "      }\n"
+        "    });\n"
+        "  }\n"
+        "\n"
+        "  /** Whether it is on screen. */",
+        "cancels on Enter rather than opening",
+    ),
+    Mutation(
+        # Focus the affirmative button. Every assertion about what the dialog
+        # *says* still passes; what changes is that a reader's next keystroke
+        # opens the link.
+        "weblink: focus Open rather than Cancel",
+        "src/lib/weblinkdialog.ts",
+        "    // Cancel, not Open. See the header.\n    this.cancel.focus();",
+        "    this.panel.children[this.panel.children.length - 1]?.focus?.();",
+        "focuses Cancel, not Open",
+    ),
+    Mutation(
+        # Open first and ask afterwards. The dialog still appears, so a person
+        # watching sees the feature working -- and the address has already been
+        # handed to the operating system by the time they read it.
+        "weblink: open before the reader has answered",
+        "src/lib/weblinkdialog.ts",
+        "  const wanted = await deps.ask({ host: target.host, rest: target.rest });\n"
+        "  if (!wanted) return false;\n"
+        "  try {\n"
+        "    await deps.open(doc, source, target.token);",
+        "  try {\n"
+        "    await deps.open(doc, source, target.token);\n"
+        "    await deps.ask({ host: target.host, rest: target.rest });",
+        "does not open when the reader says no",
+    ),
+    Mutation(
+        # Test the web arm after the refusal arm. A web link then reports itself
+        # to the reader as a link that goes nowhere, which is the failure the
+        # ordering was written for.
+        "viewer: check for a web link after the refusal branch, not before",
+        "src/lib/viewer.ts",
+        "    if (link.target.kind === \"web\") {\n"
+        "      this.opts.onWebLink?.(link.target);\n"
+        "      return;\n"
+        "    }\n"
+        "\n"
+        "    if (link.target.kind !== \"page\") {",
+        "    if (link.target.kind !== \"page\") {",
+        "reports a web link rather than jumping or refusing",
+    ),
+    Mutation(
+        # Grey the row and swallow its click, which is what `isNavigable` alone
+        # does: it answers "is a page in this document", and a web target is
+        # not one.
+        "sidebar: treat a web outline row as one that goes nowhere",
+        "src/lib/sidebar.ts",
+        "    if (row.target.kind === \"web\") {\n"
+        "      this.opts.onWebLink(row.target);\n"
+        "      return;\n"
+        "    }\n",
+        "",
+        "reports an outline web link instead of navigating, and does not grey it",
     ),
 ]
 

@@ -49,6 +49,12 @@ project conventions.
   made, and Next link / Previous link reach one without the pointer. Back and Forward grey out
   when there is nowhere to go.
   <!-- built: nav.back nav.forward nav.nextLink nav.previousLink -->
+- **Web links open in your browser, after you confirm the site.** `http` and `https` only ---
+  everything else a `/URI` can name is still declined --- and the confirmation shows the host
+  in the form that cannot lie: an internationalised name is shown as its punycode, never as
+  the lookalike it renders to. Every link is asked about every time; there is no "always allow
+  this site", because a permission granted from a document a stranger sent is one you would
+  never be asked about again.
 - Session restore: the document, page, zoom and rotation you left on.
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for
   as long as the document is open, because every worker that renders it meets the same

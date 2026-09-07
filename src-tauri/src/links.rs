@@ -156,6 +156,21 @@ pub struct Links {
     pub limits: Limits,
     /// Time spent scanning, in milliseconds.
     pub scan_ms: f64,
+    /// The address behind every [`Target::Web`] in `items`, indexed by its
+    /// `token`.
+    ///
+    /// **This is the half of a web link the webview never receives.** The
+    /// worker fills it, the app process takes it (`webopen::Registry::adopt`)
+    /// and answers `open_web_link` out of it, and what is left on the way to the
+    /// frontend is empty. A parallel vector rather than a map because the token
+    /// *is* the index, so there is no key to get wrong and no entry that can
+    /// belong to a target that is not there.
+    ///
+    /// Every entry has been through [`crate::weburl::Web::parse`] already ---
+    /// only a URL that passed the allowlist is here at all --- and the app
+    /// process parses it again on the way in rather than trusting that, because
+    /// the two are separated by a process boundary and a pipe.
+    pub urls: Vec<String>,
 }
 
 /// Reads every link in a document.
@@ -188,6 +203,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
 
     let mut limits = Limits::default();
     let mut items: Vec<Link> = Vec::new();
+    let mut urls: Vec<String> = Vec::new();
 
     // Page object to index, built once. Resolving a destination means turning a
     // page *reference* into the number the viewer scrolls to, and doing that by
@@ -227,6 +243,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
             &geometry,
             &mut items,
             &mut limits,
+            &mut urls,
         );
     }
 
@@ -234,10 +251,19 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
         items,
         limits,
         scan_ms: started.elapsed().as_secs_f64() * 1000.0,
+        urls,
     })
 }
 
 /// Reads one page's `/Annots`, keeping the links.
+///
+/// Eight arguments, and the allow is the same one `walk_outline` below carries
+/// for the same shape: six of them are the page and the two indexes built once
+/// in `scan_from`, and the other two are where the walk puts what it finds.
+/// Bundling the outputs into a struct is the usual answer and is not one here
+/// --- `target_of` takes two of the three, so one grouping cannot serve both
+/// and two groupings is more names than the problem has.
+#[allow(clippy::too_many_arguments)]
 fn read_page(
     document: &Document,
     page: ObjectId,
@@ -246,6 +272,7 @@ fn read_page(
     geometry: &[PageBox],
     items: &mut Vec<Link>,
     limits: &mut Limits,
+    urls: &mut Vec<String>,
 ) {
     let Ok(dict) = document.get_dictionary(page) else {
         limits.unreadable += 1;
@@ -331,7 +358,7 @@ fn read_page(
             id: items.len() as u32,
             page: number,
             rect,
-            target: target_of(annot, document, numbers, geometry, limits),
+            target: target_of(annot, document, numbers, geometry, limits, urls),
         });
         on_this_page += 1;
     }
@@ -353,6 +380,7 @@ fn target_of(
     numbers: &HashMap<ObjectId, u32>,
     geometry: &[PageBox],
     limits: &mut Limits,
+    urls: &mut Vec<String>,
 ) -> Target {
     if let Ok(action) = annot.get(b"A") {
         let Ok(action) = resolve(document, action).as_dict() else {
@@ -367,7 +395,7 @@ fn target_of(
                 Err(_) => Target::Broken,
             },
             b"GoToR" => refused("remote"),
-            b"URI" => refused("uri"),
+            b"URI" => web_target(action, document, urls),
             b"Launch" => refused("launch"),
             b"GoToE" => refused("embedded"),
             // Named actions (`/Named /NextPage`), JavaScript, form submission,
@@ -696,6 +724,12 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
     let mut out = Vec::new();
     let mut seen: HashSet<ObjectId> = HashSet::new();
     let mut limits = Limits::default();
+    // The oracle discards the addresses: it exists to compare *destinations*
+    // against PDFium's outline, and the two walks number their web targets
+    // independently, so a token from either side is meaningless to the other.
+    // `links-probe --mode agree` compares web targets on their host and path
+    // for exactly that reason.
+    let mut urls: Vec<String> = Vec::new();
     walk_outline(
         &document,
         *first,
@@ -704,6 +738,7 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
         &mut seen,
         &mut out,
         &mut limits,
+        &mut urls,
         MAX_TREE_DEPTH,
     );
     Ok(out)
@@ -719,6 +754,7 @@ fn walk_outline(
     seen: &mut HashSet<ObjectId>,
     out: &mut Vec<Target>,
     limits: &mut Limits,
+    urls: &mut Vec<String>,
     depth: usize,
 ) {
     if depth == 0 {
@@ -737,7 +773,7 @@ fn walk_outline(
         // §12.3.3 says `/Dest` shall not be present when `/A` is, and taking the
         // action is what refuses a `/GoToR` instead of resolving its `/D`
         // against this document.
-        out.push(target_of(dict, document, numbers, geometry, limits));
+        out.push(target_of(dict, document, numbers, geometry, limits, urls));
 
         if let Ok(Object::Reference(child)) = dict.get(b"First") {
             walk_outline(
@@ -748,6 +784,7 @@ fn walk_outline(
                 seen,
                 out,
                 limits,
+                urls,
                 depth - 1,
             );
         }
@@ -755,6 +792,44 @@ fn walk_outline(
             Ok(Object::Reference(next)) => Some(*next),
             _ => None,
         };
+    }
+}
+
+/// Reads a `/URI` action into a web target, or refuses it.
+///
+/// **A refusal here is the same refusal `/URI` always got**, deliberately: the
+/// reader is told "opens a web link --- not followed" whether the scheme was
+/// `javascript:` or the URL was unparseable, because a reason naming either
+/// would be a document-written string arriving by a second door. The one place
+/// that decides is [`crate::weburl`]; this is the plumbing.
+///
+/// The token is the address's index in `urls`, so pushing and reading the
+/// length cannot disagree --- there is no counter kept beside the vector to go
+/// out of step with it.
+fn web_target(action: &Dictionary, document: &Document, urls: &mut Vec<String>) -> Target {
+    let Ok(raw) = action.get(b"URI").map(|o| resolve(document, o)) else {
+        return refused("uri");
+    };
+    let Ok(bytes) = raw.as_str() else {
+        return refused("uri");
+    };
+    // `decode_text_string` rather than a UTF-8 read: §12.6.4.7 calls `/URI` an
+    // ASCII string, and real files write it as a text string with a UTF-16 BOM
+    // often enough that reading only ASCII would refuse working links. Being
+    // permissive here costs nothing, because `Web::parse` is strict afterwards.
+    let Some(web) = crate::weburl::Web::parse(&crate::annots::decode_text_string(bytes)) else {
+        return refused("uri");
+    };
+    // Bounded because `items` is: a document cannot have more web targets than
+    // it has links, and `MAX_TOTAL` already bounds those. The assertion is left
+    // to that bound rather than repeated here, where a second limit could
+    // silently disagree with the first.
+    let token = urls.len() as u32;
+    urls.push(web.url);
+    Target::Web {
+        token,
+        host: web.host,
+        rest: web.rest,
     }
 }
 
@@ -1101,15 +1176,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_uri_action_is_refused_and_names_itself() {
+    /// Builds a one-page document whose only link carries the given `/URI`.
+    fn scan_uri(uri: &str) -> Links {
         let (mut document, ids) = build(1, &[]);
         let mut annot = link(rect());
         annot.set(
             "A",
             dictionary! {
                 "S" => "URI",
-                "URI" => Object::string_literal("https://example.invalid/"),
+                "URI" => Object::string_literal(uri),
             },
         );
         let annot_id = document.add_object(annot);
@@ -1119,14 +1194,105 @@ mod tests {
             .as_dict_mut()
             .unwrap()
             .set("Annots", vec![Object::Reference(annot_id)]);
+        scan_of(&mut document, 1)
+    }
 
-        let links = scan_of(&mut document, 1);
+    /// **This test asserted the opposite until 2026-09-07**, and the change is
+    /// the feature rather than a correction: `docs/PLAN.md` §11 decided that
+    /// tpdf opens web links, so a `/URI` an allowlisted scheme is now a
+    /// [`Target::Web`] and only the rest are refused. The refusal case is the
+    /// test below, which is the half that had to keep working.
+    #[test]
+    fn an_http_uri_action_becomes_a_web_target_and_the_address_is_kept_apart() {
+        let links = scan_uri("https://example.invalid/a?b=1");
         assert_eq!(
             links.items[0].target,
-            Target::Refused {
-                action: "uri".into()
+            Target::Web {
+                token: 0,
+                host: "example.invalid".into(),
+                rest: "/a?b=1".into(),
             }
         );
+        // The address is in the scan's own list and in no field of the target,
+        // which is what `webopen.rs` then takes before the reply continues.
+        assert_eq!(
+            links.urls,
+            vec!["https://example.invalid/a?b=1".to_string()]
+        );
+    }
+
+    /// The token is the address's index, and two links do not share one.
+    ///
+    /// Written because an index kept as a separate counter is free to drift
+    /// from the vector it indexes --- the reason `web_target` derives it from
+    /// `urls.len()` rather than incrementing anything.
+    #[test]
+    fn each_web_target_indexes_its_own_address() {
+        let (mut document, ids) = build(1, &[]);
+        let mut annots = Vec::new();
+        for uri in ["https://first.invalid/", "https://second.invalid/"] {
+            let mut annot = link(rect());
+            annot.set(
+                "A",
+                dictionary! {
+                    "S" => "URI",
+                    "URI" => Object::string_literal(uri),
+                },
+            );
+            annots.push(Object::Reference(document.add_object(annot)));
+        }
+        document
+            .get_object_mut(ids[0])
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Annots", annots);
+
+        let links = scan_of(&mut document, 1);
+        let tokens: Vec<u32> = links
+            .items
+            .iter()
+            .map(|item| match &item.target {
+                Target::Web { token, .. } => *token,
+                other => panic!("expected a web target, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(tokens, vec![0, 1]);
+        assert_eq!(
+            links.urls,
+            vec![
+                "https://first.invalid/".to_string(),
+                "https://second.invalid/".to_string()
+            ]
+        );
+    }
+
+    /// A scheme outside the allowlist keeps the refusal `/URI` always had.
+    ///
+    /// The four here are the ones `docs/PLAN.md` §11 names, and the reason they
+    /// are refused *as `uri`* rather than by their own scheme is that the
+    /// refusal a reader reads must not be composed from the document's bytes.
+    #[test]
+    fn a_uri_action_outside_the_allowlist_is_refused_and_names_itself() {
+        for uri in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "ms-msdt:/id",
+            "data:text/html,x",
+        ] {
+            let links = scan_uri(uri);
+            assert_eq!(
+                links.items[0].target,
+                Target::Refused {
+                    action: "uri".into()
+                },
+                "{uri} must not become a web target"
+            );
+            assert!(
+                links.urls.is_empty(),
+                "{uri} must not reach the address list"
+            );
+        }
     }
 
     /// The control for the entry above: an action tpdf has never heard of is

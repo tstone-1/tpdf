@@ -157,3 +157,57 @@ def _end(pid: int) -> None:
         )
     else:
         subprocess.run(["kill", "-9", str(pid)], capture_output=True, timeout=30)
+
+
+def main(argv: "list[str]") -> int:
+    """Reports whether anything is holding the single-instance slot.
+
+    **This module had no entry point until 2026-09-07, and that was a defect
+    rather than a style.** `viewer_check.py`'s own failure message names this
+    file --- *"a second launch forwarding its argv to a window already open
+    (close it, or see `scripts/stray.py`)"* --- so a reader who hits that message
+    runs it. With no `__main__` it printed nothing and exited 0, which is
+    byte-for-byte what "there are no strays" would look like. It was run in
+    exactly that situation with three `tpdf.exe` alive and answered clean.
+
+    It **reports and does not kill**, which is the same policy `clear_strays`
+    holds and for its reason: a person may have their own tpdf open on a
+    document, and a diagnostic that closes it is one nobody can run on a working
+    machine. The harness does the killing, because the harness knows which binary
+    is under test.
+
+    Exit 1 when something is running, so a caller can branch on it. Exit 2 when
+    the probe itself could not answer --- which must not be reported as a clean
+    machine, since that is the confusion this whole function exists to end.
+    """
+    binary = Path(argv[0]) if argv else _default_binary()
+    path = str(binary.resolve())
+    try:
+        pids = _running(path)
+    except Exception as exc:  # noqa: BLE001 - the failure must not read as clean
+        print(f"[FAIL] could not check for instances of {path}: {exc}")
+        return 2
+
+    if not pids:
+        print(f"[OK] nothing is running {path}")
+        return 0
+
+    print(
+        f"[WARN] {len(pids)} instance(s) of {binary.name} are running "
+        f"(pids {', '.join(map(str, pids))}). On Windows a running instance "
+        f"absorbs a later launch through the single-instance plugin, so a harness "
+        f"started now writes nothing and looks like it hung. Close the window, or "
+        f"end them yourself -- this reports and does not kill."
+    )
+    return 1
+
+
+def _default_binary() -> Path:
+    """The release build, which is what a harness is pointed at."""
+    root = Path(__file__).resolve().parent.parent
+    name = "tpdf.exe" if sys.platform == "win32" else "tpdf"
+    return root / "src-tauri" / "target" / "release" / name
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

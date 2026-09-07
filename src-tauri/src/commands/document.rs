@@ -14,7 +14,7 @@ use tauri::Manager;
 
 use super::{await_reply, reply_channel, ReplyRx};
 use crate::render::{DocumentInfo, RenderService};
-use crate::{edits, progressive, recentdocs, render, startup};
+use crate::{edits, progressive, recentdocs, render, startup, webopen};
 
 /// A document open that was started before the webview asked for it.
 ///
@@ -205,12 +205,19 @@ pub async fn open_document(
 pub async fn release_documents(
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
+    web: tauri::State<'_, webopen::Registry>,
 ) -> Result<usize, String> {
     // Before the service call, for `close_document`'s reason and with the same
     // consequence: document numbers are reused, so a model left behind under an
     // id the service is about to hand to another file is one document's journal
     // applied to another's pages.
     let models = edits.release_all();
+    // The same argument, for the same reason, over the web addresses: a list
+    // surviving under a reused id would answer the next document's clicks with
+    // this one's links. Not counted into the line below --- a scan is not a
+    // document, and two numbers that mean different things in one sentence read
+    // as one number.
+    web.forget_all();
     let (reply, rx) = reply_channel();
     service.release_all(reply);
     let held = await_reply("release_documents", rx).await?;
@@ -246,6 +253,7 @@ pub async fn release_documents(
 pub async fn close_document(
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
+    web: tauri::State<'_, webopen::Registry>,
     doc: u32,
 ) -> Result<(), String> {
     // Before the service call rather than after, and not for tidiness: document
@@ -253,6 +261,10 @@ pub async fn close_document(
     // about to hand to another file is one document's journal applied to
     // another's pages.
     edits.close(doc);
+    // And its web addresses, on the same argument: a token is an index into a
+    // list, so a list that outlived its document would answer the next one's
+    // clicks with somebody else's addresses.
+    web.forget(doc);
     let (reply, rx) = reply_channel();
     service.close(doc, reply);
     await_reply("close_document", rx).await

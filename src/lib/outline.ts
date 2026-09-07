@@ -16,6 +16,17 @@
 export type Target =
   | { kind: "page"; page: number; top_pt: number | null }
   | { kind: "broken" }
+  /**
+   * A web address, split into the two halves a reader is shown.
+   *
+   * `token` is an index into a list the app process keeps and this side never
+   * receives, so nothing here can construct an address --- see `Target::Web` in
+   * `outline.rs` for why that is the shape. `host` is punycode and `rest` is
+   * already truncated; neither decision is remakeable here, and neither should
+   * be re-derived, because a second opinion about a host is how the punycode
+   * guarantee would quietly stop holding.
+   */
+  | { kind: "web"; token: number; host: string; rest: string }
   | { kind: "refused"; action: string }
   | { kind: "none" };
 
@@ -93,6 +104,15 @@ export const DESTINATION_MARGIN_PT = 6;
  */
 export const REACHED_TOLERANCE_PT = 8;
 
+/**
+ * The web arm of {@link Target}, named so callbacks can take exactly it.
+ *
+ * Derived from the union rather than written out a second time: a hand-written
+ * copy is free to drift from the arm it mirrors, and `docs/TRAPS.md` records
+ * what a second copy of a shape costs when only one of them is maintained.
+ */
+export type WebTarget = Extract<Target, { kind: "web" }>;
+
 /** Whether an entry can be navigated to. */
 export function isNavigable(target: Target): target is {
   kind: "page";
@@ -108,10 +128,19 @@ export function isNavigable(target: Target): target is {
  * A row that silently ignores a click is indistinguishable from a broken
  * viewer, and the three reasons are genuinely different: one is a heading, one
  * is a damaged file, and one is tpdf declining to open something.
+ *
+ * **A web target returns the empty string, and it is not a heading.** The empty
+ * answer means "this does something" rather than "this does nothing", which is
+ * the same thing `page` returns it for. Callers branch on the emptiness, so a
+ * sentence here would make every web link report itself as inert while opening
+ * perfectly well --- and `isNavigable` cannot be the thing that decides,
+ * because a web target is not a place in this document to scroll to.
  */
 export function reasonFor(target: Target): string {
   switch (target.kind) {
     case "page":
+      return "";
+    case "web":
       return "";
     case "broken":
       return "points at a page this document does not have";
@@ -126,6 +155,12 @@ function refusalWording(action: string): string {
   switch (action) {
     case "launch":
       return "opens a program — not followed";
+    // Still reachable, and it means something narrower than it did: since
+    // 2026-09-07 an `http` or `https` address becomes a `web` target, so a
+    // refusal here is a scheme outside that allowlist --- `javascript:`,
+    // `file:`, or whatever a local application registered. The wording is
+    // unchanged on purpose: naming the scheme would put a string the document
+    // wrote into a sentence tpdf speaks, which is the door `weburl.rs` closes.
     case "uri":
       return "opens a web link — not followed";
     case "remote":

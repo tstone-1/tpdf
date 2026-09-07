@@ -231,13 +231,33 @@ def build_links(path: str) -> dict:
         "a name the tree does not define",
     )
 
-    # --- page 2: everything tpdf declines to follow -----------------------
+    # --- page 2: what tpdf declines, and the one action it now follows ----
+    #
+    # **This page held six refusals until 2026-09-07 and now holds five and a
+    # web target.** `docs/PLAN.md` §11 decided that an `http`/`https` link is
+    # opened after a confirmation, so the first entry below changed kind. The
+    # `javascript:` one beside it is new and is what keeps the refusal covered:
+    # a page where every `/URI` is followed cannot tell the allowlist from a
+    # rule that accepts everything, which is the discrimination `docs/TRAPS.md`
+    # asks a fixture for two of.
     add(
         2,
         row_rect(2),
         b"/A << /S /URI /URI (https://example.invalid/tracker?doc=42) >>",
+        {
+            "kind": "web",
+            "token": 0,
+            "host": "example.invalid",
+            "rest": "/tracker?doc=42",
+        },
+        "a web link, on a scheme tpdf opens",
+    )
+    add(
+        2,
+        row_rect(12),
+        b"/A << /S /URI /URI (javascript:app.alert\\(1\\)) >>",
         {"kind": "refused", "action": "uri"},
-        "a web link",
+        "a /URI whose scheme is not on the allowlist",
     )
     add(
         2,
@@ -395,7 +415,15 @@ def build_links(path: str) -> dict:
         ("Chapter three", b"/Dest [%d 0 R /FitH %d]" % (page_objects[6], HEIGHT - 250)),
         ("Named, flat", b"/Dest /flat-chapter"),
         ("Named, tree", b"/Dest (tree-chapter)"),
-        ("A web link", b"/A << /S /URI /URI (https://example.invalid/) >>"),
+        # The **same** address as the page-2 link, which is this fixture's whole
+        # arrangement: the outline is "aimed at the same destinations the links
+        # use", and `--mode agree` finds the lopdf side by looking for a link
+        # that matches. A different URL here reads as "lopdf absent" -- a
+        # disagreement between the resolvers, when what differs is the fixture.
+        (
+            "A web link",
+            b"/A << /S /URI /URI (https://example.invalid/tracker?doc=42) >>",
+        ),
     ]
     outline_root = pdf.reserve()
     entries = [pdf.reserve() for _ in shared]
@@ -446,7 +474,18 @@ def build_links(path: str) -> dict:
             {"title": "Chapter three", "target": {"kind": "page", "page": 6, "top_pt": 250}},
             {"title": "Named, flat", "target": {"kind": "page", "page": 4, "top_pt": 200}},
             {"title": "Named, tree", "target": {"kind": "page", "page": 7, "top_pt": 150}},
-            {"title": "A web link", "target": {"kind": "refused", "action": "uri"}},
+            # The token is the outline walk's own numbering and is deliberately
+            # absent: the two resolvers number independently, so `links-probe
+            # --mode agree` compares a web target on its host and path. A token
+            # here would be an expectation about which walk answered.
+            {
+                "title": "A web link",
+                "target": {
+                    "kind": "web",
+                    "host": "example.invalid",
+                    "rest": "/tracker?doc=42",
+                },
+            },
         ],
     }
 

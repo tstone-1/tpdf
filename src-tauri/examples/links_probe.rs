@@ -148,6 +148,10 @@ fn describe(target: &Target) -> String {
         },
         Target::Broken => "broken".into(),
         Target::Refused { action } => format!("refused ({action})"),
+        // The token is deliberately not printed: it is meaningless outside the
+        // walk that assigned it, and a number in a comparison message reads as
+        // something the two sides ought to agree on.
+        Target::Web { host, rest, .. } => format!("web {host}{rest}"),
         Target::None => "no destination".into(),
     }
 }
@@ -281,6 +285,24 @@ fn wanted(value: &serde_json::Value) -> Result<Target, String> {
                 .ok_or("a refusal has no action")?
                 .to_string(),
         },
+        // The token is not read, and the manifest does not carry one: it is
+        // the *walk's* numbering, and the whole point of `--mode agree` is that
+        // two walks answer independently. `same` compares web targets on their
+        // host and path for the same reason, so a zero here is a placeholder
+        // that no comparison reaches rather than an expectation.
+        "web" => Target::Web {
+            token: 0,
+            host: value
+                .get("host")
+                .and_then(|host| host.as_str())
+                .ok_or("a web target has no host")?
+                .to_string(),
+            rest: value
+                .get("rest")
+                .and_then(|rest| rest.as_str())
+                .ok_or("a web target has no rest")?
+                .to_string(),
+        },
         other => return Err(format!("unknown target kind in the manifest: {other}")),
     })
 }
@@ -312,6 +334,26 @@ fn same(left: &Target, right: &Target) -> bool {
                     _ => false,
                 }
         }
+        // A web target's `token` is an index into the list its **own** walk
+        // built, and the two sides here are two walks --- `lopdf`'s and
+        // PDFium's --- numbering independently. Comparing the whole value would
+        // therefore report every web entry as a disagreement, which is a
+        // difference between two numberings dressed up as a difference about
+        // where a link goes. What the two must agree on is the address, and
+        // `host` and `rest` are it: they are derived from the same URL by the
+        // same `weburl::Web::parse`, so equal halves mean equal addresses.
+        (
+            Target::Web {
+                token: _,
+                host: host_a,
+                rest: rest_a,
+            },
+            Target::Web {
+                token: _,
+                host: host_b,
+                rest: rest_b,
+            },
+        ) => host_a == host_b && rest_a == rest_b,
         _ => left == right,
     }
 }

@@ -71,6 +71,7 @@ hop through the index.
 - `FPDFBookmark_GetDest` follows the bookmark's action without checking its type
 - `FPDFDest_GetLocationInPage` answers only for `/XYZ`, so every other fit lands at the page top
 - Two resolvers agreeing with themselves is not two resolvers agreeing
+- A backslash in a URL's authority is a slash, so refusing it disagrees with every browser
 - `FPDFBookmark_GetDest` cannot tell a heading from a damaged link
 - A differential that needs a manifest is a differential over one document
 - A destination's offset belongs to the page it lands on, not the page it left
@@ -341,6 +342,7 @@ hop through the index.
 - A control can be contaminated by the phase that ran before it
 - A check that derives its inputs from the thing it is testing cannot fail
 - A closure and a direct read of the same variable disagreed, and it is unexplained
+- The fake DOM keeps the tag name you passed; a browser upper-cases it
 - A hit-test slack that rescues a small target hands the click to its neighbour
 - The nib was tested where it was, not where it had been
 - Recording a jump at the call sites is a rule; recording it inside the primitive is a mechanism
@@ -366,6 +368,7 @@ hop through the index.
 - Two mechanisms, one outcome, and deleting either one would have been the defect
 - A check no gate runs is a check nobody runs, and two commands shipped past it
 - A harness printed `[FAIL]` and exited 0, under a criterion that names it
+- A failure message named a script with no entry point, so running it answered clean
 - A scanner over every tracked file scans its own exemption table, and a CI gate born red still ships
 - A readings table outlived the code that produced it, and every document still agreed
 - An accounting observable nobody reads is the same as not having one
@@ -652,6 +655,7 @@ hop through the index.
 - A silent installer skips the file it cannot write, and exits 0
 - `cargo fmt` was blamed for mangling a string, and it was innocent
 - A Windows-only file is invisible to every gate on a Mac, and cargo can cross-check it
+- The macOS half of a platform split is invisible from Windows, and the cross-check runs one way
 - An unused-import warning on one platform is not an unused import
 - A gate that refuses on a precondition of running is red on every machine that is not running
 - One unguarded call to an external program made eleven fixtures that need nothing unbuildable
@@ -677,6 +681,7 @@ hop through the index.
 - A test pinned a random value out of a generated fixture, and both places it runs hid that
 - A test whose oracle is the heuristic the code replaced fails once in 256 runs, on correct code
 - A `-manifest.json` sidecar enrols a fixture in a check it never claimed
+- A differential pairs by matching answers, so two halves of a fixture must name one address
 - A `/Text` annotation's rectangle is advisory, and PDFKit replaces it
 - The second reader substitutes the same icon and centres it, where the first anchored it
 - A rotated page makes a document mixed-size, and two checks assume it is not
@@ -22821,3 +22826,115 @@ test exists somewhere in the suite, and the leaf existed. Name the leaf. The rep
 `--only` that made re-running them slow is the argparse trap already in this file: this
 harness's flag keeps the last value, and the run that "caught all 1 mutations" was one
 of eight.
+
+### The fake DOM keeps the tag name you passed; a browser upper-cases it
+
+2026-09-07. `weblinkdialog.ts` leaves Enter alone when it lands on a button, so Open stays
+reachable from the keyboard while a bare Enter cancels. Written as
+`event.target.tagName === "BUTTON"`, which is right: an HTML element's `tagName` is upper
+case in a browser. The test asserting the branch failed, because `testdom.ts` stores
+whatever `createElement` was handed and every element there is lower case.
+
+Both spellings give a green suite over a branch no test takes, and they are not equally
+bad. `"BUTTON"` is correct in the application and unreachable under test --- the test
+fails, which is the good direction and is how this was found. `"button"` is the reverse and
+is the one to fear: the test passes, the branch never fires in a browser, and Enter on Open
+silently cancels instead of opening. A comparison correct in both is the only version worth
+having, so fold the case and say why on the line above it.
+
+Generalises past `tagName` to anything the fake normalises differently from a browser.
+`testdom.ts` exists to be small, and where it differs it differs quietly: an assertion
+written against the fake is a statement about the fake until something shows otherwise.
+
+### A backslash in a URL's authority is a slash, so refusing it disagrees with every browser
+
+2026-09-07. `weburl.rs`'s first test asserted that `https:/\evil.example` is refused, on
+the reasoning that a backslash makes the string something other than an https URL. It does
+not. The URL Standard treats `\` as `/` inside a special scheme's authority, so the string
+*is* a request to `evil.example`, every browser sends it there, and `url::Url` parses it
+that way --- the test failed on correct code.
+
+The lesson is not "read the spec first", though that would have helped. It is that the
+refusal would have been **worse than the thing it was guarding**: tpdf would show a link as
+unfollowable that every other client follows, and a reader comparing tpdf against their
+browser would conclude tpdf was broken. A validator that disagrees with the ecosystem's
+parser is a defect even when its answer is the more cautious one.
+
+What the case actually demonstrates is the rule it was written for, stated the right way
+round: the scheme and the host come from the **parse**, so the reader is shown
+`evil.example`, which is where they are going. A `starts_with("https://")` test would have
+rejected the same string, and a `starts_with("https:")` would have accepted it while
+showing the reader nothing that told them where it went. The same session made the mistake
+a second time: `https:///path-only` is `https://path-only/`, a single-label host of the
+`localhost` family, and refusing that was the same error again.
+
+### A differential pairs by matching answers, so two halves of a fixture must name one address
+
+2026-09-07. `links.pdf` carries an outline whose entries point at the same destinations the
+page links do --- that is the fixture's stated reason for existing, because `links-probe
+--mode agree` puts `lopdf`'s resolver beside PDFium's. When `/URI` became a followed
+target, the outline's web entry was given `https://example.invalid/` while the page's link
+kept `https://example.invalid/tracker?doc=42`, and the probe reported **lopdf absent** for
+it.
+
+Nothing was wrong with either resolver. The probe finds the `lopdf` side by searching the
+*links* for a target matching the manifest's expectation, so two different addresses cannot
+pair, and the output then has the shape of a resolver that failed to answer. A differential
+that pairs by matching answers rather than by position reports a fixture difference as a
+disagreement, and the message it prints names the wrong party.
+
+Two things follow. When adding a case to a fixture that exists to be read twice, add it to
+**both** halves with the same value --- the generator now says so at the line. And when a
+differential reports one side as absent, check the fixture before the code: an absence
+there is far more often a pairing failure than a resolver returning nothing.
+
+### The macOS half of a platform split is invisible from Windows, and the cross-check runs one way
+
+2026-09-07. `opener.rs` has a macOS arm and a Windows arm. Every gate ran green on the
+Windows desktop --- `cargo clippy --locked --all-targets -- -D warnings` included --- and
+the macOS arm had never been compiled by anything, because a Windows compiler never parses
+a `#[cfg(target_os = "macos")]` line. It carried an unnecessary `unsafe` block around
+`NSURL::URLWithString`, which `objc2-foundation` types safe. `unused_unsafe` is a warning,
+`-D warnings` makes it an error, and the macOS CI leg would have gone red on a file this
+machine had just certified.
+
+**`scripts/check_windows.py` is the mirror of this and only runs one way**: it type-checks
+the Windows tree *from a Mac*, because that is the direction the repository's history had
+the problem in. There is no Mac-from-Windows counterpart and there cannot easily be one ---
+the Apple SDK is not obtainable here the way `xwin` makes the Windows SDK obtainable there.
+
+What closed it was not a tool. The changed files were copied to the Mac mini over `ssh`,
+`cargo clippy` and `cargo test` were run there, and the mini's clone was restored
+afterwards. That is a two-minute round trip and it is the whole distance between "the gates
+are green" and "the gates are green on the platform that compiles this file". Do it before
+a push whenever a change touches a `#[cfg(target_os = "macos")]` body from a Windows box,
+and read the warnings rather than only the exit code --- the finding here was a warning,
+and it is only an error under the flag CI uses.
+
+### A failure message named a script with no entry point, so running it answered clean
+
+2026-09-07. `viewer_check.py` failed with *"the run printed no check-name roll"*, and its
+own message lists the causes --- the first being a stray instance absorbing the launch
+through `tauri-plugin-single-instance` --- and says *"close it, or see
+`scripts/stray.py`"*. So `python3 scripts/stray.py` was run. It printed nothing and exited
+0. Three `tpdf.exe` were alive at that moment, and the launch had indeed been absorbed by
+one of them.
+
+`stray.py` was a **library**: two functions the harnesses import, and no `__main__` block
+at all. A Python module with no entry point does nothing and exits 0, which is
+byte-for-byte what "there are no strays" looks like. The message sent a reader to an
+instrument that cannot answer the question it was named for, and its silence was the
+reassuring answer.
+
+Two things worth separating. The module was not wrong to be a library --- the killing
+policy genuinely belongs to the harness, which knows which binary is under test, and
+`clear_strays`'s own docstring argues at length for not matching by process name. What was
+wrong is that a **diagnostic message pointed at it**, and nothing connects a message to
+the thing it names. It now has a `main` that *reports and does not kill*: `[OK]` and exit 0
+when nothing holds the slot, `[WARN]` with the pids and exit 1 when something does, and
+exit **2** when the probe itself could not answer --- because "could not check" collapsing
+into "nothing found" is the same failure one layer up.
+
+Generalises to any message that says *see `<script>`*: run it, on a machine where the
+condition it describes is true, and check that it says so. A script whose clean and broken
+outputs are both empty has never been shown to answer anything.

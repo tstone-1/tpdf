@@ -105,7 +105,7 @@ import {
   type Place,
 } from "./links";
 import { Lifetime } from "./lifetime";
-import { DESTINATION_MARGIN_PT } from "./outline";
+import { DESTINATION_MARGIN_PT, type WebTarget } from "./outline";
 import {
   markWalk,
   PageMap,
@@ -393,6 +393,20 @@ export interface ViewerOptions {
    * write. Both used to resolve to nothing and say nothing.
    */
   onError?: (message: string) => void;
+  /**
+   * Called when a reader activates a web link on a page.
+   *
+   * The viewer resolves *which* link and stops there: whether it opens is a
+   * question for a confirmation this layer does not own, and the address is not
+   * here to be opened with anyway --- a {@link WebTarget} carries a token and
+   * two display strings, never a URL. So this is a report of an intent, and
+   * `App.svelte` is what turns it into a dialog and an `open_web_link`.
+   *
+   * Optional, and therefore covered by `scripts/check_viewer_wiring.py`, which
+   * is the gate that exists because a callback nothing supplies is a feature
+   * that ships inert with three layers of tests green.
+   */
+  onWebLink?: (target: WebTarget) => void;
   /**
    * Called once if the document's file is truncated on disk while it is open.
    *
@@ -3250,6 +3264,15 @@ export class Viewer {
   followLink(id: number): void {
     const link = this.linkItems.find((item) => item.id === id);
     if (!link) return;
+
+    // A web link is an intent to leave the document, so it is reported rather
+    // than followed --- see `onWebLink`. Before the refusal branch, because a
+    // web target is not navigable either and would otherwise fall into it and
+    // be reported as a link that goes nowhere.
+    if (link.target.kind === "web") {
+      this.opts.onWebLink?.(link.target);
+      return;
+    }
 
     if (link.target.kind !== "page") {
       const said = refusalFor(link.target);

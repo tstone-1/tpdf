@@ -37,14 +37,21 @@
 //! ancestor loop but not a *sibling* loop, which is the shape the fixture and
 //! the qpdf warning are about.
 //!
-//! ## Actions are refused, not followed
+//! ## Every action but two is refused
 //!
 //! An outline entry can carry an action instead of a destination, and the
 //! action can be `/Launch`, `/URI` or `/GoToR`. `docs/THREAT-MODEL.md` disables
 //! launch actions by default; this is where an outline click would otherwise
-//! reach one. Only `/GoTo` --- a destination inside this document --- is
-//! resolved. The rest become [`Target::Refused`] carrying *which* kind it was,
-//! so the sidebar can say why an entry does nothing rather than looking broken.
+//! reach one. `/GoTo` --- a destination inside this document --- is resolved,
+//! and since 2026-09-07 `/URI` is read into a [`Target::Web`] the reader is
+//! asked about before anything opens (`docs/PLAN.md` §11). The rest become
+//! [`Target::Refused`] carrying *which* kind it was, so the sidebar can say why
+//! an entry does nothing rather than looking broken.
+//!
+//! **The two are not symmetrical and the asymmetry is the point.** A `/GoTo`
+//! is followed on the click; a `/URI` is not followed by this module at all ---
+//! it is turned into two strings a reader is shown and an index into a list
+//! this module keeps. Nothing here can open anything.
 //!
 //! ## Titles are attacker-controlled strings
 //!
@@ -123,6 +130,25 @@ pub enum Target {
     Page { page: u32, top_pt: Option<f32> },
     /// A destination that resolves to no page this document has.
     Broken,
+    /// A web address tpdf will open, once the reader has confirmed it.
+    ///
+    /// **The three fields are chosen so that the frontend cannot navigate.**
+    /// `docs/PLAN.md` §11 decided that opening web links makes T8 the part
+    /// needing work, because the feature deliberately sends the webview a
+    /// string a stranger wrote. So the address itself is not here: `token`
+    /// indexes the scan's own [`crate::links::Links::urls`], which the app
+    /// process keeps and the webview never receives, and `host` and `rest` are
+    /// display-only halves that no sink could turn into a request even if one
+    /// existed. A compromised webview can therefore ask to open a link that is
+    /// **in this document** and nothing else.
+    ///
+    /// `host` is punycode and `rest` is truncated --- see [`crate::weburl`],
+    /// which is the one place either is decided.
+    Web {
+        token: u32,
+        host: String,
+        rest: String,
+    },
     /// An action tpdf declines to follow. `action` names which kind.
     Refused { action: String },
     /// No destination and no action at all --- a heading that is only a heading.
@@ -188,6 +214,17 @@ pub struct Outline {
     pub limits: Limits,
     /// Time spent walking, in milliseconds.
     pub walk_ms: f64,
+    /// The address behind every [`Target::Web`] in `items`, indexed by its
+    /// `token`.
+    ///
+    /// The outline's own list, and deliberately not shared with
+    /// [`crate::links::Links::urls`]: the two are separate replies from
+    /// separate requests, so a token means nothing without the list it came
+    /// from. `webopen::Source` is what says which, and it is a parameter of the
+    /// command rather than a bit packed into the token --- an encoding that
+    /// made one number mean two things is the kind of cleverness `AGENTS.md`
+    /// has entries about.
+    pub urls: Vec<String>,
 }
 
 /// State threaded through the walk. Separate from [`Outline`] because the
@@ -203,6 +240,9 @@ struct Walk<'doc> {
     turns: HashMap<u32, u8>,
     limits: Limits,
     total: usize,
+    /// Addresses behind the web targets built so far. The index a target
+    /// carries is its position here, so the two cannot drift.
+    urls: Vec<String>,
     _borrow: &'doc OpenDocument,
 }
 
@@ -218,6 +258,7 @@ pub fn read(document: &OpenDocument) -> Outline {
         turns: HashMap::new(),
         limits: Limits::default(),
         total: 0,
+        urls: Vec::new(),
         _borrow: document,
     };
 
@@ -234,6 +275,7 @@ pub fn read(document: &OpenDocument) -> Outline {
         total: walk.total,
         limits: walk.limits,
         walk_ms: started.elapsed().as_secs_f64() * 1000.0,
+        urls: walk.urls,
     }
 }
 
@@ -338,6 +380,70 @@ impl Walk<'_> {
         buffer
     }
 
+    /// Reads a `/URI` action into a web target, or refuses it.
+    ///
+    /// The counterpart of `links.rs`'s `web_target`, and the two share the
+    /// policy rather than the extraction: what a scheme may be and what a reader
+    /// is shown is decided once, in [`crate::weburl`]. What differs is only
+    /// where the string comes from --- PDFium's accessor here, the action
+    /// dictionary there --- which is the same split the two destination
+    /// resolvers already have.
+    ///
+    /// `FPDFAction_GetURIPath` hands back a **byte** string, not the UTF-16 a
+    /// title arrives as: §12.6.4.7 defines `/URI` as ASCII, and PDFium passes it
+    /// through unchanged. Reading it as UTF-16 would produce plausible garbage
+    /// rather than an error, which is the failure shape this module's own header
+    /// warns about for titles.
+    fn web(&mut self, action: FPDF_ACTION) -> Target {
+        // SAFETY: the documented two-call form --- a null buffer asks for the
+        // length in bytes, including the terminating NUL.
+        let needed = unsafe {
+            self.bindings
+                .FPDFAction_GetURIPath(self.document, action, std::ptr::null_mut(), 0)
+        } as usize;
+        // One byte is the NUL alone, i.e. an empty URI; and the bound is
+        // `weburl`'s, so a length this refuses is one `Web::parse` would refuse
+        // anyway --- checked here only to keep the allocation off the file.
+        if needed <= 1 || needed > crate::weburl::MAX_URL_BYTES {
+            return refused("uri");
+        }
+
+        let mut buffer = vec![0u8; needed];
+        // SAFETY: `buffer` is `needed` writable bytes, which is what the call
+        // above asked for.
+        let written = unsafe {
+            self.bindings.FPDFAction_GetURIPath(
+                self.document,
+                action,
+                buffer.as_mut_ptr() as *mut c_void,
+                needed as c_ulong,
+            )
+        } as usize;
+        buffer.truncate(written.min(needed));
+        // The trailing NUL is PDFium's, not the URI's. Trimming every trailing
+        // NUL rather than exactly one: a buffer PDFium wrote less into than it
+        // asked for ends in more than one, and a NUL reaching `Web::parse` is a
+        // control character it would refuse --- which would read as a rejected
+        // link rather than as a short write.
+        while buffer.last() == Some(&0) {
+            buffer.pop();
+        }
+
+        let Ok(text) = String::from_utf8(buffer) else {
+            return refused("uri");
+        };
+        let Some(web) = crate::weburl::Web::parse(&text) else {
+            return refused("uri");
+        };
+        let token = self.urls.len() as u32;
+        self.urls.push(web.url);
+        Target::Web {
+            token,
+            host: web.host,
+            rest: web.rest,
+        }
+    }
+
     /// Resolves an entry's destination, or records why it has none.
     ///
     /// **The action is read first, and that ordering is load-bearing.**
@@ -371,7 +477,7 @@ impl Walk<'_> {
                 // GoTo or RemoteGoto, and only the first is ours to follow.
                 action::GOTO => unsafe { self.bindings.FPDFAction_GetDest(self.document, action) },
                 action::REMOTEGOTO => return refused("remote"),
-                action::URI => return refused("uri"),
+                action::URI => return self.web(action),
                 action::LAUNCH => return refused("launch"),
                 action::EMBEDDEDGOTO => return refused("embedded"),
                 _ => return refused("unsupported"),
@@ -823,9 +929,22 @@ mod tests {
     /// way to turn a string into markup, a navigation or a script; that proof is
     /// *sufficient* only because no attacker-controlled URL ever reaches the
     /// frontend to be turned into anything. This is what makes that true:
-    /// `/URI`, `/Launch` and `/GoToR` become [`Target::Refused`], whose `action`
-    /// is one of five literals chosen here rather than anything the document
-    /// said.
+    /// `/Launch` and `/GoToR` become [`Target::Refused`], whose `action` is one
+    /// of five literals chosen here rather than anything the document said, and
+    /// `/URI` becomes [`Target::Web`], whose two strings are halves a reader is
+    /// *shown* and neither of which is an address.
+    ///
+    /// **The claim in the name survived web links being followed, and it is
+    /// worth saying why rather than assuming it.** Until 2026-09-07 the honest
+    /// version of this test was "no variant carries a string from the file at
+    /// all", and `Target::Web` ends that: `host` and `rest` are the document's
+    /// bytes. What is still true, and is what T8 actually rests on, is that no
+    /// variant carries a **URL** --- the address lives in
+    /// `crate::links::Links::urls`, which the app process keeps and the webview
+    /// never receives, and `token` is an index into it. So the assertions below
+    /// changed from "this string is ours" to "this string cannot be an
+    /// address", which is a weaker claim honestly stated rather than the old one
+    /// quietly reinterpreted.
     ///
     /// The match below is **exhaustive and deliberately not a wildcard**. A new
     /// variant --- `Target::Uri { url: String }`, say --- is a compile error
@@ -839,7 +958,7 @@ mod tests {
     /// both need revisiting first.
     #[test]
     fn no_target_variant_may_carry_a_url() {
-        /// Every field of every variant, as the frontend would receive it.
+        /// Every *string* field of every variant, as the frontend receives it.
         fn fields(target: &Target) -> Vec<String> {
             match target {
                 // Numbers. A page index and an offset cannot be a URL.
@@ -850,6 +969,14 @@ mod tests {
                 Target::Broken | Target::None => vec![],
                 // The one string, and it is ours.
                 Target::Refused { action } => vec![action.clone()],
+                // Two strings, and they are the document's. `token` is a number
+                // and is deliberately not listed: it is an index into a list the
+                // frontend does not have, so it carries nothing at all.
+                Target::Web {
+                    token: _,
+                    host,
+                    rest,
+                } => vec![host.clone(), rest.clone()],
             }
         }
 
@@ -870,7 +997,41 @@ mod tests {
             );
         }
 
-        // And the walk never produces a target carrying anything URL-shaped.
+        // A web target's own halves, checked against what each one may be. The
+        // host is the field a reader is asked to judge, so it is the one that
+        // must not be able to hold anything but a host.
+        let web = crate::weburl::Web::parse("https://example.com/a?b=1#c")
+            .expect("the premise of this case is a URL that IS opened");
+        let target = Target::Web {
+            token: 0,
+            host: web.host.clone(),
+            rest: web.rest.clone(),
+        };
+        let Target::Web { host, rest, .. } = &target else {
+            panic!("built a Web above");
+        };
+        assert!(
+            host.is_ascii() && !host.contains('/') && !host.contains(char::is_whitespace),
+            "a host that can hold a slash or a space is a URL in disguise: {host:?}"
+        );
+        assert!(
+            !host.contains("://"),
+            "a host must never carry a scheme: {host:?}"
+        );
+        // Not asserted of `rest`, and the omission is the point: a path may
+        // legitimately contain `https://` as a query parameter, so a rule
+        // forbidding it there would refuse correct links. What bounds `rest` is
+        // its length and the control-character refusal, both in `weburl.rs`.
+        assert!(
+            rest.chars().count() <= crate::weburl::MAX_REST_CHARS + 1,
+            "the path shown to a reader is bounded: {rest:?}"
+        );
+        assert!(
+            !rest.chars().any(char::is_control),
+            "a control character reached the frontend: {rest:?}"
+        );
+
+        // And no target carries a whole address in any field.
         for target in [
             Target::Page {
                 page: 3,
@@ -879,10 +1040,13 @@ mod tests {
             Target::Broken,
             Target::None,
             refused("uri"),
+            target,
         ] {
             for field in fields(&target) {
                 assert!(
-                    !field.contains("://") && !field.starts_with("javascript:"),
+                    !field.starts_with("http://")
+                        && !field.starts_with("https://")
+                        && !field.starts_with("javascript:"),
                     "a Target field reached the frontend looking like a URL: {field:?}"
                 );
             }
