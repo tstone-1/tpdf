@@ -1797,6 +1797,9 @@ pub fn append_update(
     let prev = Document::load_mem_with_options(
         &original,
         lopdf::LoadOptions {
+            // An incremental update needs an actual /Prev offset. Recovery in
+            // lopdf 0.45 can reconstruct objects with no valid table to chain.
+            strict: true,
             max_decompressed_size: Some(MAX_DECODE),
             password: password.map(str::to_string),
             ..Default::default()
@@ -1804,15 +1807,9 @@ pub fn append_update(
     )
     .map_err(|e| format!("this document could not be parsed: {e}"))?;
 
-    // **Where the two save paths part company, and the only place in this file
-    // they do.** The rewrite refuses an encrypted document outright because
-    // `lopdf`'s full serialiser writes every object in the clear and drops the
-    // `/Encrypt` dictionary with it. An append does the opposite: the previous
-    // revision's bytes are never rewritten, and `IncrementalDocument::save_to`
-    // encrypts each appended object with the state the load recorded and puts
-    // `/Encrypt` back in the appended trailer. So `was_encrypted` --- there was
-    // encryption and the load holds its key --- goes *through* here and is
-    // refused by `planned_bytes`.
+    // An append preserves the existing encrypted bytes and encrypts its new
+    // objects with the key the load recorded. A full rewrite instead restores
+    // the source encryption after modifying and sweeping its object graph.
     //
     // What is refused is a document still locked, which is what `is_encrypted`
     // reports: no password opened it, so `lopdf` parsed no objects at all and
@@ -2631,7 +2628,8 @@ impl Rewriter for Here {
 /// pixel-identically to a correct one while `qpdf --check` named the defect at
 /// once. What is being tested here is whether the cross-reference *chained*, and
 /// a parser that reconstructs a broken table answers yes either way. `lopdf`
-/// refuses, and its refusal is the whole instrument.
+/// refuses in strict mode, and its refusal is the whole instrument. Since 0.45
+/// its default mode repairs broken tables, so strictness must be explicit here.
 ///
 /// **The password is not optional, and forgetting it would roll every encrypted
 /// save back.** `lopdf` parses no objects at all for a document it cannot
@@ -2648,6 +2646,7 @@ pub fn reread_pages(bytes: &[u8], password: Option<&str>) -> Result<usize, Strin
     Document::load_mem_with_options(
         bytes,
         lopdf::LoadOptions {
+            strict: true,
             max_decompressed_size: Some(MAX_DECODE),
             password: password.map(str::to_string),
             ..Default::default()

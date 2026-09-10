@@ -242,6 +242,21 @@ The account behind this section --- what was measured, what it cost, and which e
 
 ## Stack
 
+Document tabs retain backend handles and edit journals in `src/lib/documenttabs.ts`.
+Only the active tab mounts a Viewer and Sidebar; switching commits open note fields,
+drains pending edits, and keeps the reading position, search scope and sidebar choice.
+Save/reload replaces the handle in the same tab. File writes block tab transitions;
+tab closure releases its handle, and window closure checks all tabs for unsaved work.
+`scripts/tabs_check.py <binary> <fixture.pdf>` exercises the application on disposable
+copies. On Windows, run an isolated build (`TAURI_CONFIG` with a distinct `identifier`)
+when the installed app is running, since single-instance forwarding otherwise absorbs it.
+The restart session still restores the most recent document, not the full tab list.
+
+Windows orphaned test workers can hold the release executable open while CIM
+returns no executable path for them. Restart Manager with that exact executable
+registered as a resource identifies its holders. Never clean up by image name:
+the installed application may be running alongside the test build.
+
 The **shell is settled**, and since 2026-07-27 so is the **PDF layer** --- Phase 0 proved
 each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` §9).
 
@@ -259,9 +274,15 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** --- reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
 | Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** --- reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building. PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
-The PDFium pin is `chromium/7881`, installed by `scripts/fetch_pdfium.py` and verified by
-digest. Every measurement in this file was taken against that build, so bumping it
-invalidates them until the two checks in `BUILD.md` are re-run.
+The PDFium pin is `chromium/8044`, installed by `scripts/fetch_pdfium.py` and verified by
+digest. Phase 0 measurements used `chromium/7881`; they remain historical evidence.
+On a pin change, re-run the compatibility probes listed near the top of `BUILD.md`.
+
+`pdfium-render` 0.9.4 hides its bindings accessor. `progressive::bind` and
+`bind_library` retain both a safe wrapper and a second public raw binding table
+for the same library; only the safe wrapper initializes PDFium. Raw-interface
+callers must use this bridge, before applying containment. The tables live for
+the process lifetime; this does not make PDFium calls safe to run concurrently.
 
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.

@@ -99,7 +99,7 @@ fn main() {
     }
 
     let path = Pdfium::pdfium_platform_library_name_at_path(&library);
-    let bound = match Pdfium::bind_to_library(&path) {
+    let bound = match progressive::bind_library(&path) {
         Ok(bound) => bound,
         Err(why) => {
             println!(
@@ -109,7 +109,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let bindings = progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))));
+    let bindings = progressive::bindings_of(bound);
 
     let doc = match OpenDocument::open(bindings, &file, None) {
         Ok(doc) => doc,

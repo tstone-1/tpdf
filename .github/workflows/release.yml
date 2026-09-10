@@ -412,10 +412,13 @@ jobs:
           the network either — with search, selection, an outline, thumbnails,
           session restore and printing.
 
-          **New in this release.** A compact editing toolbar groups the tools
-          with contextual colour and width controls. Windows title bars show the
-          version and identify development builds. Redaction results count removed
-          images and let you open the saved copy directly.
+          **New in this release.** Document tabs keep several PDFs open with
+          separate edits, reading positions, searches and sidebar choices. Open
+          several files at once, switch with Ctrl+Tab or Ctrl+Shift+Tab, and close
+          a tab with Ctrl+W (Cmd+W on macOS). Closing or quitting checks for
+          unsaved changes. Restart restores the most recent document; the full
+          tab list is not restored yet. This release also updates PDFium to
+          chromium/8044 and adds compatibility with pdfium-render 0.9.4.
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag

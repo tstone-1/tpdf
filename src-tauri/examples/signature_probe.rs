@@ -166,11 +166,9 @@ fn run(args: &Args) -> Result<bool, String> {
 fn bind(library: &Path) -> Result<Bindings, String> {
     use pdfium_render::prelude::Pdfium;
     let path = Pdfium::pdfium_platform_library_name_at_path(library);
-    let bound = Pdfium::bind_to_library(&path)
+    let bound = progressive::bind_library(&path)
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
-    Ok(progressive::bindings_of(Box::leak(Box::new(Pdfium::new(
-        bound,
-    )))))
+    Ok(progressive::bindings_of(bound))
 }
 
 /// One signature as PDFium reports it.

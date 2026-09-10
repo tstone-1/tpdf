@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.9.3"
+version = "26.9.4"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
@@ -42,14 +42,14 @@ sha2 = "0.11"
 # only makes `Pdfium` Send + Sync and awaits the global bindings. Concurrent
 # renders are undefined behaviour and crash (examples/thread_probe.rs). Parallelism
 # comes from worker processes (spike 0.5), never from threads.
-pdfium-render = "0.9"
+pdfium-render = "0.9.4"
 
 # A reader's own search pattern, when the find bar is in regex mode. Already in
 # the tree transitively through the toolchain, so declaring it added no package.
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode"] }
 
 # Low-level PDF object graph and content-stream operators.
-lopdf = "0.44"
+lopdf = "0.45"
 
 # Reading a `/URI` action's string, in `weburl.rs`. MIT OR Apache-2.0, and it
 # adds **no package**: it was already in the tree through the updater's

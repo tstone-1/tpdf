@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from stray import clear_leftover_app  # noqa: E402
+from stray import clear_strays  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTDATA = ROOT / "testdata"
@@ -295,7 +295,7 @@ def run_one(app: Path, stem: str, timeout: int, raise_window: bool) -> dict[str,
     # `tauri-plugin-single-instance` makes a new process forward its argv to the
     # old one and exit, so the run reports one line and no checks at all.
     # Measured on 2026-08-19, against three stray `tauri dev` processes.
-    clear_leftover_app()
+    clear_strays(app)
     result = subprocess.run(
         [
             sys.executable,

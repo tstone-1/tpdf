@@ -55,7 +55,12 @@ project conventions.
   the lookalike it renders to. Every link is asked about every time; there is no "always allow
   this site", because a permission granted from a document a stranger sent is one you would
   never be asked about again.
-- Session restore: the document, page, zoom and rotation you left on.
+- **Document tabs** keep several PDFs open with separate edits, reading positions,
+  searches and sidebar choices. Ctrl+Tab / Ctrl+Shift+Tab switch tabs; Ctrl+W
+  (Cmd+W on macOS) closes one, checking for unsaved changes.
+  <!-- built: file.close view.nextTab view.previousTab -->
+- Session restore: the most recent document, page, zoom and rotation you left on.
+  The full tab list is not restored after restarting.
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for
   as long as the document is open, because every worker that renders it meets the same
   encryption.

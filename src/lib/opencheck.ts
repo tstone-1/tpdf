@@ -28,6 +28,8 @@ import { call } from "./ipc";
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
 import { SIDEBAR_CLASS } from "./sidebar";
+import type { Viewer } from "./viewer";
+import type { Edits } from "./edits";
 
 /** How long to wait for a document that should already be on its way. */
 const SETTLE_MS = 20_000;
@@ -60,6 +62,13 @@ export interface OpenCheckHost {
   open: (path: string) => Promise<void>;
   /** Whether a viewer is mounted, for the `race` phase's end state. */
   hasViewer: () => boolean;
+  tabs: () => readonly { id: number; path: string }[];
+  viewer: () => Viewer | null;
+  edits: () => Edits | null;
+  activate: (id: number) => Promise<void>;
+  close: (id: number) => Promise<void>;
+  run: (id: string) => void;
+  idle: () => Promise<void>;
 }
 
 const report = new Report();
@@ -99,6 +108,66 @@ function sidebars(): number {
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "tabs": {
+      const check = (name: string, ok: boolean) => report.check(name, ok,
+        `${host.tabs().length} tabs, active ${basename(host.path())}`);
+      const [first, second] = expected.split("|");
+      if (!first || !second || first === second) throw new Error("two distinct fixture paths required");
+      report.emit("[tabs] opening the first fixture");
+      await host.open(first);
+      const a = host.tabs()[0];
+      if (!a || !host.viewer()) throw new Error("first document did not open");
+      report.emit("[tabs] editing the first tab");
+      host.viewer()!.setZoomFixed(1.25);
+      host.run("edit.rotatePageClockwise");
+      if (!await settle(() => host.edits()?.state.dirty === true, SETTLE_MS))
+        throw new Error("rotation did not reach the document");
+      host.run("edit.addComment");
+      document.querySelector(".surface")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      if (!await settle(() => (host.viewer()?.markOpen ?? -1) >= 0, SETTLE_MS))
+        throw new Error("note did not open");
+      const note = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note"]')!;
+      note.value = "Synthetic tab note";
+      note.dispatchEvent(new Event("input", { bubbles: true }));
+      report.emit("[tabs] opening the second fixture");
+      await host.open(second);
+      const b = host.tabs().find((tab) => tab.id !== a.id);
+      check("both documents retain a tab", host.tabs().length === 2 && !!b);
+      check("the second tab has no inherited edits", host.edits()?.state.dirty === false && host.edits()?.state.marks.length === 0);
+      if (!b) return;
+      const button = document.getElementById(`document-tab-${a.id}`);
+      button?.click();
+      if (!await settle(() => host.path() === first && !!host.viewer(), SETTLE_MS))
+        throw new Error("clicking the first tab did not activate it");
+      await pause(200);
+      check("switching keeps the original backend handle", host.edits()?.doc === a.id);
+      check("switching keeps page edits", host.edits()?.state.pages[0]?.turns === 1);
+      check("switching commits the open note to its own tab", host.edits()?.state.marks[0]?.note === "Synthetic tab note");
+      check("switching restores fixed zoom", Math.abs((host.viewer()?.currentZoom ?? 0) - 1.25) < 0.001 && host.viewer()?.fitMode === "none");
+      await host.open(first);
+      check("opening an existing path reuses its tab", host.tabs().length === 2 && host.edits()?.doc === a.id);
+      await host.open(`${first}.missing`);
+      check("a failed open leaves both tabs and the active document intact", host.tabs().length === 2 && host.edits()?.doc === a.id && host.hasViewer());
+      host.run("file.save");
+      await host.idle();
+      check("saving replaces only the active handle", host.tabs().length === 2 && host.tabs()[0]?.path === first && host.tabs()[1]?.id === b.id && host.edits()?.doc !== a.id);
+      check("saving resets the active journal", host.edits()?.state.dirty === false);
+      await host.activate(b.id);
+      check("saving leaves the other tab usable", host.path() === second && host.edits()?.doc === b.id && host.hasViewer());
+      const saved = host.tabs().find((tab) => tab.path === first);
+      if (!saved) throw new Error("saved tab disappeared");
+      await host.close(saved.id);
+      check("closing a background tab keeps the active document", host.tabs().length === 1 && host.edits()?.doc === b.id);
+      let released = false;
+      try { await call("edit_state", { doc: saved.id }); } catch { released = true; }
+      check("closing releases the backend edit model", released);
+      await host.close(b.id);
+      check("closing the last tab leaves an empty window", host.tabs().length === 0 && !host.hasViewer() && host.path() === "");
+      await host.open(second);
+      check("opening after the last close still works", host.tabs().length === 1 && host.hasViewer());
+      check("only one sidebar is mounted", sidebars() === 1);
+      break;
+    }
     case "opened": {
       const opened = await settle(() => host.path() !== "", SETTLE_MS);
       report.check(

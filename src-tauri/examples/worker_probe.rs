@@ -1340,18 +1340,15 @@ fn main() {
             bombed.is_err(),
             format!("worker {:?}", bombed.as_ref().err().map(|why| &why.message)),
         );
-        // **The reason has to name the worker's death rather than the
-        // document.** A refusal saying the file is malformed would mean `lopdf`
-        // returned an error, which is a different --- and much better --- fact
-        // than the one this fixture exists to pin. If this check ever goes red
-        // because the message changed shape, read it before changing the
-        // assertion: `lopdf` growing a bound here is the outcome we want.
-        let named_the_worker = bombed
-            .as_ref()
-            .err()
-            .is_some_and(|why| why.message.contains("worker"));
+        // lopdf 0.45 rejects this fixture normally instead of aborting. Accept
+        // that specific parser refusal as well as a contained worker death;
+        // the explicit kill above still proves crash reporting independently.
+        let named_the_worker = bombed.as_ref().err().is_some_and(|why| {
+            why.message.contains("worker")
+                || why.message == "could not parse the document: couldn't parse input"
+        });
         check(
-            "and the coordinator says the worker stopped, rather than blaming the file",
+            "and the xref bomb is refused by the parser or its contained worker",
             named_the_worker,
             format!("said {:?}", bombed.as_ref().err().map(|why| &why.message)),
         );
@@ -1359,7 +1356,7 @@ fn main() {
     } else {
         for what in [
             "a document that aborts its parser takes the worker and not this process",
-            "and the coordinator says the worker stopped, rather than blaming the file",
+            "and the xref bomb is refused by the parser or its contained worker",
         ] {
             skipped += 1;
             println!("[SKIP] {what:52} not applicable --- xref-bomb.pdf is not generated");
@@ -1393,8 +1390,8 @@ fn in_process_tile(document: &Path, library_dir: &Path) -> Result<Vec<u8>, Strin
     use pdfium_render::prelude::Pdfium;
 
     let path = Pdfium::pdfium_platform_library_name_at_path(library_dir);
-    let bindings = Pdfium::bind_to_library(&path).map_err(|e| e.to_string())?;
-    let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
+    let bindings = progressive::bind_library(&path).map_err(|e| e.to_string())?;
+    let pdfium = bindings;
     let bindings = progressive::bindings_of(pdfium);
 
     let doc = OpenDocument::open(bindings, document, None)?;

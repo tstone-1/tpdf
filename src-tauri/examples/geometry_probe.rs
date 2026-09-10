@@ -224,8 +224,8 @@ fn check(name: &str, ok: bool, detail: &str) -> bool {
 
 fn bind(library: &Path) -> progressive::Bindings {
     let path = Pdfium::pdfium_platform_library_name_at_path(library);
-    let bound = Pdfium::bind_to_library(&path).expect("could not load Pdfium");
-    progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))))
+    let bound = progressive::bind_library(&path).expect("could not load Pdfium");
+    progressive::bindings_of(bound)
 }
 
 /// A 200-pixel-wide render of the whole page.

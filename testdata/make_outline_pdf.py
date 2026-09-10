@@ -23,7 +23,7 @@ something to walk and something to survive.
                     This fixture is that input: a sibling chain that loops, a
                     child that points back at its own ancestor, a 200-level
                     chain, destinations at a page that does not exist, actions
-                    tpdf must refuse to follow (/Launch, /URI, /GoToR), and
+                    tpdf must refuse to follow (/Launch, file /URI, /GoToR), and
                     titles built to break a decoder --- 50,000 characters,
                     embedded control characters, and an unpaired UTF-16
                     surrogate.
@@ -345,7 +345,8 @@ def build_hostile(path: str) -> dict:
         Node("Ancestor cycle", page=0, children=(ancestor_child,)),
         deep,
         Node("Launch action", action=b"<< /S /Launch /F (/bin/sh) >>"),
-        Node("URI action", action=b"<< /S /URI /URI (https://example.invalid/) >>"),
+        # HTTP(S) links are supported; the hostile control needs a refused scheme.
+        Node("URI action", action=b"<< /S /URI /URI (file:///fixture.pdf) >>"),
         Node(
             "Remote goto",
             action=b"<< /S /GoToR /F (other.pdf) /D [0 /Fit] >>",

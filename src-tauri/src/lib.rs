@@ -844,6 +844,18 @@ pub fn run() {
     startup::mark("app built");
 
     app.run(|_handle, event| {
+        // Native Quit must pass the same unsaved-tab check as the close button.
+        // Explicit exit codes belong to the unattended probes and bypass it.
+        if let tauri::RunEvent::ExitRequested {
+            api, code: None, ..
+        } = &event
+        {
+            use tauri::Manager;
+            if let Some(window) = _handle.get_webview_window("main") {
+                api.prevent_exit();
+                let _ = window.close();
+            }
+        }
         if matches!(event, tauri::RunEvent::Ready) {
             startup::mark("event loop ready");
         }

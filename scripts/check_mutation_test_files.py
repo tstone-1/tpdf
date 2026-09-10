@@ -86,12 +86,13 @@ def load(path: str):
 def collect(npx: str) -> dict[str, list[str]]:
     """Every test vitest can see, mapped from repo-relative file to test names.
 
-    `list` collects without executing, so this is the suite's own answer about
-    what exists rather than an approximation of it. No positional argument and
-    no path after `--json` -- see the warning in this module's docstring.
+    Runtime collection evaluates test declarations without running test bodies.
+    Vitest 5 defaults to static parsing, which leaves parameterized names
+    unexpanded and misses tests declared in loops. Request runtime collection
+    explicitly. No path after `--json` -- see the warning above.
     """
     done = subprocess.run(
-        [npx, "vitest", "list", "--json"],
+        [npx, "vitest", "list", "--staticParse=false", "--json"],
         cwd=ROOT,
         capture_output=True,
         text=True,

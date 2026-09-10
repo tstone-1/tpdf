@@ -1887,6 +1887,9 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         Document::load_mem_with_options(
             slice,
             LoadOptions {
+                // A recovered prefix may end mid-object and cannot establish
+                // which objects belonged to the signed revision.
+                strict: true,
                 max_decompressed_size: Some(MAX_DECODE),
                 password: password.map(str::to_string),
                 ..Default::default()

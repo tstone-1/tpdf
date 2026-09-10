@@ -80,7 +80,11 @@ Four principals, each trusting only what is below it in the table.
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
 since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
 `core:default`, `dialog:allow-open`, `dialog:allow-save`, `dialog:allow-message` and
-`updater:default`. The dialog permissions open panels and write nothing; the message
+`updater:default`, plus `core:window:allow-destroy`. The last permission closes the
+window after the frontend has checked every open tab for unsaved edits. Tabs retain
+their document handles, worker pools and passwords until closed; only the active tab
+mounts a viewer. Resource limits remain per worker, not an aggregate limit across tabs.
+The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
 `redact_copy`, `redact_document` and `redact_raster_copy`, and all nine write a file at the process's authority
@@ -2902,10 +2906,18 @@ which is what makes it evidence rather than a milestone.
     coordinator arm is deliberately not run against it --- it would take the probe with it,
     which is the finding rather than a test.
 
+    **Rechecked with lopdf 0.45 on Windows, 2026-09-10:** the generated xref-bomb
+    is now rejected with `could not parse the document: couldn't parse input`
+    instead of aborting. The worker probe requires refusal and no output; its
+    separate explicit worker-kill check still proves crash reporting. The wider
+    fuzz corpus has not been rerun against 0.45, so this closes the reproducer's
+    observed abort, not every possible allocation failure described here.
+
     Nothing here is a memory-safety defect and nothing is exploitable beyond availability: the
     allocation is refused, not made. The fixes available are upstream in `lopdf`, or a
     pre-parse of the cross-reference stream's `/W` before handing the bytes over, which means
-    writing a second cross-reference parser to protect the first. Neither has been done.
+    writing a second cross-reference parser to protect the first. The upstream
+    change above removes the observed abort for this reproducer.
     Found 2026-09-01 by coverage-guided fuzzing of `lopdf` through our own entry points,
     independently by **three** targets --- `lopdf_load`, `encoding_scan` and, on 2026-09-02
     after 8,051,057 executions, `annots_scan`. Five artifacts carry it at five magnitudes,

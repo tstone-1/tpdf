@@ -6268,6 +6268,14 @@ export class Viewer {
     return this.searchScope;
   }
 
+  /** Restores a tab's search without widening a search confined to a selection. */
+  restoreSearch(query: string, options: SearchOptions, scope: readonly ScopeRange[] | null): void {
+    this.searchOptions = options;
+    this.searchScope = scope ? scope.map((range) => ({ ...range })) : null;
+    if (query) this.search(query);
+    else this.wake();
+  }
+
   /**
    * Changes how the query is matched, rescanning if there is one.
    *
