@@ -939,8 +939,8 @@ MUTATIONS = [
         # table already carries an entry for would be back on one binding.
         "keys: let the physical key win before the modifiers are read",
         "src/lib/keys.ts",
-        "  const accel = event.metaKey || event.ctrlKey;\n  if (accel !== (binding.accel ?? false)) return false;",
-        "  if (binding.code !== undefined && event.code === binding.code) return true;\n  const accel = event.metaKey || event.ctrlKey;\n  if (accel !== (binding.accel ?? false)) return false;",
+        "  const accel = event.metaKey || event.ctrlKey;\n  if (binding.ctrl ? (!event.ctrlKey || event.metaKey) : accel !== (binding.accel ?? false)) return false;",
+        "  if (binding.code !== undefined && event.code === binding.code) return true;\n  const accel = event.metaKey || event.ctrlKey;\n  if (binding.ctrl ? (!event.ctrlKey || event.metaKey) : accel !== (binding.accel ?? false)) return false;",
         "keeps the modifier checks on the position path",
     ),
     Mutation(
@@ -1849,8 +1849,8 @@ MUTATIONS = [
         # could name a binding that does not exist.
         "keys: put Shift before Option in a rendered label",
         "src/lib/keys.ts",
-        '  return `${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}',
-        '  return `${binding.shift ? "⇧" : ""}${binding.alt ? "⌥" : ""}',
+        '  return `${binding.ctrl ? "Ctrl+" : ""}${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}',
+        '  return `${binding.ctrl ? "Ctrl+" : ""}${binding.shift ? "⇧" : ""}${binding.alt ? "⌥" : ""}',
         "orders the modifiers as the platform does",
     ),
     Mutation(
@@ -5108,6 +5108,7 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    "src/lib/documenttabs.test.ts",
     "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",
     "src/lib/text.test.ts",
@@ -7358,6 +7359,30 @@ MUTATIONS += [
         "    }\n",
         "",
         "holds the picked region until it is cleared or the model drops it",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        "tabs: move a saved document to the end instead of replacing its handle",
+        "src/lib/documenttabs.ts",
+        "    else this.entries[index] = tab;",
+        "    else this.entries.push(tab);",
+        "replaces a saved handle in its original position",
+    ),
+    Mutation(
+        "tabs: closing a background document changes the active tab",
+        "src/lib/documenttabs.ts",
+        "    if (this.active === id)",
+        "    if (true)",
+        "closes a background tab without moving focus and chooses a neighbour for the active tab",
+    ),
+    Mutation(
+        "tabs: allow a transition before a save has reopened its document",
+        "src/lib/documenttabs.ts",
+        "    while (this.busy) await this.pending.catch(() => {});",
+        "    return;",
+        "holds a transition until a save and its reopen finish",
     ),
 ]
 

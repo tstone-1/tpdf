@@ -67,6 +67,8 @@ export interface Binding {
   code?: string;
   /** Whether the platform accelerator (⌘ on macOS, Ctrl elsewhere) is held. */
   accel?: boolean;
+  /** Physical Control on both platforms, for document-tab navigation. */
+  ctrl?: boolean;
   /** Whether Shift is held. Absent means "must not be". */
   shift?: boolean;
   /**
@@ -99,6 +101,9 @@ export interface Binding {
  */
 export const BINDINGS = {
   "file.open": { keys: ["o"], accel: true },
+  "file.close": { keys: ["w"], accel: true },
+  "view.nextTab": { keys: ["Tab"], ctrl: true },
+  "view.previousTab": { keys: ["Tab"], ctrl: true, shift: true },
   "file.print": { keys: ["p"], accel: true },
   "find.open": { keys: ["f"], accel: true },
   "find.next": { keys: ["g", "G"], accel: true },
@@ -222,7 +227,7 @@ export type BoundCommand = keyof typeof BINDINGS;
  * only ids that exist.
  */
 export function render(binding: Binding): string {
-  const modified = Boolean(binding.accel || binding.shift || binding.alt);
+  const modified = Boolean(binding.accel || binding.ctrl || binding.shift || binding.alt);
   // What this keyboard prints in that position, when the binding names one and
   // the platform has answered. Before the answer arrives, and on a platform that
   // cannot give one, this is the character the binding declares --- which is the
@@ -245,14 +250,14 @@ export function render(binding: Binding): string {
     // `Binding.accel` has said "⌘ on macOS, Ctrl elsewhere" since it was
     // written. The data model knew; only the renderer did not.
     const parts = [];
-    if (binding.accel) parts.push("Ctrl");
+    if (binding.accel || binding.ctrl) parts.push("Ctrl");
     if (binding.alt) parts.push("Alt");
     if (binding.shift) parts.push("Shift");
     parts.push(key);
     return parts.join("+");
   }
   // macOS order, which is Control, Option, Shift, Command, then the key.
-  return `${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}${binding.accel ? "⌘" : ""}${key}`;
+  return `${binding.ctrl ? "Ctrl+" : ""}${binding.alt ? "⌥" : ""}${binding.shift ? "⇧" : ""}${binding.accel ? "⌘" : ""}${key}`;
 }
 
 /**
@@ -424,7 +429,7 @@ function plainKey(key: string): string | null {
 export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   const binding: Binding = BINDINGS[id];
   const accel = event.metaKey || event.ctrlKey;
-  if (accel !== (binding.accel ?? false)) return false;
+  if (binding.ctrl ? (!event.ctrlKey || event.metaKey) : accel !== (binding.accel ?? false)) return false;
   if (event.shiftKey !== (binding.shift ?? false)) return false;
   if (event.altKey !== (binding.alt ?? false)) return false;
   // Position *or* character --- see `Binding.code`. The character alone leaves

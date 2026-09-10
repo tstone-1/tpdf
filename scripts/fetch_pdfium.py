@@ -74,22 +74,19 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# The pinned upstream release. Every Phase 0 measurement in AGENTS.md and
-# docs/PLAN.md was taken against this build; changing it invalidates them.
-TAG = "chromium/7881"
+# The pinned upstream release. Re-run BUILD.md's compatibility probes on a bump;
+# historical Phase 0 measurements describe their original build, not this one.
+TAG = "chromium/8044"
 
 # asset name -> sha256 of the archive as published under TAG.
 #
-# mac-arm64 is the build every spike ran on: its digest matches the SHA256.txt
-# of the working install, and the dylib inside it is byte-identical to the one
-# in vendor/pdfium/lib. The other three were downloaded from the same release
-# and hashed here; they are pinned so a future fetch is reproducible, not
-# because any of them has been run.
+# Digests published with the upstream release assets. The installer verifies
+# downloaded bytes before extraction on every platform.
 PINS = {
-    "mac-arm64": "52e94ca5aa8847934330daf3f8150c190682c5ca93831468794f8b90d4392e40",
-    "mac-x64": "6dedf83990e0e3d6b7c93c9e7589c5a126b0ae14b7464d76120cff7a26afb18b",
-    "win-x64": "73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08",
-    "win-arm64": "d3035d4d2cacac6ecd1a2ece197a3d702a1b2a58466276b9f870b8cb278a9d84",
+    "mac-arm64": "61424884d4a7f153b808deba6437848e4400834ce30aaf95d3050da44df8f420",
+    "mac-x64": "a93d44238e05de20028446561b951d50988b849efbbe56fe40c0d376c05b45e8",
+    "win-x64": "78a17d9a5f14467631c26a3ac8741b27a0471ecc05bd6a119b523598160a0537",
+    "win-arm64": "6c9ac0ddc69edd8a18d47b95098a5b843eaed5c5bbdcb9587a18c196457449f8",
 }
 
 RELEASE_URL = "https://github.com/bblanchon/pdfium-binaries/releases/download"

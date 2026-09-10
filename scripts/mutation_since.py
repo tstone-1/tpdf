@@ -119,7 +119,7 @@ def select(mutations, ref: str, prefix: str = "") -> "tuple[list, list[str]] | N
             report.append(f"         {path}")
     report.append(
         "[WARN] a change elsewhere can still break a mutation in a file this missed "
-        "--- run the whole table before pushing"
+        "--- include affected callers when selecting release scope (BUILD.md)"
     )
     return chosen, report
 

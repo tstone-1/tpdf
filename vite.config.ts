@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 // Tauri expects a fixed port and surfaces Rust errors itself, so Vite must not
@@ -6,6 +6,8 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 export default defineConfig({
   plugins: [svelte()],
   clearScreen: false,
+  // Temporary checkouts under scratch are not a second copy of the test suite.
+  test: { include: ["src/**/*.test.ts"] },
   server: {
     port: 1420,
     strictPort: true,

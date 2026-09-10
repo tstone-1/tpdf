@@ -109,6 +109,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     items: [
       "file.open",
       "file.reload",
+      "file.close",
       SEPARATOR,
       "file.save",
       "file.saveCopy",
@@ -277,6 +278,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
   {
     title: "View",
     items: [
+      "view.nextTab",
+      "view.previousTab",
+      SEPARATOR,
       "view.zoomIn",
       "view.zoomOut",
       "view.zoomTo",

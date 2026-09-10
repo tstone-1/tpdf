@@ -217,6 +217,7 @@ describe("buildMenu", () => {
     expect(file?.items.map((item) => item.kind)).toEqual([
       "command",
       "command",
+      "command",
       "separator",
       // Save, Save a copy, Image-only redaction, Redact and save as,
       // Redact and save, Extract, Split, Merge.

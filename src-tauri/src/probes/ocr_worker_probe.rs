@@ -453,9 +453,9 @@ impl Sheet {
 fn render_page(file: &Path, library: &Path) -> Result<Sheet, String> {
     use pdfium_render::prelude::Pdfium;
     let path = Pdfium::pdfium_platform_library_name_at_path(library);
-    let bound = Pdfium::bind_to_library(&path)
+    let bound = progressive::bind_library(&path)
         .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
-    let bindings = progressive::bindings_of(Box::leak(Box::new(Pdfium::new(bound))));
+    let bindings = progressive::bindings_of(bound);
     let document = OpenDocument::open(bindings, file, None)?;
     let page = document.page(0)?;
     tile(bindings, &page, 2.0)

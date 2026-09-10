@@ -3130,6 +3130,9 @@ async function appCommandChecks(
     viewer: () => viewer,
     pageCount: () => doc.page_count,
     openDocument: () => fired.push("openDocument"),
+    closeDocument: () => fired.push("closeDocument"),
+    nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
+    documentCount: () => 2,
     reloadDocument: () => fired.push("reloadDocument"),
     busyOpening: () => busy,
     busyDocument: () => false,
@@ -4207,6 +4210,9 @@ async function appCommandChecks(
   // counted in this comment: the count belongs to the entries, and saying it
   // here went stale the first time one was added.
   const undriven: Record<string, string> = {
+    "file.close": "tab ownership is exercised by the open check's tabs phase",
+    "view.nextTab": "tab ownership is exercised by the open check's tabs phase",
+    "view.previousTab": "tab ownership is exercised by the open check's tabs phase",
     "find.next": "needs a live search with more than one match",
     "find.previous": "needs a live search with more than one match",
     "edit.copy": "its outcome is the system clipboard",

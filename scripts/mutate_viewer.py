@@ -60,7 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_output import stream_results  # noqa: E402
 import mutation_resume  # noqa: E402
 import mutation_since  # noqa: E402
-from stray import clear_leftover_app  # noqa: E402
+from stray import clear_strays  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 WINDOWS = sys.platform == "win32"
@@ -548,8 +548,8 @@ MUTATIONS = [
     Mutation(
         "Cmd-K reaches no arm at all",
         "src/lib/appcommands.ts",
-        '  if (matches("app.palette", event)) {',
-        "  if (false) {",
+        '  } else if (matches("app.palette", event)) {',
+        "  } else if (false) {",
         "Cmd-K opens the palette",
     ),
     # Re-aimed at `keys.ts` when the chord moved into the bindings table. The
@@ -1631,7 +1631,7 @@ def run_check(fixture: Path = FIXTURE) -> tuple[list[str], str, str]:
     #  - `--timeout`, so that a hang is a bounded failure. A harness whose worst
     #    case is an unbounded wait cannot report anything at all, and this one is
     #    run unattended by design.
-    clear_leftover_app()
+    clear_strays(APP)
     done = subprocess.run(
         [
             sys.executable,

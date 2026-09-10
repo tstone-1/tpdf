@@ -6103,8 +6103,8 @@ def main() -> int:
     parser.add_argument("--list", action="store_true")
     # Same flag, same meaning as `mutate_viewer.py`'s. Added when the page
     # deletion work put twenty new mutations into a table of a hundred: the
-    # whole table is what runs before a push, and re-proving ninety-odd
-    # mutations that could not have moved is an hour of somebody waiting.
+    # release selects affected behaviour, and re-proving ninety-odd mutations
+    # that could not have moved is an hour of somebody waiting.
     # The control run and the name cross-check below still run in full.
     # **Repeatable, and every value must match something.** It was a plain
     # string option until 2026-09-01, so argparse kept the LAST of several and
@@ -6129,8 +6129,8 @@ def main() -> int:
     # **It does not go as far as the whole table, and the difference is not
     # scope but reach.** A change in `docmodel.rs` can decide what `save.rs`
     # does, so a mutation in an untouched file can stop being caught without
-    # that file changing. This is the fast loop; the table is what runs before a
-    # push, and the count of what it left out is printed rather than implied.
+    # that file changing. Include affected callers when selecting release scope
+    # (BUILD.md); the count left out is printed rather than implied.
     parser.add_argument(
         "--since",
         default="",
@@ -8632,6 +8632,33 @@ MUTATIONS += [
         '    if false {\n        return Err(\n'
         '            "Choose a different name for the image-only copy; the original must be kept".into(),',
         "raster_copy_never_overwrites_its_source",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        "strict parsing: recover a damaged signed prefix",
+        "src/docinfo.rs",
+        "                // which objects belonged to the signed revision.\n"
+        "                strict: true,",
+        "                // which objects belonged to the signed revision.\n"
+        "                strict: false,",
+        "an_appendix_whose_signed_prefix_is_unparseable_is_reported_as_unread",
+    ),
+    Mutation(
+        "strict parsing: repair a saved file instead of rejecting its broken table",
+        "src/save.rs",
+        "pub fn reread_pages(bytes: &[u8], password: Option<&str>) -> Result<usize, String> {\n"
+        "    Document::load_mem_with_options(\n"
+        "        bytes,\n"
+        "        lopdf::LoadOptions {\n"
+        "            strict: true,",
+        "pub fn reread_pages(bytes: &[u8], password: Option<&str>) -> Result<usize, String> {\n"
+        "    Document::load_mem_with_options(\n"
+        "        bytes,\n"
+        "        lopdf::LoadOptions {\n"
+        "            strict: false,",
+        "an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was",
     ),
 ]
 

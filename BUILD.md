@@ -37,13 +37,18 @@ Verify an existing install without touching the network:
 scripts/fetch_pdfium.py --check
 ```
 
-The pin is `chromium/7881`, which is the build every Phase 0 measurement in `AGENTS.md`
-and `docs/PLAN.md` was taken against. Bumping it means editing `TAG` and the whole `PINS`
+The pin is `chromium/8044`; Phase 0 measurements in `AGENTS.md` and `docs/PLAN.md`
+used `chromium/7881`. Bumping it means editing `TAG` and the whole `PINS`
 table in `scripts/fetch_pdfium.py` together, then re-running the two checks that a digest
 cannot stand in for:
 
 Run these from the repository root, after generating the fixtures below. Each exits
 non-zero on failure.
+
+With pdfium-render 0.9.4, removal cases `a` and `c` both passed on Windows on
+2026-09-10, against both 7881 and 8044. That does not establish whether the
+earlier macOS ownership crash is fixed; retain the spike's workaround until
+the destroy case is also rerun there.
 
 ```
 # The FPDFPageObj_Destroy ownership segfault. Case `c` (leak) must pass; if case
@@ -1782,9 +1787,9 @@ produces.
 
 The earlier ones. The second six are the page-range print and the merge --- three checks each: the differential,
 the needs-a-worker control, and the scratch or page-count reading. The last two are
-`xref-bomb.pdf`, the fixture whose `/W` widths abort whatever parses it: they assert the worker
-dies and the coordinator is told, and there is deliberately **no coordinator arm**, because
-running one would end the probe. Three of them put a
+`xref-bomb.pdf`, whose `/W` widths aborted lopdf 0.44. With 0.45 it is refused normally;
+the check accepts that parser refusal or a contained worker death and requires no output.
+There is deliberately **no coordinator arm**, preserving containment if this regresses. Three of them put a
 worker on **Save a copy** and three on the **print job**, which are the last two writing paths
 `docs/THREAT-MODEL.md` residual risk 18 was disclosing.
 
@@ -4838,6 +4843,11 @@ starts at 0 and increments within the month.
 4. In `CHANGELOG.md`, replace `Unreleased` with the release date.
 5. `scripts/gates.py` --- all gates pass.
 
+   On a Windows host with many cores, cap Cargo concurrency if linking exhausts
+   memory: `$env:CARGO_BUILD_JOBS='4'`. The gate suite links all examples; a
+   2026-09-10 run launched more than 30 linkers and failed with `LNK1102`.
+   Four jobs completed the build without changing any gate or compiler flags.
+
    **On a Mac, also `scripts/check_windows.py`, and it is not optional before a tag.** A
    green gate list on this platform says nothing about any `#[cfg(windows)]` line, because
    the compiler never parses one: `print_win.rs`, `examples/print_probe.rs`,
@@ -4950,8 +4960,17 @@ starts at 0 and increments within the month.
    passes exactly like one describing it well. Read the first three paragraphs, then the two
    feature lists, against what you know shipped this cycle. Do not put a count in the prose:
    every one that was there had drifted, and the files they describe carry their own.
-7. Re-run the mutation harnesses. They are not gates --- they rebuild per mutation and two of
-   them need a window --- and they are the only thing that says the tests can fail.
+7. Run mutations for the changed behaviour, including new failure cases for a new
+   capability. Start with `--since <last tag>` and add affected callers or runners
+   when a shared contract changes. Always run the full quality gates once, and
+   the relevant native checks. Record the selected mutation count and any gaps.
+
+   **Release scope, corrected 2026-09-10:** a new capability, a large diff, or a
+   month elapsed does not by itself justify every historical mutation. Full
+   tables are for a harness-wide change or a shared contract whose reach cannot
+   be bounded. Run the affected table when its test runner changes (for example,
+   the frontend table when upgrading Vitest). The historical timings below explain
+   the cost; they are not an additional requirement to run those tables.
 
    **How much of them to run is a decision, and this step used to duck it.** It read *"if any
    of the code they cover changed"*, which is true of nearly every release and therefore meant
@@ -4982,16 +5001,7 @@ starts at 0 and increments within the month.
    ever added to a checklist --- this is the first one this file has ever narrowed --- so the
    narrowing states its own trigger rather than leaving it to whoever is tired:
 
-   **Run the FULL tables when any one of these is true.** The first two are the ones that have
-   actually paid:
-
-   - the diff touches `src/lib/viewercheck.ts`, or a harness-covered module by more than
-     ~100 lines --- `git diff --stat <last tag>..HEAD -- src-tauri/src src/lib`
-   - a module joined `FILTERS` or the mutation table since the last release, or a runner did
-   - the release adds a capability rather than fixing one
-   - nobody has run the full tables in a month
-
-   **Otherwise run the narrow pass**, which is minutes rather than hours:
+   **The default is the narrow pass**, which is minutes rather than hours:
 
    ```
    scripts/mutate_rust.py --since <last tag>        # only the mutations whose FILE moved
@@ -5078,7 +5088,7 @@ starts at 0 and increments within the month.
 
    # All three take `--only <substring>`, matched against the mutation's name,
    # for the loop while a change is being made: `--only pagetree`, `--only
-   # "page delete"`. The whole table is what runs before a push --- the flag
+   # "page delete"`. Select release scope by the rule above --- the flag
    # exists because re-proving a hundred mutations that could not have moved is
    # somebody waiting, not because a subset is ever the gate.
 
@@ -5087,8 +5097,8 @@ starts at 0 and increments within the month.
    # included, prints how many it left out and which changed files no mutation
    # aims at, and exits 1 rather than looking green when it selected nothing.
    # Its reach is shorter than its scope --- a change in docmodel.rs can stop a
-   # mutation in save.rs from being caught --- so it is the loop, and the whole
-   # table is still the thing before a push.
+   # mutation in save.rs from being caught --- so include affected callers when
+   # selecting release scope under the rule above.
    scripts/mutate_rust.py --since HEAD~3
    scripts/mutate_frontend.py --since HEAD~3
    scripts/mutate_viewer.py --since HEAD~3

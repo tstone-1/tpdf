@@ -1,5 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { DocumentTabs, DocumentTasks, type DocumentTab } from "./lib/documenttabs";
+  import { PLAIN_SEARCH } from "./lib/search";
   import Toolbar from "./Toolbar.svelte";
   import { toolbarState } from "./lib/toolbar";
   import { listen } from "@tauri-apps/api/event";
@@ -126,6 +129,120 @@
    */
   let offers = $state<Offer[]>([]);
   let opening = $state(false);
+  let documentBusy = $state(false);
+  const documentTasks = new DocumentTasks((busy) => { documentBusy = busy; });
+  const tabs = new DocumentTabs<DocumentTab>();
+  let tabRows = $state<{ id: number; path: string; dirty: boolean }[]>([]);
+  let activeTab = $state(-1);
+  const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
+  let committingPopup = false;
+
+  function commitPopups(): void {
+    committingPopup = true;
+    try {
+      viewer?.closeMark();
+      viewer?.closeComment();
+    } finally { committingPopup = false; }
+  }
+
+  function refreshTabs(): void {
+    const changed = activeTab !== tabs.active;
+    activeTab = tabs.active;
+    tabRows = tabs.all.map((tab) => ({
+      id: tab.doc.id, path: tab.path, dirty: tab.edits.state.dirty,
+    }));
+    if (changed) void tick().then(() => {
+      document.getElementById(`document-tab-${activeTab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }
+
+  async function settleDocument(): Promise<void> {
+    commitPopups();
+    await pendingEdit;
+    notePlace();
+    places.flush();
+  }
+
+  function keepActiveTab(): void {
+    const tab = tabs.find(openDoc);
+    if (!tab || !viewer || !edits) return;
+    Object.assign(tab, {
+      edits, place: currentPlace(false), covered: new Map(covered), query,
+      findShown, searchOptions: viewer.searchOptionsNow,
+      searchScope: viewer.searchScopeRanges, sidebarTab: sidebar?.tab ?? "outline",
+      error, offers, notice, redactedCopyPath,
+    });
+    refreshTabs();
+  }
+
+  function activateTab(id: number): Promise<void> {
+    return documentTasks.idle().then(() => opens.run(async () => {
+      const tab = tabs.find(id);
+      if (!tab || id === openDoc) return;
+      await openDocument(tab.path, false, null, tab);
+    }));
+  }
+
+  function closeTab(id: number): Promise<void> {
+    return documentTasks.idle().then(() => opens.run(async () => {
+      const tab = tabs.find(id);
+      if (!tab) return;
+      opening = true;
+      try {
+        await settleDocument();
+        if (tab.edits.state.dirty && !await confirmDialog(
+          `Discard unsaved changes to ${basename(tab.path)}?`,
+          { title: "Close tab", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+        )) return;
+        const wasActive = id === openDoc;
+        if (wasActive) clearActiveDocument();
+        tabs.remove(id);
+        refreshTabs();
+        // A teardown refusal must not prevent the next document from mounting.
+        await call("close_document", { doc: id }).catch((e) => {
+          console.warn(`could not release document ${id}: ${e}`);
+        });
+        const next = tabs.find(tabs.active);
+        if (wasActive && next) await openDocument(next.path, false, null, next);
+      } catch (e) { say(String(e)); }
+      finally { opening = false; refreshMenu(); }
+    }));
+  }
+
+  function clearActiveDocument(): void {
+    clearTimeout(findTimer);
+    viewer?.destroy();
+    sidebar?.destroy();
+    viewer = null;
+    sidebar = null;
+    edits = null;
+    openDoc = -1;
+    status = null;
+    title = "";
+    openPathName = "";
+    openPageCount = 0;
+    dirty = false;
+    query = "";
+    findShown = false;
+    degraded = degradedGate.update(null, performance.now());
+    say(null);
+    notice = null;
+  }
+
+  function tabKey(event: KeyboardEvent, id: number): void {
+    const index = tabRows.findIndex((tab) => tab.id === id);
+    let next: number;
+    if (event.key === "ArrowRight") next = (index + 1) % tabRows.length;
+    else if (event.key === "ArrowLeft") next = (index + tabRows.length - 1) % tabRows.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabRows.length - 1;
+    else return;
+    event.preventDefault();
+    const target = tabRows[next];
+    if (target) void activateTab(target.id).then(() => {
+      document.getElementById(`document-tab-${target.id}`)?.focus();
+    });
+  }
   let rasterCopyBusy = $state(false);
   let redactedCopyPath = $state<string | null>(null);
   let blockingTask = $state<string | null>(null);
@@ -445,8 +562,11 @@
     pageCount: () => status?.pageCount ?? 0,
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => reloadDocument(),
-    busyOpening: () => opening || rasterCopyBusy,
-    busyDocument: () => rasterCopyBusy,
+    closeDocument: () => void closeTab(openDoc),
+    nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.doc.id); },
+    documentCount: () => tabRows.length,
+    busyOpening: () => opening || rasterCopyBusy || documentBusy,
+    busyDocument: () => rasterCopyBusy || opening || documentBusy,
     printDocument: () => void printDocument(),
     focusFind: () => focusFind(),
     toggleSearchOption: (which) => toggleSearchOption(which),
@@ -1024,7 +1144,7 @@
    * is to redraw what differs.
    */
   function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
-    if (rasterCopyBusy) return Promise.resolve();
+    if (rasterCopyBusy || (documentBusy && !committingPopup)) return Promise.resolve();
     // Queued rather than started, so a reply can never be adopted after a
     // later one. See {@link editing}.
     pendingEdit = editing.run(() => runEdit(run));
@@ -1038,6 +1158,7 @@
     if (!model || !viewer) return;
     try {
       const after = await run(model);
+      if (edits !== model) return;
       // Only when the pages moved, and the viewer is what answers that: every
       // call below throws work away --- the strip's thumbnails, the panels' rows
       // --- and a turn moves no page, so doing it unconditionally would make
@@ -1070,6 +1191,7 @@
       sidebar?.setRedactions(redactionRows(after.redactions, model.map));
       void fillRedactionWords();
       dirty = after.dirty;
+      refreshTabs();
       // Undo and Redo are the two menu items whose enablement moves on every
       // edit, which is why this is here rather than only at the ends of an open.
       refreshMenu();
@@ -1311,48 +1433,51 @@
    * else left the reader exactly as they were, and is only a message.
    */
   async function saveDocument(): Promise<void> {
-    if (!edits || !openPathName || !viewer) return;
-    viewer.closeMark();
-    await pendingEdit;
-    const path = openPathName;
-    const place = currentPlace(false);
-    try {
-      await edits.save(path);
-    } catch (e) {
-      // Read through the seam rather than cast here, so that what a rejection
-      // is understood to carry has one definition. Three catches wrote this by
-      // hand and the fourth -- printing -- wrote none of it.
-      const failure = refusalOf(e);
-      // The message and the buttons come from one call, so they cannot disagree
-      // about what happened. A refusal that names Save a copy now arrives with
-      // Save a copy beside it -- which it did not until 2026-08-19, and worse,
-      // Save a copy was refused by the same guard, so the advice named a door
-      // that was locked.
-      const prompt = afterRefusal(failure);
-      if (!failure.reopen) {
-        say(prompt.message, prompt.offers);
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || !viewer) return;
+      commitPopups();
+      await pendingEdit;
+      const path = openPathName;
+      const place = currentPlace(false);
+      try {
+        await edits.save(path);
+      } catch (e) {
+        // Read through the seam rather than cast here, so that what a rejection
+        // is understood to carry has one definition. Three catches wrote this by
+        // hand and the fourth -- printing -- wrote none of it.
+        const failure = refusalOf(e);
+        // The message and the buttons come from one call, so they cannot disagree
+        // about what happened. A refusal that names Save a copy now arrives with
+        // Save a copy beside it -- which it did not until 2026-08-19, and worse,
+        // Save a copy was refused by the same guard, so the advice named a door
+        // that was locked.
+        const prompt = afterRefusal(failure);
+        if (!failure.reopen) {
+          say(prompt.message, prompt.offers);
+          return;
+        }
+        // The document is closed and the file is the one it always was. Reopening
+        // is what gives the reader something to look at; their unsaved commands
+        // are gone with the model, which is what the message says.
+        openDoc = -1;
+        await openPath(path, false, place);
+        // **After the reopen, and that ordering is the whole of it.** `openPath`
+        // clears the message area on its way in, so saying this before the reopen
+        // showed it for zero frames: the one refusal a reader can do nothing about
+        // -- their document closed, their edits spent -- was the one they were
+        // never told about. It has been that way since `save_document` landed, and
+        // the fingerprint work is what made the path reachable often enough to
+        // notice.
+        //
+        // Only when the reopen had nothing of its own to report. A file that also
+        // failed to reopen is the more urgent fact, and it is already on screen.
+        if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      // The document is closed and the file is the one it always was. Reopening
-      // is what gives the reader something to look at; their unsaved commands
-      // are gone with the model, which is what the message says.
       openDoc = -1;
       await openPath(path, false, place);
-      // **After the reopen, and that ordering is the whole of it.** `openPath`
-      // clears the message area on its way in, so saying this before the reopen
-      // showed it for zero frames: the one refusal a reader can do nothing about
-      // -- their document closed, their edits spent -- was the one they were
-      // never told about. It has been that way since `save_document` landed, and
-      // the fingerprint work is what made the path reachable often enough to
-      // notice.
-      //
-      // Only when the reopen had nothing of its own to report. A file that also
-      // failed to reopen is the more urgent fact, and it is already on screen.
-      if (!error) say(prompt.message, prompt.offers);
-      return;
-    }
-    openDoc = -1;
-    await openPath(path, false, place);
+    });
   }
 
   /**
@@ -1364,14 +1489,16 @@
    * it --- see `docs/PLAN.md` §5 on saving in place.
    */
   async function saveCopy(): Promise<void> {
-    if (!edits || !openPathName) return;
-    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
-    try {
-      const chosen = await saveDialog({
-        title: "Save a copy",
-        defaultPath: `${suggested} copy.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName) return;
+      const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+      try {
+        const chosen = await saveDialog({
+          title: "Save a copy",
+          defaultPath: `${suggested} copy.pdf`,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
       // Cancelled. Deliberately not an error and deliberately not a message:
       // the reader closed the panel, which is an answer.
       if (!chosen) return;
@@ -1389,6 +1516,7 @@
     } catch (e) {
       say(String(e));
     }
+    });
   }
 
   /**
@@ -1404,14 +1532,16 @@
    * marks and can try again somewhere else.
    */
   async function redactCopy(): Promise<void> {
-    if (!edits || !openPathName) return;
-    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
-    try {
-      const chosen = await saveDialog({
-        title: "Redact and save as",
-        defaultPath: `${suggested} redacted.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName) return;
+      const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+      try {
+        const chosen = await saveDialog({
+          title: "Redact and save as",
+          defaultPath: `${suggested} redacted.pdf`,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
       // Cancelled, which is an answer rather than an error.
       if (!chosen) return;
       const result = afterRedactionCopy(await edits.redactCopy(openPathName, chosen));
@@ -1423,6 +1553,7 @@
       // writing anything and names what and where.
       say(String(e));
     }
+    });
   }
 
   /**
@@ -1435,31 +1566,33 @@
    * what that model means halfway through the copy.
    */
   async function redactRasterCopy(): Promise<void> {
-    if (!edits || !openPathName || !viewer || rasterCopyBusy) return;
-    // Closing the note journals its last text synchronously. Do this before the
-    // busy guard starts refusing new edits, then wait for that queued edit below.
-    viewer.closeMark();
-    rasterCopyBusy = true;
-    refreshMenu();
-    try {
-      await pendingEdit;
-      const proceed = await confirmDialog(
-        "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
-        {
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || !viewer || rasterCopyBusy) return;
+      // Closing the note journals its last text synchronously. Do this before the
+      // busy guard starts refusing new edits, then wait for that queued edit below.
+      commitPopups();
+      rasterCopyBusy = true;
+      refreshMenu();
+      try {
+        await pendingEdit;
+        const proceed = await confirmDialog(
+          "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
+          {
+            title: "Redact to image-only copy",
+            kind: "warning",
+            okLabel: "Create image-only copy",
+            cancelLabel: "Cancel",
+          },
+        );
+        if (!proceed || !edits || !openPathName) return;
+        const source = openPathName;
+        const suggested = basename(source).replace(/\.pdf$/i, "");
+        const chosen = await saveDialog({
           title: "Redact to image-only copy",
-          kind: "warning",
-          okLabel: "Create image-only copy",
-          cancelLabel: "Cancel",
-        },
-      );
-      if (!proceed || !edits || !openPathName) return;
-      const source = openPathName;
-      const suggested = basename(source).replace(/\.pdf$/i, "");
-      const chosen = await saveDialog({
-        title: "Redact to image-only copy",
-        defaultPath: `${suggested} redacted image-only.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
+          defaultPath: `${suggested} redacted image-only.pdf`,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
       if (!chosen) return;
 
       blockingTask = "Creating image-only copy...";
@@ -1480,6 +1613,7 @@
       rasterCopyBusy = false;
       refreshMenu();
     }
+    });
   }
 
   /**
@@ -1522,32 +1656,35 @@
    * the strength of it.
    */
   async function redactAnyway(): Promise<void> {
-    if (!edits || !openPathName || !viewer) return;
-    viewer.closeMark();
-    await pendingEdit;
-    const path = openPathName;
-    const place = currentPlace(false);
-    say(null);
-    let said: string;
-    try {
-      said = afterRedaction(await edits.redactDocument(path));
-    } catch (e) {
-      const failure = refusalOf(e);
-      const prompt = afterRefusal(failure);
-      // Nothing happened: the file is the file and the reader still has their
-      // document and their marks. A message is all there is to do.
-      if (!failure.reopen) {
-        say(prompt.message, prompt.offers);
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || !viewer) return;
+      commitPopups();
+      await pendingEdit;
+      const path = openPathName;
+      const place = currentPlace(false);
+      say(null);
+      let said: string;
+      try {
+        said = afterRedaction(await edits.redactDocument(path));
+      } catch (e) {
+        const failure = refusalOf(e);
+        const prompt = afterRefusal(failure);
+        // Nothing happened: the file is the file and the reader still has their
+        // document and their marks. A message is all there is to do.
+        if (!failure.reopen) {
+          say(prompt.message, prompt.offers);
+          return;
+        }
+        openDoc = -1;
+        await openPath(path, false, place);
+        if (!error) say(prompt.message, prompt.offers);
         return;
       }
       openDoc = -1;
       await openPath(path, false, place);
-      if (!error) say(prompt.message, prompt.offers);
-      return;
-    }
-    openDoc = -1;
-    await openPath(path, false, place);
-    if (!error) say(said);
+      if (!error) say(said);
+    });
   }
 
   /**
@@ -1564,14 +1701,16 @@
    * to expand a selection.
    */
   async function extractPages(slots: number[]): Promise<void> {
-    if (!edits || !openPathName || slots.length === 0) return;
-    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
-    try {
-      const chosen = await saveDialog({
-        title: "Extract pages",
-        defaultPath: `${suggested} ${namePages(slots)}.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || slots.length === 0) return;
+      const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+      try {
+        const chosen = await saveDialog({
+          title: "Extract pages",
+          defaultPath: `${suggested} ${namePages(slots)}.pdf`,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
       if (!chosen) return;
       // The same report `saveCopy` gives, and it was missing until 2026-08-24
       // while `lib.rs`'s comment on `extract_pages` said "the reader is told the
@@ -1585,6 +1724,7 @@
     } catch (e) {
       say(String(e));
     }
+    });
   }
 
   /**
@@ -1603,19 +1743,22 @@
    * Nothing happens to the open document: no `applyEdit`, no state to adopt.
    */
   async function splitDocument(groups: number[][]): Promise<void> {
-    if (!edits || !openPathName || groups.length < 2) return;
-    const suggested = basename(openPathName).replace(/\.pdf$/i, "");
-    try {
-      const chosen = await saveDialog({
-        title: "Split document",
-        defaultPath: `${suggested}.pdf`,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || groups.length < 2) return;
+      const suggested = basename(openPathName).replace(/\.pdf$/i, "");
+      try {
+        const chosen = await saveDialog({
+          title: "Split document",
+          defaultPath: `${suggested}.pdf`,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
       if (!chosen) return;
       say(afterSplit(await edits.splitDocument(openPathName, chosen, groups)));
     } catch (e) {
       say(String(e));
     }
+    });
   }
 
   /**
@@ -1637,14 +1780,16 @@
    * one this machine happens to give.
    */
   async function mergeDocuments(): Promise<void> {
-    if (!edits || !openPathName) return;
-    try {
-      const picked = await openDialog({
-        multiple: true,
-        directory: false,
-        title: "Choose documents to merge into this one",
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName) return;
+      try {
+        const picked = await openDialog({
+          multiple: true,
+          directory: false,
+          title: "Choose documents to merge into this one",
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
       const others =
         typeof picked === "string" ? [picked] : (picked ?? []);
       if (others.length === 0) return;
@@ -1659,6 +1804,7 @@
     } catch (e) {
       say(String(e));
     }
+    });
   }
 
   /**
@@ -1916,18 +2062,20 @@
    * so there is no outcome here worth waiting for.
    */
   async function printDocument() {
-    if (!openPathName || !viewer) return;
-    try {
-      await call("print_document", {
-        path: openPathName,
-        // The edits go with it: which pages are left, and how each is turned.
-        // Read from the model rather than sent from here --- the frontend's copy
-        // is a cache, and a print job built from a stale one would put a page on
-        // paper that the reader has deleted.
-        doc: openDoc,
-        pages: null,
-        turns: viewer.rotation,
-      });
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!openPathName || !viewer) return;
+      try {
+        await call("print_document", {
+          path: openPathName,
+          // The edits go with it: which pages are left, and how each is turned.
+          // Read from the model rather than sent from here --- the frontend's copy
+          // is a cache, and a print job built from a stale one would put a page on
+          // paper that the reader has deleted.
+          doc: openDoc,
+          pages: null,
+          turns: viewer.rotation,
+        });
     } catch (e) {
       // Shown, unlike a failed place write. This one the reader is standing
       // there waiting for: a print command that silently does nothing reads as
@@ -1947,6 +2095,7 @@
       const prompt = afterRefusal(refusalOf(e));
       say(prompt.message, prompt.offers);
     }
+    });
   }
 
   function toggleSidebar() {
@@ -2450,6 +2599,22 @@
       }
 
       await installMenu();
+      await getCurrentWindow().onCloseRequested(async (event) => {
+        event.preventDefault();
+        await documentTasks.idle();
+        await opens.run(async () => {
+          opening = true;
+          try {
+            await settleDocument();
+            const unsaved = tabs.all.filter((tab) => tab.edits.state.dirty);
+            if (unsaved.length && !await confirmDialog(
+              `Discard unsaved changes in ${unsaved.length} open document(s)?`,
+              { title: "Close tpdf", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+            )) return;
+            await getCurrentWindow().destroy();
+          } finally { opening = false; }
+        });
+      });
 
       // The launch check, and its position here is the whole of what keeps every
       // spike, benchmark and check run offline: all of them return above this
@@ -2460,8 +2625,7 @@
 
       await getCurrentWebview().onDragDropEvent((event) => {
         if (event.payload.type !== "drop") return;
-        const [path] = event.payload.paths;
-        if (path) void openPath(path);
+        for (const path of event.payload.paths) void openPath(path);
       });
 
       // A last chance to record the position for a reader who quits inside the
@@ -2510,12 +2674,8 @@
       // Read before any document opens, so the first tiles of the first page are
       // requested in the polarity the reader left the application in.
       invertPages = session.invert_pages ?? false;
-      const [first] = handed;
-      if (first) {
-        // One window, so one document. Selecting several in the Finder opens
-        // the first; the rest are dropped rather than silently replacing each
-        // other, which is what opening them in turn would look like.
-        await openPath(first);
+      if (handed.length) {
+        for (const path of handed) await openPath(path);
       } else {
         const resume = session.places[0];
         if (resume) await openPath(resume.path, true);
@@ -2533,6 +2693,13 @@
           // it would be testing a second implementation of the open.
           open: (path) => openPath(path),
           hasViewer: () => viewer !== null,
+          tabs: () => tabRows,
+          viewer: () => viewer,
+          edits: () => edits,
+          activate: activateTab,
+          close: closeTab,
+          run: (id) => { commands.run(id); },
+          idle: () => documentTasks.idle(),
         })
       )
         return;
@@ -2584,11 +2751,12 @@
 
   async function pickAndOpen() {
     const chosen = await openDialog({
-      multiple: false,
+      multiple: true,
       directory: false,
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
-    if (typeof chosen === "string") await openPath(chosen);
+    for (const path of typeof chosen === "string" ? [chosen] : chosen ?? [])
+      await openPath(path);
   }
 
   /**
@@ -2629,8 +2797,13 @@
     resuming = false,
     resume: Place | null = null,
   ): Promise<void> {
-    if (rasterCopyBusy) return Promise.resolve();
-    return opens.run(() => openDocument(path, resuming, resume));
+    // A save's own reopen must not wait for the save that requested it.
+    const ready = resume ? Promise.resolve() : documentTasks.idle();
+    return ready.then(() => opens.run(async () => {
+      const existing = resume ? undefined : tabs.forPath(path);
+      if (existing?.doc.id === openDoc) { viewer?.focus(); return; }
+      await openDocument(path, resuming, resume, existing);
+    }));
   }
 
   /**
@@ -2667,9 +2840,8 @@
     path: string,
     resuming = false,
     override: Place | null = null,
+    retained?: DocumentTab,
   ) {
-    say(null);
-    notice = null;
     opening = true;
     /**
      * Whether this body has already torn the outgoing document down.
@@ -2684,30 +2856,13 @@
      * that is gone.
      */
     let replaced = false;
+    let acquired = -1;
     try {
-      const doc = await openOrAsk(path);
-
-      // Released only once the replacement exists, so a file that turns out not
-      // to open leaves the reader with what they had --- and recorded here,
-      // before anything else can throw, because from this line on the backend is
-      // holding this document whether or not it ever reaches the screen.
-      //
-      // Under the worker backend this is a process rather than an allocation:
-      // without it a session that opens a dozen files holds a dozen sandboxed
-      // children. Not awaited --- the render thread is FIFO, so the close is
-      // already behind everything the outgoing document had outstanding, and
-      // making the reader wait for a process teardown on the way to their first
-      // page would be paying for it twice.
-      const outgoing = openDoc;
-      openDoc = doc.id;
-      if (outgoing >= 0 && outgoing !== doc.id) {
-        void call("close_document", { doc: outgoing }).catch((e) => {
-          // Not raised to the reader: the file they asked for is open and fine,
-          // and this is a leak rather than anything they can act on.
-          console.warn(`could not release document ${outgoing}: ${e}`);
-        });
-      }
-
+      const doc = retained?.doc ?? await openOrAsk(path);
+      acquired = retained ? -1 : doc.id;
+      await settleDocument();
+      keepActiveTab();
+      const replaceId = override ? tabs.forPath(path)?.doc.id : undefined;
       const page = doc.pages[0];
       if (!page) throw new Error("document reports no pages");
       // The whole table the open carried, not only its first entry. On a lazy
@@ -2728,6 +2883,7 @@
       clearTimeout(findTimer);
       replaced = true;
       viewer?.destroy();
+      openDoc = doc.id;
       viewer = null;
       sidebar?.destroy();
       sidebar = null;
@@ -2743,8 +2899,8 @@
       // A caller that already knows where the reader is wins over the startup
       // snapshot --- see `reloadDocument`, which is the only one that does.
       const remembered =
-        override ?? session.places.find((kept) => kept.path === path);
-      const resume = remembered ? clampPlace(remembered, doc.page_count) : null;
+        retained?.place ?? override ?? session.places.find((kept) => kept.path === path);
+      const resume = remembered ? clampPlace(remembered, retained?.edits.state.pages.length ?? doc.page_count) : null;
       sidebarShown = resume ? resume.sidebar : sidebarShown;
 
       // The host element does not exist until the viewer section is in the
@@ -2752,7 +2908,11 @@
       await new Promise(requestAnimationFrame);
       if (!surface || !sidebarHost) throw new Error("no surface to mount into");
 
-      query = "";
+      query = retained?.query ?? "";
+      findShown = retained?.findShown ?? false;
+      say(retained?.error ?? null, retained?.offers ?? []);
+      notice = retained?.notice ?? null;
+      redactedCopyPath = retained?.redactedCopyPath ?? null;
       // Before the panels are built, so nothing carries over from the document
       // that was open a moment ago --- these are answers about a file, and the
       // file has changed.
@@ -2887,12 +3047,21 @@
       // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
       // backend, and holding the first page behind it would put an IPC round
       // trip on the startup path for an answer that is "nothing is edited".
-      const opening = new Edits(doc.id, doc.page_count);
+      const opening = retained?.edits ?? new Edits(doc.id, doc.page_count);
       edits = opening;
-      dirty = false;
+      dirty = opening.state.dirty;
       // Mark ids start again with the model, so an entry kept from the last
       // document would put its words on this one's first highlight.
       covered.clear();
+      for (const [id, words] of retained?.covered ?? []) covered.set(id, words);
+      tabs.keep(retained ?? {
+        doc, path, edits: opening, place: resume, covered: new Map(), query: "",
+        findShown: false, searchOptions: PLAIN_SEARCH, searchScope: null,
+        sidebarTab: "outline", error: null, offers: [], notice: null, redactedCopyPath: null,
+      }, replaceId);
+      refreshTabs();
+      if (replaceId !== undefined && replaceId !== doc.id)
+        void call("close_document", { doc: replaceId }).catch(console.warn);
       void opening.refresh().then(
         (state) => {
           // The model this reply belongs to, not whichever one is open when it
@@ -2902,6 +3071,7 @@
           // `dirty` had the same hazard and the same one-line fix.
           if (edits !== opening) return;
           dirty = state.dirty;
+          refreshTabs();
           // A document opened with edits already on it --- which is the model's
           // to answer, not this file's to assume. Every later change comes
           // through `runEdit` above.
@@ -3082,7 +3252,16 @@
       // Before the first paint, so the reader sees their page rather than page
       // one and then a jump --- and before `focus`, which does not move the view
       // but would make the jump look like something they did.
+      viewer.setPages(opening.state.pages);
+      viewer.setMarks(opening.state.marks);
+      viewer.setRedactions(opening.state.redactions);
+      sidebar.thumbnails?.setPages(opening.state.pages.length);
       if (resume) viewer.restore(resume);
+      if (retained) {
+        viewer.restoreSearch(retained.query, retained.searchOptions, retained.searchScope);
+        sidebar.selectTab(retained.sidebarTab);
+      }
+      viewer.setNib(markNib.pt);
       // After `restore`, which does not touch the colours, and before `focus`,
       // so the first tiles requested are already the right polarity rather than
       // being rendered light and immediately thrown away.
@@ -3110,6 +3289,7 @@
       // costs nothing --- an outline for a document nobody is looking at is
       // dropped exactly as it was before.
       const wanted = doc.id;
+      const mounted = viewer;
       void firstPaint()
         .then(() => {
           // Checked before asking as well as after. The wait is up to a second
@@ -3117,13 +3297,13 @@
           // during it --- and an outline walk for a file nobody is looking at is
           // not merely wasted, it is a third of a second of the FIFO render
           // thread in front of the tiles for the file they *are* looking at.
-          if (openDoc !== wanted) return null;
+          if (openDoc !== wanted || viewer !== mounted) return null;
           return call("document_outline", { doc: wanted });
         })
         .then((result) => {
           // And again, because another document may have been opened while the
           // walk itself was in flight.
-          if (!result || openDoc !== wanted) return;
+          if (!result || openDoc !== wanted || viewer !== mounted) return;
           rawOutline = result;
           applyPageOrder();
         })
@@ -3140,11 +3320,11 @@
       // whose outline cannot be read still gets its comments and the reverse.
       void firstPaint()
         .then(() => {
-          if (openDoc !== wanted) return null;
+          if (openDoc !== wanted || viewer !== mounted) return null;
           return call("document_comments", { doc: wanted });
         })
         .then((result) => {
-          if (!result || openDoc !== wanted) return;
+          if (!result || openDoc !== wanted || viewer !== mounted) return;
           // Both the panel that lists them and the viewer that makes the mark on
           // the page openable, and both through the translation --- see
           // `applyPageOrder`, which is also what re-runs this if a page is
@@ -3170,11 +3350,11 @@
       // same reason they do, and for nothing else.
       void firstPaint()
         .then(() => {
-          if (openDoc !== wanted) return null;
+          if (openDoc !== wanted || viewer !== mounted) return null;
           return call("document_links", { doc: wanted });
         })
         .then((result) => {
-          if (!result || openDoc !== wanted) return;
+          if (!result || openDoc !== wanted || viewer !== mounted) return;
           rawLinks = result.items;
           applyPageOrder();
           // A cut list is worth saying out loud, for the reason every bound in
@@ -3190,6 +3370,11 @@
           // would do about it, so this is not the `onError` contract.
         });
     } catch (e) {
+      if (acquired >= 0) {
+        tabs.remove(acquired);
+        void call("close_document", { doc: acquired }).catch(console.warn);
+        refreshTabs();
+      }
       if (replaced) {
         // Whatever half-built state got as far as existing. A viewer left alive
         // while `title` is empty runs its frame loop against a detached surface
@@ -3210,6 +3395,9 @@
         title = "";
         openPathName = "";
         openPageCount = 0;
+        openDoc = -1;
+        edits = null;
+        dirty = false;
       }
       // A document that was open last time and is not there now is not a
       // failure the reader caused, so the window simply comes up empty.
@@ -3237,7 +3425,7 @@
 
 <main>
   <header>
-    <button title="Open a PDF" onclick={pickAndOpen} disabled={opening || rasterCopyBusy}>Open</button>
+    <button title="Open a PDF" onclick={pickAndOpen} disabled={opening || rasterCopyBusy || documentBusy}>Open</button>
     {#if title}
       <button class="sidebar-toggle" aria-pressed={sidebarShown} title="Toggle sidebar" onclick={toggleSidebar}>Sidebar</button>
       <button title={toolState['file.save']?.title} disabled={!toolState['file.save']?.enabled}
@@ -3418,8 +3606,30 @@
     </div>
   {/if}
 
+  {#if tabRows.length}
+    <div class="document-tabs" role="tablist" aria-label="Open documents">
+      {#each tabRows as tab, index (tab.id)}
+        <div class="document-tab" class:active={tab.id === activeTab}>
+          <button id={`document-tab-${tab.id}`} role="tab"
+            aria-selected={tab.id === activeTab} aria-controls="document-panel"
+            tabindex={tab.id === activeTab ? 0 : -1}
+            title={tab.path} disabled={opening || documentBusy}
+            onclick={() => void activateTab(tab.id)} onkeydown={(event) => tabKey(event, tab.id)}>
+            <span class="tab-name">{tabLabels[index]}</span>
+            {#if tab.id === activeTab ? dirty : tab.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+          </button>
+          <button class="tab-close" title={`Close ${tabLabels[index]}`}
+            aria-label={`Close ${tabLabels[index]}`} disabled={opening || documentBusy}
+            onclick={() => void closeTab(tab.id)}>x</button>
+        </div>
+      {/each}
+      <button class="tab-open" title="Open PDFs in new tabs" aria-label="Open PDFs in new tabs"
+        disabled={opening || documentBusy} onclick={pickAndOpen}>+</button>
+    </div>
+  {/if}
   {#if title}
-    <div class="body">
+    <div class="body" id="document-panel" role="tabpanel" aria-labelledby={`document-tab-${activeTab}`}>
+
       <div class="panel" bind:this={sidebarHost}></div>
       <div class="surface" bind:this={surface}></div>
     </div>
@@ -3439,6 +3649,17 @@
 </main>
 
 <style>
+  .document-tabs { display:flex; flex-shrink:0; overflow-x:auto; gap:3px; padding:4px 8px 0; border-bottom:1px solid color-mix(in srgb, CanvasText 20%, transparent); }
+  .document-tab { display:flex; min-width:100px; max-width:240px; flex-shrink:0; border:1px solid transparent; border-radius:6px 6px 0 0; }
+  .document-tab.active { background:color-mix(in srgb, Highlight 12%, Canvas); border-color:color-mix(in srgb, Highlight 50%, Canvas); border-bottom:2px solid Highlight; }
+  .document-tab button { border:0; background:transparent; color:inherit; border-radius:4px; }
+  .document-tab [role="tab"] { display:flex; flex:1 1 auto; align-items:center; gap:6px; min-width:0; padding:6px 10px; }
+  .tab-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .document-tab [aria-label="Unsaved changes"] { flex:none; }
+  .document-tab .tab-close { padding:4px 8px; margin:3px; }
+  .document-tab .tab-close:hover { background:color-mix(in srgb, CanvasText 14%, transparent); }
+  .tab-open { align-self:center; flex-shrink:0; }
+
   :global(body) {
     margin: 0;
     background: Canvas;

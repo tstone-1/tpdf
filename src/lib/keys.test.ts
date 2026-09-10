@@ -108,7 +108,8 @@ describe("matches", () => {
         const accel = "accel" in binding ? binding.accel : false;
         const shift = "shift" in binding ? binding.shift : false;
         const alt = "alt" in binding ? binding.alt : false;
-        expect(matches(id, event(key, { accel, shift, alt })), `${id} / ${key}`).toBe(
+        const ctrl = "ctrl" in binding ? binding.ctrl : false;
+        expect(matches(id, event(key, { accel, shift, alt, ctrl })), `${id} / ${key}`).toBe(
           true,
         );
       }

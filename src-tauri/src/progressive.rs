@@ -36,7 +36,7 @@ use std::os::raw::{c_int, c_void};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use pdfium_render::prelude::*;
@@ -87,14 +87,50 @@ const RENDER_FLAGS: c_int = raw::FPDF_ANNOT | raw::FPDF_REVERSE_BYTE_ORDER;
 
 /// Bindings to the loaded PDFium library.
 ///
-/// `Pdfium` promotes its bindings into a global `OnceCell` on construction, and
-/// hands out `&'static` references to it, so a raw handle can be closed without
-/// having to carry the `Pdfium` that produced it.
+/// The process-wide engine owns these bindings for the lifetime of every raw handle.
 pub type Bindings = &'static dyn PdfiumLibraryBindings;
 
-/// Returns the process-wide bindings, given the `Pdfium` that installed them.
-pub fn bindings_of(pdfium: &'static Pdfium) -> Bindings {
-    pdfium.bindings()
+/// Owns both public interfaces to the same loaded PDFium library.
+///
+/// pdfium-render 0.9.4 made its bindings accessor private. Resolve a second
+/// function table through its public loader instead of borrowing private state.
+/// Both tables load the same library path; the OS shares that module. Pdfium::new
+/// alone initializes it, once. Neither table is released while handles exist.
+/// This adds no PDFium initialization and no concurrent rendering authority.
+pub struct BoundPdfium {
+    pdfium: Pdfium,
+    raw: Box<dyn PdfiumLibraryBindings>,
+}
+
+impl std::ops::Deref for BoundPdfium {
+    type Target = Pdfium;
+
+    fn deref(&self) -> &Pdfium {
+        &self.pdfium
+    }
+}
+
+/// Returns the raw interface retained beside the safe interface.
+pub fn bindings_of(pdfium: &'static BoundPdfium) -> Bindings {
+    pdfium.raw.as_ref()
+}
+
+/// Loads both interfaces before containment denies access to the library path.
+pub fn bind_library(path: &Path) -> Result<&'static BoundPdfium, String> {
+    static PDFIUM: OnceLock<BoundPdfium> = OnceLock::new();
+    if let Some(pdfium) = PDFIUM.get() {
+        return Ok(pdfium);
+    }
+    let load = || {
+        Pdfium::bind_to_library(path)
+            .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))
+    };
+    let safe = load()?;
+    let raw = load()?;
+    Ok(PDFIUM.get_or_init(|| BoundPdfium {
+        pdfium: Pdfium::new(safe),
+        raw,
+    }))
 }
 
 /// Loads PDFium from `library_dir`. In a worker, must run *before* the sandbox.
@@ -111,11 +147,9 @@ pub fn bindings_of(pdfium: &'static Pdfium) -> Bindings {
 /// # Errors
 ///
 /// The library being absent or unloadable at `library_dir`.
-pub fn bind(library_dir: &Path) -> Result<&'static Pdfium, String> {
+pub fn bind(library_dir: &Path) -> Result<&'static BoundPdfium, String> {
     let path = Pdfium::pdfium_platform_library_name_at_path(library_dir);
-    let bindings = Pdfium::bind_to_library(&path)
-        .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
-    Ok(Box::leak(Box::new(Pdfium::new(bindings))))
+    bind_library(&path)
 }
 
 /// How many loaded pages a document keeps alive at once.

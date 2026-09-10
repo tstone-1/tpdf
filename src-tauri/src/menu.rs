@@ -262,8 +262,6 @@ fn build<R: Runtime>(app: &AppHandle<R>, spec: &[SectionSpec]) -> Result<(), Str
         .item(&PredefinedMenuItem::maximize(app, None).map_err(why)?)
         .separator()
         .item(&PredefinedMenuItem::fullscreen(app, None).map_err(why)?)
-        .separator()
-        .item(&PredefinedMenuItem::close_window(app, None).map_err(why)?)
         .build()
         .map_err(why)?;
     menu = menu.item(&window);

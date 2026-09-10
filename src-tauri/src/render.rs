@@ -74,10 +74,8 @@
 use crate::document::OpenDocument;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-use pdfium_render::prelude::*;
 
 use crate::annots::Comments;
 use crate::docinfo::Properties;
@@ -1483,18 +1481,8 @@ impl Engine for InProcess {
 /// The binary must match the API version `pdfium-render` was built against ---
 /// `pdfium_latest` currently means chromium/7881. A newer Pdfium is not
 /// automatically compatible. See AGENTS.md.
-fn bind_pdfium(library_dir: &Path) -> Result<&'static Pdfium, String> {
-    static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
-
-    if let Some(p) = PDFIUM.get() {
-        return Ok(p);
-    }
-
-    let path = Pdfium::pdfium_platform_library_name_at_path(library_dir);
-    let bindings = Pdfium::bind_to_library(&path)
-        .map_err(|e| format!("could not load Pdfium from {}: {e}", path.display()))?;
-
-    Ok(PDFIUM.get_or_init(|| Pdfium::new(bindings)))
+fn bind_pdfium(library_dir: &Path) -> Result<&'static progressive::BoundPdfium, String> {
+    progressive::bind(library_dir)
 }
 
 /// Which region of a document to render, from the request naming it.

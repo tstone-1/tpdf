@@ -83,6 +83,12 @@ export interface AppActions {
   pageCount(): number;
   /** Ask for a file and open it. */
   openDocument(): void;
+  /** Close the active document, checking for unsaved work. */
+  closeDocument(): void;
+  /** Move through the open document tabs. */
+  nextDocument(delta: number): void;
+  /** Number of open document tabs. */
+  documentCount(): number;
   /** Open the current document's path again, keeping the reader's place. */
   reloadDocument(): void;
   /**
@@ -462,6 +468,27 @@ export function registerAppCommands(
   const withDocument = () => actions.viewer() !== null && available();
 
   registry.register(
+    {
+      id: "file.close",
+      title: "Close tab",
+      keys: label("file.close"),
+      enabled: withDocument,
+      run: () => actions.closeDocument(),
+    },
+    {
+      id: "view.nextTab",
+      title: "Next tab",
+      keys: label("view.nextTab"),
+      enabled: () => withDocument() && actions.documentCount() > 1,
+      run: () => actions.nextDocument(1),
+    },
+    {
+      id: "view.previousTab",
+      title: "Previous tab",
+      keys: label("view.previousTab"),
+      enabled: () => withDocument() && actions.documentCount() > 1,
+      run: () => actions.nextDocument(-1),
+    },
     {
       id: "file.open",
       title: "Open document",
@@ -1695,7 +1722,13 @@ export function handleWindowKey(
   const { actions } = deps;
   const title = deps.hasDocument();
 
-  if (matches("app.palette", event)) {
+  if (matches("file.close", event) && title) {
+    event.preventDefault();
+    if (!actions.busyOpening()) actions.closeDocument();
+  } else if (matches("view.nextTab", event) || matches("view.previousTab", event)) {
+    event.preventDefault();
+    if (!actions.busyOpening()) actions.nextDocument(event.shiftKey ? -1 : 1);
+  } else if (matches("app.palette", event)) {
     event.preventDefault();
     togglePalette(deps);
   } else if (matches("nav.goToPage", event) && title) {

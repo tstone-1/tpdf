@@ -17,6 +17,24 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.4] - 2026-09-10
+
+### Document tabs
+
+- Open several PDFs in one window, including multi-file selections and drops.
+  Opening a file already in a tab selects that tab.
+- Each tab keeps its edits, reading position, zoom, search and sidebar choice.
+  Switching tabs commits any open note field to the document it belongs to.
+- Close a tab with its close button or Ctrl+W / Cmd+W, and switch with Ctrl+Tab
+  or Ctrl+Shift+Tab. Closing a tab or quitting checks for unsaved changes.
+- Long filenames truncate inside the tab, leaving its close button visible.
+- Restart still restores the most recent document rather than the full tab list.
+- Updated compatible dependencies and migrated the test runner to Vitest 5.
+- Support pdfium-render 0.9.4 through its public library-loading API. The raw
+  renderer and safe comparison path retain separate bindings to the same engine.
+- Update the bundled PDFium engine to chromium/8044. Keep save validation and
+  signed-revision comparisons strict when parsing with lopdf 0.45.
+
 ## [26.9.3] - 2026-09-07
 
 ### Toolbar and redaction improvements

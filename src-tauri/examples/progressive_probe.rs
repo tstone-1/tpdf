@@ -110,7 +110,7 @@ fn main() {
     let args = parse_args();
 
     let path = Pdfium::pdfium_platform_library_name_at_path(&args.library_dir);
-    let bindings = match Pdfium::bind_to_library(&path) {
+    let bindings = match progressive::bind_library(&path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("[FAIL] could not load Pdfium from {}: {e}", path.display());
@@ -118,7 +118,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
+    let pdfium = bindings;
     let raw = progressive::bindings_of(pdfium);
 
     println!("file      {}", args.file.display());
