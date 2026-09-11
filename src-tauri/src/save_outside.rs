@@ -538,6 +538,7 @@ mod tests {
             redactions: vec![],
             notes: vec![],
             discards: vec![],
+            forms: Vec::new(),
         };
         let snapshot = super::raster_snapshot(&mut source, 18, &plan).unwrap();
         source.seek(SeekFrom::Start(0)).unwrap();

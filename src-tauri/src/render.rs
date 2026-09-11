@@ -461,6 +461,10 @@ pub(crate) enum Job {
         doc: u32,
         reply: Reply<Links>,
     },
+    Form {
+        doc: u32,
+        reply: Reply<crate::forms::Form>,
+    },
     Comments {
         doc: u32,
         reply: Reply<Comments>,
@@ -924,6 +928,11 @@ impl RenderService {
         }
     }
 
+    /// Reads form widgets after the first page is painted.
+    pub fn form(&self, doc: u32, reply: Reply<crate::forms::Form>) {
+        let _ = self.tx.send(Job::Form { doc, reply });
+    }
+
     /// Reads every comment in a document, invoking `reply` on a service thread.
     ///
     /// One job for the whole document rather than one per page, which is the
@@ -1129,6 +1138,7 @@ pub(crate) trait Engine {
         regions: &[[f32; 4]],
     ) -> Result<Vec<redact::RegionPlan>, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
+    fn form(&self, doc: u32) -> Result<crate::forms::Form, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
     fn links(&self, doc: u32) -> Result<Links, String>;
@@ -1200,6 +1210,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             reply,
         } => reply(engine.redaction_plans(doc, page, &regions)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
+        Job::Form { doc, reply } => reply(engine.form(doc)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
@@ -1236,6 +1247,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::CropBox { reply, .. } => reply(Err(error.to_string())),
             Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
+            Job::Form { reply, .. } => reply(Err(error.to_string())),
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Links { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
@@ -1421,6 +1433,10 @@ impl Engine for InProcess {
 
     fn outline(&self, doc: u32) -> Result<Outline, String> {
         Ok(run_outline(open_slot(&self.docs.borrow(), doc)?))
+    }
+
+    fn form(&self, doc: u32) -> Result<crate::forms::Form, String> {
+        open_slot(&self.docs.borrow(), doc)?.graph().form()
     }
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {

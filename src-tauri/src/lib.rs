@@ -24,6 +24,7 @@ pub mod encoding;
 pub mod failure;
 pub mod fields;
 pub mod fingerprint;
+pub mod forms;
 pub mod images;
 pub mod invert;
 #[cfg(target_os = "macos")]
@@ -806,6 +807,8 @@ pub fn run() {
             page_text,
             search_page,
             document_outline,
+            document_form,
+            form_fill,
             document_comments,
             document_links,
             open_web_link,
@@ -1151,6 +1154,7 @@ mod tests {
             redactions: Vec::new(),
             notes: Vec::new(),
             discards: Vec::new(),
+            forms: Vec::new(),
         }
     }
 

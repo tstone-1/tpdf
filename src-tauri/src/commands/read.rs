@@ -224,3 +224,36 @@ pub async fn document_mapping(
     service.mapping(doc, reply);
     await_reply("document_mapping", rx).await
 }
+
+/// Reads the form through the document worker; the coordinator parses no bytes.
+#[tauri::command]
+pub async fn document_form(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+) -> Result<crate::forms::Form, String> {
+    let (reply, rx) = reply_channel();
+    service.form(doc, reply);
+    await_reply("document_form", rx).await
+}
+
+/// Validates a shared field answer before recording it in the document journal.
+#[tauri::command]
+pub async fn form_fill(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, crate::edits::Edits>,
+    doc: u32,
+    object: (u32, u16),
+    value: crate::forms::Value,
+) -> Result<crate::edits::EditState, String> {
+    let (reply, rx) = reply_channel();
+    service.form(doc, reply);
+    let form: crate::forms::Form = await_reply("form_fill", rx).await?;
+    let widgets: Vec<_> = form.widgets.iter().filter(|w| w.object == object).collect();
+    if widgets.is_empty() {
+        return Err("This field is no longer available".into());
+    }
+    for widget in widgets {
+        crate::forms::validate(widget, &value)?;
+    }
+    edits.fill(doc, object, value)
+}

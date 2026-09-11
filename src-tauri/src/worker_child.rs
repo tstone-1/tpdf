@@ -599,6 +599,10 @@ fn handle(
             }
         }
         Request::Outline => Response::reply(Reply::Outline(render::run_outline(document))),
+        Request::Form => match document.graph().form() {
+            Ok(form) => Response::reply(Reply::Form(form)),
+            Err(error) => Response::err(error),
+        },
         Request::Comments => match render::run_comments(document) {
             Ok(comments) => Response::reply(Reply::Comments(comments)),
             Err(e) => Response::err(e),

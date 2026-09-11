@@ -450,6 +450,9 @@ fn channel(value: f32) -> f32 {
 /// an answer, and the only way for it to be wrong is to be stale.
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct EditState {
+    /// Pending form answers, shared by all widgets of each field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forms: Vec<crate::forms::Change>,
     /// The live pages, in reading order.
     pub pages: Vec<PageView>,
     pub can_undo: bool,
@@ -1381,6 +1384,22 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Journals an answer already checked against a worker's field description.
+    pub fn fill(
+        &self,
+        doc: u32,
+        object: (u32, u16),
+        value: crate::forms::Value,
+    ) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .fill(ObjectId::new(object.0, object.1), value)
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Steps back one command.
     ///
     /// Returns the state either way. A reader pressing undo with nothing to undo
@@ -1436,6 +1455,7 @@ impl Edits {
         let model = &open.model;
         let pages = snapshot(model).pages;
         Ok(Plan {
+            forms: model.form_changes(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -1575,6 +1595,7 @@ impl Edits {
         // file, which reads as the deletion having silently failed.
         let discards = planned_discards(model, &pages);
         Ok(Plan {
+            forms: model.form_changes(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -1699,6 +1720,9 @@ fn planned_discards(model: &Doc, pages: &[PageView]) -> Vec<PlannedDiscard> {
 /// kept out of five from a five-page document that lost two under it.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Plan {
+    /// Answers to write with explicit appearances in the sandbox.
+    #[serde(default)]
+    pub forms: Vec<crate::forms::Change>,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -1993,6 +2017,9 @@ impl Plan {
         // leaving it out would let the print path hand over the original bytes
         // for a document the reader has highlighted --- which prints, correctly
         // and confusingly, without the highlights.
+        if !self.forms.is_empty() {
+            return false;
+        }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
     }
 
@@ -2013,6 +2040,9 @@ impl Plan {
     /// is a thing that has already happened here once.
     #[must_use]
     pub fn is_appendable(&self) -> bool {
+        if !self.forms.is_empty() {
+            return false;
+        }
         // **Renamed from `only_adds_marks` when note edits landed, and the name
         // is the lesson.** It asked "does this plan only add marks", which was
         // the same question as "can this be an append" for exactly as long as
@@ -2336,6 +2366,7 @@ fn snapshot(model: &Doc) -> EditState {
 
     let (applied, _) = model.depth();
     EditState {
+        forms: model.form_changes(),
         pages,
         marks,
         redactions,

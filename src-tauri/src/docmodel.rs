@@ -1036,6 +1036,8 @@ pub struct Page {
 /// A page operation. Every variant addresses pages by identity.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Command {
+    /// Replace a shared form field answer, by immutable version.
+    Fill { object: ObjectId, version: u32 },
     /// Turn a page by `turns` quarter turns clockwise; negative turns the other
     /// way. Relative rather than absolute so that undo of a turn is the turn
     /// back, and so that two turns of the same page compose the way a reader
@@ -1217,7 +1219,8 @@ impl Command {
             | Command::Renote { .. }
             | Command::Reink { .. }
             | Command::Recolor { .. }
-            | Command::Unredact { .. } => None,
+            | Command::Unredact { .. }
+            | Command::Fill { .. } => None,
         }
     }
 }
@@ -1376,6 +1379,7 @@ pub enum Refusal {
 /// Baseline plus the commands applied so far, materialized.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Working {
+    forms: BTreeMap<ObjectId, u32>,
     order: Vec<PageId>,
     pages: HashMap<PageId, Page>,
     /// Ids that were live and are not. Carries no state: undo rebuilds a deleted
@@ -1492,6 +1496,7 @@ impl Working {
             })
             .collect();
         Working {
+            forms: BTreeMap::new(),
             order: ids,
             pages: table,
             graves: HashSet::new(),
@@ -1740,6 +1745,9 @@ impl Working {
     /// by each arm remembering to unwind.
     fn apply(&mut self, cmd: Command) -> Result<(), Refusal> {
         match cmd {
+            Command::Fill { object, version } => {
+                self.forms.insert(object, version);
+            }
             Command::Rotate { page, turns } => {
                 self.live(page)?;
                 let p = self.pages.get_mut(&page).expect("checked live");
@@ -2005,6 +2013,8 @@ struct Entry {
 /// A document being edited: baseline, working view, journal and cursor.
 #[derive(Clone, Debug)]
 pub struct Doc {
+    forms: HashMap<u32, crate::forms::Value>,
+    next_form: u32,
     baseline: u32,
     now: Working,
     journal: Vec<Entry>,
@@ -2079,6 +2089,8 @@ impl Doc {
     /// Opens a document of `pages` baseline pages with an empty journal.
     pub fn open(pages: u32) -> Doc {
         Doc {
+            forms: HashMap::new(),
+            next_form: 1,
             baseline: pages,
             now: Working::baseline(pages),
             journal: Vec::new(),
@@ -2098,6 +2110,26 @@ impl Doc {
             rewrites: HashMap::new(),
             next_rewrite: 1,
         }
+    }
+
+    /// Records one answer as one undoable edit.
+    pub fn fill(&mut self, object: ObjectId, value: crate::forms::Value) -> Result<(), Refusal> {
+        let version = self.next_form;
+        self.next_form += 1;
+        self.forms.insert(version, value);
+        self.apply(Command::Fill { object, version })
+    }
+
+    /// Current shared-field answers, rebuilt by undo and redo.
+    pub fn form_changes(&self) -> Vec<crate::forms::Change> {
+        self.now
+            .forms
+            .iter()
+            .map(|(id, version)| crate::forms::Change {
+                object: (id.number(), id.generation()),
+                value: self.forms[version].clone(),
+            })
+            .collect()
     }
 
     /// What renders.
@@ -2817,6 +2849,7 @@ impl Doc {
         // and the ids are never re-issued, so nothing else would ever notice.
         for discarded in &self.journal[self.cursor..] {
             match discarded.cmd {
+                Command::Fill { version, .. } => { self.forms.remove(&version); }
                 Command::Annotate { mark, note, .. } => {
                     self.marks.remove(&mark);
                     self.notes.remove(&note);

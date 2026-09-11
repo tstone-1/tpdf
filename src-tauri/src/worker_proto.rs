@@ -146,6 +146,8 @@ pub enum Request {
     RedactPlans { page: u32, regions: Vec<[f32; 4]> },
     /// Read the document's outline.
     Outline,
+    /// Read editable form widgets after first paint.
+    Form,
     /// Read every comment in the document.
     ///
     /// Document-level and lazy, like [`Request::Mapping`] and for the same two
@@ -443,6 +445,8 @@ pub enum Reply {
     RedactPlans(Vec<crate::redact::RegionPlan>),
     /// The document's bookmarks.
     Outline(crate::outline::Outline),
+    /// Form controls and their shared field answers.
+    Form(crate::forms::Form),
     /// Every annotation a reader can be shown.
     Comments(crate::annots::Comments),
     /// Every link, with the destination each resolves to.
@@ -739,6 +743,7 @@ mod tests {
             ("RedactPlans", "redaction_plans"),
             ("Outline", "outline"),
             ("Comments", "comments"),
+            ("Form", "form"),
             ("Links", "links"),
             ("Mapping", "mapping"),
             ("Properties", "properties"),
@@ -957,6 +962,7 @@ mod tests {
                 regions: vec![[10.0, 20.0, 300.0, 400.0], [0.0, 0.0, 1.0, 1.0]],
             },
             Request::Outline,
+            Request::Form,
             Request::Comments,
             Request::Links,
         ] {
@@ -1024,6 +1030,7 @@ mod tests {
                 top: 0.0,
             }),
             Reply::Outline(crate::outline::Outline::default()),
+            Reply::Form(crate::forms::Form::default()),
             Reply::Comments(crate::annots::Comments::default()),
             Reply::Links(crate::links::Links {
                 items: Vec::new(),
@@ -1072,6 +1079,7 @@ mod tests {
                 | Reply::RedactPlans(_)
                 | Reply::Geometry(_)
                 | Reply::Outline(_)
+                | Reply::Form(_)
                 | Reply::Comments(_)
                 | Reply::Links(_)
                 | Reply::Mapping(_)

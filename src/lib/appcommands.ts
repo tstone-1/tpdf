@@ -71,6 +71,8 @@ const STAMP_TITLES: Record<StampName, string> = {
  * component behind it would make the seam untestable again.
  */
 export interface AppActions {
+  /** Focus an editable form field on its page. */
+  fillForm: () => void;
   /**
    * The open document's surface, or null.
    *
@@ -1107,6 +1109,12 @@ export function registerAppCommands(
       title: "Remove this redaction",
       enabled: () => withDocument() && actions.hasPickedRedaction(),
       run: () => actions.removeRedaction(),
+    },
+    {
+      id: "edit.fillForm",
+      title: "Fill form",
+      enabled: withDocument,
+      run: () => actions.fillForm(),
     },
     {
       // **Crop by dragging.** The one page operation only the reader can decide:

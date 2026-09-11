@@ -79,6 +79,8 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation("forms: lose an unchecked value", "src/lib/forms.ts", "?.value ?? widget.value", "?.value || widget.value", "does not confuse an unchecked checkbox with an absent answer"),
+    Mutation("forms: ignore a read-only field", "src/lib/forms.ts", "  if (widget.reason) return widget.reason;", "  if (false) return widget.reason;", "accepts supported text and refuses loss, wrong types and field restrictions"),
     Mutation(
         "toolbar: ignore command enablement",
         "src/lib/toolbar.ts",
@@ -4299,7 +4301,7 @@ MUTATIONS += [
         # anything can go red about it.
         "release-notes: call a shipped command unbuilt",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.insertPages edit.fillForm edit.editText -->",
+        "          <!-- not-built: edit.insertPages edit.signDocument edit.editText -->",
         "          <!-- not-built: edit.insertPages edit.fillForm file.redactCopy -->",
         "calls nothing unbuilt that the application registers",
     ),
@@ -4319,8 +4321,8 @@ MUTATIONS += [
         # nothing, which is also the only shape this can fail as.
         "release-notes: claim something the README does not",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.insertPages edit.fillForm edit.editText -->",
-        "          <!-- not-built: edit.insertPages edit.fillForm edit.editTextBox -->",
+        "          <!-- not-built: edit.insertPages edit.signDocument edit.editText -->",
+        "          <!-- not-built: edit.insertPages edit.signDocument edit.editTextBox -->",
         "agrees with the README about what is not built",
     ),
     Mutation(
@@ -4380,7 +4382,7 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Forms and visual signatures. Signatures are read, never made.",
+        "- Visual signatures. Signatures are read, never made.",
         "- Forms <!-- built: file.print --> and visual signatures. Signatures are read, never made.",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
@@ -5108,6 +5110,7 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    "src/lib/forms.test.ts",
     "src/lib/documenttabs.test.ts",
     "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",

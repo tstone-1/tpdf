@@ -4600,6 +4600,24 @@ export class Viewer {
           : "";
   }
 
+  /** A file widget placed through the same mapping as comments and links. */
+  showForm(widget: import("./forms").FormWidget): void {
+    const slot = this.pages.slotOf(widget.page);
+    if (slot !== undefined) this.goToDestination(slot, widget.display_rect[1]);
+  }
+
+  /** Places a field under current crop and rotation. */
+  formAnchor(widget: import("./forms").FormWidget): (Anchor & { clip: string; scale: number }) | null {
+    const slot = this.pages.slotOf(widget.page);
+    if (slot === undefined) return null;
+    const box = this.viewRectOn(slot, widget.display_rect);
+    const origin = this.scroller.pageOrigin(slot);
+    const size = this.laidSize(slot);
+    if (box.right <= 0 || box.bottom <= 0 || box.left >= size.width || box.top >= size.height) return null;
+    const clip = [Math.max(0, -box.top), Math.max(0, box.right - size.width), Math.max(0, box.bottom - size.height), Math.max(0, -box.left)].map((value) => `${value * this.zoom}px`).join(" ");
+    return { scale: this.zoom, clip: `inset(${clip})`, left: origin.left + box.left * this.zoom, top: origin.top + box.top * this.zoom - this.scrollTop, right: origin.left + box.right * this.zoom, bottom: origin.top + box.bottom * this.zoom - this.scrollTop };
+  }
+
   /**
    * Where one of the reader's own marks is on screen, or `null`.
    *

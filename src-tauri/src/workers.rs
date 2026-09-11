@@ -1907,6 +1907,13 @@ impl Engine for Workers {
         }
     }
 
+    fn form(&self, doc: u32) -> Result<crate::forms::Form, String> {
+        match self.ask(doc, &Request::Form)? {
+            Reply::Form(form) => Ok(form),
+            other => Err(mismatched("form", &other)),
+        }
+    }
+
     fn comments(&self, doc: u32) -> Result<Comments, String> {
         match self.ask(doc, &Request::Comments)? {
             Reply::Comments(comments) => Ok(comments),

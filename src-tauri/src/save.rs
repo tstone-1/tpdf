@@ -3401,6 +3401,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // leaves out anything on a page the *plan* does not carry, so this only
     // reaches a page that is being kept -- unless the reader deleted it in the
     // same breath, which is the case this ordering forgives.
+    crate::forms::write(&mut doc, &plan.forms)?;
     rewrite_note_edits(&mut doc, &plan.notes)?;
 
     // **Beside the note edits, and above `materialise` for their reason.** A

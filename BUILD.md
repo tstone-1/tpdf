@@ -78,6 +78,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-p
 cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-probe -- \
     testdata/form.pdf --mode identity --slices 0
 
+# AcroForm editing: synthetic shared fields, saved appearances and the real UI.
+# Use a scratch directory; the application check edits only its own copies.
+TPDF_FORM_FIXTURE=/tmp/tpdf-form-fixture.pdf TPDF_FORM_PROBE=/tmp/tpdf-filled-form.pdf \
+    cargo test --locked --manifest-path src-tauri/Cargo.toml --lib forms::tests::forms_round_trip_values_and_every_shared_widget_appearance
+uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-form-fixture.pdf --phase forms
+# macOS independent reader; the optional directory receives page PNGs.
+swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
+
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.

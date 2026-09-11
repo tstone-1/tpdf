@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FormLayer } from "./lib/forms";
   import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DocumentTabs, DocumentTasks, type DocumentTab } from "./lib/documenttabs";
@@ -130,16 +131,21 @@
   let offers = $state<Offer[]>([]);
   let opening = $state(false);
   let documentBusy = $state(false);
-  const documentTasks = new DocumentTasks((busy) => { documentBusy = busy; });
+  const documentTasks = new DocumentTasks((busy) => {
+    documentBusy = busy;
+    formLayer?.setBusy(busy);
+  });
   const tabs = new DocumentTabs<DocumentTab>();
   let tabRows = $state<{ id: number; path: string; dirty: boolean }[]>([]);
   let activeTab = $state(-1);
   const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
   let committingPopup = false;
+  let formLayer: FormLayer | null = null;
 
   function commitPopups(): void {
     committingPopup = true;
     try {
+      formLayer?.commit();
       viewer?.closeMark();
       viewer?.closeComment();
     } finally { committingPopup = false; }
@@ -159,6 +165,7 @@
   async function settleDocument(): Promise<void> {
     commitPopups();
     await pendingEdit;
+    await formLayer?.settle();
     notePlace();
     places.flush();
   }
@@ -211,6 +218,8 @@
 
   function clearActiveDocument(): void {
     clearTimeout(findTimer);
+    formLayer?.destroy();
+    formLayer = null;
     viewer?.destroy();
     sidebar?.destroy();
     viewer = null;
@@ -559,6 +568,7 @@
    */
   const appActions: AppActions = {
     viewer: () => viewer,
+    fillForm: () => formLayer?.focus(),
     pageCount: () => status?.pageCount ?? 0,
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => reloadDocument(),
@@ -1174,6 +1184,7 @@
         sidebar?.thumbnails?.setPages(after.pages.length);
       }
       viewer?.setMarks(after.marks);
+      formLayer?.update(after);
       // The pending redactions arrive on the same reply and are pushed the same
       // way. Not through `setMarks`: they are a separate list for the reason
       // `docmodel.rs` states, and one setter taking both would be the first
@@ -1438,6 +1449,7 @@
       if (!edits || !openPathName || !viewer) return;
       commitPopups();
       await pendingEdit;
+      await formLayer?.settle();
       const path = openPathName;
       const place = currentPlace(false);
       try {
@@ -1576,6 +1588,7 @@
       refreshMenu();
       try {
         await pendingEdit;
+        await formLayer?.settle();
         const proceed = await confirmDialog(
           "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
           {
@@ -1661,6 +1674,7 @@
       if (!edits || !openPathName || !viewer) return;
       commitPopups();
       await pendingEdit;
+      await formLayer?.settle();
       const path = openPathName;
       const place = currentPlace(false);
       say(null);
@@ -2699,7 +2713,7 @@
           activate: activateTab,
           close: closeTab,
           run: (id) => { commands.run(id); },
-          idle: () => documentTasks.idle(),
+          idle: async () => { await pendingEdit; await formLayer?.settle(); await documentTasks.idle(); await tick(); },
         })
       )
         return;
@@ -2882,6 +2896,8 @@
       // field no longer shows, because `query` is cleared below.
       clearTimeout(findTimer);
       replaced = true;
+      formLayer?.destroy();
+      formLayer = null;
       viewer?.destroy();
       openDoc = doc.id;
       viewer = null;
@@ -3188,6 +3204,7 @@
         onNavigate: () => refreshMenu(),
         onStatus: (next) => {
           status = next;
+          formLayer?.layout();
           // Here rather than in a `$derived`, because this is the only moment
           // the coverage actually changes, and the gate wants one reading of
           // the clock per change rather than one per render.
@@ -3290,6 +3307,17 @@
       // dropped exactly as it was before.
       const wanted = doc.id;
       const mounted = viewer;
+      void firstPaint().then(() => {
+        if (openDoc !== wanted || viewer !== mounted) return null;
+        return call("document_form", { doc: wanted });
+      }).then((form) => {
+        if (!form || !surface || openDoc !== wanted || viewer !== mounted) return;
+        formLayer = new FormLayer(surface, form, (widget) => mounted.formAnchor(widget),
+          (object, value) => applyEdit((model) => model.fill(object, value)),
+          (widget) => mounted.showForm(widget), say);
+        if (edits) formLayer.update(edits.state);
+        formLayer.setBusy(documentBusy);
+      }).catch((error) => { if (openDoc === wanted && viewer === mounted) say(String(error)); });
       void firstPaint()
         .then(() => {
           // Checked before asking as well as after. The wait is up to a second
@@ -3380,6 +3408,8 @@
         // while `title` is empty runs its frame loop against a detached surface
         // and keeps writing `status`, which the header renders --- a page count
         // and a zoom for a document with no body under them.
+        formLayer?.destroy();
+        formLayer = null;
         viewer?.destroy();
         viewer = null;
         sidebar?.destroy();

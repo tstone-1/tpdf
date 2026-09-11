@@ -342,6 +342,8 @@ export interface Commands {
     reply: PageMatches;
   };
   document_outline: { args: { doc: number }; reply: Outline };
+  document_form: { args: { doc: number }; reply: import("./forms").Form };
+  form_fill: { args: { doc: number; object: [number, number]; value: string | boolean }; reply: EditState };
   document_comments: { args: { doc: number }; reply: Comments };
   document_links: { args: { doc: number }; reply: Links };
   /**

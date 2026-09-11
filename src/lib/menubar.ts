@@ -143,6 +143,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     items: [
       "edit.undo",
       "edit.redo",
+      "edit.fillForm",
       SEPARATOR,
       "edit.copy",
       SEPARATOR,

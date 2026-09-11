@@ -160,6 +160,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -184,6 +185,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -3473,6 +3475,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: vec![PlannedMark {
             kind,
             // The biconditional the model enforces, restated here because
@@ -3566,6 +3569,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
             made: "D:20260829120000Z".into(),
         }],
         discards: Vec::new(),
+        forms: Vec::new(),
     };
     assert!(
         plan.is_appendable(),
@@ -6803,6 +6807,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6856,6 +6861,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6914,6 +6920,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plain.is_identity());
@@ -6949,6 +6956,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
@@ -9593,5 +9601,118 @@ fn a_strikeout_crosses_the_text_and_an_underline_sits_under_it() {
     assert!(
         (through - 683.0).abs() < 1.0,
         "strikeout sits at {through}, not near the middle"
+    );
+}
+
+#[test]
+fn form_answers_force_a_rewrite_and_reach_the_saved_file() {
+    let (mut document, field, check) = crate::forms::tests::fixture();
+    let mut original = Vec::new();
+    document.save_to(&mut original).unwrap();
+    let mut plan = plan_of(&[0, 0]);
+    plan.forms = vec![
+        crate::forms::Change {
+            object: field,
+            value: crate::forms::Value::Text("saved answer".into()),
+        },
+        crate::forms::Change {
+            object: check,
+            value: crate::forms::Value::Checked(true),
+        },
+    ];
+    assert!(!plan.is_identity());
+    assert!(!plan.is_appendable());
+    let written = rewrite_update(&original, &plan, Job::Save, None).unwrap();
+    let saved = lopdf::Document::load_mem(&written).unwrap();
+    let form = crate::forms::scan(&saved).unwrap();
+    assert_eq!(
+        form.widgets
+            .iter()
+            .filter(|w| w.value == crate::forms::Value::Text("saved answer".into()))
+            .count(),
+        2
+    );
+    assert!(form
+        .widgets
+        .iter()
+        .any(|w| w.value == crate::forms::Value::Checked(true)));
+    let mut marked = plan_of_kind(
+        MarkKind::Highlight,
+        vec![crate::docmodel::Quad {
+            left: 20.0,
+            top: 20.0,
+            right: 80.0,
+            bottom: 35.0,
+        }],
+    );
+    marked.forms = plan.forms;
+    assert!(
+        !marked.is_appendable(),
+        "a form answer alongside a mark must not be lost in an append"
+    );
+}
+
+#[test]
+fn a_form_answer_for_an_unknown_field_is_refused() {
+    let (mut document, field, _) = crate::forms::tests::fixture();
+    let mut original = Vec::new();
+    document.save_to(&mut original).unwrap();
+    let mut plan = plan_of(&[0, 0]);
+    plan.forms = vec![crate::forms::Change {
+        object: field,
+        value: crate::forms::Value::Text("encrypted answer".into()),
+    }];
+    // A stale or forged field id must not turn into a successful no-op.
+    plan.forms[0].object = (999999, 0);
+    assert!(rewrite_update(&original, &plan, Job::Save, None).is_err());
+}
+
+#[test]
+fn a_filled_form_rewrite_keeps_the_password_and_values() {
+    let (mut document, field, _) = crate::forms::tests::fixture();
+    document.trailer.set(
+        "ID",
+        vec![
+            Object::string_literal("synthetic-form-id"),
+            Object::string_literal("synthetic-form-id"),
+        ],
+    );
+    let encryption = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+        document: &document,
+        owner_password: "synthetic-owner",
+        user_password: "synthetic-reader",
+        key_length: 128,
+        permissions: lopdf::Permissions::default(),
+    })
+    .unwrap();
+    document.encrypt(&encryption).unwrap();
+    let mut original = Vec::new();
+    document.save_to(&mut original).unwrap();
+    let mut plan = plan_of(&[0, 0]);
+    plan.forms = vec![crate::forms::Change {
+        object: field,
+        value: crate::forms::Value::Text("encrypted answer".into()),
+    }];
+    let written = rewrite_update(&original, &plan, Job::Save, Some("synthetic-reader")).unwrap();
+    let mut saved = lopdf::Document::load_mem(&written).unwrap();
+    assert!(saved.is_encrypted());
+    assert!(saved.decrypt("wrong-password").is_err());
+    let saved = lopdf::Document::load_mem_with_options(
+        &written,
+        lopdf::LoadOptions {
+            password: Some("synthetic-reader".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(!saved.is_encrypted());
+    assert_eq!(
+        crate::forms::scan(&saved)
+            .unwrap()
+            .widgets
+            .iter()
+            .filter(|w| w.value == crate::forms::Value::Text("encrypted answer".into()))
+            .count(),
+        2
     );
 }

@@ -178,6 +178,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         }],
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
     };
     save::write_copy(file, &plan, &out, None, &save::Here).map_err(|e| e.message)?;
 

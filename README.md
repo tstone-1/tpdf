@@ -89,6 +89,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 ## What it edits today
 
+- **Fill PDF forms** by clicking text fields or checkboxes. Tab moves between fields;
+  **Fill form** in the command palette focuses the first field. Answers support undo
+  and save with explicit appearances, including shared fields. This first version
+  supports plain text with Western European characters; unsupported controls and
+  read-only fields remain unchanged. JavaScript and XFA are not supported.
+  <!-- built: edit.fillForm -->
+
+
 - **Turn a page in the document**, not only in the view --- with undo and redo, and a
   history that survives any number of turns because it is replayed rather than reversed.
   <!-- built: edit.rotatePageClockwise edit.rotatePageCounterClockwise edit.undo edit.redo -->
@@ -345,8 +353,8 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Forms and visual signatures. Signatures are read, never made.
-  <!-- not-built: edit.fillForm edit.signDocument -->
+- Visual signatures. Signatures are read, never made.
+  <!-- not-built: edit.signDocument -->
 - In-place text editing
   <!-- not-built: edit.editText -->
 
