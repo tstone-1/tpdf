@@ -3483,6 +3483,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
             // empty border, which is a box, so a test written for a stamp
             // would be measuring the wrong kind.
             stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+            image: None,
             reply_to: None,
             at: 0,
             quads,
@@ -3971,6 +3972,7 @@ fn a_mark_on_a_page_tpdf_made_is_written_onto_that_page() {
     plan.marks = vec![PlannedMark {
         kind: MarkKind::Highlight,
         stamp: None,
+        image: None,
         reply_to: None,
         at: 2,
         quads: vec![crate::docmodel::Quad {
@@ -4133,6 +4135,7 @@ fn a_reply_is_written_as_one_and_reads_back_as_one() {
         }],
         strokes: Vec::new(),
         stamp: None,
+        image: None,
         reply_to: Some((annot.0, annot.1)),
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
@@ -4215,6 +4218,7 @@ fn a_comment_that_answers_nothing_is_threaded_under_nobody() {
         }],
         strokes: Vec::new(),
         stamp: None,
+        image: None,
         reply_to: None,
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
@@ -4265,6 +4269,7 @@ fn a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths()
         }],
         strokes: Vec::new(),
         stamp: None,
+        image: None,
         reply_to: Some((object.0, object.1)),
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
@@ -4401,6 +4406,7 @@ fn appendable_with(
     plan.marks = vec![PlannedMark {
         kind: MarkKind::Highlight,
         stamp: None,
+        image: None,
         reply_to: None,
         at: 0,
         quads: one_quad(),
@@ -6811,6 +6817,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            image: None,
             reply_to: None,
             at: 0,
             quads: one_quad(),
@@ -6865,6 +6872,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            image: None,
             reply_to: None,
             at: 2,
             quads: one_quad(),
@@ -9027,6 +9035,7 @@ fn one_mark_over(pages: usize, kind: MarkKind, quad: crate::docmodel::Quad) -> P
     plan.marks.push(PlannedMark {
         kind,
         stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+        image: None,
         reply_to: None,
         at: 0,
         quads: vec![quad],
@@ -9051,6 +9060,122 @@ fn readers_box() -> crate::docmodel::Quad {
         top: 100.0,
         right: 372.0,
         bottom: 140.0,
+    }
+}
+
+#[test]
+fn signature_pixels_alpha_and_placement_survive_append_and_rewrite() {
+    let image = std::sync::Arc::new(crate::signature::Image {
+        width: 2,
+        height: 2,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0],
+    });
+    for turns in 0..4 {
+        let (mut source, _, _) = crate::forms::tests::fixture();
+        let page = ordered_pages(&source)[0];
+        source
+            .get_dictionary_mut(page)
+            .unwrap()
+            .set("MediaBox", vec![0.into(), 0.into(), 400.into(), 500.into()]);
+        source
+            .get_dictionary_mut(page)
+            .unwrap()
+            .set("Rotate", turns * 90);
+        source.get_dictionary_mut(page).unwrap().set(
+            "CropBox",
+            vec![10.into(), 20.into(), 390.into(), 480.into()],
+        );
+        let mut original = Vec::new();
+        source.save_to(&mut original).unwrap();
+        let mut plan = one_mark_over(
+            2,
+            MarkKind::Signature,
+            crate::docmodel::Quad {
+                left: 40.0,
+                top: 40.0,
+                right: 200.0,
+                bottom: 200.0,
+            },
+        );
+        plan.marks[0].image = Some(image.clone());
+        let update = append_update(original.clone(), &plan, None).unwrap();
+        let mut appended = original.clone();
+        appended.extend_from_slice(&update.update);
+        let rewritten = rewrite_update(&original, &plan, Job::Save, None).unwrap();
+        for bytes in [&appended, &rewritten] {
+            let doc = Document::load_mem(bytes).unwrap();
+            let page = ordered_pages(&doc)[0];
+            let annotations = doc.get_dictionary(page).unwrap().get(b"Annots").unwrap();
+            let annotations = doc.dereference(annotations).unwrap().1.as_array().unwrap();
+            let stamp = annotations
+                .iter()
+                .map(|o| doc.dereference(o).unwrap().1.as_dict().unwrap())
+                .find(|d| d.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Stamp"))
+                .unwrap();
+            let ap = stamp
+                .get(b"AP")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"N")
+                .unwrap();
+            let ap = doc.dereference(ap).unwrap().1.as_stream().unwrap();
+            let raster = ap
+                .dict
+                .get(b"Resources")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"XObject")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"Signature")
+                .unwrap();
+            let raster = doc.dereference(raster).unwrap().1.as_stream().unwrap();
+            assert_eq!(
+                raster.decompressed_content().unwrap(),
+                vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0]
+            );
+            let alpha = doc
+                .dereference(raster.dict.get(b"SMask").unwrap())
+                .unwrap()
+                .1
+                .as_stream()
+                .unwrap();
+            assert_eq!(
+                alpha.decompressed_content().unwrap(),
+                vec![255, 255, 255, 0]
+            );
+            assert!(String::from_utf8(ap.content.clone())
+                .unwrap()
+                .contains("/Signature Do"));
+        }
+        if let Ok(path) = std::env::var("TPDF_SIGNATURE_PROBE") {
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(
+                Path::new(&path).join(format!("signature-source-{turns}.pdf")),
+                &original,
+            )
+            .unwrap();
+            std::fs::write(
+                Path::new(&path).join(format!("signature-{turns}.pdf")),
+                &rewritten,
+            )
+            .unwrap();
+            std::fs::write(
+                Path::new(&path).join(format!("signature-append-{turns}.pdf")),
+                &appended,
+            )
+            .unwrap();
+        }
+        let mut broken = plan.clone();
+        broken.marks[0].image = Some(std::sync::Arc::new(crate::signature::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![255],
+        }));
+        assert!(rewrite_update(&original, &broken, Job::Save, None).is_err());
     }
 }
 
@@ -9606,7 +9731,20 @@ fn a_strikeout_crosses_the_text_and_an_underline_sits_under_it() {
 
 #[test]
 fn form_answers_force_a_rewrite_and_reach_the_saved_file() {
-    let (mut document, field, check) = crate::forms::tests::fixture();
+    let (mut document, radio, combo, list) = crate::forms::tests::mixed_fixture();
+    let fields = crate::forms::scan(&document).unwrap();
+    let field = fields
+        .widgets
+        .iter()
+        .find(|w| w.name == "ACME.answer")
+        .unwrap()
+        .object;
+    let check = fields
+        .widgets
+        .iter()
+        .find(|w| w.name == "consent")
+        .unwrap()
+        .object;
     let mut original = Vec::new();
     document.save_to(&mut original).unwrap();
     let mut plan = plan_of(&[0, 0]);
@@ -9619,12 +9757,38 @@ fn form_answers_force_a_rewrite_and_reach_the_saved_file() {
             object: check,
             value: crate::forms::Value::Checked(true),
         },
+        crate::forms::Change {
+            object: radio,
+            value: crate::forms::Value::Selection(vec![1]),
+        },
+        crate::forms::Change {
+            object: combo,
+            value: crate::forms::Value::Selection(vec![1]),
+        },
+        crate::forms::Change {
+            object: list,
+            value: crate::forms::Value::Selection(vec![0, 2]),
+        },
     ];
     assert!(!plan.is_identity());
     assert!(!plan.is_appendable());
     let written = rewrite_update(&original, &plan, Job::Save, None).unwrap();
     let saved = lopdf::Document::load_mem(&written).unwrap();
     let form = crate::forms::scan(&saved).unwrap();
+    for (name, selected) in [
+        ("delivery", vec![1]),
+        ("delivery_choice", vec![1]),
+        ("items", vec![0, 2]),
+    ] {
+        let widgets: Vec<_> = form.widgets.iter().filter(|w| w.name == name).collect();
+        assert!(!widgets.is_empty());
+        for widget in widgets {
+            assert_eq!(
+                widget.value,
+                crate::forms::Value::Selection(selected.clone())
+            );
+        }
+    }
     assert_eq!(
         form.widgets
             .iter()

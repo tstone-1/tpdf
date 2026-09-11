@@ -169,6 +169,9 @@ pub struct MarkView {
     /// is and this says what it says. A stamp with no name would be an empty
     /// border, and an empty border is a box.
     pub stamp: Option<StampName>,
+    /// Normalized signature pixels, shared by journal snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<std::sync::Arc<crate::signature::Image>>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     /// How thick this mark's ink is, in points.
@@ -342,6 +345,9 @@ pub struct NewMark {
     /// The model refuses the two ways this can disagree with `kind`.
     #[serde(default)]
     pub stamp: Option<StampName>,
+    /// Normalized signature pixels, shared by journal snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<std::sync::Arc<crate::signature::Image>>,
     /// The comment this one answers, as `[number, generation]`, when it is a
     /// reply.
     ///
@@ -939,6 +945,11 @@ impl Edits {
         {
             return Err(format!("a mark cannot have a corner at {bad}"));
         }
+        if let Some(image) = &want.image {
+            if !image.valid() {
+                return Err("The signature image is empty, invalid or too large".into());
+            }
+        }
         too_long(&want.note)?;
         let strokes: Vec<Stroke> = want
             .strokes
@@ -982,6 +993,7 @@ impl Edits {
                     quads,
                     strokes,
                     stamp: want.stamp,
+                    image: want.image.clone(),
                     reply_to: want
                         .reply_to
                         .map(|(number, generation)| ObjectId::new(number, generation)),
@@ -1355,6 +1367,17 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Changes a signature's width in page points as one undoable edit.
+    pub fn resize_signature(&self, doc: u32, mark: u64, width: f32) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .resize_signature(MarkId::from_raw(mark), width)
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Applies a command and returns the state it produced.
     fn command(&self, doc: u32, cmd: Command) -> Result<EditState, String> {
         self.command_in(doc, cmd, None)
@@ -1639,6 +1662,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
                     stamp: body.stamp,
+                    image: body.image.clone(),
                     reply_to: body
                         .reply_to
                         .map(|object| (object.number(), object.generation())),
@@ -1959,6 +1983,9 @@ pub struct PlannedMark {
     /// gets drawn, and the model has already refused the two ways it can
     /// disagree with the kind.
     pub stamp: Option<StampName>,
+    /// Normalized signature pixels, shared by journal snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<std::sync::Arc<crate::signature::Image>>,
     /// The comment this one answers, as `[number, generation]`, for a reply.
     ///
     /// Carried to the writer for [`PlannedMark::stamp`]'s reason, and the model
@@ -2264,6 +2291,7 @@ fn snapshot(model: &Doc) -> EditState {
                 // geometry below: a stamp's name is fixed at the moment it is
                 // made, so there is no "what it is now" for the model to answer.
                 stamp: mark.stamp,
+                image: mark.image.clone(),
                 page: page.get(),
                 // **Through the model's accessors, not off the body**, because
                 // an eraser moves both: `Doc::quads_of` and `Doc::strokes_of`
@@ -2448,6 +2476,7 @@ mod tests {
                         quads: vec![0.0, 0.0, 1.0, 1.0],
                         strokes: Vec::new(),
                         stamp: None,
+                        image: None,
                         reply_to: None,
                         color: [1.0, 1.0, 0.0],
                         author: String::new(),
@@ -3417,6 +3446,7 @@ mod tests {
         NewMark {
             kind,
             stamp: None,
+            image: None,
             reply_to: None,
             page,
             quads: vec![72.0, 100.0, 300.0, 118.0],
@@ -3760,6 +3790,7 @@ mod tests {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            image: None,
             reply_to: None,
             page,
             quads: Vec::new(),

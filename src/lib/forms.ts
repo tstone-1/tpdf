@@ -1,6 +1,12 @@
 import type { EditState } from "./edits";
 import type { Anchor } from "./popup";
 
+/** Option indices preserve choices whose export values happen to be equal. */
+export type FormValue = string | boolean | number[];
+export type FormControl = { kind: "text" | "checkbox" | "unsupported" }
+  | { kind: "radio"; index: number; states: number[][]; unison: boolean; no_toggle_off: boolean }
+  | { kind: "choice"; options: { export: string; label: string }[]; combo: boolean; editable: boolean; multiple: boolean };
+
 /** Mirrors the worker's AcroForm reply. Object ids name shared fields. */
 export interface FormWidget {
   object: [number, number];
@@ -9,25 +15,36 @@ export interface FormWidget {
   rect: [number, number, number, number];
   display_rect: [number, number, number, number];
   name: string;
-  value: string | boolean;
+  value: FormValue;
+  control: FormControl;
   multiline: boolean;
   max_length: number | null;
   reason: string | null;
 }
 export interface Form { widgets: FormWidget[] }
-export interface FormChange { object: [number, number]; value: string | boolean }
+export interface FormChange { object: [number, number]; value: FormValue }
 
 export function fieldKey(object: readonly [number, number]): string { return object.join(":"); }
 
 /** Distinguishes clearing a value from leaving it unchanged, including undo. */
-export function fieldValue(widget: FormWidget, changes: readonly FormChange[]): string | boolean {
+export function fieldValue(widget: FormWidget, changes: readonly FormChange[]): FormValue {
   return changes.find((change) => fieldKey(change.object) === fieldKey(widget.object))?.value ?? widget.value;
 }
 
 /** Reports unsupported input before a tab switch or save can close its editor. */
-export function answerError(widget: FormWidget, value: string | boolean): string | null {
+export function answerError(widget: FormWidget, value: FormValue): string | null {
   if (widget.reason) return widget.reason;
-  if (typeof value !== typeof widget.value) return "The answer does not match this field.";
+  const control = widget.control;
+  if (Array.isArray(value)) {
+    if (control.kind !== "radio" && control.kind !== "choice") return "The answer does not match this field.";
+    const length = control.kind === "radio" ? control.states.length : control.options.length;
+    if (value.some((i, at) => !Number.isInteger(i) || i < 0 || i >= length || (at > 0 && i <= value[at - 1]!))) return "Choose available options without duplicates.";
+    if ((control.kind === "radio" || !control.multiple || control.combo) && value.length > 1) return "Choose one option.";
+    if (control.kind === "radio" && control.no_toggle_off && !value.length) return "Choose one radio button.";
+    return null;
+  }
+  if (control.kind === "radio" || (control.kind === "choice" && (!control.editable || typeof value !== "string")) || control.kind === "unsupported") return "The answer does not match this field.";
+  if (control.kind !== "choice" && typeof value !== typeof widget.value) return "The answer does not match this field.";
   if (typeof value === "boolean") return null;
   if (new TextEncoder().encode(value).length > 16384) return "A form answer is limited to 16 KB.";
   if (widget.max_length !== null && [...value].length > widget.max_length) return "This answer exceeds the field's maximum length.";
@@ -36,19 +53,24 @@ export function answerError(widget: FormWidget, value: string | boolean): string
   return null;
 }
 
-interface Control { widget: FormWidget; input: HTMLInputElement | HTMLTextAreaElement; accepted: string | boolean; pending: number }
+interface Mounted { widget: FormWidget; input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement; accepted: FormValue; pending: number }
+
+/** Array identity changes at every IPC reply; equality is about the selected indices. */
+export function sameAnswer(a: FormValue, b: FormValue): boolean {
+  return Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((v, i) => v === b[i]) : a === b;
+}
 
 /** Native page controls. Editing commits once on blur; pending text survives repaint. */
 export class FormLayer {
   private readonly node = document.createElement("div");
-  private readonly controls: Control[] = [];
+  private readonly controls: Mounted[] = [];
   private changes: readonly FormChange[] = [];
   private disposed = false;
   private readonly pending = new Set<Promise<void>>();
 
   constructor(host: HTMLElement, form: Form,
     private readonly anchor: (widget: FormWidget) => (Anchor & { clip?: string; scale?: number }) | null,
-    private readonly change: (object: [number, number], value: string | boolean) => Promise<void>,
+    private readonly change: (object: [number, number], value: FormValue) => Promise<void>,
     private readonly reveal: (widget: FormWidget) => void,
     private readonly error: (message: string) => void,
   ) {
@@ -57,8 +79,30 @@ export class FormLayer {
     host.append(this.node);
     for (const widget of form.widgets) {
       if (widget.reason) continue;
-      const input = widget.multiline ? document.createElement("textarea") : document.createElement("input");
-      if (input instanceof HTMLInputElement) input.type = typeof widget.value === "boolean" ? "checkbox" : "text";
+      const kind = widget.control;
+      const input = kind.kind === "choice" && !kind.editable ? document.createElement("select") : widget.multiline ? document.createElement("textarea") : document.createElement("input");
+      if (input instanceof HTMLInputElement) {
+        input.type = kind.kind === "radio" ? "radio" : kind.kind === "checkbox" ? "checkbox" : "text";
+        if (kind.kind === "radio") input.name = `form-${fieldKey(widget.object)}${kind.unison ? `-${kind.index}` : ""}`;
+      }
+      if (kind.kind === "choice") {
+        if (input instanceof HTMLSelectElement) {
+          input.multiple = kind.multiple && !kind.combo;
+          if (!kind.combo) input.size = Math.max(2, Math.min(8, kind.options.length));
+          if (kind.combo) {
+            const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Choose an option"; input.append(empty);
+          }
+          for (const [i, option] of kind.options.entries()) {
+            const item = document.createElement("option"); item.value = String(i); item.textContent = option.label; input.append(item);
+          }
+        } else {
+          const list = document.createElement("datalist"); list.id = `form-options-${fieldKey(widget.widget)}`;
+          for (const option of kind.options) {
+            const item = document.createElement("option"); item.value = option.label; list.append(item);
+          }
+          input.setAttribute("list", list.id); this.node.append(list);
+        }
+      }
       input.setAttribute("aria-label", widget.name || "Form field");
       input.dataset.field = fieldKey(widget.object);
       input.autocomplete = "off";
@@ -75,6 +119,13 @@ export class FormLayer {
         // Save and application undo retain their usual meaning. Ordinary typing
         // must never reach the viewer's page-navigation shortcuts.
         if (!(event.metaKey || event.ctrlKey)) event.stopPropagation();
+        if (kind.kind === "radio" && ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
+          const group = this.controls.filter((c) => fieldKey(c.widget.object) === fieldKey(widget.object));
+          const direction = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
+          const next = group[(group.indexOf(control) + direction + group.length) % group.length];
+          if (next) { this.reveal(next.widget); this.layout(); next.input.focus({ preventScroll: true }); next.input.click(); }
+          event.preventDefault();
+        }
         if (event.key === "Tab") {
           const at = this.controls.indexOf(control);
           const next = this.controls[at + (event.shiftKey ? -1 : 1)];
@@ -86,25 +137,45 @@ export class FormLayer {
         if (event.key === "Escape") { input.blur(); event.preventDefault(); }
       });
       input.addEventListener("blur", () => { if (!this.disposed) this.commitOne(control, false); });
-      input.addEventListener("change", () => { if (typeof widget.value === "boolean") this.commitOne(control, false); });
+      input.addEventListener("change", () => { if (kind.kind !== "text") this.commitOne(control, false); });
       this.node.append(input);
     }
     this.layout();
   }
 
-  private read(control: Control): string | boolean {
-    return typeof control.widget.value === "boolean" ? (control.input as HTMLInputElement).checked : control.input.value;
+  private read(control: Mounted): FormValue {
+    const kind = control.widget.control;
+    if (kind.kind === "radio") {
+      if (!(control.input as HTMLInputElement).checked) return control.accepted;
+      if (Array.isArray(control.accepted) && kind.unison && control.accepted.some((i) => sameAnswer(kind.states[i]!, kind.states[kind.index]!))) return control.accepted;
+      return [kind.index];
+    }
+    if (control.input instanceof HTMLSelectElement) return [...control.input.selectedOptions].filter((o) => o.value !== "").map((o) => Number(o.value));
+    if (kind.kind === "choice" && kind.editable) {
+      if (control.input.value === "") return [];
+      if (typeof control.accepted === "string" && control.input.value === control.accepted) return control.accepted;
+      if (Array.isArray(control.accepted) && control.accepted.length === 1 && control.input.value === kind.options[control.accepted[0]!]!.label) return control.accepted;
+      const index = kind.options.findIndex((o) => o.label === control.input.value);
+      return index < 0 ? control.input.value : [index];
+    }
+    return kind.kind === "checkbox" ? (control.input as HTMLInputElement).checked : control.input.value;
   }
 
-  private put(control: Control, value: string | boolean): void {
-    if (typeof value === "boolean") (control.input as HTMLInputElement).checked = value;
-    else control.input.value = value;
+  private put(control: Mounted, value: FormValue): void {
+    const kind = control.widget.control;
+    if (kind.kind === "radio" && Array.isArray(value)) {
+      (control.input as HTMLInputElement).checked = value.some((i) => i === kind.index || (kind.unison && sameAnswer(kind.states[i]!, kind.states[kind.index]!)));
+    } else if (control.input instanceof HTMLSelectElement && Array.isArray(value)) {
+      for (const option of control.input.options) option.selected = option.value === "" ? value.length === 0 : value.includes(Number(option.value));
+    } else if (typeof value === "boolean") (control.input as HTMLInputElement).checked = value;
+    else if (Array.isArray(value) && kind.kind === "choice") control.input.value = value.map((i) => kind.options[i]!.label).join(", ");
+    else if (typeof value === "string") control.input.value = value;
     control.accepted = value;
   }
 
-  private commitOne(control: Control, throwing: boolean): void {
+  private commitOne(control: Mounted, throwing: boolean): void {
     const value = this.read(control);
-    if (value === control.accepted) { control.input.setCustomValidity(""); return; }
+    if (sameAnswer(value, control.accepted)) { control.input.setCustomValidity(""); return; }
     const error = answerError(control.widget, value);
     if (error) {
       control.input.setCustomValidity(error);
@@ -119,7 +190,7 @@ export class FormLayer {
     const task = this.change(control.widget.object, value).then(() => {
       control.pending -= 1;
       if (this.disposed) return;
-      if (!control.pending && fieldValue(control.widget, this.changes) !== value) {
+      if (!control.pending && !sameAnswer(fieldValue(control.widget, this.changes), value)) {
         control.accepted = previous;
         control.input.setCustomValidity("This answer was refused. Correct it before saving or switching documents.");
       }
@@ -134,7 +205,7 @@ export class FormLayer {
   /** Freeze editing during file writes without blurring an uncommitted draft. */
   setBusy(busy: boolean): void {
     for (const { widget, input } of this.controls) {
-      if (typeof widget.value === "boolean") input.disabled = busy;
+      if (input instanceof HTMLSelectElement || widget.control.kind === "radio" || widget.control.kind === "checkbox") input.disabled = busy;
       else input.readOnly = busy;
     }
   }
@@ -150,7 +221,7 @@ export class FormLayer {
   update(state: EditState): void {
     this.changes = state.forms ?? [];
     for (const control of this.controls) {
-      if (!control.pending && this.read(control) === control.accepted && !control.input.validationMessage)
+      if (!control.pending && sameAnswer(this.read(control), control.accepted) && !control.input.validationMessage)
         this.put(control, fieldValue(control.widget, this.changes));
     }
     this.layout();

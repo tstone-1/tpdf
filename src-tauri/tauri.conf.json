@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "tpdf",
-  "version": "26.9.4",
+  "version": "26.9.5",
   "identifier": "com.timostein.tpdf",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -40,7 +40,7 @@
     "category": "Productivity",
     "homepage": "https://github.com/tstone-1/tpdf",
     "shortDescription": "Fast, lightweight PDF viewer and editor",
-    "longDescription": "A PDF viewer and editor for macOS and Windows. Every document is parsed and rendered in sandboxed worker processes with no filesystem or network authority, and every command is reachable from the command palette.",
+    "longDescription": "A PDF viewer and editor for macOS and Windows, with annotations, form filling, visual signatures and redaction. Documents are parsed and rendered in sandboxed worker processes, and every command is reachable from the command palette.",
     "fileAssociations": [
       {
         "ext": ["pdf"],

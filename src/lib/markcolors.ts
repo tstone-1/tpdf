@@ -104,6 +104,7 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // whose whole purpose is to be seen from across the page, which rules out the
   // wash's yellow more firmly than for any other kind here.
   stamp: [0.85, 0.15, 0.15],
+  signature: [0, 0, 0],
 };
 
 /**

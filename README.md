@@ -4,7 +4,7 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: Phase 0 closed, Phase 1 in progress, Phase 2 met, Phase 3 in progress. First release: `26.8.0`.**
+**Status: released for macOS and Windows, with annotations, page editing, redaction, form filling and visual signatures.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
@@ -14,7 +14,8 @@ comment on it, move what you put there, erase any of it, rewrite, answer or dele
 somebody else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and in-place
-text editing is the one that matters.
+text editing is the one that matters. Fill text fields, checkboxes, radio groups,
+dropdowns and lists, or draw and import a visual signature to place on a page.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
 SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the
@@ -89,12 +90,18 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 ## What it edits today
 
-- **Fill PDF forms** by clicking text fields or checkboxes. Tab moves between fields;
+- **Fill PDF forms** with text, checkboxes, radio buttons, dropdowns and selection lists. Tab moves between fields;
   **Fill form** in the command palette focuses the first field. Answers support undo
-  and save with explicit appearances, including shared fields. This first version
+  and save with explicit appearances, including shared fields. Text entry
   supports plain text with Western European characters; unsupported controls and
   read-only fields remain unchanged. JavaScript and XFA are not supported.
   <!-- built: edit.fillForm -->
+
+- **Add a visual signature** with **Sign** in the toolbar or **Add signature** in the
+  command palette. Draw it or import a PNG/JPEG, then drag to place it on the page.
+  Move it, resize it with Smaller/Larger, or remove it; every edit supports undo.
+  Saving embeds its appearance as a PDF stamp. Remembering it on this device is optional.
+  <!-- built: edit.addSignature -->
 
 
 - **Turn a page in the document**, not only in the view --- with undo and redo, and a
@@ -353,7 +360,7 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Visual signatures. Signatures are read, never made.
+- Certificate-based digital signing and signature verification.
   <!-- not-built: edit.signDocument -->
 - In-place text editing
   <!-- not-built: edit.editText -->

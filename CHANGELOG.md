@@ -17,6 +17,22 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.5] - 2026-09-11
+
+### Form filling and visual signatures
+
+- Fill text fields, checkboxes, radio groups, dropdowns (including editable
+  choices), and single or multiple-selection lists. Answers support undo/redo
+  and stay with their document tab. Saving writes explicit appearances for
+  other PDF readers and preserves the document's encryption.
+- Draw a visual signature or import a PNG/JPEG, place it on a page, then move,
+  resize or remove it. Signatures save as standard PDF stamp annotations.
+  Optionally remember a signature on this device and forget it from the dialog.
+  This places an image; it does not create a cryptographic signature.
+- Open document properties from the toolbar menu.
+- Update compatible dependencies and limit Windows build concurrency to prevent
+  parallel linkers exhausting system memory.
+
 ## [26.9.4] - 2026-09-10
 
 ### Document tabs

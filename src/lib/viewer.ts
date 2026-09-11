@@ -31,6 +31,7 @@
 
 import { AccessibleText } from "./a11y";
 import { inTextField, isMac, matches } from "./keys";
+import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { CommentPopup } from "./commentpopup";
 import {
   intoCrop,
@@ -337,6 +338,7 @@ export interface ViewerStatus {
  * where it could only be checked against itself.
  */
 export interface Drawn {
+  image?: SignatureImage;
   /** Four numbers per rectangle. Empty for ink, whose rectangle is derived. */
   quads: number[];
   /** `x y x y ...` per stroke. Empty for every kind but ink. */
@@ -534,6 +536,8 @@ export interface ViewerOptions {
    * gesture and read the preview without committing anything.
    */
   onMarkMoved?: (id: number, dx: number, dy: number) => void;
+  /** Resize a visual signature in original page display points. */
+  onSignatureResize?: (id: number, width: number) => void;
 
   /**
    * One sweep of the eraser: which drawing, and which of its strokes went.
@@ -982,7 +986,7 @@ function release(element: HTMLElement, pointerId: number): void {
  */
 export type ArmedTool =
   | { kind: "none" }
-  | { kind: "draw"; mark: MarkKind; stamp: StampName | null }
+  | { kind: "draw"; mark: MarkKind; stamp: StampName | null; image?: SignatureImage }
   | { kind: "erase" }
   | { kind: "crop" }
   | { kind: "redact" };
@@ -1137,6 +1141,8 @@ export class Viewer {
    * field.
    */
   private tool: ArmedTool = NO_TOOL;
+  private readonly signatureImages = new Map<number, HTMLCanvasElement>();
+  private signaturePreview: HTMLCanvasElement | null = null;
 
   /**
    * How thick the next drawing is, in points.
@@ -1474,6 +1480,7 @@ export class Viewer {
     this.markNote = new MarkPopup(root, {
       onNote: (mark, note) => this.opts.onMarkNote?.(mark, note),
       onRecolor: (mark, color) => this.opts.onMarkRecolor?.(mark, color),
+      onSignatureSize: (mark, width) => this.opts.onSignatureResize?.(mark, width),
       onRemove: () => this.removeOpenMark(),
       onClose: () => this.closeMark(),
       onOpen: (mark) => this.opts.onMark?.(mark),
@@ -1776,10 +1783,12 @@ export class Viewer {
         // that slips a pixel between press and release still drops the bubble
         // where it was aimed --- and so that the ghost the reader was watching
         // is the mark they get.
-        const quad =
+        let quad =
           kind === "note"
             ? iconQuad(live.from.x, live.from.y, this.laidSize(live.slot))
             : boxQuad(live.from, live.to, this.laidSize(live.slot));
+        const image = this.tool.kind === "draw" ? this.tool.image : undefined;
+        if (kind === "signature" && image && quad) quad = fitSignature(quad, image);
         const id = quad ? this.pages.idOf(live.slot) : undefined;
         if (!quad || id === undefined) {
           // **A click rather than a drag, and the tool stays armed.** Silent,
@@ -1799,7 +1808,8 @@ export class Viewer {
         this.opts.onDrawn?.(
           kind,
           id,
-          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib },
+          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib,
+            ...(image ? { image: rotateSignature(image, -this.scroller.effectiveTurns(live.slot)) } : {}) },
           stamp,
         );
       },
@@ -4162,6 +4172,14 @@ export class Viewer {
     return { page: id, quads: this.fileRectOn(slot, quad) };
   }
 
+  /** Prepare a signature for one aspect-preserving placement drag. */
+  armSignature(image: SignatureImage): void {
+    if (!validSignature(image)) return;
+    this.armDraw("signature");
+    this.tool = { kind: "draw", mark: "signature", stamp: null, image };
+    this.signaturePreview = signatureCanvas(image);
+  }
+
   /**
    * Arms the box tool: the next drag on a page draws one.
    *
@@ -4789,6 +4807,7 @@ export class Viewer {
     if (id === null) return false;
     const mark = this.markById(id);
     if (!mark) return false;
+    if (mark.kind === "signature") return false;
     const want = colorFor(mark.kind, color);
     if (sameColor(mark.color, want)) return false;
     this.opts.onMarkRecolor?.(id, want);
@@ -5509,6 +5528,10 @@ export class Viewer {
   setMarks(marks: readonly MarkView[]): void {
     this.marks = marks;
     this.markIndex = null;
+    const live = new Set(marks.map((mark) => mark.id));
+    for (const id of this.signatureImages.keys()) if (!live.has(id)) this.signatureImages.delete(id);
+    const open = marks.find((mark) => mark.id === this.markNote.openId);
+    if (open) this.markNote.syncSignatureSize(open);
     // `wake` rather than a repaint: the overlay is drawn from the frame loop,
     // which may be idle when a mark is made from the menu bar with nothing
     // scrolling. Painting here as well would draw the same rectangles twice.
@@ -5818,7 +5841,11 @@ export class Viewer {
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
         const width = (band.right - band.left) * this.zoom * dpr;
         const height = (band.bottom - band.top) * this.zoom * dpr;
-        if (style === "text") {
+        if (style === "image" && mark.image) {
+          let image = this.signatureImages.get(mark.id);
+          if (!image) { image = signatureCanvas(mark.image); this.signatureImages.set(mark.id, image); }
+          drawSignature(ctx, image, left, top, width, height, this.scroller.effectiveTurns(slot));
+        } else if (style === "text") {
           // The reader's words, in the lines the *backend* broke them into.
           // Nothing here measures text: `ctx.measureText` would measure whatever
           // font the system resolved and the file is set in Helvetica, so two
@@ -5980,7 +6007,13 @@ export class Viewer {
     const py = (origin.top + top * this.zoom - this.scrollTop) * dpr;
     const pw = (right - left) * this.zoom * dpr;
     const ph = (bottom - top) * this.zoom * dpr;
-    if (this.drawArmed === "ellipse") {
+    if (this.drawArmed === "signature" && this.tool.kind === "draw" && this.tool.image && this.signaturePreview) {
+      const quad = fitSignature({ left, top, right, bottom }, this.tool.image);
+      const width = (quad.right - quad.left) * this.zoom * dpr;
+      const height = (quad.bottom - quad.top) * this.zoom * dpr;
+      ctx.drawImage(this.signaturePreview, px, py, width, height);
+      ctx.strokeRect(px, py, width, height);
+    } else if (this.drawArmed === "ellipse") {
       traceEllipse(ctx, px, py, pw, ph);
       ctx.stroke();
     } else ctx.strokeRect(px, py, pw, ph);

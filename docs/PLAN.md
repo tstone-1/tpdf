@@ -13087,7 +13087,10 @@ one document journal, including shared widgets, and save through the sandboxed
 rewrite with explicit appearance streams. The application check covers entering,
 clearing, undo/redo, tab isolation and reopening; PDFKit is the independent reader.
 Text currently uses the Western European character set supported by `textbox.rs`.
-Choice fields, radio buttons and visual signatures remain later increments.
+Release 26.9.5 (2026-09-11) adds radio groups, dropdowns
+(including editable choices), and single/multiple-selection lists. Visual signatures
+are also included: draw or import PNG/JPEG, place, move,
+resize, remove, undo/redo, optional local reuse, and saved PDF stamp appearances.
 
 AcroForm filling with saved state, appearance stream regeneration, field inheritance,
 shared widgets, form JavaScript policy (disabled by default), signature *image* placement.

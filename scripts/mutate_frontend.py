@@ -79,6 +79,8 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation("choices: compare selection arrays by identity", "src/lib/forms.ts", "a.length === b.length && a.every((v, i) => v === b[i])", "a === b", "keeps duplicate exports distinct and compares selections across IPC replies"),
+    Mutation("choices: accept too many selected options", "src/lib/forms.ts", "&& value.length > 1) return", "&& value.length > 100) return", "validates option indices and selection cardinality"),
     Mutation("forms: lose an unchecked value", "src/lib/forms.ts", "?.value ?? widget.value", "?.value || widget.value", "does not confuse an unchecked checkbox with an absent answer"),
     Mutation("forms: ignore a read-only field", "src/lib/forms.ts", "  if (widget.reason) return widget.reason;", "  if (false) return widget.reason;", "accepts supported text and refuses loss, wrong types and field restrictions"),
     Mutation(
@@ -601,9 +603,9 @@ MUTATIONS = [
         # identical `const id = quad ? ...`, and it builds its quad with
         # `boxQuad(live.from, live.to, ...)` unconditionally rather than choosing
         # between an icon and a box.
-        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n"
+        '        if (kind === "signature" && image && quad) quad = fitSignature(quad, image);\n'
         "        const id = quad ? this.pages.idOf(live.slot) : undefined;",
-        "            : boxQuad(live.from, live.to, this.laidSize(live.slot));\n"
+        '        if (kind === "signature" && image && quad) quad = fitSignature(quad, image);\n'
         "        const id = quad ? live.slot : undefined;",
         "carries the armed kind and the page's id",
     ),
@@ -4382,8 +4384,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Visual signatures. Signatures are read, never made.",
-        "- Forms <!-- built: file.print --> and visual signatures. Signatures are read, never made.",
+        "- Certificate-based digital signing and signature verification.",
+        "- Certificate-based digital signing <!-- built: file.print --> and signature verification.",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -5110,6 +5112,7 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    "src/lib/signature.test.ts",
     "src/lib/forms.test.ts",
     "src/lib/documenttabs.test.ts",
     "src/lib/toolbar.test.ts",
@@ -5903,11 +5906,11 @@ MUTATIONS += [
         # dropping the bubble in the corner.
         "comment: require a drag rather than a press to place one",
         "src/lib/viewer.ts",
-        "        const quad =\n"
+        "        let quad =\n"
         '          kind === "note"\n'
         "            ? iconQuad(live.from.x, live.from.y, this.laidSize(live.slot))\n"
         "            : boxQuad(live.from, live.to, this.laidSize(live.slot));",
-        "        const quad = boxQuad(live.from, live.to, this.laidSize(live.slot));",
+        "        let quad = boxQuad(live.from, live.to, this.laidSize(live.slot));",
         "drops the bubble where the reader pressed, from a click alone",
     ),
     Mutation(
@@ -6002,6 +6005,7 @@ MUTATIONS += [
         "    // A stamp is placed by the reader and anchored to nothing, so it moves for\n"
         "    // the box's reason exactly.\n"
         '    case "stamp":\n'
+        '    case "signature":\n'
         "      return true;",
         '    case "note":\n'
         "      return true;\n"
@@ -6010,6 +6014,7 @@ MUTATIONS += [
         '    case "textbox":\n'
         '    case "ink":\n'
         '    case "stamp":\n'
+        '    case "signature":\n'
         "      return false;",
         "moves a box, an ellipse, a text box and a drawing",
     ),
@@ -6530,11 +6535,10 @@ def main() -> int:
     # mutations that could not have moved is an hour of somebody waiting.
     # The control run and the name cross-check below still run in full.
     parser.add_argument(
-        "--only", default="", help="run mutations whose name contains this"
+        "--only", action="append", default=[], help="run mutations whose name contains this; repeatable"
     )
-    # `--only` matches a mutation's name, so a change across four modules is
-    # four runs and four control passes. This selects by the file a mutation
-    # edits, which is what an edit actually moves. See `mutation_since.py` for
+    # `--only` matches names; `--since` selects by the file a mutation
+    # edits, without needing a filter per behaviour. See `mutation_since.py` for
     # why it is loud and why nothing selected is a refusal.
     parser.add_argument(
         "--since", default="", help="run only mutations whose file changed since this ref"
@@ -6551,7 +6555,13 @@ def main() -> int:
         help="reuse verdicts from an earlier run, if the tracked tree has not moved",
     )
     args = parser.parse_args()
-    chosen = [m for m in MUTATIONS if args.only.lower() in m.name.lower()]
+    # Match every requested filter. Silently keeping only the last one reports
+    # success for a smaller run than the caller requested.
+    missing = [needle for needle in args.only if not any(needle.lower() in m.name.lower() for m in MUTATIONS)]
+    if missing:
+        print(f"[FAIL] no mutation matches {missing!r}")
+        return 1
+    chosen = [m for m in MUTATIONS if not args.only or any(needle.lower() in m.name.lower() for needle in args.only)]
     if args.since:
         # No prefix: this table names paths from the repository root already.
         chosen, code = mutation_since.apply(chosen, args.since)
@@ -6900,8 +6910,8 @@ MUTATIONS += [
         # screen saying which is right until the file is reopened.
         "viewer: report the default nib rather than the armed one",
         "src/lib/viewer.ts",
-        "          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib },",
-        "          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: INK_WIDTH },",
+        "          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: this.nib,",
+        "          { quads: this.fileRectOn(live.slot, quad), strokes: [], width: INK_WIDTH,",
         "carries the nib that was set, and the default until one is",
     ),
     Mutation(
@@ -7386,6 +7396,23 @@ MUTATIONS += [
         "    while (this.busy) await this.pending.catch(() => {});",
         "    return;",
         "holds a transition until a save and its reopen finish",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        "visual signature: stretch outside the placement rectangle",
+        "src/lib/signature.ts",
+        "Math.min((rect.right - rect.left) / image.width, (rect.bottom - rect.top) / image.height)",
+        "Math.max((rect.right - rect.left) / image.width, (rect.bottom - rect.top) / image.height)",
+        "fits a wide signature without stretching or escaping the dragged rectangle",
+    ),
+    Mutation(
+        "visual signature: ignore page turns",
+        "src/lib/signature.ts",
+        "turn < ((turns % 4) + 4) % 4",
+        "turn < 0",
+        "rotates pixel orientation with the page and reverses a placement turn",
     ),
 ]
 

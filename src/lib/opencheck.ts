@@ -24,6 +24,7 @@
  */
 
 import { call } from "./ipc";
+import { signatureCheck } from "./signaturecheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
@@ -108,6 +109,7 @@ function sidebars(): number {
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "signatures": await signatureCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
       const [first, second] = expected.split("|");
@@ -137,8 +139,39 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       field()!.focus();
       field()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
       check("Tab reaches the next field", document.activeElement === checkbox);
+      const combo = () => document.querySelector<HTMLSelectElement>('.form-fields select:not([multiple])');
+      const list = () => document.querySelector<HTMLSelectElement>('.form-fields select[multiple]');
+      const radios = () => [...document.querySelectorAll<HTMLInputElement>('.form-fields input[type="radio"]')];
+      const single = () => document.querySelector<HTMLSelectElement>('.form-fields select[size]:not([multiple])');
+      const custom = () => document.querySelector<HTMLInputElement>('.form-fields input[list]');
+      const mixed = !!combo();
+      if (mixed) {
+        check("mixed controls were discovered", radios().length === 2 && !!list());
+        radios()[1]!.click(); await host.idle();
+        check("choosing a radio clears its sibling", radios()[1]!.checked && !radios()[0]!.checked);
+        host.run("edit.undo"); await host.idle();
+        check("undo restores the radio group", radios()[0]!.checked && !radios()[1]!.checked);
+        host.run("edit.redo"); await host.idle();
+        check("redo restores the radio choice", radios()[1]!.checked && !radios()[0]!.checked);
+        combo()!.value = "1"; combo()!.dispatchEvent(new Event("change")); await host.idle();
+        check("dropdown uses the display label", combo()!.selectedOptions[0]?.textContent === "Second label");
+        for (const option of list()!.options) option.selected = option.value === "0" || option.value === "2";
+        list()!.dispatchEvent(new Event("change")); await host.idle();
+        check("a list journals multiple selected indices", host.edits()?.state.forms?.some((f) => Array.isArray(f.value) && f.value.join(",") === "0,2") === true);
+        single()!.value = "2"; single()!.dispatchEvent(new Event("change")); await host.idle();
+        check("a single-selection list selects one item", single()!.selectedOptions.length === 1 && single()!.value === "2");
+        custom()!.value = "Custom answer"; custom()!.dispatchEvent(new Event("change")); await host.idle();
+        check("an editable dropdown accepts custom text", host.edits()?.state.forms?.some((f) => f.value === "Custom answer") === true);
+        host.run("edit.undo"); await host.idle();
+        check("undo restores an editable dropdown option", custom()?.value === "Alpha");
+        host.run("edit.redo"); await host.idle();
+        check("redo restores custom dropdown text", custom()?.value === "Custom answer");
+        await host.activate(b.id); await host.activate(a.id);
+        if (!await settle(() => !!combo() && !!list() && radios().length === 2, SETTLE_MS)) throw new Error("mixed controls did not remount");
+        check("choice answers survive tab switching", combo()?.value === "1" && list()?.selectedOptions.length === 2 && radios()[1]?.checked === true);
+      }
       host.run("file.save");
-      check("saving freezes form edits", field()?.readOnly === true && checkbox.disabled);
+      check("saving freezes form edits", field()?.readOnly === true && document.querySelector<HTMLInputElement>('.form-fields input[type="checkbox"]')?.disabled === true);
       await host.idle();
       if (!await settle(() => field()?.value === "Grüße", SETTLE_MS)) throw new Error(`the saved field did not reopen: ${document.querySelector(".error")?.textContent ?? "no error shown"}`);
       check("save resets the journal", host.edits()?.state.dirty === false);
@@ -146,6 +179,13 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const form = await call("document_form", { doc: host.edits()!.doc });
       check("both shared widgets reopen with the saved answer", form.widgets.filter((w) => w.value === "Grüße").length === 2);
       check("the checkbox reopens checked", form.widgets.some((w) => w.value === true));
+      if (mixed) {
+        check("saved dropdown preserves the second duplicate export", combo()?.value === "1");
+        check("saved list preserves both selections", [...list()!.selectedOptions].map((o) => o.value).join(",") === "0,2");
+        check("saved radio group has exactly one selected button", radios()[1]?.checked === true && radios()[0]?.checked === false);
+        check("saved choices remain choice fields", form.widgets.filter((w) => w.control.kind === "choice").length === 4);
+        check("single-list and custom dropdown answers reopen", single()?.value === "2" && custom()?.value === "Custom answer");
+      }
       const current = host.edits()!;
       await host.activate(b.id);
       check("saving did not change the other tab", (host.edits()?.state.forms?.length ?? 0) === 0 && host.edits()?.state.dirty === false);

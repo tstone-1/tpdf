@@ -412,13 +412,14 @@ jobs:
           the network either — with search, selection, an outline, thumbnails,
           session restore and printing.
 
-          **New in this release.** Document tabs keep several PDFs open with
-          separate edits, reading positions, searches and sidebar choices. Open
-          several files at once, switch with Ctrl+Tab or Ctrl+Shift+Tab, and close
-          a tab with Ctrl+W (Cmd+W on macOS). Closing or quitting checks for
-          unsaved changes. Restart restores the most recent document; the full
-          tab list is not restored yet. This release also updates PDFium to
-          chromium/8044 and adds compatibility with pdfium-render 0.9.4.
+          **New in this release.** Fill PDF text fields, checkboxes, radio groups,
+          dropdowns and lists. Answers support undo/redo, stay with their document
+          tab, and are saved with explicit appearances for other PDF readers.
+          Draw a visual signature or import a PNG/JPEG, then place, move or resize
+          it on the page. Optionally remember it on this device for reuse, or
+          forget it from the signature dialog. Visual signatures do not provide
+          certificate-based signing. Document properties are now available from
+          the toolbar menu. Compatible dependencies are updated.
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag
@@ -505,7 +506,7 @@ jobs:
           and then appended to says so plainly.
 
           **What it is not, yet.** Signature verification, inserting pages
-          **from another file**, visual signatures and text editing are not built. See the
+          **from another file**, certificate-based signing and text editing are not built. See the
           roadmap in `docs/PLAN.md`.
           <!-- not-built: edit.insertPages edit.signDocument edit.editText -->
 

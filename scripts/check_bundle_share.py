@@ -95,7 +95,8 @@ ENTRY_POINTS = {
 # Reached only from the entry points -- asserted below, not assumed. It is the
 # shared printer every unattended check writes through, so it ships for exactly
 # the same reason they do and belongs in the same total.
-SHARED = {"checkreport.ts"}
+# Helpers reached through those entry points, including the signature workflow.
+SHARED = {"checkreport.ts", "signaturecheck.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 

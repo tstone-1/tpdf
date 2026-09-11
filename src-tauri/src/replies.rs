@@ -242,23 +242,43 @@ fn samples() -> BTreeMap<&'static str, String> {
         },
     );
 
-    put(
-        "Form",
-        &crate::forms::Form {
-            widgets: vec![crate::forms::Widget {
-                object: (12, 0),
-                widget: (13, 0),
-                page: 0,
-                rect: [10.0, 20.0, 110.0, 40.0],
-                display_rect: [10.0, 20.0, 110.0, 40.0],
-                name: "ACME.answer".into(),
-                value: crate::forms::Value::Text("answer".into()),
-                multiline: false,
-                max_length: Some(20),
-                reason: Some("Read-only".into()),
+    put("Form", &{
+        let text = crate::forms::Widget {
+            object: (12, 0),
+            widget: (13, 0),
+            page: 0,
+            rect: [10.0, 20.0, 110.0, 40.0],
+            display_rect: [10.0, 20.0, 110.0, 40.0],
+            name: "ACME.answer".into(),
+            value: crate::forms::Value::Text("answer".into()),
+            control: crate::forms::Control::Text,
+            multiline: false,
+            max_length: Some(20),
+            reason: Some("Read-only".into()),
+        };
+        let mut radio = text.clone();
+        radio.value = crate::forms::Value::Selection(vec![1]);
+        radio.control = crate::forms::Control::Radio {
+            index: 0,
+            states: vec![b"One".to_vec(), b"Two".to_vec()],
+            unison: false,
+            no_toggle_off: true,
+        };
+        let mut choice = text.clone();
+        choice.value = crate::forms::Value::Selection(vec![0]);
+        choice.control = crate::forms::Control::Choice {
+            options: vec![crate::forms::Choice {
+                export: "VALUE".into(),
+                label: "Visible label".into(),
             }],
-        },
-    );
+            combo: false,
+            editable: false,
+            multiple: true,
+        };
+        crate::forms::Form {
+            widgets: vec![text, radio, choice],
+        }
+    });
 
     put(
         "EditState",
@@ -294,6 +314,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     quads: vec![10.0, 20.0, 110.0, 20.0, 10.0, 60.0, 110.0, 60.0],
                     strokes: Vec::new(),
                     stamp: None,
+                    image: None,
                     color: [1.0, 0.9, 0.2],
                     width: 1.0,
                     note: "a note on the mark".into(),
@@ -306,8 +327,26 @@ fn samples() -> BTreeMap<&'static str, String> {
                     quads: vec![0.0, 0.0, 100.0, 40.0],
                     strokes: vec![vec![1.0, 2.0, 3.0, 4.0]],
                     stamp: Some(docmodel::StampName::Draft),
+                    image: None,
                     color: [0.8, 0.1, 0.1],
                     width: 2.5,
+                    note: String::new(),
+                    lines: Vec::new(),
+                },
+                edits::MarkView {
+                    id: 6,
+                    kind: docmodel::MarkKind::Signature,
+                    page: 2,
+                    quads: vec![10.0, 20.0, 110.0, 70.0],
+                    strokes: Vec::new(),
+                    stamp: None,
+                    image: Some(std::sync::Arc::new(crate::signature::Image {
+                        width: 2,
+                        height: 1,
+                        rgba: vec![10, 20, 30, 255, 40, 50, 60, 128],
+                    })),
+                    color: [0.0; 3],
+                    width: 1.0,
                     note: String::new(),
                     lines: Vec::new(),
                 },

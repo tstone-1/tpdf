@@ -27,8 +27,8 @@
 //! resolver disagreeing with it. That trap is recorded twice already.
 //!
 //! What PDFium's API is genuinely good for is a **differential**: two
-//! independent readers of one file, compared. That is worth building and is not
-//! built here; see `docs/PLAN.md`.
+//! independent readers of one file, compared. `signature-probe` implements that
+//! comparison; see `docs/PLAN.md`.
 //!
 //! ## Encryption is readable without the password, and that is by design
 //!
@@ -39,14 +39,14 @@
 //!
 //! The `/Info` strings are the opposite. On an encrypted document they are
 //! ciphertext, and `lopdf` does not decrypt on load. [`scan`] asks it to decrypt
-//! with an empty user password, which is what the common case --- a document
-//! locked against *editing* rather than against reading --- actually uses. When
+//! with the supplied password, or an empty user password when none was supplied.
+//! The latter opens documents locked against editing but not reading. When
 //! that fails the fields are **omitted and the omission is reported**, never
 //! shown as the mojibake that decoding ciphertext as PDFDocEncoding produces.
 //!
 //! ## Nothing here says a signature is valid
 //!
-//! This has no crypto stack, no certificate parser and no trust store, so it
+//! This parses certificates but has no verification stack or trust store, so it
 //! cannot say whether a signature verifies, whether the certificate chains to
 //! anything, or whether it was revoked. `docs/TRAPS.md` is explicit that the UI
 //! must never imply otherwise, and the shape of this module is what enforces it:

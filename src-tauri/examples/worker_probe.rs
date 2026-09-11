@@ -110,6 +110,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            image: None,
             reply_to: None,
             at: 0,
             quads: vec![Quad {

@@ -377,6 +377,7 @@ mod tests {
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
+                image: None,
                 reply_to: None,
                 at: 0,
                 quads: vec![Quad {

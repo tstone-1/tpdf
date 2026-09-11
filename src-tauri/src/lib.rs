@@ -76,6 +76,7 @@ mod save_order;
 pub mod save_outside;
 pub mod search;
 pub mod session;
+pub mod signature;
 pub mod startup;
 pub mod structure;
 pub mod sweep;
@@ -791,6 +792,7 @@ pub fn run() {
             annot_discard,
             annot_recolor,
             annot_move,
+            annot_resize_signature,
             edit_undo,
             edit_redo,
             edit_state,
