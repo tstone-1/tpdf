@@ -111,7 +111,8 @@ export type MarkKind =
   | "ellipse"
   | "textbox"
   | "ink"
-  | "stamp";
+  | "stamp"
+  | "signature";
 
 /**
  * Which standard stamp a `"stamp"` mark is.
@@ -319,6 +320,7 @@ export interface MarkView {
    * disagree with {@link MarkView.kind}.
    */
   stamp: StampName | null;
+  image?: import("./signature").SignatureImage;
   color: [number, number, number];
   /**
    * How thick this mark's ink is, in points, before any zoom.

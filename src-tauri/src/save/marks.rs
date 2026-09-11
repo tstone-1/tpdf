@@ -245,6 +245,12 @@ pub(super) fn write_marks(
     _replies_were_checked: RepliesChecked,
 ) -> Result<MarksWritten, String> {
     for (mark, site) in marks.iter().zip(sites) {
+        if mark.image.is_some() != (mark.kind == MarkKind::Signature)
+            || mark.image.as_ref().is_some_and(|image| !image.valid())
+            || (mark.kind == MarkKind::Signature && mark.quads.len() != 1)
+        {
+            return Err("Invalid signature raster in save plan".into());
+        }
         let MarkSite {
             page,
             shown,
@@ -587,7 +593,7 @@ pub(super) fn subtype(kind: MarkKind) -> &'static [u8] {
         MarkKind::TextBox => b"FreeText",
         MarkKind::Ink => b"Ink",
         // `/Stamp`, and the one kind whose three spellings all agree.
-        MarkKind::Stamp => b"Stamp",
+        MarkKind::Stamp | MarkKind::Signature => b"Stamp",
     }
 }
 
@@ -676,6 +682,8 @@ enum Paint {
     /// border reads as a text box, and a border with no word is a
     /// [`Paint::Outline`]; what makes a stamp recognisable is both together.
     Stamp,
+    /// A normalized signature raster and its alpha mask.
+    Image,
     /// None of ours. The reader draws its own, which for `/Text` is the only
     /// way the icon can look like that reader's other comments.
     None,
@@ -702,6 +710,7 @@ fn paint(kind: MarkKind) -> Paint {
         // annotation that draws nothing at all, which is `MarkKind::Square`'s
         // situation rather than the comment's.
         MarkKind::Stamp => Paint::Stamp,
+        MarkKind::Signature => Paint::Image,
     }
 }
 
@@ -915,7 +924,7 @@ pub(super) fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         MarkKind::Ink => (bottom, full),
         // Not reached, a sixth time: a stamp is a border and a word, both placed
         // from its own rectangle by `Paint::Stamp`. The whole quad.
-        MarkKind::Stamp => (bottom, full),
+        MarkKind::Stamp | MarkKind::Signature => (bottom, full),
         // Not reached, for the box's reason exactly: an ellipse is drawn from
         // its quad by `Paint::Ellipse` and has no band inside it either. The
         // whole quad a fifth time, which is the argument above getting stronger
@@ -1468,6 +1477,21 @@ fn appearance_stream(
         Paint::Outline => draw_outline(&mut content, quads),
         Paint::Text => draw_text(&mut content, quads, &mark.note, turns),
         Paint::Stamp => draw_stamp(&mut content, quads, mark.stamp, turns),
+        Paint::Image => {
+            if let Some(image) = &mark.image {
+                let object = image.xobject(doc);
+                resources.set("XObject", dictionary! { "Signature" => object });
+                let upright = Upright::of(turns, rect);
+                let (x, y) = upright.at(0.0, upright.height);
+                content.push_str(&format!(
+                    "q {} {} {} {} {x} {y} cm /Signature Do Q\n",
+                    upright.right.0 * upright.width,
+                    upright.right.1 * upright.width,
+                    -upright.down.0 * upright.height,
+                    -upright.down.1 * upright.height
+                ));
+            }
+        }
         Paint::Wave => draw_wave(&mut content, quads, mark.kind, turns),
         Paint::Ellipse => draw_ellipse(&mut content, quads),
         Paint::Path => draw_path(&mut content, strokes),

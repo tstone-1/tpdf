@@ -16,6 +16,7 @@ export interface ToolGroup {
 export const TOOL_ACTIONS: ToolItem[] = [
   { id: "edit.addComment", label: "Comment" },
   { id: "edit.addTextBox", label: "Text" },
+  { id: "edit.addSignature", label: "Sign" },
 ];
 
 export const TOOL_GROUPS: ToolGroup[] = [

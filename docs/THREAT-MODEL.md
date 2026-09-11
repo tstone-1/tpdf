@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- nine of which write files on its behalf (§T6.1), drives the updater's one request per launch (§T9), and can ask for a web link the document holds to be opened in the reader's browser (§T8) | No *direct* filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- nine of which write files on its behalf (§T6.1), drives the updater's one request per launch (§T9), can ask for a document web link to be opened (§T8), and reads signature images explicitly selected through its file input (§T6.17) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** --- on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -1738,6 +1738,37 @@ call these commands at all.
 commands and cannot see where a gesture ends; a backend-minted grouping would have to be a
 timer, which is a decision about the clock rather than about what the reader did. The trust
 this places in the webview is the trust already placed in it to send the commands at all.
+
+#### T6.17 — Form answers and visual signatures, added 2026-09-11
+
+AcroForm fields are read inside the document worker. Form JavaScript remains
+disabled; XFA and unsupported field types are not editable. Answers belong to
+the document's edit journal and pass validation before save or a tab transition.
+The writing worker emits explicit appearances and preserves encryption through
+the existing rewrite path. The application forms check covers shared answers,
+choice controls, tab isolation and reopening; independent PDFKit and pypdf checks
+cover the saved values and appearances.
+
+A visual signature is a PDF stamp, with no certificate, identity verification or
+cryptographic assurance. The webview can read a PNG/JPEG explicitly selected in
+its file input; it still has no general filesystem plugin permission. It rejects
+files larger than 10 MiB before decoding. The operating system's webview image
+decoder processes the original image, so this byte cap does not bound decoded
+source pixels or peak decoder memory. This input is separate from the worker's
+PDF rendering boundary and from the tile PNGs described in T8.
+
+Before IPC, signatures are reduced to at most 131,072 RGBA pixels. Rust validates
+dimensions, exact byte length and nonzero opacity, and bounds retained signature
+rasters, including undo history, to 4 MiB per document. The writing worker emits
+RGB image data and a separate alpha mask; the coordinator decodes no image file.
+Pixel comparisons through PDFium and PDFKit cover saved stamps on rotated and
+cropped pages, with unedited inputs as controls.
+
+Remembering a signature is explicit opt-in. The raster is stored unencrypted in
+the application's localStorage, accessible to scripts in that origin and to
+someone who can read the user profile. The dialog provides a forget operation;
+forgetting does not remove stamps already saved in PDFs. This is convenience
+storage, not protected credential storage.
 
 ### T7 — Distribution and update
 

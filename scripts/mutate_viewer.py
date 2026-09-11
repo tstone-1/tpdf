@@ -246,8 +246,8 @@ MUTATIONS = [
         # the bundle that ships rather than against a fake DOM.
         "markpopup: build the note box without its swatch row",
         "src/lib/markpopup.ts",
-        "    this.element.append(this.header(), this.colors(), this.input, this.actions());",
-        "    this.element.append(this.header(), this.input, this.actions());",
+        "    this.element.append(this.header(), this.colors(), this.signatureSize, this.input, this.actions());",
+        "    this.element.append(this.header(), this.signatureSize, this.input, this.actions());",
         "the note box offers a swatch for every colour a mark can be",
         runner="viewer",
     ),
@@ -293,8 +293,8 @@ MUTATIONS = [
         # the second of those is the reading that replaced `edges === 0`.
         "viewer: draw a text box as a filled rectangle",
         "src/lib/viewer.ts",
-        '        if (style === "text") {',
-        "        if (false) {",
+        '        } else if (style === "text") {',
+        "        } else if (false) {",
         "a text box draws its words and not its rectangle",
         "viewer",
     ),

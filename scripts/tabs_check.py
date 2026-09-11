@@ -20,8 +20,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "forms"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "forms", "signatures"), default="tabs")
     parser.add_argument("--timeout", type=float, default=90)
+    parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="tpdf-tabs-") as directory:
         room = Path(directory)
@@ -62,7 +63,10 @@ def main() -> int:
                 process.wait(timeout=10)
                 print("[FAIL] tab check timed out")
                 code = 1
-        return 0 if report(log.read_text(encoding="utf-8", errors="replace"), code, phase=args.phase) else 1
+        passed = report(log.read_text(encoding="utf-8", errors="replace"), code, phase=args.phase)
+        if passed and args.saved_copy:
+            shutil.copyfile(first, args.saved_copy)
+        return 0 if passed else 1
 
 
 if __name__ == "__main__":

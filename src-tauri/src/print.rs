@@ -588,6 +588,7 @@ mod tests {
                 crate::edits::NewMark {
                     kind: crate::docmodel::MarkKind::Highlight,
                     stamp: None,
+                    image: None,
                     reply_to: None,
                     page: pages[at].id,
                     quads: vec![72.0, 100.0, 300.0, 118.0],

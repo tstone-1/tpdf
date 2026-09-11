@@ -124,6 +124,7 @@ gate run has.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -335,6 +336,13 @@ def main() -> int:
         for name, argv, _ in selected:
             print(f"{name:8} {' '.join(argv)}")
         return 0
+
+    if sys.platform == "win32":
+        # Linking many examples concurrently exhausted Windows commit memory
+        # (os error 1455), aborting rustc and the calling terminal session.
+        # Bound the default; an explicit caller setting still takes precedence.
+        os.environ.setdefault("CARGO_BUILD_JOBS", "2")
+        print(f"[INFO] Cargo build jobs: {os.environ['CARGO_BUILD_JOBS']}", flush=True)
 
     results = [(name, *run(name, argv), reason) for name, argv, reason in selected]
 

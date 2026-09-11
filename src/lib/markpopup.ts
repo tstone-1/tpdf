@@ -62,6 +62,8 @@ import {
 
 /** What the popup does on the reader's behalf. The viewer supplies all three. */
 export interface MarkPopupOptions {
+  /** Change a signature's size while keeping its proportions. */
+  onSignatureSize?: (mark: number, width: number) => void;
   /** The note was changed and the popup is closing. Only ever with new text. */
   onNote: (mark: number, note: string) => void;
   /** Remove this mark. The popup closes without committing its note. */
@@ -144,6 +146,7 @@ const NAMES: Record<MarkKind, string> = {
   // "Stamp", the third kind whose PDF subtype, serde name and reader's word
   // are one word --- after "Squiggly" and "Ellipse", and for their reason.
   stamp: "Stamp",
+  signature: "Signature",
   // "Drawing", never "Ink". `/Ink` is the file's spelling, `ink` is the serde
   // name, and inside this codebase "ink" already means how a mark is laid down
   // --- `Paint` in `save.rs`, `markBand` here. A reader who drew a line and
@@ -173,6 +176,8 @@ export function nameOf(kind: MarkKind): string {
 
 /** The note editor for one mark the reader made. */
 export class MarkPopup {
+  private readonly signatureSize = document.createElement("div");
+  private signatureWidth = 0;
   private readonly host: HTMLElement;
   private readonly element: HTMLElement;
   private readonly input: HTMLTextAreaElement;
@@ -244,7 +249,16 @@ export class MarkPopup {
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;padding:0.3rem 0.4rem;";
 
-    this.element.append(this.header(), this.colors(), this.input, this.actions());
+    this.signatureSize.textContent = "Size: ";
+    for (const [label, factor] of [["Smaller", 0.8], ["Larger", 1.25]] as const) {
+      const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+      button.style.cssText = "margin:0 6px 8px 0;padding:4px 8px";
+      button.addEventListener("click", () => {
+        if (this.shown !== null) this.opts.onSignatureSize?.(this.shown, Math.max(4, Math.min(2000, this.signatureWidth * factor)));
+      });
+      this.signatureSize.append(button);
+    }
+    this.element.append(this.header(), this.colors(), this.signatureSize, this.input, this.actions());
     host.appendChild(this.element);
   }
 
@@ -298,10 +312,18 @@ export class MarkPopup {
     this.was = mark.note;
     this.input.value = mark.note;
     this.showColor(mark.color);
+    this.signatureSize.hidden = mark.kind !== "signature";
+    this.syncSignatureSize(mark);
+    for (const button of this.swatches) button.hidden = mark.kind === "signature";
     this.element.style.display = "block";
     this.place(at);
     if (focus) this.input.focus();
     if (was !== mark.id) this.opts.onOpen(mark.id);
+  }
+
+  /** Follow journal updates without replacing the note currently being typed. */
+  syncSignatureSize(mark: MarkView): void {
+    if (this.shown === mark.id) this.signatureWidth = (mark.quads[2] ?? 0) - (mark.quads[0] ?? 0);
   }
 
   /**

@@ -62,6 +62,7 @@
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
+  import { SignatureDialog } from "./lib/signaturedialog";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
   import {
@@ -381,6 +382,7 @@
   let viewer: Viewer | null = null;
   let palette: Palette | null = null;
   let sidebar: Sidebar | null = null;
+  let signatureDialog: SignatureDialog | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
@@ -615,6 +617,7 @@
     drawEllipse: () => viewer?.armDraw("ellipse"),
     stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
+    signature: () => void addSignature(),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,
@@ -835,6 +838,13 @@
    * only thing on screen saying the rectangle is theirs rather than the
    * document's.
    */
+  async function addSignature(): Promise<void> {
+    const target = viewer, doc = openDoc;
+    if (!target || doc < 0 || !signatureDialog || documentBusy || opening || rasterCopyBusy) return;
+    const image = await signatureDialog.ask();
+    if (image && viewer === target && openDoc === doc) target.armSignature(image);
+  }
+
   async function drawn(
     kind: MarkKind,
     page: PageId,
@@ -860,6 +870,7 @@
         // `Drawn.width`. Reading the state below instead would work today and
         // would be a second copy of it.
         shape.width,
+        shape.image,
       ),
     );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
@@ -2504,6 +2515,7 @@
 
       // On `document.body` rather than inside the viewer, for the reason the
       // context menu is: a modal that lives in a scroll box is clipped by it.
+      signatureDialog = new SignatureDialog(document.body);
       propertiesDialog = new PropertiesDialog(document.body);
 
       // Beside it, and for its reason. A locked document is asked about
@@ -3186,6 +3198,7 @@
         // A pending redaction is held in exactly the space handed here.
         onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
+        onSignatureResize: (id, width) => void applyEdit((e) => e.resizeSignature(id, width)),
         onErased: (mark, remove, sweep) =>
           void applyEdit((e) => e.erase(mark, remove, sweep)),
         // The same sweep's other half: a mark with no parts to lose goes whole.

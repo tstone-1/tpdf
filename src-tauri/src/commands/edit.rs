@@ -269,6 +269,17 @@ pub async fn annot_move(
     edits.displace(doc, mark, dx, dy)
 }
 
+/// Resizes a visual signature while preserving its proportions.
+#[tauri::command]
+pub async fn annot_resize_signature(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    width: f32,
+) -> Result<edits::EditState, String> {
+    edits.resize_signature(doc, mark, width)
+}
+
 /// Steps the edit journal back one command.
 #[tauri::command]
 pub async fn edit_undo(

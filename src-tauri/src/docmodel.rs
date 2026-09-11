@@ -786,6 +786,8 @@ pub enum MarkKind {
     /// after [`MarkKind::Ellipse`] and [`MarkKind::Squiggly`], and for their
     /// reason: there is no better everyday word.
     Stamp,
+    /// A handwritten signature raster, saved as a custom stamp appearance.
+    Signature,
 }
 
 /// Which standard stamp a [`MarkKind::Stamp`] is.
@@ -887,6 +889,8 @@ pub struct Mark {
     /// is, and it keeps this struct's "everything here is fixed at creation"
     /// property intact.
     pub stamp: Option<StampName>,
+    /// Normalized signature pixels, shared by journal snapshots.
+    pub image: Option<std::sync::Arc<crate::signature::Image>>,
     /// The comment this one answers, when it is a reply. `None` for a mark that
     /// answers nothing, which is every mark a reader places on the page.
     ///
@@ -2363,9 +2367,25 @@ impl Doc {
         if mark.stamp.is_some() != (mark.kind == MarkKind::Stamp) {
             return Err(Refusal::StampMismatch(mark.kind));
         }
-        // The third of the family, and the only one that is not a
-        // biconditional --- see [`Mark::reply_to`] on why a comment with no
-        // parent needs no refusal while a highlight with one does.
+        // Signature pixels belong only to signatures. Bound the whole retained
+        // pool, including undo history, as well as each individual raster.
+        if mark.image.is_some() != (mark.kind == MarkKind::Signature)
+            || mark.image.as_ref().is_some_and(|image| !image.valid())
+            || (mark.kind == MarkKind::Signature && mark.quads.len() != 1)
+            || mark.image.as_ref().is_some_and(|image| {
+                image.rgba.len()
+                    + self
+                        .marks
+                        .values()
+                        .filter_map(|m| m.image.as_ref())
+                        .map(|i| i.rgba.len())
+                        .sum::<usize>()
+                    > crate::signature::DOCUMENT_BYTES
+            })
+        {
+            return Err(Refusal::ShapeMismatch(mark.kind));
+        }
+        // A note may have no parent, but other marks may not have one.
         if mark.reply_to.is_some() && mark.kind != MarkKind::Note {
             return Err(Refusal::ReplyMismatch(mark.kind));
         }
@@ -2650,6 +2670,31 @@ impl Doc {
             })
             .collect();
         let ink = self.issue_ink(Ink { strokes, quads });
+        self.apply(Command::Reink { mark, ink })
+    }
+
+    /// Resizes a signature about its upper-left corner, preserving its aspect ratio.
+    pub fn resize_signature(&mut self, mark: MarkId, width: f32) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        if self
+            .mark(mark)
+            .is_none_or(|m| m.kind != MarkKind::Signature)
+            || !width.is_finite()
+            || !(4.0..=2000.0).contains(&width)
+        {
+            return Err(Refusal::ShapeMismatch(MarkKind::Signature));
+        }
+        let q = self.quads_of(mark)[0];
+        let height = (q.bottom - q.top) * width / (q.right - q.left);
+        let quads = vec![Quad {
+            right: q.left + width,
+            bottom: q.top + height,
+            ..q
+        }];
+        let ink = self.issue_ink(Ink {
+            strokes: Vec::new(),
+            quads,
+        });
         self.apply(Command::Reink { mark, ink })
     }
 
@@ -3320,6 +3365,7 @@ mod tests {
         Mark {
             kind: MarkKind::Highlight,
             stamp: None,
+            image: None,
             reply_to: None,
             page,
             quads: vec![Quad {
@@ -3879,6 +3925,7 @@ mod tests {
         Mark {
             kind: MarkKind::Ink,
             stamp: None,
+            image: None,
             reply_to: None,
             page,
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),
@@ -3910,6 +3957,7 @@ mod tests {
         Mark {
             kind: MarkKind::Ink,
             stamp: None,
+            image: None,
             reply_to: None,
             page,
             quads: Stroke::bounds(&strokes, 1.25).into_iter().collect(),

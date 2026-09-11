@@ -151,6 +151,7 @@ export interface NewMark {
   strokes: number[][];
   /** Set for `stamp` and null for every other kind; the model refuses the rest. */
   stamp: StampName | null;
+  image?: import("./signature").SignatureImage;
   /** The comment this one answers, as `[number, generation]`. */
   reply_to: readonly [number, number] | null;
   color: MarkColor;
@@ -286,6 +287,7 @@ export interface Commands {
     args: { doc: number; mark: number; dx: number; dy: number };
     reply: EditState;
   };
+  annot_resize_signature: { args: { doc: number; mark: number; width: number }; reply: EditState };
   edit_undo: { args: { doc: number }; reply: EditState };
   edit_redo: { args: { doc: number }; reply: EditState };
   edit_state: { args: { doc: number }; reply: EditState };
@@ -343,7 +345,7 @@ export interface Commands {
   };
   document_outline: { args: { doc: number }; reply: Outline };
   document_form: { args: { doc: number }; reply: import("./forms").Form };
-  form_fill: { args: { doc: number; object: [number, number]; value: string | boolean }; reply: EditState };
+  form_fill: { args: { doc: number; object: [number, number]; value: import("./forms").FormValue }; reply: EditState };
   document_comments: { args: { doc: number }; reply: Comments };
   document_links: { args: { doc: number }; reply: Links };
   /**

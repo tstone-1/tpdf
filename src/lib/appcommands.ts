@@ -297,6 +297,8 @@ export interface AppActions {
    * started --- the box is empty until they type into its note.
    */
   drawTextBox(): void;
+  /** Draw or import a visual signature, then place it on a page. */
+  signature(): void;
   /**
    * Arms the freehand tool for one drawing.
    *
@@ -810,6 +812,12 @@ export function registerAppCommands(
       title: "Draw an ellipse...",
       enabled: withDocument,
       run: () => actions.drawEllipse(),
+    },
+    {
+      id: "edit.addSignature",
+      title: "Add signature...",
+      enabled: withDocument,
+      run: () => actions.signature(),
     },
     ...(["approved", "confidential", "draft", "final"] as const).map(
       (name) => ({

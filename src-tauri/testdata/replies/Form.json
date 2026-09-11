@@ -24,6 +24,99 @@
       ],
       "name": "ACME.answer",
       "value": "answer",
+      "control": {
+        "kind": "text"
+      },
+      "multiline": false,
+      "max_length": 20,
+      "reason": "Read-only"
+    },
+    {
+      "object": [
+        12,
+        0
+      ],
+      "widget": [
+        13,
+        0
+      ],
+      "page": 0,
+      "rect": [
+        10.0,
+        20.0,
+        110.0,
+        40.0
+      ],
+      "display_rect": [
+        10.0,
+        20.0,
+        110.0,
+        40.0
+      ],
+      "name": "ACME.answer",
+      "value": [
+        1
+      ],
+      "control": {
+        "kind": "radio",
+        "index": 0,
+        "states": [
+          [
+            79,
+            110,
+            101
+          ],
+          [
+            84,
+            119,
+            111
+          ]
+        ],
+        "unison": false,
+        "no_toggle_off": true
+      },
+      "multiline": false,
+      "max_length": 20,
+      "reason": "Read-only"
+    },
+    {
+      "object": [
+        12,
+        0
+      ],
+      "widget": [
+        13,
+        0
+      ],
+      "page": 0,
+      "rect": [
+        10.0,
+        20.0,
+        110.0,
+        40.0
+      ],
+      "display_rect": [
+        10.0,
+        20.0,
+        110.0,
+        40.0
+      ],
+      "name": "ACME.answer",
+      "value": [
+        0
+      ],
+      "control": {
+        "kind": "choice",
+        "options": [
+          {
+            "export": "VALUE",
+            "label": "Visible label"
+          }
+        ],
+        "combo": false,
+        "editable": false,
+        "multiple": true
+      },
       "multiline": false,
       "max_length": 20,
       "reason": "Read-only"

@@ -3127,6 +3127,7 @@ async function appCommandChecks(
   let canRedo = false;
 
   const actions: AppActions = {
+    signature: () => { fired.push("signature"); },
     fillForm: () => {},
     viewer: () => viewer,
     pageCount: () => doc.page_count,
@@ -3839,6 +3840,7 @@ async function appCommandChecks(
       ...shell("drawBox"),
       read: () => fired.join(","),
     },
+    { id: "edit.addSignature", ...shell("signature"), read: () => fired.join(",") },
     {
       // **The one crop command that can be driven here**, and that is why it is
       // a probe while its two neighbours are excused: it arms and returns, so

@@ -242,11 +242,23 @@ The account behind this section --- what was measured, what it cost, and which e
 
 ## Stack
 
+Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
+`MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
+`Arc` in the journal, limited to 512x256 pixels (including rotated equivalents)
+per image and 4 MiB across retained marks. The worker writes a PDF Stamp appearance
+with an RGB image and alpha soft mask. Placement stores inverse-rotated pixels in
+the mark's original display space, so later page turns rotate the image with it.
+`SignatureDialog` remembers pixels in localStorage only on explicit opt-in.
+`tabs_check.py --phase signatures` checks the real application; the independent
+PDFium and PDFKit pixel readers and fixture commands are in `BUILD.md`.
+This creates visual marks only; it does not create certificate-based signatures.
+
 AcroForm filling uses `forms.rs` inside the document worker, with shared field
 answers in the edit journal and `Plan.forms`. Every save carrying answers takes
 an explicit-appearance rewrite; ordinary save, copy, print and raster redaction
-share that writer. Text fields and checkboxes are supported; XFA, read-only,
-password, file-select, comb, rich-text, radio and choice controls are not editable.
+share that writer. Text fields, checkboxes, radio groups, dropdowns (including
+editable choices), and single/multiple-selection lists are supported. XFA,
+read-only, password, file-select, comb and rich-text controls are not editable.
 Text uses Helvetica with the same supported character set as `textbox.rs`.
 `FormLayer` commits and drains validation before a tab transition or save.
 `tabs_check.py --phase forms` drives the application on disposable synthetic forms;
@@ -255,6 +267,20 @@ When writing inherited fields, materialise `/FT` and `/Ff` on the terminal field
 PDFKit reads `/V` through the parent chain but did not render our fixture's text
 when `/FT` existed only on its grandparent. The unit test pins this compatibility
 requirement. See `BUILD.md` for the fixture-generation and check commands.
+
+Choice answers use option indices in the journal, preserving distinct labels
+that share an export value. The writer saves `/V`, `/I` and explicit appearances
+together; editable custom text removes stale `/I`. Radio indices use widget
+object order, so page moves cannot retarget a pending answer, and `/AS` is updated
+on every sibling while preserving its authored artwork. `TPDF_CHOICE_FIXTURE`
+and `TPDF_CHOICE_PROBE` on the mixed-form Rust test generate synthetic inputs
+and saved output for `tabs_check.py --phase forms` and `choice_pdf_check.py`.
+The latter uses the independent `pypdf` parser and must reject the unedited input.
+PDFKit displays the first label for duplicate dropdown exports despite a saved
+`/I` selecting the second. `TPDF_CHOICE_UNIQUE_PROBE` generates the distinct-export
+control for `choice_pdfkit_check.swift`, which asserts the selected dropdown label
+and radio states. PDFKit's thumbnail also omits list-selection shading; the
+independent parser checks the saved list values, indices and shaded appearances.
 
 Document tabs retain backend handles and edit journals in `src/lib/documenttabs.ts`.
 Only the active tab mounts a Viewer and Sidebar; switching commits open note fields,
@@ -557,6 +583,11 @@ it on every release.
 `scripts/gates.py` runs them all, and **is** the gate list rather than a description of
 one. `BUILD.md` names that one command and deliberately does not repeat the commands
 underneath it.
+
+On Windows the gate runner defaults `CARGO_BUILD_JOBS` to 2, respecting an explicit
+override. Concurrent example builds exhausted commit memory with OS error 1455
+and allocation aborts; use the same bound for local Cargo verification outside
+the runner. This limits compilation concurrency, not the Rust test threads.
 
 That is a deviation from the portfolio rule, which says a release checklist must state
 every gating command verbatim with its flags. The rule exists because a hand-copied

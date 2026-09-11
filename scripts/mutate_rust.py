@@ -261,6 +261,9 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
+    Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),
+    Mutation("choices: ignore the selected radio sibling", "src/forms.rs", "                            selected == index || (*unison && states[*selected] == states[*index])", "                            selected == index || (!*unison && states[*selected] != states[*index])", "choices_and_radio_round_trip_exports_indices_and_appearances"),
     Mutation("forms: skip answers in the save pipeline", "src/save.rs", "    crate::forms::write(&mut doc, &plan.forms)?;", "    // form answers omitted", "form_answers_force_a_rewrite_and_reach_the_saved_file"),
     Mutation("forms: write no appearances or values", "src/forms.rs", "    if changes.is_empty() {", "    if true {", "forms_round_trip_values_and_every_shared_widget_appearance"),
     Mutation("forms: lose current answers on replay", "src/docmodel.rs", "                self.forms.insert(object, version);", "                let _ = (object, version);", "forms_journal_undo_redo_and_redo_branch_are_independent_of_comments"),
@@ -5914,7 +5917,7 @@ MUTATIONS += [
         "        self.apply(Command::Reink { mark, ink })\n"
         "    }\n"
         "\n"
-        "    /// Replaces what a mark is drawn in",
+        "    /// Resizes a signature",
         "            .collect();\n"
         "        if let Some(body) = self.marks.get_mut(&mark) {\n"
         "            body.quads = quads;\n"
@@ -5923,7 +5926,7 @@ MUTATIONS += [
         "        Ok(())\n"
         "    }\n"
         "\n"
-        "    /// Replaces what a mark is drawn in",
+        "    /// Resizes a signature",
         "undoing_a_move_puts_the_mark_back_where_it_was",
     ),
     Mutation(
@@ -8663,6 +8666,23 @@ MUTATIONS += [
         "        lopdf::LoadOptions {\n"
         "            strict: false,",
         "an_append_that_cannot_be_read_back_puts_the_file_back_as_it_was",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        "visual signature: discard transparency when writing its mask",
+        "src/signature.rs",
+        "            alpha.push(pixel[3]);",
+        "            alpha.push(255);",
+        "signature_pixels_alpha_and_placement_survive_append_and_rewrite",
+    ),
+    Mutation(
+        "visual signature: accept an invisible raster",
+        "src/signature.rs",
+        "            && self.rgba.chunks_exact(4).any(|p| p[3] != 0)",
+        "            && !self.rgba.is_empty()",
+        "signature_rasters_reject_bad_lengths_limits_and_invisible_pixels",
     ),
 ]
 

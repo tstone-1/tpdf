@@ -86,6 +86,15 @@ uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-form-fixture.pdf --phase f
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
+# Visual signatures: synthetic colour/alpha quadrants on cropped, rotated pages.
+TPDF_SIGNATURE_PROBE=/tmp/tpdf-signatures \
+    cargo test --locked --manifest-path src-tauri/Cargo.toml --lib signature_pixels_alpha_and_placement
+uv run --with pypdfium2 --with pillow scripts/signature_pdf_check.py /tmp/tpdf-signatures
+swift scripts/signature_pdfkit_check.swift /tmp/tpdf-signatures
+uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-signatures/signature-source-0.pdf --phase signatures
+# On Windows, set TPDF_SIGNATURE_PROBE with $env:TPDF_SIGNATURE_PROBE and use a local scratch path.
+# Use an isolated TAURI_CONFIG identifier if another instance of tpdf is running.
+
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.
@@ -4836,6 +4845,20 @@ and the defect does not, so a sixth adds nothing: check the message, then delete
 
 ## Cutting a release
 
+**26.9.5 local verification, Windows x64, 2026-09-11:** all 23 gates passed
+in 309 seconds (1,319 Rust tests passed, two ignored; 1,631 frontend tests).
+The selected mutations caught 14/14 Rust, 251/251 frontend and 2/2 native UI
+faults. These cover forms, signatures, movement and changed frontend files;
+the historical mutation tables were not run in full. The extracted MSI passed
+313 text-heavy and 215 vector-heavy viewer checks, with 51 and 149 not applicable,
+plus 34 form and 20 signature checks. The development PDFium was hidden; hiding
+the bundled engine too failed as expected. The print probe passed 10/10.
+The real-document OCR sweep opened 133 PDFs, sampled 11,728 regions and read back
+7,556 on 260 pages: zero still read as text, 3,337 were reported unreadable,
+and no arithmetic warnings appeared (27.5 seconds).
+The released 26.9.4 NSIS setup upgraded to 26.9.5 in a disposable installation;
+the prior installed release and all three registry exports were restored.
+
 Version scheme is **CalVer `YY.M.MICRO`** (`26.8.0` = first August 2026 release). MICRO
 starts at 0 and increments within the month.
 
@@ -4852,9 +4875,10 @@ starts at 0 and increments within the month.
 5. `scripts/gates.py` --- all gates pass.
 
    On a Windows host with many cores, cap Cargo concurrency if linking exhausts
-   memory: `$env:CARGO_BUILD_JOBS='4'`. The gate suite links all examples; a
-   2026-09-10 run launched more than 30 linkers and failed with `LNK1102`.
-   Four jobs completed the build without changing any gate or compiler flags.
+   memory: `$env:CARGO_BUILD_JOBS='2'`. The gate suite defaults to two jobs on
+   Windows. A 2026-09-10 run launched more than 30 linkers; a later allocation
+   failure exhausted system commit memory and terminated the calling session.
+   Keep this cap for release builds as well as the gates.
 
    **On a Mac, also `scripts/check_windows.py`, and it is not optional before a tag.** A
    green gate list on this platform says nothing about any `#[cfg(windows)]` line, because
@@ -5633,6 +5657,13 @@ starts at 0 and increments within the month.
    never off the exit code: the failing leg exits **0**, writes every other file, registers
    itself and creates the shortcut. Silent mode turns the Abort/Retry/Ignore box into Ignore,
    and Ignore reports success.
+
+   The packaged executable differs from the loose `target/release/tpdf.exe` by
+   Tauri's installer-kind marker: `__TAURI_BUNDLE_TYPE_VAR_UNK` becomes
+   `__TAURI_BUNDLE_TYPE_VAR_NSS` for NSIS. Verify exactly one marker replacement
+   and byte identity everywhere else, or compare against an extracted matching
+   installer. A raw digest comparison against the loose binary falsely rejected
+   the correct 26.9.5 upgrade; the difference was exactly those three bytes.
 
    Measured 2026-08-24, planting 26.8.8's stray `pdfium` file in both legs:
 

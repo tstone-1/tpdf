@@ -402,6 +402,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            image: None,
             reply_to: None,
             at: 0,
             // Display space, which is y-down: `top` is the smaller number. The

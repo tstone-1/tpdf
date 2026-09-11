@@ -284,6 +284,7 @@ export function isMovable(kind: MarkKind): boolean {
     // A stamp is placed by the reader and anchored to nothing, so it moves for
     // the box's reason exactly.
     case "stamp":
+    case "signature":
       return true;
   }
 }
@@ -789,7 +790,8 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // strokes, so nothing reaches this arm --- it exists because the switch
       // is exhaustive, which is what makes a sixth kind a compile error here.
       return quad;
-     case "stamp":
+    case "signature":
+    case "stamp":
       // The whole quad a sixth time. A stamp is a border on the quad's edge and
       // a word across its middle, which is two things rather than a band --- the
       // overlay asks {@link isStamp} and draws both. What this returns is the
@@ -822,7 +824,8 @@ export type Paint =
   | "text"
   | "path"
   | "icon"
-  | "stamp";
+  | "stamp"
+  | "image";
 
 /**
  * Which of those a kind is drawn as.
@@ -862,6 +865,8 @@ export function paintOf(kind: MarkKind): Paint {
       return "path";
     case "note":
       return "icon";
+    case "signature":
+      return "image";
     case "stamp":
       return "stamp";
   }
