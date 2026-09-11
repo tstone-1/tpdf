@@ -24,7 +24,8 @@
 //! containing list carries more than one so an arm the mirror omits is in the
 //! bytes rather than in nobody's sample.
 //!
-//! **Regenerate with `TPDF_REPLIES=write`**, which rewrites the files from the
+//! **Regenerate with `TPDF_REPLIES=write cargo test --lib
+//! replies::tests::every_named_reply_payload_serialises_to_its_committed_sample`**, which rewrites the files from the
 //! samples below and is the only supported way to change them --- editing one by
 //! hand states what Rust sends without asking Rust.
 //!
@@ -242,8 +243,30 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "Form",
+        &crate::forms::Form {
+            widgets: vec![crate::forms::Widget {
+                object: (12, 0),
+                widget: (13, 0),
+                page: 0,
+                rect: [10.0, 20.0, 110.0, 40.0],
+                display_rect: [10.0, 20.0, 110.0, 40.0],
+                name: "ACME.answer".into(),
+                value: crate::forms::Value::Text("answer".into()),
+                multiline: false,
+                max_length: Some(20),
+                reason: Some("Read-only".into()),
+            }],
+        },
+    );
+
+    put(
         "EditState",
         &edits::EditState {
+            forms: vec![crate::forms::Change {
+                object: (12, 0),
+                value: crate::forms::Value::Text("ACME answer".into()),
+            }],
             pages: vec![
                 edits::PageView {
                     id: 1,

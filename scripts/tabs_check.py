@@ -20,6 +20,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
+    parser.add_argument("--phase", choices=("tabs", "forms"), default="tabs")
     parser.add_argument("--timeout", type=float, default=90)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="tpdf-tabs-") as directory:
@@ -27,7 +28,7 @@ def main() -> int:
         first, second = room / "first.pdf", room / "second.pdf"
         shutil.copyfile(args.pdf, first)
         shutil.copyfile(args.pdf, second)
-        env = dict(os.environ, TPDF_OPENCHECK=f"tabs:{first}|{second}",
+        env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{first}|{second}",
                    TPDF_SESSION_FILE=str(room / "session.json"))
         if os.name == "nt":
             # Keep this unattended check running behind other windows without
@@ -61,7 +62,7 @@ def main() -> int:
                 process.wait(timeout=10)
                 print("[FAIL] tab check timed out")
                 code = 1
-        return 0 if report(log.read_text(encoding="utf-8", errors="replace"), code, phase="tabs") else 1
+        return 0 if report(log.read_text(encoding="utf-8", errors="replace"), code, phase=args.phase) else 1
 
 
 if __name__ == "__main__":

@@ -354,6 +354,7 @@ mod tests {
             redactions: Vec::new(),
             notes: Vec::new(),
             discards: Vec::new(),
+            forms: Vec::new(),
             dirty,
         }
     }
@@ -372,6 +373,7 @@ mod tests {
             redactions: Vec::new(),
             notes: Vec::new(),
             discards: Vec::new(),
+            forms: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,

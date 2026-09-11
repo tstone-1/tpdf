@@ -167,6 +167,7 @@ mod tests {
             marks: vec![],
             notes: vec![],
             discards: vec![],
+            forms: Vec::new(),
             redactions: vec![
                 region(0, [30.0, 40.0, 60.0, 70.0]),
                 region(1, [1.0, 2.0, 3.0, 4.0]),

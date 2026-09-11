@@ -3127,6 +3127,7 @@ async function appCommandChecks(
   let canRedo = false;
 
   const actions: AppActions = {
+    fillForm: () => {},
     viewer: () => viewer,
     pageCount: () => doc.page_count,
     openDocument: () => fired.push("openDocument"),
@@ -4210,6 +4211,7 @@ async function appCommandChecks(
   // counted in this comment: the count belongs to the entries, and saying it
   // here went stale the first time one was added.
   const undriven: Record<string, string> = {
+    "edit.fillForm": "Driven against the real application by tabs_check.py --phase forms.",
     "file.close": "tab ownership is exercised by the open check's tabs phase",
     "view.nextTab": "tab ownership is exercised by the open check's tabs phase",
     "view.previousTab": "tab ownership is exercised by the open check's tabs phase",

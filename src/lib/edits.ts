@@ -113,6 +113,7 @@ export interface Split {
 
 /** Mirrors `edits::EditState`. */
 export interface EditState {
+  forms?: import("./forms").FormChange[];
   pages: PageView[];
   marks: MarkView[];
   /**
@@ -236,6 +237,11 @@ export class Edits {
   /** Quarter-turns an edit has applied to the page in slot `page`. */
   turnsOf(page: number): number {
     return this.current.pages[page]?.turns ?? 0;
+  }
+
+  /** Fill one shared form field through the validated backend command. */
+  async fill(object: [number, number], value: string | boolean): Promise<EditState> {
+    return this.adopt(await call("form_fill", { doc: this.doc, object, value }));
   }
 
   /**

@@ -120,6 +120,7 @@ HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "wi
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
 FILTERS = [
+    "forms::",
     "search::",
     "structure::",
     "text::",
@@ -260,6 +261,9 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation("forms: skip answers in the save pipeline", "src/save.rs", "    crate::forms::write(&mut doc, &plan.forms)?;", "    // form answers omitted", "form_answers_force_a_rewrite_and_reach_the_saved_file"),
+    Mutation("forms: write no appearances or values", "src/forms.rs", "    if changes.is_empty() {", "    if true {", "forms_round_trip_values_and_every_shared_widget_appearance"),
+    Mutation("forms: lose current answers on replay", "src/docmodel.rs", "                self.forms.insert(object, version);", "                let _ = (object, version);", "forms_journal_undo_redo_and_redo_branch_are_independent_of_comments"),
     Mutation(
         # Show the engine a control no scale can render, as the gate did until
         # 2026-08-28. The region comes back `ControlUnread` -- true, and it

@@ -8,8 +8,8 @@ cropped or extracted. Annotations followed between 2026-08-18 and 2026-08-23 ---
 underline, strike-out, squiggly, drawing, box, ellipse, text box, stamp and comment --- and a
 document has been written **in place** since 2026-08-19. Redaction shipped in `26.8.11` on
 2026-08-27, end to end: mark a region, review the list, remove the words from the page's own
-instructions, and read the result back as *verified* or *not verified, and why*. **Forms are
-not started** (Phase 4), and neither is in-place text editing (Phase 5).
+instructions, and read the result back as *verified* or *not verified, and why*. **Form filling is in development** (Phase 4): text fields and checkboxes, with
+shared answers, undo and saved appearances. In-place text editing is not started (Phase 5).
 
 That last sentence read *"Annotations, forms and redaction are not started, and no document is
 written in place"* until 2026-08-28 --- wrong on three of its four clauses, against work that
@@ -13081,6 +13081,13 @@ a document rather than coverage --- and unlike the two fixtures beside it, a hos
 can build this one, since `make_hostile_pdf.py` is dependency-free.
 
 ### Phase 4 — Forms and visual signatures
+
+The first increment implements plain text fields and checkboxes. Answers live in
+one document journal, including shared widgets, and save through the sandboxed
+rewrite with explicit appearance streams. The application check covers entering,
+clearing, undo/redo, tab isolation and reopening; PDFKit is the independent reader.
+Text currently uses the Western European character set supported by `textbox.rs`.
+Choice fields, radio buttons and visual signatures remain later increments.
 
 AcroForm filling with saved state, appearance stream regeneration, field inheritance,
 shared widgets, form JavaScript policy (disabled by default), signature *image* placement.

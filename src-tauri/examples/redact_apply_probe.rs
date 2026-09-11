@@ -954,6 +954,7 @@ fn form_plan(
         }],
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
     }
 }
 
@@ -1005,6 +1006,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
         }],
         notes: Vec::new(),
         discards: Vec::new(),
+        forms: Vec::new(),
     }
 }
 

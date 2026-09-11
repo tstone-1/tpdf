@@ -453,6 +453,11 @@ impl DocumentGraph {
         Ok(crate::verify::scan(&bytes, needles, self.password()))
     }
 
+    /// Reads widgets from the shared, bounded object graph.
+    pub fn form(&self) -> Result<crate::forms::Form, String> {
+        crate::forms::scan(self.parsed()?)
+    }
+
     /// Whether the page tree has been parsed for this document yet.
     ///
     /// **An accounting observable.** `RawDocument::original_box` is meant to

@@ -108,6 +108,63 @@ function sidebars(): number {
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "forms": {
+      const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
+      const [first, second] = expected.split("|");
+      if (!first || !second) throw new Error("two disposable form paths required");
+      await host.open(first);
+      const a = host.tabs()[0];
+      if (!a) throw new Error("first document did not open");
+      const field = () => document.querySelector<HTMLInputElement>('.form-fields input[type="text"]');
+      if (!await settle(() => !!field(), SETTLE_MS)) throw new Error("form controls did not mount");
+      host.run("edit.fillForm");
+      check("the palette focuses a form field", document.activeElement === field());
+      field()!.value = "Grüße";
+      // Switching while typing must flush to A before B becomes active.
+      await host.open(second);
+      const b = host.tabs().find((tab) => tab.id !== a.id)!;
+      check("the second document has no form edits", (host.edits()?.state.forms?.length ?? 0) === 0);
+      await host.activate(a.id);
+      if (!await settle(() => field()?.value === "Grüße", SETTLE_MS)) throw new Error("the typed answer was lost on tab switch");
+      check("the answer belongs to the original tab", host.edits()?.state.forms?.[0]?.value === "Grüße");
+      host.run("edit.undo"); await host.idle();
+      check("undo restores the file's answer", field()?.value === "OLD");
+      host.run("edit.redo"); await host.idle();
+      check("redo restores the typed answer", field()?.value === "Grüße");
+      const checkbox = document.querySelector<HTMLInputElement>('.form-fields input[type="checkbox"]')!;
+      checkbox.click(); await host.idle();
+      check("a checkbox records a boolean answer", host.edits()?.state.forms?.some((f) => f.value === true) === true);
+      field()!.focus();
+      field()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      check("Tab reaches the next field", document.activeElement === checkbox);
+      host.run("file.save");
+      check("saving freezes form edits", field()?.readOnly === true && checkbox.disabled);
+      await host.idle();
+      if (!await settle(() => field()?.value === "Grüße", SETTLE_MS)) throw new Error(`the saved field did not reopen: ${document.querySelector(".error")?.textContent ?? "no error shown"}`);
+      check("save resets the journal", host.edits()?.state.dirty === false);
+      check("saved controls are editable again", field()?.readOnly === false);
+      const form = await call("document_form", { doc: host.edits()!.doc });
+      check("both shared widgets reopen with the saved answer", form.widgets.filter((w) => w.value === "Grüße").length === 2);
+      check("the checkbox reopens checked", form.widgets.some((w) => w.value === true));
+      const current = host.edits()!;
+      await host.activate(b.id);
+      check("saving did not change the other tab", (host.edits()?.state.forms?.length ?? 0) === 0 && host.edits()?.state.dirty === false);
+      const untouched = await call("document_form", { doc: b.id });
+      check("the other file retains its original answer", untouched.widgets.some((w) => w.value === "OLD"));
+      await host.activate(current.doc);
+      if (!await settle(() => !!field(), SETTLE_MS)) throw new Error("form controls did not remount");
+      field()!.value = ""; field()!.dispatchEvent(new Event("blur")); await host.idle();
+      check("clearing is an edit, not an absent value", host.edits()?.state.forms?.some((f) => f.value === "") === true);
+      host.run("edit.undo"); await host.idle();
+      check("undo restores a cleared field", field()?.value === "Grüße");
+      field()!.value = "x".repeat(21);
+      await host.activate(b.id);
+      check("an invalid draft blocks tab switching", host.edits()?.doc === current.doc && field()?.value === "x".repeat(21));
+      field()!.value = "Grüße";
+      await host.activate(b.id);
+      check("correcting a draft permits switching again", host.edits()?.doc === b.id);
+      break;
+    }
     case "tabs": {
       const check = (name: string, ok: boolean) => report.check(name, ok,
         `${host.tabs().length} tabs, active ${basename(host.path())}`);

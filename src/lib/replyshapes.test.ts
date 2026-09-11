@@ -57,6 +57,8 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { Form } from "./forms";
+import Form_ from "../../src-tauri/testdata/replies/Form.json";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
@@ -135,6 +137,7 @@ type Shape<T> = Record<keyof T, readonly Kind[]>;
  * assertion rather than a list of everything that would be tolerated.
  */
 const SCHEMA = {
+  Form: { widgets: ["array"] } satisfies Shape<Form>,
   Applied: {
     regions: ["number"],
     shows: ["number"],
@@ -165,6 +168,7 @@ const SCHEMA = {
     at_ms: ["number"],
   } satisfies Shape<DocumentInfo>,
   EditState: {
+    forms: ["array"],
     pages: ["array"],
     can_undo: ["boolean"],
     can_redo: ["boolean"],
@@ -271,6 +275,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Copied: Copied_ satisfies Widen<Copied>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,
+  Form: Form_ satisfies Widen<Form>,
   EditState: EditState_ satisfies Widen<EditState>,
   Links: Links_ satisfies Widen<Links>,
   Merged: Merged_ satisfies Widen<Merged>,

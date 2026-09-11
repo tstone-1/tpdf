@@ -242,6 +242,20 @@ The account behind this section --- what was measured, what it cost, and which e
 
 ## Stack
 
+AcroForm filling uses `forms.rs` inside the document worker, with shared field
+answers in the edit journal and `Plan.forms`. Every save carrying answers takes
+an explicit-appearance rewrite; ordinary save, copy, print and raster redaction
+share that writer. Text fields and checkboxes are supported; XFA, read-only,
+password, file-select, comb, rich-text, radio and choice controls are not editable.
+Text uses Helvetica with the same supported character set as `textbox.rs`.
+`FormLayer` commits and drains validation before a tab transition or save.
+`tabs_check.py --phase forms` drives the application on disposable synthetic forms;
+`form_pdfkit_check.swift` independently reads and renders the saved result.
+When writing inherited fields, materialise `/FT` and `/Ff` on the terminal field:
+PDFKit reads `/V` through the parent chain but did not render our fixture's text
+when `/FT` existed only on its grandparent. The unit test pins this compatibility
+requirement. See `BUILD.md` for the fixture-generation and check commands.
+
 Document tabs retain backend handles and edit journals in `src/lib/documenttabs.ts`.
 Only the active tab mounts a Viewer and Sidebar; switching commits open note fields,
 drains pending edits, and keeps the reading position, search scope and sidebar choice.
