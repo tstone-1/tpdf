@@ -164,6 +164,10 @@
 {/snippet}
 
 <div class="tools" bind:this={host} role="toolbar" aria-label="Document tools">
+  <!-- Keep Document visible at narrow widths too: Windows has no native File menu. -->
+  {#each TOOL_GROUPS.filter((group) => group.label === "Document") as group}
+    {@render dropdown(group)}
+  {/each}
   <div class="history">
     <button disabled={!enabled("edit.undo")} title={commandState["edit.undo"]?.title ?? "Undo"} onclick={() => invoke("edit.undo")}>Undo</button>
     <button disabled={!enabled("edit.redo")} title={commandState["edit.redo"]?.title ?? "Redo"} onclick={() => invoke("edit.redo")}>Redo</button>

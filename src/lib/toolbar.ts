@@ -20,6 +20,15 @@ export const TOOL_ACTIONS: ToolItem[] = [
 
 export const TOOL_GROUPS: ToolGroup[] = [
   {
+    label: "Document",
+    items: [
+      { id: "file.properties", label: "Document properties" },
+      { id: "file.saveCopy", label: "Save a copy..." },
+      { id: "file.print", label: "Print..." },
+      { id: "file.reload", label: "Reload from disk" },
+    ],
+  },
+  {
     label: "Highlight",
     items: [
       { id: "edit.highlightSelection", label: "Highlight selection" },
