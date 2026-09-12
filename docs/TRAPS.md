@@ -17001,6 +17001,16 @@ the process whose death matters is not the probe.
 Until then the honest wording is that the job object bounds memory and process
 creation, both measured, and that orphan cleanup is intended rather than shown.
 
+**Follow-up, 2026-09-12:** a form check exposed five more orphaned renderer workers.
+A separate test parent now stops immediately after creating its suspended child;
+the outer test opens the child's process handle, kills the parent without unwinding,
+and waits on the child. The old create-then-assign ordering fails; assigning the
+job inside `CreateProcess` through `PROC_THREAD_ATTRIBUTE_JOB_LIST` passes on both
+Windows launch paths. The lesson is the interval: "before the first instruction"
+is too late for a lifetime guarantee if the parent can die before job assignment.
+Nine subsequent native app exits left no workers, as checked externally by
+`scripts/win_worker_exit.py`. The older incident's exact mechanism remains unknown.
+
 ### A timeout whose failure path has no timeout is not a bound
 
 `scripts/viewer_check.py` bounds one run of the window check, and

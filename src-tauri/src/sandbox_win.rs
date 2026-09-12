@@ -72,7 +72,7 @@ use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, InitializeProcThreadAttributeList, OpenProcessToken, ResumeThread,
     UpdateProcThreadAttribute, WaitForSingleObject, CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT,
     INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    PROC_THREAD_ATTRIBUTE_JOB_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 /// Low integrity, `S-1-16-4096`.
@@ -306,79 +306,85 @@ fn low_integrity_token() -> Result<Token, String> {
     Ok(dup)
 }
 
-/// An owned `PROC_THREAD_ATTRIBUTE_LIST` naming exactly the inheritable handles.
-///
-/// The handle array must outlive the list *and* the `CreateProcess` call, since
-/// `UpdateProcThreadAttribute` stores the pointer rather than copying --- which
-/// is why the handles are owned by this struct and not borrowed from the caller.
+/// Owned process-creation attributes. Their arrays stay at stable heap addresses
+/// until the attribute list and the CreateProcess call have finished.
 struct AttributeList {
     buffer: Vec<u8>,
-    /// Kept alive because the attribute list points into it.
     _handles: Vec<HANDLE>,
+    _jobs: Box<[HANDLE; 1]>,
 }
 
 impl AttributeList {
-    /// Returns `None` for an empty set, which is not an oversight.
-    ///
-    /// `UpdateProcThreadAttribute` refuses a zero-length handle list with
-    /// `ERROR_BAD_LENGTH`, so "inherit nothing" cannot be said with an attribute
-    /// --- it is said by omitting the attribute *and* passing
-    /// `bInheritHandles: FALSE`, which [`spawn_contained`] does. Encoding that as
-    /// `Option` rather than as an empty list keeps the caller from constructing
-    /// a request Win32 has no way to represent.
-    fn new(handles: Vec<HANDLE>) -> Result<Option<Self>, String> {
-        if handles.is_empty() {
-            return Ok(None);
-        }
+    fn new(handles: Vec<HANDLE>, job: &Job) -> Result<Self, String> {
+        // A zero-length HANDLE_LIST is invalid. Omit that attribute when no
+        // handles are requested, and turn inheritance off in CreateProcess.
+        let count = if handles.is_empty() { 1 } else { 2 };
         let mut size: usize = 0;
-        // First call always "fails" with ERROR_INSUFFICIENT_BUFFER and reports
-        // the size; its return value is not the thing to check.
-        // SAFETY: a null list with a live out-parameter is the documented way to
-        // ask for the size.
-        unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &raw mut size) };
+        // SAFETY: documented sizing call, with a live output parameter.
+        unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), count, 0, &raw mut size) };
         if size == 0 {
             return Err(format!(
                 "InitializeProcThreadAttributeList sizing failed: {}",
                 last_error()
             ));
         }
-
         let mut buffer = vec![0u8; size];
         let list: LPPROC_THREAD_ATTRIBUTE_LIST = buffer.as_mut_ptr().cast();
-        // SAFETY: `buffer` is at least `size` bytes and outlives the list.
-        let ok = unsafe { InitializeProcThreadAttributeList(list, 1, 0, &raw mut size) };
-        if ok == 0 {
+        // SAFETY: buffer has the size returned above and outlives the list.
+        if unsafe { InitializeProcThreadAttributeList(list, count, 0, &raw mut size) } == 0 {
             return Err(format!(
                 "InitializeProcThreadAttributeList failed: {}",
                 last_error()
             ));
         }
-
         let mut this = Self {
             buffer,
             _handles: handles,
+            _jobs: Box::new([job.0]),
         };
-        let list: LPPROC_THREAD_ATTRIBUTE_LIST = this.buffer.as_mut_ptr().cast();
-        // SAFETY: the handle array outlives this struct, and the byte length is
-        // its own size.
+        let list = this.as_ptr();
+        // Assignment must happen inside CreateProcess. Assigning afterwards,
+        // even before ResumeThread, leaves an orphan if the parent dies between
+        // those calls. JOB_LIST is supported on every shipped Windows version.
+        // SAFETY: the array's heap allocation and the job outlive CreateProcess.
         let ok = unsafe {
             UpdateProcThreadAttribute(
                 list,
                 0,
-                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-                this._handles.as_ptr().cast(),
-                std::mem::size_of_val(this._handles.as_slice()),
+                PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+                this._jobs.as_ptr().cast(),
+                std::mem::size_of_val(this._jobs.as_ref()),
                 std::ptr::null_mut(),
                 std::ptr::null(),
             )
         };
         if ok == 0 {
             return Err(format!(
-                "UpdateProcThreadAttribute failed: {}",
+                "UpdateProcThreadAttribute job list failed: {}",
                 last_error()
             ));
         }
-        Ok(Some(this))
+        if !this._handles.is_empty() {
+            // SAFETY: the nonempty array's allocation outlives CreateProcess.
+            let ok = unsafe {
+                UpdateProcThreadAttribute(
+                    list,
+                    0,
+                    PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                    this._handles.as_ptr().cast(),
+                    std::mem::size_of_val(this._handles.as_slice()),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                )
+            };
+            if ok == 0 {
+                return Err(format!(
+                    "UpdateProcThreadAttribute handle list failed: {}",
+                    last_error()
+                ));
+            }
+        }
+        Ok(this)
     }
 
     fn as_ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
@@ -929,6 +935,18 @@ pub fn spawn_contained(
     containment: &Containment,
     stdio: Option<&Stdio>,
 ) -> Result<Contained, String> {
+    spawn_contained_at_creation(command, handles, containment, stdio, |_| {})
+}
+
+// The observer is normally a no-op. Tests stop the parent at the precise point
+// where Windows has created the child but no subsequent Rust code has run.
+fn spawn_contained_at_creation(
+    command: &str,
+    handles: &[HANDLE],
+    containment: &Containment,
+    stdio: Option<&Stdio>,
+    created_observer: impl FnOnce(&PROCESS_INFORMATION),
+) -> Result<Contained, String> {
     // Held to the end of this function, which is what bounds the window: every
     // path out of here, `CreateProcess` failing included, clears the mark.
     // SAFETY: the caller's obligation, restated on this function.
@@ -952,7 +970,8 @@ pub fn spawn_contained(
     let job = Job::create(containment.memory_cap)?;
 
     let mut cmdline: Vec<u16> = OsStr::new(command).encode_wide().chain(Some(0)).collect();
-    let mut attributes = AttributeList::new(handles)?;
+    let inherit = i32::from(!handles.is_empty());
+    let mut attributes = AttributeList::new(handles, &job)?;
 
     // SAFETY: zeroed is the documented initial state; `cb` is set below.
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
@@ -964,18 +983,8 @@ pub fn spawn_contained(
         startup.StartupInfo.hStdError = stdio.stderr;
     }
 
-    // With no handles to pass, inheritance is switched off entirely rather than
-    // narrowed to nothing --- see `AttributeList::new`. Leaving `bInheritHandles`
-    // true with no list would inherit *every* inheritable handle this process
-    // holds, which is the opposite of what an empty request means and the most
-    // expensive possible way to misread it.
-    let (inherit, flags) = match attributes.as_mut() {
-        Some(list) => {
-            startup.lpAttributeList = list.as_ptr();
-            (1, CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT)
-        }
-        None => (0, CREATE_SUSPENDED),
-    };
+    startup.lpAttributeList = attributes.as_ptr();
+    let flags = CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT;
     // SAFETY: overwritten wholesale by a successful CreateProcess.
     let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let created = match &token {
@@ -1016,9 +1025,7 @@ pub fn spawn_contained(
         return Err(format!("CreateProcess failed: {}", last_error()));
     }
 
-    // Before the child runs, which is the whole reason it was created suspended.
-    // SAFETY: a handle `CreateProcess` returned moments ago.
-    unsafe { job.assign(info.hProcess)? };
+    created_observer(&info);
 
     Ok(Contained {
         process: info.hProcess,
@@ -1323,22 +1330,109 @@ mod tests {
     fn an_attribute_list_is_built_from_real_handles() {
         // SAFETY: a pseudo-handle, valid to name in a list.
         let handles = vec![unsafe { GetCurrentProcess() }];
-        let list = AttributeList::new(handles).expect("an attribute list over one handle");
-        assert!(list.is_some(), "a non-empty set must become a list");
+        let job = Job::create(WORKER_MEMORY_CAP).expect("a job");
+        AttributeList::new(handles, &job).expect("job and handle attributes");
     }
 
-    /// "Inherit nothing" cannot be an attribute list, so it is `None`.
-    ///
-    /// Also written asserting the opposite, and also wrong:
-    /// `UpdateProcThreadAttribute` refuses a zero-length list with
-    /// `ERROR_BAD_LENGTH`. That is a design constraint rather than a quirk to
-    /// work around --- an empty request has to reach `CreateProcess` as
-    /// `bInheritHandles: FALSE`, because leaving it true with no list inherits
-    /// *everything*, which is the exact opposite of what was asked for.
     #[test]
-    fn an_empty_handle_set_is_not_an_attribute_list() {
-        let list = AttributeList::new(Vec::new()).expect("an empty set is legal to ask for");
-        assert!(list.is_none(), "an empty set must not become a list");
+    fn an_empty_handle_set_still_carries_the_job() {
+        let job = Job::create(WORKER_MEMORY_CAP).expect("a job");
+        AttributeList::new(Vec::new(), &job).expect("job attribute without handle inheritance");
+    }
+
+    // Invoked in a separate process by the parent-death test. Without the marker
+    // it is inert when the ordinary test runner enumerates this helper.
+    #[test]
+    fn creation_boundary_owner() {
+        let Some(marker) = std::env::var_os("TPDF_CREATION_BOUNDARY_PID") else {
+            return;
+        };
+        let containment = Containment {
+            low_integrity: std::env::var_os("TPDF_CREATION_BOUNDARY_LOW").is_some(),
+            ..Containment::default()
+        };
+        let _child =
+            spawn_contained_at_creation("cmd.exe /c exit 0", &[], &containment, None, |info| {
+                std::fs::write(marker, info.dwProcessId.to_string()).expect("publish child PID");
+                // The outer test terminates us without running destructors.
+                loop {
+                    std::thread::park();
+                }
+            })
+            .expect("create suspended child");
+    }
+
+    #[test]
+    fn parent_death_at_process_creation_leaves_no_suspended_child() {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        };
+
+        // Both CreateProcessW and CreateProcessAsUserW must have the property.
+        for low in [false, true] {
+            let marker = std::env::temp_dir().join(format!(
+                "tpdf-creation-boundary-{}-{low}.pid",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&marker);
+            let mut command = Command::new(std::env::current_exe().expect("test executable"));
+            command
+                .args([
+                    "--exact",
+                    "sandbox_win::tests::creation_boundary_owner",
+                    "--nocapture",
+                ])
+                .env("TPDF_CREATION_BOUNDARY_PID", &marker)
+                .env_remove("TPDF_CREATION_BOUNDARY_LOW")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null());
+            if low {
+                command.env("TPDF_CREATION_BOUNDARY_LOW", "1");
+            }
+            let mut owner = command.spawn().expect("spawn owner process");
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let pid = loop {
+                if let Some(pid) = std::fs::read_to_string(&marker)
+                    .ok()
+                    .and_then(|text| text.parse::<u32>().ok())
+                {
+                    break Some(pid);
+                }
+                if Instant::now() >= deadline || owner.try_wait().expect("owner status").is_some() {
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            // Open before killing the owner: a retained handle identifies this
+            // exact process even if Windows subsequently recycles its PID.
+            let raw = pid.map_or(std::ptr::null_mut(), |pid| {
+                // SAFETY: access rights are valid; PID came from our own owner.
+                unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) }
+            });
+            let _ = owner.kill();
+            owner.wait().expect("owner terminated");
+            let _ = std::fs::remove_file(&marker);
+            assert!(
+                !raw.is_null(),
+                "could not observe suspended child, low={low}"
+            );
+            // SAFETY: OpenProcess returned an owned handle, closed exactly once.
+            let child = unsafe { OwnedHandle::from_raw_handle(raw) };
+            // SAFETY: the retained process handle has SYNCHRONIZE rights.
+            let result = unsafe { WaitForSingleObject(child.as_raw_handle(), 5_000) };
+            if result != WAIT_OBJECT_0 {
+                // Clean up the deliberately exposed regression before failing.
+                // SAFETY: our child's retained handle has TERMINATE rights.
+                unsafe { TerminateProcess(child.as_raw_handle(), 1) };
+            }
+            assert_eq!(
+                result, WAIT_OBJECT_0,
+                "worker survived parent death at creation, low={low}"
+            );
+        }
     }
 
     /// A low-integrity token can be derived from this process's own.

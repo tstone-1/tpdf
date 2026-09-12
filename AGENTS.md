@@ -211,7 +211,8 @@ an undefined extern called from one example's `main` is what turns it red with `
 compile-time guards around dynamic imports; `npm run build` removes them, while
 `npm run build:checks` retains them for native UI checks. Use
 `npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app`
-for a separate application identifier with the checks enabled. This supersedes
+on macOS, or replace `--bundles app` with `--no-bundle` on Windows, for a separate
+application identifier with the checks enabled. This supersedes
 the earlier decision to ship all harness code. The production modules are shared;
 a check build is not byte-identical to the released artifact, so release smoke
 tests must also exercise the normal bundle. `scripts/check_bundle_share.py` checks
@@ -307,6 +308,13 @@ tab closure releases its handle, and window closure checks all tabs for unsaved 
 copies. On Windows, run an isolated build (`TAURI_CONFIG` with a distinct `identifier`)
 when the installed app is running, since single-instance forwarding otherwise absorbs it.
 The restart session still restores the most recent document, not the full tab list.
+
+Windows workers join their cleanup job during process creation through
+`PROC_THREAD_ATTRIBUTE_JOB_LIST`. Do not restore a separate post-creation
+assignment: parent termination in that interval leaves a suspended orphan.
+The sandbox regression kills a helper parent at that boundary. Native tab,
+form, signature and signed-save checks also verify worker exit externally with
+`scripts/win_worker_exit.py`; its controls run in Windows CI and release validation.
 
 Windows orphaned test workers can hold the release executable open while CIM
 returns no executable path for them. Restart Manager with that exact executable

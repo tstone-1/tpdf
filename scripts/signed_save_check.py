@@ -12,6 +12,7 @@ import signal
 import subprocess
 import tempfile
 from harness_launch import report
+from win_worker_exit import check_worker_exit
 
 
 def main() -> int:
@@ -38,6 +39,8 @@ def main() -> int:
                         os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=10)
                     raise RuntimeError("signed-save check timed out")
+            if not check_worker_exit(process, args.binary):
+                return 1
             text = log.read_text(errors="replace")
             if not report(text, code, phase=action):
                 return 1

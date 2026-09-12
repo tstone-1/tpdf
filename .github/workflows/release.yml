@@ -282,6 +282,10 @@ jobs:
       - name: The worker boundary, including the rewrite's output channel
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example worker-probe -- testdata/text-wide.pdf
 
+      - name: Windows worker-exit observer controls
+        if: runner.os == 'Windows'
+        run: python scripts/win_worker_exit.py --self-test
+
       - name: Image-only redaction
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example raster-redact-probe
 
