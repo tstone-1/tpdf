@@ -6054,8 +6054,8 @@ Fuzzing includes `textedit_scan`, seeded with an editable synthetic document, pl
 pending text changes in `save_rewrite_update`; the regular fuzz gate builds both.
 
 The independent ReportLab producer exercises font setup outside the visible text
-block, line leading, and a single-Flate filter array. It deliberately omits the
-ASCII85 wrapper, which remains unsupported. Generate its two layouts with:
+block, line leading, and compressed filter arrays. It writes both layouts with
+Flate alone and with ReportLab's usual ASCII85 wrapper. Generate all four inputs with:
 
 ```bash
 uv run --with reportlab testdata/make_textedit_reportlab.py scratch/textedit-reportlab
@@ -6063,13 +6063,17 @@ cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-prob
 cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reportlab/multiline-result scratch/textedit-reportlab/multiline.pdf
 swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/separate-result
 swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/multiline-result
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reportlab/separate-ascii85-result scratch/textedit-reportlab/separate-ascii85.pdf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reportlab/multiline-ascii85-result scratch/textedit-reportlab/multiline-ascii85.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/separate-ascii85-result
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/multiline-ascii85-result
 ```
 
-Both inputs can also replace the fixture argument to `tabs_check.py --phase textedit`.
+All four inputs can also replace the fixture argument to `tabs_check.py --phase textedit`.
 The seed generator includes a multiline document so fuzzing reaches the new state
 transitions as well as their refusal paths.
 
-Verified on macOS on 2026-09-12: both ReportLab layouts passed all 15 native
+Verified on macOS on 2026-09-12: both Flate-only layouts passed all 15 native
 text-editing checks. PDFKit read both UI-saved files and measured 2,394 changed
 pixels within the edited line and zero outside it. The independent parser also
 confirmed that the worker outputs changed only the target `Tj` operand and kept
@@ -6077,3 +6081,12 @@ the font dictionary unchanged. All 19 targeted Rust tests and all-target Clippy
 passed. A 21-second instrumented `textedit_scan` run executed 31,884 inputs with
 85 MiB peak RSS and no finding. These are independent producer fixtures, not
 coverage of arbitrary ReportLab output or embedded fonts.
+
+The ASCII85 follow-up also passed both worker round trips and PDFKit comparisons.
+The multiline ASCII85 input passed all 15 native application checks; PDFKit then
+verified the UI-saved output with the same zero-outside-change result. All 24
+focused Rust tests and all-target Clippy passed. A 21-second instrumented fuzz run
+executed 34,091 inputs with 86 MiB peak RSS and no finding. Decoder tests cover
+independent byte vectors, malformed markers and groups, trailing data, truncation,
+and separate intermediate/final expansion bounds. Encoded input is capped at
+2 MiB per stream; intermediate output and total decoded page content at 1 MiB.

@@ -11,14 +11,16 @@ from pathlib import Path
 from reportlab import rl_config
 from reportlab.pdfgen.canvas import Canvas
 
-# Exercise the supported bounded Flate decoder without an ASCII85 wrapper.
-rl_config.useA85 = False
 root = Path(sys.argv[1])
 root.mkdir(parents=True, exist_ok=True)
-for mode in ("separate", "multiline"):
+for mode, wrapped in (("separate", False), ("multiline", False),
+                      ("separate-ascii85", True), ("multiline-ascii85", True)):
+    # True is ReportLab's normal wrapper for compressed page content; keep the
+    # Flate-only layouts as controls over the extra decoding stage.
+    rl_config.useA85 = wrapped
     canvas = Canvas(str(root / f"{mode}.pdf"), pagesize=(300, 240),
                     pageCompression=1, invariant=1)
-    if mode == "separate":
+    if mode.startswith("separate"):
         canvas.drawString(40, 180, "SYNTHETIC FIRST")
         canvas.drawString(40, 140, "SYNTHETIC SECOND")
     else:

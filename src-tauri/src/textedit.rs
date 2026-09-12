@@ -5,6 +5,8 @@
 //! Graphics, custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
+mod filters;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use lopdf::{content::Content, Dictionary, Document, Object, ObjectId, Stream};
@@ -128,45 +130,8 @@ fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
         let stream = crate::encoding::resolve(doc, value)
             .as_stream()
             .map_err(|e| e.to_string())?;
-        if stream.dict.has(b"F") || stream.dict.has(b"DecodeParms") {
-            return Err("external or parameterised content streams are not editable yet".into());
-        }
-        // The general page helper skips invalid references and falls back to
-        // raw bytes on decode errors. Editing must never accept that partial view.
-        if let Ok(filter) = stream.dict.get(b"Filter") {
-            let filter = match filter {
-                Object::Array(filters) if filters.len() == 1 => &filters[0],
-                value => value,
-            };
-            if filter.as_name().ok() != Some(b"FlateDecode") {
-                return Err("unsupported content stream filter".into());
-            }
-        }
         let remaining = MAX_CONTENT.saturating_sub(bytes.len() + 1);
-        let decoded = if stream.dict.has(b"Filter") {
-            let mut decoder = flate2::Decompress::new(true);
-            let mut output = vec![0; remaining + 1];
-            let status = decoder
-                .decompress(
-                    &stream.content,
-                    &mut output,
-                    flate2::FlushDecompress::Finish,
-                )
-                .map_err(|e| format!("invalid Flate content: {e}"))?;
-            if status != flate2::Status::StreamEnd
-                || decoder.total_in() != stream.content.len() as u64
-                || decoder.total_out() > remaining as u64
-            {
-                return Err("incomplete or oversized Flate content".into());
-            }
-            output.truncate(decoder.total_out() as usize);
-            output
-        } else {
-            if stream.content.len() > remaining {
-                return Err("page content exceeds its limit".into());
-            }
-            stream.content.clone()
-        };
+        let decoded = filters::decode(stream, remaining)?;
         bytes.extend(decoded);
         bytes.push(b'\n');
         if bytes.len() > MAX_CONTENT {
@@ -469,7 +434,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn textedit_accepts_single_flate_array_but_refuses_filter_chains() {
+    fn textedit_accepts_single_flate_array_and_rejects_invalid_encodings() {
         let mut doc = fixture();
         let page = crate::pagetree::ordered_pages(&doc)[0];
         let stream = doc
