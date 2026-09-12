@@ -11,7 +11,7 @@
  *
  * Swapping the binary under somebody who has a document open is rude, and for a
  * viewer an update is never urgent. So a check reports, and the reader decides.
- * The one thing that is automatic is the *check*, once per launch.
+ * The check runs once per launch unless the reader disables it.
  *
  * ## Why the Tauri API is injected
  *
@@ -83,12 +83,36 @@ export class Updates {
   #busy = false;
   #handle: UpdateHandle | null = null;
   #onChange: (s: UpdateState) => void;
+  #automatic = false;
+  #launchChecked = false;
 
   constructor(
     private api: UpdaterApi,
     onChange: (s: UpdateState) => void = () => {},
+    private storage: () => Pick<Storage, "getItem" | "setItem"> = () => window.localStorage,
   ) {
     this.#onChange = onChange;
+    try {
+      const saved = this.storage().getItem("tpdf.automaticUpdates");
+      // Missing means the existing default; unreadable or malformed means offline.
+      this.#automatic = saved === null || saved === "true";
+    } catch { /* A failed preference read must not enable network traffic. */ }
+  }
+
+  get automatic(): boolean { return this.#automatic; }
+
+  /** Disabling takes effect even if persistence fails; enabling requires a saved choice. */
+  setAutomatic(enabled: boolean): void {
+    if (!enabled) this.#automatic = false;
+    this.storage().setItem("tpdf.automaticUpdates", String(enabled));
+    this.#automatic = enabled;
+  }
+
+  /** Separate from the manual check, which always remains available. */
+  async checkOnLaunch(): Promise<UpdateState> {
+    if (this.#launchChecked) return this.#state;
+    this.#launchChecked = true;
+    return this.#automatic ? this.check() : this.#state;
   }
 
   get state(): UpdateState {

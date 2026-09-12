@@ -1,7 +1,8 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
-//! The first supported grammar is isolated `BT Tf (Tm|Td) Tj ET` blocks using
-//! unmodified Helvetica/WinAnsi and printable ASCII. Everything else is refused.
+//! Supported text uses Helvetica/WinAnsi and printable ASCII, with explicit
+//! positioning between shows. Font/leading setup may precede a text block.
+//! Graphics, custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -133,6 +134,10 @@ fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
         // The general page helper skips invalid references and falls back to
         // raw bytes on decode errors. Editing must never accept that partial view.
         if let Ok(filter) = stream.dict.get(b"Filter") {
+            let filter = match filter {
+                Object::Array(filters) if filters.len() == 1 => &filters[0],
+                value => value,
+            };
             if filter.as_name().ok() != Some(b"FlateDecode") {
                 return Err("unsupported content stream filter".into());
             }
@@ -171,6 +176,21 @@ fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+// Td/T* translate the line matrix, not the text matrix advanced by Tj.
+// Only diagonal matrices reach here; reject accumulated positions outside the
+// same bound used for authored coordinates.
+fn move_line(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
+    matrix[4] += x * matrix[0];
+    matrix[5] += y * matrix[3];
+    if matrix[4..]
+        .iter()
+        .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
+    {
+        return Err("text position exceeds its limit".into());
+    }
+    Ok(())
+}
+
 fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), String> {
     if doc
         .catalog()
@@ -197,47 +217,67 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
         revision: Sha256::digest(&bytes).to_vec(),
         runs: Vec::new(),
     };
-    // A complete grammar, rather than ignoring operators we do not understand:
-    // gs, cm, marked content, clipping, and preceding text-state changes can
-    // change what a later Tj means without changing its string at all.
-    if content.operations.len() % 5 != 0 {
-        return Err("only isolated single-show text blocks are editable yet".into());
-    }
-    for (block, ops) in content.operations.chunks_exact(5).enumerate() {
-        if ops[0].operator != "BT"
-            || !ops[0].operands.is_empty()
-            || ops[1].operator != "Tf"
-            || ops[1].operands.len() != 2
-            || ops[3].operator != "Tj"
-            || ops[3].operands.len() != 1
-            || ops[4].operator != "ET"
-            || !ops[4].operands.is_empty()
-        {
-            return Err("only isolated single-show text blocks are editable yet".into());
-        }
-        let name = ops[1].operands[0].as_name().map_err(|e| e.to_string())?;
-        font(doc, resources, name)?;
-        let size = number(&ops[1].operands[1])?;
-        if !(0.0..=1000.0).contains(&size) || size == 0.0 {
-            return Err("unsupported text size".into());
-        }
-        let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-        match (ops[2].operator.as_str(), ops[2].operands.as_slice()) {
-            ("Td", [x, y]) => {
-                matrix[4] = number(x)?;
-                matrix[5] = number(y)?;
+    // Never skip unknown operators: graphics and text state can change a Tj's
+    // meaning without changing its string. Tf and TL persist across BT/ET;
+    // the text/line matrices reset at BT. Every accepted show has a position
+    // independent of the preceding show's advance, so shorter edits cannot
+    // move following text.
+    let mut inside = false;
+    let mut positioned = false;
+    let mut selected_font = None;
+    let mut leading = 0.0;
+    let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    for (index, op) in content.operations.iter().enumerate() {
+        match (op.operator.as_str(), op.operands.as_slice()) {
+            ("cm", values) if !inside && values.len() == 6 => {
+                for (value, expected) in values.iter().zip([1., 0., 0., 1., 0., 0.]) {
+                    if number(value)? != expected {
+                        return Err("transformed page content is not editable yet".into());
+                    }
+                }
             }
-            ("Tm", values) if values.len() == 6 => {
+            ("BT", []) if !inside => {
+                inside = true;
+                positioned = false;
+                matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+            }
+            ("ET", []) if inside => inside = false,
+            ("Tf", [name, size]) if inside => {
+                let name = name.as_name().map_err(|e| e.to_string())?;
+                font(doc, resources, name)?;
+                let size = number(size)?;
+                if !(0.0..=1000.0).contains(&size) || size == 0.0 {
+                    return Err("unsupported text size".into());
+                }
+                selected_font = Some((name, size));
+            }
+            ("TL", [value]) if inside => leading = number(value)?,
+            ("Tm", values) if inside && values.len() == 6 => {
                 for (dest, value) in matrix.iter_mut().zip(values) {
                     *dest = number(value)?;
                 }
                 if matrix[0] <= 0.0 || matrix[3] <= 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {
                     return Err("rotated or skewed text is not editable yet".into());
                 }
+                positioned = true;
             }
-            _ => return Err("unsupported text positioning".into()),
+            ("Td", [x, y]) if inside => {
+                move_line(&mut matrix, number(x)?, number(y)?)?;
+                positioned = true;
+            }
+            ("T*", []) if inside => {
+                move_line(&mut matrix, 0.0, -leading)?;
+                positioned = true;
+            }
+            ("Tj", [_]) if inside && positioned => {}
+            _ => return Err("unsupported text state or positioning between shows".into()),
         }
-        let text = ascii(ops[3].operands[0].as_str().map_err(|e| e.to_string())?)?;
+        if op.operator != "Tj" {
+            continue;
+        }
+        let (name, size) = selected_font.ok_or("text has no explicit font")?;
+        let text = ascii(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
+        positioned = false;
         let geometry = crate::pagetree::displayed_page(doc, id);
         let advance = crate::textbox::advance(text, size);
         let x = matrix[4] - f64::from(geometry.origin.0);
@@ -258,13 +298,16 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
         }
         result.runs.push(Run {
             display_rect,
-            operator: (block * 5 + 3) as u32,
+            operator: index as u32,
             text: text.into(),
             font: String::from_utf8_lossy(name).into_owned(),
             size,
             matrix,
-            advance: crate::textbox::advance(text, size),
+            advance,
         });
+    }
+    if inside {
+        return Err("unterminated text block".into());
     }
     Ok((id, content, result))
 }
@@ -371,6 +414,90 @@ pub(crate) mod tests {
             operator: runs.runs[0].operator,
             original: runs.runs[0].text.clone(),
             replacement: "EDITED FIRST".into(),
+        }
+    }
+
+    fn with_content(bytes: &[u8]) -> Document {
+        let mut doc = fixture();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let stream = doc.add_object(Stream::new(Dictionary::new(), bytes.to_vec()));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        doc
+    }
+
+    #[test]
+    fn textedit_reportlab_font_setup_and_multiline_positions_survive_shorter_edits() {
+        // Produced independently by testdata/make_textedit_reportlab.py.
+        let mut doc = with_content(b"1 0 0 1 0 0 cm BT /F1 12 Tf 14.4 TL ET\nBT 1 0 0 1 40 180 Tm 40 TL (SYNTHETIC FIRST) Tj T* (SYNTHETIC SECOND) Tj T* ET");
+        let (_, before, mapped) = inspect(&doc, 0).unwrap();
+        assert_eq!(
+            mapped.runs.iter().map(|r| r.operator).collect::<Vec<_>>(),
+            [8, 10]
+        );
+        assert_eq!(mapped.runs[0].matrix, [1., 0., 0., 1., 40., 180.]);
+        assert_eq!(mapped.runs[1].matrix, [1., 0., 0., 1., 40., 140.]);
+        assert_eq!(mapped.runs[1].size, 12.);
+        let mut edit = change(&doc);
+        edit.replacement = "X".into();
+        write(&mut doc, &[edit]).unwrap();
+        let (_, after, saved) = inspect(&doc, 0).unwrap();
+        assert_eq!(saved.runs[0].text, "X");
+        assert_eq!(saved.runs[1], mapped.runs[1]);
+        assert_eq!(before.operations.len(), after.operations.len());
+        for (index, (a, b)) in before.operations.iter().zip(&after.operations).enumerate() {
+            if index != 8 {
+                assert_eq!(a.operator, b.operator, "changed operator {index}");
+                assert_eq!(a.operands, b.operands, "changed operands {index}");
+            }
+        }
+    }
+
+    #[test]
+    fn textedit_line_positions_use_scaled_line_matrix_and_reset_on_bt() {
+        let doc = with_content(b"BT /F1 12 Tf 20 TL 2 0 0 3 40 180 Tm (FIRST) Tj 10 -10 Td (SECOND) Tj T* (THIRD) Tj ET BT 5 200 Td (FOURTH) Tj T* (FIFTH) Tj ET");
+        let runs = scan(&doc, 0).unwrap().runs;
+        assert_eq!(
+            runs.iter()
+                .map(|r| [r.matrix[4], r.matrix[5]])
+                .collect::<Vec<_>>(),
+            [[40., 180.], [60., 150.], [60., 90.], [5., 200.], [5., 180.]]
+        );
+        assert_eq!(runs[3].matrix[..4], [1., 0., 0., 1.]);
+        assert!(runs.iter().all(|r| r.size == 12.));
+    }
+
+    #[test]
+    fn textedit_accepts_single_flate_array_but_refuses_filter_chains() {
+        let mut doc = fixture();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let stream = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Contents")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        doc.get_object_mut(stream)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .compress()
+            .unwrap();
+        for (filters, accepted) in [
+            (vec![Object::Name(b"FlateDecode".to_vec())], true),
+            (vec![], false),
+            (vec![Object::Name(b"ASCII85Decode".to_vec())], false),
+            (vec![Object::Name(b"FlateDecode".to_vec()); 2], false),
+        ] {
+            doc.get_object_mut(stream)
+                .unwrap()
+                .as_stream_mut()
+                .unwrap()
+                .dict
+                .set("Filter", Object::Array(filters));
+            assert_eq!(scan(&doc, 0).is_ok(), accepted);
         }
     }
 
@@ -488,6 +615,17 @@ pub(crate) mod tests {
             "2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (SCALED) Tj ET",
             "BT /F1 12 Tf 0 1 -1 0 40 180 Tm (ROTATED) Tj ET",
             "/Span << /ActualText (OTHER) >> BDC BT /F1 12 Tf 40 180 Td (TEXT) Tj ET EMC",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj",
+            "BT BT /F1 12 Tf 40 180 Td (TEXT) Tj ET ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET ET",
+            "BT 40 180 Td (TEXT) Tj ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj 1 Tc T* (MORE) Tj ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj /F1 10 Tf (MORE) Tj ET",
+            "BT /F1 12 Tf (TEXT) Tj ET",
+            "BT /F1 12 Tf 1000000 0 0 1 40 180 Tm 2 0 Td (TEXT) Tj ET",
+            "1 0 0 1 1 0 cm BT /F1 12 Tf 40 180 Td (TEXT) Tj ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj 1 T* ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET (OUTSIDE) Tj",
         ] {
             let mut doc = fixture();
             let id = crate::pagetree::ordered_pages(&doc)[0];

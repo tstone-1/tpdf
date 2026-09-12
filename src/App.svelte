@@ -604,6 +604,8 @@
     // "Check for updates" and being up to date was indistinguishable from a
     // command that did not run.
     checkForUpdates: () => void checkAndSay(),
+    automaticUpdates: () => updates.automatic,
+    setAutomaticUpdates: (enabled) => setAutomaticUpdates(enabled),
     applyUpdate: () => void updates.install(),
     updateAvailable: () => updates.state.kind === "available",
     updateReady: () => updates.state.kind === "ready",
@@ -2699,12 +2701,10 @@
         });
       });
 
-      // The launch check, and its position here is the whole of what keeps every
-      // spike, benchmark and check run offline: all of them return above this
-      // line. `void` rather than `await` because nothing downstream depends on
-      // the answer and a slow endpoint must not delay a document opening --- the
-      // reader is here to read, and an update is never urgent.
-      void updates.check();
+      // Early benchmark/check entry points return above this line. Full-shell
+      // checks below can reach it too; the saved preference applies to both.
+      // Do not await the endpoint: a slow check must not delay opening a PDF.
+      void updates.checkOnLaunch();
 
       await getCurrentWebview().onDragDropEvent((event) => {
         if (event.payload.type !== "drop") return;
@@ -2852,6 +2852,20 @@
   async function checkAndSay(): Promise<void> {
     notice = updateNotice({ kind: "checking" }, appVersion);
     notice = updateNotice(await updates.check(), appVersion);
+  }
+
+  function setAutomaticUpdates(enabled: boolean): void {
+    try {
+      updates.setAutomatic(enabled);
+      notice = enabled
+        ? "Automatic update checks enabled for future launches."
+        : "Automatic update checks disabled. You can still use Check for updates. A check already started may finish.";
+    } catch {
+      notice = enabled
+        ? "Could not save the update preference. Automatic checks remain disabled."
+        : "Automatic checks disabled for this launch, but the preference could not be saved for future launches.";
+    }
+    refreshMenu();
   }
 
   /**

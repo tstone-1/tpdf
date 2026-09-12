@@ -3159,6 +3159,8 @@ async function appCommandChecks(
     // an exception from a helper nobody was looking at.
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
+    automaticUpdates: () => true,
+    setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
     applyUpdate: () => fired.push("applyUpdate"),
     // False both, so the install command's `enabled` guard is exercised in the
     // direction the check can assert: it must not appear in the palette on a
@@ -4244,6 +4246,8 @@ async function appCommandChecks(
     // that as a manual step because it needs a published release to check
     // against.
     "app.checkForUpdates": "it would reach the network from an offline check",
+    "app.disableAutomaticUpdates": "the persisted setting is covered by update tests",
+    "app.enableAutomaticUpdates": "the persisted setting is covered by update tests",
     "app.installUpdate": "it would replace the running binary mid-run",
     // Driving either from the palette would time the layout against a chain of
     // two IPC round trips --- measure the ink, then ask what size the page
@@ -4499,7 +4503,7 @@ async function appCommandChecks(
   // what `app.about` did on the day it was added, reporting all three commands
   // present and the check failing anyway. Worth reading the message rather than
   // the verdict there: the two lists differ by a swap, not by a member.
-  const NEEDS_NO_DOCUMENT = ["file.open", "app.about", "app.checkForUpdates"];
+  const NEEDS_NO_DOCUMENT = ["file.open", "app.about", "app.checkForUpdates", "app.disableAutomaticUpdates"];
 
   viewer.clearSelection();
   // And the mark the removal probe made, for the same reason the selection is

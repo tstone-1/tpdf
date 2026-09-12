@@ -18,6 +18,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import app from "../App.svelte?raw";
 
 import {
   percentOfDownload,
@@ -48,6 +49,89 @@ function api(result: UpdateHandle | null | Error): UpdaterApi {
     },
   };
 }
+
+describe("automatic update preference", () => {
+  function stored(initial: string | null = null) {
+    let value = initial;
+    return {
+      getItem: vi.fn(() => value),
+      setItem: vi.fn((_key: string, next: string) => { value = next; }),
+    };
+  }
+
+  it("checks once on a new installation without downloading anything", async () => {
+    const storage = stored();
+    const downloadAndInstall = vi.fn();
+    const check = vi.fn(async () => ({ version: "99.1.0", downloadAndInstall }));
+    const updates = new Updates({ check }, undefined, () => storage);
+    await updates.checkOnLaunch(); await updates.checkOnLaunch();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(downloadAndInstall).not.toHaveBeenCalled();
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("remembers disabling across restart and preserves the manual check", async () => {
+    const storage = stored();
+    const check = vi.fn(async () => null);
+    new Updates({ check }, undefined, () => storage).setAutomatic(false);
+    const restarted = new Updates({ check }, undefined, () => storage);
+    expect(restarted.automatic).toBe(false);
+    expect(await restarted.checkOnLaunch()).toEqual({ kind: "idle" });
+    expect(check).not.toHaveBeenCalled();
+    expect(await restarted.check()).toEqual({ kind: "current" });
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(storage.getItem).toHaveBeenCalledWith("tpdf.automaticUpdates");
+    expect(storage.setItem).toHaveBeenCalledWith("tpdf.automaticUpdates", "false");
+  });
+
+  it("enables future launches without starting a request when the choice changes", async () => {
+    const storage = stored("false"), check = vi.fn(async () => null);
+    const updates = new Updates({ check }, undefined, () => storage);
+    await updates.checkOnLaunch();
+    updates.setAutomatic(true);
+    await updates.checkOnLaunch();
+    expect(check).not.toHaveBeenCalled();
+    await new Updates({ check }, undefined, () => storage).checkOnLaunch();
+    expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips automatic traffic for unreadable and malformed preferences", async () => {
+    const check = vi.fn(async () => null);
+    for (const storage of [stored(""), stored("broken"), stored("false"), {
+      getItem: () => { throw new Error("unreadable"); }, setItem: vi.fn(),
+    }]) {
+      const updates = new Updates({ check }, undefined, () => storage);
+      await updates.checkOnLaunch(); expect(updates.automatic).toBe(false);
+    }
+    await new Updates({ check }, undefined, () => { throw new Error("unavailable"); }).checkOnLaunch();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("reports persistence errors, disables immediately and refuses an unsaved enable", async () => {
+    const storage = stored(), check = vi.fn(async () => null);
+    storage.setItem.mockImplementation(() => { throw new Error("full"); });
+    const updates = new Updates({ check }, undefined, () => storage);
+    expect(() => updates.setAutomatic(false)).toThrow("full");
+    expect(updates.automatic).toBe(false);
+    expect(() => updates.setAutomatic(true)).toThrow("full");
+    expect(updates.automatic).toBe(false);
+    await updates.checkOnLaunch(); expect(check).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a failed automatic check", async () => {
+    const check = vi.fn(async () => { throw new Error("offline"); });
+    const updates = new Updates({ check }, undefined, () => stored());
+    await updates.checkOnLaunch(); await updates.checkOnLaunch();
+    expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires startup through the preference and confines direct checking to the manual action", () => {
+    // The module tests cannot see a caller that bypasses the preference entirely.
+    expect(app.match(/updates\.checkOnLaunch\(\)/g)).toHaveLength(1);
+    expect(app.match(/updates\.check\(\)/g)).toHaveLength(1);
+    expect(app).toMatch(/async function checkAndSay\(\)[\s\S]*?notice = updateNotice\(await updates\.check\(\), appVersion\);\s*}/);
+  });
+});
 
 describe("percentOfDownload", () => {
   it("reports a percentage when the total is known", () => {

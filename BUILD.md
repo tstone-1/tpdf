@@ -6052,3 +6052,28 @@ the UI. Windows uses the isolated checks executable with the same
 across tabs, unsaved rendering, selection, search, undo/redo, refusal and saving.
 Fuzzing includes `textedit_scan`, seeded with an editable synthetic document, plus
 pending text changes in `save_rewrite_update`; the regular fuzz gate builds both.
+
+The independent ReportLab producer exercises font setup outside the visible text
+block, line leading, and a single-Flate filter array. It deliberately omits the
+ASCII85 wrapper, which remains unsupported. Generate its two layouts with:
+
+```bash
+uv run --with reportlab testdata/make_textedit_reportlab.py scratch/textedit-reportlab
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reportlab/separate-result scratch/textedit-reportlab/separate.pdf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reportlab/multiline-result scratch/textedit-reportlab/multiline.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/separate-result
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/multiline-result
+```
+
+Both inputs can also replace the fixture argument to `tabs_check.py --phase textedit`.
+The seed generator includes a multiline document so fuzzing reaches the new state
+transitions as well as their refusal paths.
+
+Verified on macOS on 2026-09-12: both ReportLab layouts passed all 15 native
+text-editing checks. PDFKit read both UI-saved files and measured 2,394 changed
+pixels within the edited line and zero outside it. The independent parser also
+confirmed that the worker outputs changed only the target `Tj` operand and kept
+the font dictionary unchanged. All 19 targeted Rust tests and all-target Clippy
+passed. A 21-second instrumented `textedit_scan` run executed 31,884 inputs with
+85 MiB peak RSS and no finding. These are independent producer fixtures, not
+coverage of arbitrary ReportLab output or embedded fonts.
