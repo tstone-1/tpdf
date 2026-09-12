@@ -25,13 +25,37 @@ faults, native checks and the full gate run. Windows confidentiality containment
 macOS kernel memory limits and independent user validation remain separate open
 items; none is closed by the application-level safeguards above.
 
-The assurance changes are implemented locally. Verification on 2026-09-12 includes
+The assurance changes are implemented. Verification on 2026-09-12 includes
 both frontend build profiles, the regular Rust/frontend gates (with the initial
 IPC sample/order and event-handler findings corrected), 15 targeted frontend
 mutations, 49 native form/signature/save-consent checks, a maximum-size Keychain
 round trip, and a Windows cross-check. Short instrumented fuzz runs executed
-34,326 AcroForm inputs and 83,753 rewrite inputs without a failure. Native Windows
-DPAPI operation and normal-bundle release smoke testing remain pre-release checks.
+34,326 AcroForm inputs and 83,753 rewrite inputs without a failure.
+
+Additional Windows x64 verification on 2026-09-12 at `7bae8cd` passed the native
+maximum-size DPAPI round trip and deletion, 16 tab checks, 18 form checks and
+21 signature checks. Signed-save cancellation preserved file bytes and acceptance
+changed them; the independent PDFium reader passed 32 pixel checks across eight
+saved signature PDFs. The normal optimized executable, built with an isolated
+application identifier, opened and rendered a synthetic PDF under external Windows
+UI Automation. Its coordinator did not map PDFium, and the normal frontend passed
+the no-harness bundle check. This covers the application executable; installed
+MSI/NSIS release smoke testing remains a pre-release check.
+
+The same run exposed a shutdown gap: the form UI check left five live renderer
+workers after its application process exited. Their command lines identified the
+checks executable, all shared the exited form-check parent, and each retained one
+thread. They were stopped by verified PID. The follow-up assigns the cleanup job
+inside Windows process creation, closing the interval before the old separate job
+assignment. A forced-parent-death regression fails on the old ordering and passes
+with the fix for both ordinary and low-integrity launches. All 23 Windows sandbox
+tests and 45 worker-boundary checks pass; the full Windows Rust run passed 1,330
+tests with three ignored. Five consecutive form runs, plus tabs,
+signatures and both signed-save choices, passed with no surviving test workers
+across nine application exits. The external worker-exit observer runs after each
+native tab/form/signature/save-consent check; its live/dead/path controls also run
+in Windows CI and release validation. Hosted CI and installed-artifact smoke testing
+remain before release.
 
 
 

@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from harness_launch import report
+from win_worker_exit import check_worker_exit
 
 
 def main() -> int:
@@ -64,6 +65,7 @@ def main() -> int:
                 print("[FAIL] tab check timed out")
                 code = 1
         passed = report(log.read_text(encoding="utf-8", errors="replace"), code, phase=args.phase)
+        passed = check_worker_exit(process, args.binary) and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1

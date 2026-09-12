@@ -2,7 +2,10 @@
 
 Native UI probes now require a checks build:
 `npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app`
-(add `--debug` for a development build). It has a separate application identifier;
+(macOS), or
+`npm run tauri build -- --config src-tauri/tauri.checks.conf.json --no-bundle`
+(Windows; the executable is in `src-tauri/target/release/`). Add `--debug` for a
+development build in `src-tauri/target/debug/`. It has a separate application identifier;
 normal `npm run tauri build` excludes the frontend harness. Existing probe commands
 below refer to this checks executable when they drive the UI. Run
 `python3 scripts/check_bundle_share.py --checks` on its frontend output; the normal

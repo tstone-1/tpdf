@@ -2279,8 +2279,10 @@ carried a risk that had been closed.
 **The mechanism, and where each half lives.** macOS gets its boundary from `sandbox_init`,
 which the child applies *to itself* after `exec` — there is a "before" in which to bind
 PDFium. Windows has no counterpart, so the **parent** builds the boundary instead, while the
-child is still suspended and has executed no instruction: a low-integrity token inside a job
-object (`sandbox_win::Containment`, `Job::create`, `low_integrity_token`). Spawning is
+child is created suspended and has executed no instruction: a low-integrity token inside a job
+object (`sandbox_win::Containment`, `Job::create`, `low_integrity_token`). The job is
+assigned by `PROC_THREAD_ATTRIBUTE_JOB_LIST` inside process creation, so parent
+termination cannot fall between child creation and a later job assignment. Spawning is
 `Worker::spawn`; selecting it is `Backend::default_here`, which returns `Backend::Worker` on
 both platforms.
 
@@ -2327,8 +2329,8 @@ until 2026-07-30 — its three authority probes are all integrity-level properti
 rung reported on `lowil` and above while the job's limits went unexercised. Now probed, with
 the uncontained rung as the control: `bare` commits 1 GB and starts a second process; every
 rung with a job is refused with `1455` (`ERROR_COMMITMENT_LIMIT`) and `1816`
-(`ERROR_NOT_ENOUGH_QUOTA`). `KILL_ON_JOB_CLOSE` is still only claimed — testing it means
-killing the probe itself.
+(`ERROR_NOT_ENOUGH_QUOTA`). At that time `KILL_ON_JOB_CLOSE` was only claimed;
+the parent-death regression below now exercises it from an external test process.
 
 ⚠ **And on 2026-08-25 the outcome it is supposed to prevent was observed.** A viewer
 mutation run stalled on a live `tpdf.exe --render-worker --prespawn --tile-handle 2028`
@@ -2337,10 +2339,22 @@ still there twenty-nine minutes later, idle, holding the stdout and stderr it ha
 inherited. What that establishes is the *outcome*, not the mechanism — whether the job
 object was assigned to that worker at all, whether its handle was closed early, or
 whether the exit path leaks a handle that keeps the job alive, is **not established**,
-and no probe here can currently say. Read the row above as: memory and process creation
-are measured, orphan cleanup is intended and has one counterexample. The probe that
-would settle it does not need to kill itself after all — spawn the pre-spawn from a
-*child*, kill the child, and look. `docs/TRAPS.md` carries the entry.
+and no probe then could say. At that point memory and process creation were
+measured, while orphan cleanup had a counterexample. `docs/TRAPS.md` carries the entry.
+
+**The creation gap is reproduced and closed on Windows, 2026-09-12.** Another native
+form check left five suspended renderer workers after app exit. The spawn path
+created a suspended process and assigned its job in a separate call. Terminating a
+helper parent immediately after `CreateProcess` reproduced an orphan on that
+ordering. `PROC_THREAD_ATTRIBUTE_JOB_LIST` now assigns the job during creation;
+the same test passes for both ordinary and low-integrity launches, without running
+parent destructors. All 23 sandbox tests and 45 worker-boundary checks passed.
+Nine native application exits (five form runs, tabs, signatures, and two signed-save
+choices) left no surviving test workers. `scripts/win_worker_exit.py` checks the
+process table externally after these UI checks, distinguishes terminated process
+objects from live children, and fails when enumeration cannot establish an answer.
+This closes the demonstrated creation race; it does not retroactively establish
+the mechanism of the August incident.
 
 **Evidence that the whole path works, not just the pieces**: `worker-probe` passed 11/11 on
 2026-07-29 on `text-base14`, `text-cid`, `vector-heavy` and `rotated`, including
