@@ -54,7 +54,7 @@ fn main() {
     // Chosen to exercise the parts of the table most likely to be wrong: the
     // wide capitals, the narrow lowercase, the digits (all one width), the
     // punctuation, and a German line for the accented Latin-1 range whose widths
-    // are claimed to equal their base letters'.
+    // need exact metrics; several do not equal their base letters'.
     let strings = [
         "Hamburgefonstiv",
         "WAVE Tokyo",

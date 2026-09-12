@@ -1,6 +1,6 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
-//! Supported text uses Helvetica/WinAnsi and printable ASCII, with explicit
+//! Supported text uses Helvetica/WinAnsi and printable Latin-1, with explicit
 //! positioning between shows. Font/leading setup may precede a text block.
 //! Graphics, custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
@@ -107,11 +107,37 @@ fn number(value: &Object) -> Result<f64, String> {
     Ok(value)
 }
 
-fn ascii(bytes: &[u8]) -> Result<&str, String> {
-    if bytes.len() > MAX_TEXT || !bytes.iter().all(|byte| (32..=126).contains(byte)) {
-        return Err("text editing currently supports printable ASCII only".into());
+// WinAnsi agrees with Latin-1 in these ranges. Bytes 127..159 have different
+// glyph mappings and must not be interpreted as Unicode control characters.
+fn text_byte(byte: u8) -> bool {
+    (32..=126).contains(&byte) || byte >= 160
+}
+
+fn decode_text(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() > MAX_TEXT || !bytes.iter().all(|&byte| text_byte(byte)) {
+        return Err("text editing currently supports printable Latin-1 only".into());
     }
-    std::str::from_utf8(bytes).map_err(|e| e.to_string())
+    Ok(bytes.iter().map(|&byte| char::from(byte)).collect())
+}
+
+fn encode_text(text: &str) -> Result<Vec<u8>, String> {
+    // Each supported character uses at most two UTF-8 bytes and one PDF byte.
+    if text.len() > MAX_TEXT * 2 {
+        return Err("text replacement exceeds its limit".into());
+    }
+    let bytes = text
+        .chars()
+        .map(|ch| {
+            u8::try_from(ch as u32)
+                .ok()
+                .filter(|&byte| text_byte(byte))
+                .ok_or("text editing currently supports printable Latin-1 only")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if bytes.len() > MAX_TEXT {
+        return Err("text replacement exceeds its limit".into());
+    }
+    Ok(bytes)
 }
 
 fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
@@ -241,10 +267,10 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
             continue;
         }
         let (name, size) = selected_font.ok_or("text has no explicit font")?;
-        let text = ascii(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
+        let text = decode_text(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
         positioned = false;
         let geometry = crate::pagetree::displayed_page(doc, id);
-        let advance = crate::textbox::advance(text, size);
+        let advance = crate::textbox::advance(&text, size);
         let x = matrix[4] - f64::from(geometry.origin.0);
         let y = matrix[5] - f64::from(geometry.origin.1);
         let display_rect = crate::text::to_device(
@@ -264,7 +290,7 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
         result.runs.push(Run {
             display_rect,
             operator: index as u32,
-            text: text.into(),
+            text,
             font: String::from_utf8_lossy(name).into_owned(),
             size,
             matrix,
@@ -299,7 +325,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if !seen.insert((change.page, change.operator)) {
             return Err("duplicate text replacement".into());
         }
-        ascii(change.replacement.as_bytes())?;
+        let replacement = encode_text(&change.replacement)?;
         if change.original == change.replacement {
             return Err("text replacement is unchanged".into());
         }
@@ -319,7 +345,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             return Err("replacement would exceed the original text advance".into());
         }
         content.operations[change.operator as usize].operands[0] =
-            Object::string_literal(change.replacement.as_bytes());
+            Object::string_literal(replacement);
     }
     let ready = prepared
         .into_values()
@@ -344,6 +370,68 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
 pub(crate) mod tests {
     use super::*;
     use lopdf::dictionary;
+
+    #[test]
+    fn textedit_latin1_uses_single_pdf_bytes_and_bounds_characters() {
+        assert_eq!(
+            encode_text("ÄÖÜ äöü ß î ø").unwrap(),
+            b"\xC4\xD6\xDC \xE4\xF6\xFC \xDF \xEE \xF8"
+        );
+        let bytes: Vec<u8> = (32..=126).chain(160..=255).collect();
+        assert_eq!(encode_text(&decode_text(&bytes).unwrap()).unwrap(), bytes);
+        for byte in (0..32).chain(127..160) {
+            assert!(decode_text(&[byte]).is_err());
+            assert!(encode_text(&char::from(byte).to_string()).is_err());
+        }
+        for text in ["α", "€", "a\u{308}", "日本語"] {
+            assert!(encode_text(text).is_err());
+        }
+        assert_eq!(encode_text(&"ä".repeat(MAX_TEXT)).unwrap().len(), MAX_TEXT);
+        assert!(encode_text(&"ä".repeat(MAX_TEXT + 1)).is_err());
+        assert!(decode_text(&vec![0xE4; MAX_TEXT + 1]).is_err());
+    }
+
+    #[test]
+    fn textedit_latin1_width_refuses_sharp_s_and_accented_i_overflow() {
+        for (original, replacement) in [("s", "ß"), ("i", "î"), ("o", "ø")] {
+            let raw = format!("BT /F1 12 Tf 40 180 Td ({original}) Tj ET");
+            let mut doc = with_content(raw.as_bytes());
+            let change = Change {
+                replacement: replacement.into(),
+                ..change(&doc)
+            };
+            let before = doc.objects.clone();
+            assert!(write(&mut doc, &[change])
+                .unwrap_err()
+                .contains("exceed the original"));
+            assert_eq!(doc.objects, before);
+        }
+    }
+
+    #[test]
+    fn textedit_latin1_rewrites_and_rediscovers_without_utf8_in_the_operand() {
+        let mut doc = fixture();
+        let update = Change {
+            replacement: "GEPRÜFT ß".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, &[update]).unwrap();
+        let (_, content, runs) = inspect(&doc, 0).unwrap();
+        assert_eq!(runs.runs[0].text, "GEPRÜFT ß");
+        assert_eq!(
+            content.operations[runs.runs[0].operator as usize].operands[0]
+                .as_str()
+                .unwrap(),
+            b"GEPR\xDCFT \xDF"
+        );
+        assert_eq!(runs.runs[1].text, "SYNTHETIC SECOND");
+        let update = Change {
+            replacement: "ASCII".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, &[update]).unwrap();
+        assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "ASCII");
+    }
 
     pub(crate) fn fixture() -> Document {
         let mut doc = Document::with_version("1.7");
@@ -540,7 +628,7 @@ pub(crate) mod tests {
                     replacement: "\u{03b1}".into(),
                     ..valid.clone()
                 },
-                "ASCII only",
+                "Latin-1 only",
             ),
             (
                 Change {
@@ -623,7 +711,7 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .contains("too many")
         );
-        assert!(ascii(&vec![b'A'; MAX_TEXT + 1]).is_err());
+        assert!(decode_text(&vec![b'A'; MAX_TEXT + 1]).is_err());
     }
 
     #[test]

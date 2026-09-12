@@ -725,7 +725,7 @@ pub enum MarkKind {
     ///   glyph. `textbox.rs` is that, and it is the only place in this
     ///   repository that measures text.
     /// - **What a reader types can be unwritable.** Helvetica with
-    ///   `/WinAnsiEncoding` covers Latin-1 and nothing else, so a pasted line of
+    ///   `/WinAnsiEncoding` uses our supported Latin-1 subset, so a pasted line of
     ///   Greek is refused rather than written as substituted glyphs --- see
     ///   `textbox::encodable`.
     ///
@@ -2167,8 +2167,16 @@ impl Doc {
             return Err(Refusal::TextEdit("text no longer belongs to this page"));
         }
         if change.revision.len() != 32
-            || change.original.len() > crate::textedit::MAX_TEXT
-            || change.replacement.len() > crate::textedit::MAX_TEXT
+            || change
+                .original
+                .chars()
+                .nth(crate::textedit::MAX_TEXT)
+                .is_some()
+            || change
+                .replacement
+                .chars()
+                .nth(crate::textedit::MAX_TEXT)
+                .is_some()
         {
             return Err(Refusal::TextEdit("text replacement exceeds its limit"));
         }

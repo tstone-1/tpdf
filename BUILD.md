@@ -6055,7 +6055,8 @@ pending text changes in `save_rewrite_update`; the regular fuzz gate builds both
 
 The independent ReportLab producer exercises font setup outside the visible text
 block, line leading, and compressed filter arrays. It writes both layouts with
-Flate alone and with ReportLab's usual ASCII85 wrapper. Generate all four inputs with:
+Flate alone and with ReportLab's usual ASCII85 wrapper, plus an accented variant.
+Generate them with:
 
 ```bash
 uv run --with reportlab testdata/make_textedit_reportlab.py scratch/textedit-reportlab
@@ -6069,7 +6070,7 @@ swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/separate-ascii85
 swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/multiline-ascii85-result
 ```
 
-All four inputs can also replace the fixture argument to `tabs_check.py --phase textedit`.
+The four ASCII inputs can also replace the fixture argument to `tabs_check.py --phase textedit`.
 The seed generator includes a multiline document so fuzzing reaches the new state
 transitions as well as their refusal paths.
 
@@ -6090,3 +6091,33 @@ executed 34,091 inputs with 86 MiB peak RSS and no finding. Decoder tests cover
 independent byte vectors, malformed markers and groups, trailing data, truncation,
 and separate intermediate/final expansion bounds. Encoded input is capped at
 2 MiB per stream; intermediate output and total decoded page content at 1 MiB.
+
+The Latin-1 increment uses `latin1.pdf`, containing `SYNTHETIC ÄÖÜ ß` and the same
+untouched second line. The generator also compares all 191 supported Helvetica
+advances against ReportLab's independent glyph metrics. The worker and UI replace
+the first line with `GEPRÜFT ß`:
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reportlab/latin1-result scratch/textedit-reportlab/latin1.pdf --latin1
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/latin1-result --latin1
+python3 scripts/tabs_check.py "src-tauri/target/debug/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf" scratch/textedit-reportlab/latin1.pdf --phase textedit-latin1 --saved-copy scratch/textedit-reportlab/latin1-result/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reportlab/latin1-result --latin1
+```
+
+The UI command requires the isolated checks build described above. Latin-1
+characters occupy one PDF byte each; UTF-8 bytes must never be copied into the
+operand. The 4,096-character limit applies equally to ASCII and accented text in
+the UI, worker and journal. Other scripts and WinAnsi punctuation outside Latin-1
+remain refused. Shared Helvetica metrics now include the true widths of sharp s,
+accented lowercase i, slashed o and Latin-1 symbols; this also corrects wrapping
+in text boxes and form appearances.
+
+Verified on macOS on 2026-09-12: 28 focused text-editing tests, 10 shared text-layout
+tests, 1,667 frontend tests and all 15 native Latin-1 workflow checks passed.
+Type checking, all-target Clippy and both frontend build profiles also passed.
+PDFKit read the worker and UI outputs, measuring 2,332 changed pixels inside the
+edited line and zero outside. The independent parser found only the target operand
+changed and the original font dictionary preserved. The instrumented fuzz run
+executed 38,711 inputs in 21 seconds with 85 MiB peak RSS and no finding. The
+independent metrics check rejects a deliberately wrong width; the frontend test
+rejects removal of accent support. The production build excludes all harness code.

@@ -9973,7 +9973,10 @@ fn textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans() {
 #[test]
 fn textedit_preserves_encryption() {
     let mut document = crate::textedit::tests::fixture();
-    let edit = crate::textedit::tests::change(&document);
+    let edit = crate::textedit::Change {
+        replacement: "GEPRÜFT ß".into(),
+        ..crate::textedit::tests::change(&document)
+    };
     document
         .trailer
         .set("ID", vec![Object::string_literal("synthetic-text-id"); 2]);
@@ -9997,6 +10000,6 @@ fn textedit_preserves_encryption() {
     let saved = crate::encoding::load(&written, Some("synthetic-reader")).unwrap();
     assert_eq!(
         crate::textedit::scan(&saved, 0).unwrap().runs[0].text,
-        "EDITED FIRST"
+        "GEPRÜFT ß"
     );
 }
