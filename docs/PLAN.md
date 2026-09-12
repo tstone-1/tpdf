@@ -4381,7 +4381,8 @@ not claims about editing arbitrary documents.
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable ASCII. It accepts font/leading setup across
 text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
-page transform and single-Flate filter array. Each `Tj` must have positioning
+page transform and ASCII85/Flate content (including a single-filter array). Each
+`Tj` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
 other graphics/text operators remain refused. It reports the original operator address,
 text, font resource, size, text matrix and advance. Discovery uses the worker's
@@ -4410,8 +4411,10 @@ including redo; page moves and deletions preserve their original source addresse
 Content reads and decoding must be complete: invalid references, unsupported
 filters, corrupt or incomplete zlib data and trailing malformed operators refuse
 editing. The general page-content helper is unsuitable here because it skips bad
-streams and recovers partial decompression. The editor uses bounded strict zlib
-decoding, with limits on content bytes, operators, strings and replacement count.
+streams and recovers partial decompression. The editor uses bounded strict ASCII85 and zlib
+decoding, with limits on encoded input, intermediate output, content bytes,
+operators, strings and replacement count. Invalid end markers, incomplete streams
+and trailing data are refused before editing.
 
 ```bash
 cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/text-edit/worker

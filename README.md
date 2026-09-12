@@ -371,7 +371,7 @@ Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Apply previews the actual PDF rendering;
 save writes it. The unreleased editor supports simple Helvetica/ASCII text,
 including separate lines and multiline text blocks produced by ReportLab with
-Flate compression. Replacements must fit the original width. Unsupported pages
+its usual ASCII85/Flate encoding. Replacements must fit the original width. Unsupported pages
 are refused. Text edits support undo and redo and must be saved before marking
 redactions.
 <!-- built: edit.editText -->
