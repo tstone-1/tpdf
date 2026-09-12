@@ -41,6 +41,7 @@ pub mod ocr_vision;
 #[cfg(windows)]
 pub mod ocr_windows;
 pub mod ocr_worker;
+pub mod textedit;
 // The OS opener, and the one place a `/URI` string is judged. Separate modules
 // because they are separate questions: `weburl` decides whether an address may
 // be opened and what a reader is shown, `opener` hands the result to the
@@ -77,6 +78,7 @@ pub mod save_outside;
 pub mod search;
 pub mod session;
 pub mod signature;
+pub mod signature_store;
 pub mod startup;
 pub mod structure;
 pub mod sweep;
@@ -793,6 +795,7 @@ pub fn run() {
             annot_recolor,
             annot_move,
             annot_resize_signature,
+            signature_store,
             edit_undo,
             edit_redo,
             edit_state,
@@ -1157,6 +1160,7 @@ mod tests {
             notes: Vec::new(),
             discards: Vec::new(),
             forms: Vec::new(),
+            text_edits: Vec::new(),
         }
     }
 

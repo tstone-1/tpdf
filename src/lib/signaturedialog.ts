@@ -1,4 +1,6 @@
-import { SIGNATURE_KEY, savedSignature, signatureCanvas, trimSignature, type SignatureImage } from "./signature";
+import { decodeSignature, signatureCanvas, trimSignature, type SignatureImage } from "./signature";
+
+import { prepareSignatureStorage, loadSignature, rememberSignature, forgetSignature } from "./signaturestore";
 
 /** A visual signature editor; image files are decoded by the webview, never Rust. */
 export class SignatureDialog {
@@ -15,11 +17,13 @@ export class SignatureDialog {
   private generation = 0;
 
   constructor(host: HTMLElement) {
+    void prepareSignatureStorage().catch((error: unknown) => { this.message.textContent = String(error); });
     this.dialog.className = "signature-dialog";
-    this.dialog.setAttribute("aria-label", "Add signature");
+    this.dialog.setAttribute("aria-label", "Place signature image");
     this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
-    const heading = document.createElement("h2"); heading.textContent = "Add signature"; heading.style.margin = "0 0 8px";
+    const heading = document.createElement("h2"); heading.textContent = "Place signature image"; heading.style.margin = "0 0 8px";
     const help = document.createElement("p"); help.textContent = "Draw your signature or import a PNG or JPEG image.";
+    const notice = document.createElement("p"); notice.textContent = "Visual mark only. This does not verify your identity or create a certificate-based digital signature.";
     this.canvas.width = 1024; this.canvas.height = 400;
     this.canvas.style.cssText = "width:100%;height:auto;aspect-ratio:1024/400;display:block;background:white;border:1px solid #999;border-radius:6px;touch-action:none;cursor:crosshair";
     this.canvas.setAttribute("aria-label", "Draw your signature");
@@ -27,13 +31,7 @@ export class SignatureDialog {
     const file = document.createElement("input"); file.type = "file"; file.accept = "image/png,image/jpeg"; file.hidden = true;
     const load = this.button("Import image...", () => { file.value = ""; file.click(); });
     file.addEventListener("change", () => { const chosen = file.files?.[0]; if (chosen) void this.importFile(chosen); });
-    tools.append(load, this.button("Clear", () => this.clear()), this.button("Use saved signature", () => {
-      const saved = savedSignature();
-      if (saved) { this.generation++; this.source = signatureCanvas(saved); this.render(); } else this.message.textContent = "No signature has been saved on this device.";
-    }), this.button("Forget saved signature", () => {
-      try { localStorage.removeItem(SIGNATURE_KEY); this.remember.checked = false; this.message.textContent = "Saved signature removed from this device."; }
-      catch { this.message.textContent = "The saved signature could not be removed."; }
-    }));
+    tools.append(load, this.button("Clear", () => this.clear()), this.button("Use saved signature", () => void this.loadSaved()), this.button("Forget saved signature", () => void this.forgetSaved()));
     const options = document.createElement("div"); options.style.cssText = "display:flex;gap:16px;flex-wrap:wrap";
     const label = (input: HTMLInputElement, text: string) => { input.type = "checkbox"; const node = document.createElement("label"); node.append(input, ` ${text}`); return node; };
     options.append(label(this.white, "Remove white background"), label(this.remember, "Remember on this device"));
@@ -41,9 +39,9 @@ export class SignatureDialog {
     this.white.addEventListener("change", () => { if (this.source) this.render(); });
     this.message.setAttribute("role", "status"); this.message.style.cssText = "min-height:1.5em;font-size:13px";
     const footer = document.createElement("div"); footer.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
-    this.place = this.button("Place signature", () => this.accept()); this.place.disabled = true;
+    this.place = this.button("Place signature image", () => void this.accept()); this.place.disabled = true;
     footer.append(this.button("Cancel", () => this.finish(null)), this.place);
-    this.dialog.append(heading, help, this.canvas, tools, options, this.message, footer, file);
+    this.dialog.append(heading, help, notice, this.canvas, tools, options, this.message, footer, file);
     host.append(this.dialog);
     this.dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.finish(null); });
     this.dialog.addEventListener("keydown", (event) => event.stopPropagation());
@@ -94,14 +92,14 @@ export class SignatureDialog {
     }
     let image: ImageBitmap | undefined;
     try {
-      image = await createImageBitmap(file);
+      image = await decodeSignature(file);
       if (generation !== this.generation || !this.isOpen) return;
       const source = document.createElement("canvas");
       const scale = Math.min(1, 1024/image.width, 512/image.height);
       source.width = Math.max(1, Math.round(image.width*scale)); source.height = Math.max(1, Math.round(image.height*scale));
       source.getContext("2d")!.drawImage(image, 0, 0, source.width, source.height);
       this.source = source; this.render(); this.message.textContent = "";
-    } catch { if (generation === this.generation) this.message.textContent = "This image could not be opened."; }
+    } catch (error) { if (generation === this.generation) this.message.textContent = error instanceof Error ? error.message : "This image could not be opened."; }
     finally { image?.close(); }
   }
   private render(): void {
@@ -121,7 +119,8 @@ export class SignatureDialog {
     ctx.drawImage(sourceCanvas, 12, 12, trimmed.width*scale, trimmed.height*scale);
     this.place.disabled = false;
   }
-  private accept(): void {
+  private async accept(): Promise<void> {
+    const generation = this.generation;
     const ctx = this.canvas.getContext("2d")!;
     const trimmed = trimSignature(this.canvas.width, this.canvas.height, ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data);
     if (!trimmed) { this.message.textContent = "Draw or import a signature first."; return; }
@@ -130,10 +129,23 @@ export class SignatureDialog {
     canvas.getContext("2d")!.drawImage(signatureCanvas(trimmed), 0, 0, canvas.width, canvas.height);
     const image: SignatureImage = { width: canvas.width, height: canvas.height, rgba: [...canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data] };
     if (this.remember.checked) {
-      try { localStorage.setItem(SIGNATURE_KEY, JSON.stringify(image)); }
-      catch { this.message.textContent = "The signature could not be remembered. Clear that option to place it without saving it locally."; return; }
+      try { this.place.disabled = true; await rememberSignature(image); }
+      catch { this.place.disabled = false; this.message.textContent = "The signature could not be remembered securely. Clear that option to place it without saving it locally."; return; }
     }
-    this.finish(image);
+    if (generation === this.generation && this.isOpen) this.finish(image);
+  }
+  private async loadSaved(): Promise<void> {
+    const generation = ++this.generation;
+    try {
+      const saved = await loadSignature();
+      if (generation !== this.generation || !this.isOpen) return;
+      if (saved) { this.source = signatureCanvas(saved); this.render(); }
+      else this.message.textContent = "No signature has been saved on this device.";
+    } catch (error) { if (generation === this.generation) this.message.textContent = String(error); }
+  }
+  private async forgetSaved(): Promise<void> {
+    try { await forgetSignature(); this.remember.checked = false; this.message.textContent = "Saved signature removed from this device."; }
+    catch { this.message.textContent = "The saved signature could not be removed."; }
   }
   private finish(image: SignatureImage | null): void {
     this.generation++; this.point = null;

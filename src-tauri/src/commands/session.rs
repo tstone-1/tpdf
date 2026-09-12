@@ -132,3 +132,23 @@ pub async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Re
     .await
     .map_err(|e| format!("the session write did not run: {e}"))?
 }
+
+/// Remember signature pixels in the current user's protected OS storage.
+#[tauri::command]
+pub async fn signature_store(
+    app: tauri::AppHandle,
+    action: crate::signature_store::Action,
+) -> Result<Option<crate::signature::Image>, String> {
+    use tauri::Manager;
+    let service = format!("{}.signature", app.config().identifier);
+    let path = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("signature.bin");
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::signature_store::perform(&service, &path, action)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

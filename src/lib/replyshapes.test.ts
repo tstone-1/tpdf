@@ -57,6 +57,8 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SignatureImage } from "./signature";
+import Image_ from "../../src-tauri/testdata/replies/Image.json";
 import type { Form } from "./forms";
 import Form_ from "../../src-tauri/testdata/replies/Form.json";
 import type { Comments } from "./comments";
@@ -137,6 +139,7 @@ type Shape<T> = Record<keyof T, readonly Kind[]>;
  * assertion rather than a list of everything that would be tolerated.
  */
 const SCHEMA = {
+  Image: { width: ["number"], height: ["number"], rgba: ["array"] } satisfies Shape<SignatureImage>,
   Form: { widgets: ["array"] } satisfies Shape<Form>,
   Applied: {
     regions: ["number"],
@@ -270,6 +273,7 @@ const SCHEMA = {
  * behaviour anybody can observe at run time.
  */
 const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
+  Image: Image_ satisfies Widen<SignatureImage>,
   Applied: Applied_ satisfies Widen<Applied>,
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,

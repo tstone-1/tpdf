@@ -34,6 +34,9 @@ serde_json = "1"
 # is the standing rule for anything the licensing constraint touches.
 # MIT OR Apache-2.0.
 sha2 = "0.11"
+# Strict, bounded zlib decoding for editable content. Already used by lopdf;
+# its recovery-oriented decoder accepts partial streams. MIT OR Apache-2.0.
+flate2 = "1"
 
 # PDF rendering and text extraction. Settled 2026-07-27 by spikes 0.1, 0.3 and 0.5:
 # it renders, extracts and sandboxes correctly, and is not usable for redaction
@@ -141,6 +144,8 @@ quick-xml = "0.42"
 # Tauri, so only `objc2-pdf-kit` is genuinely new --- same crate family, same
 # `Zlib OR Apache-2.0 OR MIT`, so no licensing question (AGENTS.md).
 [target.'cfg(target_os = "macos")'.dependencies]
+# Keychain-protected signature storage; already used by the TLS verifier. MIT OR Apache-2.0.
+security-framework = "3"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = [
@@ -190,6 +195,7 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     # Toolhelp: `backend-probe` reads its own module list and finds its worker
     # children through the OS process table, which are the observables its
     # claims rest on -- see `mapped_images` and `worker_pids` there.
@@ -456,3 +462,7 @@ path = "examples/raster_redact_probe.rs"
 [[example]]
 name = "redaction-fill-probe"
 path = "examples/redaction_fill_probe.rs"
+
+[[example]]
+name = "text-edit-probe"
+path = "examples/text_edit_probe.rs"

@@ -815,7 +815,7 @@ export function registerAppCommands(
     },
     {
       id: "edit.addSignature",
-      title: "Add signature...",
+      title: "Place signature image...",
       enabled: withDocument,
       run: () => actions.signature(),
     },

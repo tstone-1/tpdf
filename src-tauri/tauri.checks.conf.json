@@ -1,0 +1,10 @@
+{
+  "identifier": "com.timostein.tpdf.checks",
+  "productName": "tpdf Checks",
+  "build": {
+    "beforeBuildCommand": "npm run build:checks"
+  },
+  "bundle": {
+    "fileAssociations": []
+  }
+}

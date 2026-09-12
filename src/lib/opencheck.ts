@@ -109,6 +109,28 @@ function sidebars(): number {
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "signed-save-cancel":
+    case "signed-save-accept": {
+      await host.open(expected); await host.idle();
+      const original = host.edits()!.doc;
+      const properties = await call("document_properties", {doc:original});
+      report.check("the fixture has a digital signature", properties.signatures.some((s)=>s.signed), "signed save");
+      host.run("edit.rotatePageClockwise"); await host.idle();
+      report.check("the signed document has pending edits", host.edits()!.dirty, "signed save");
+      host.run("file.save");
+      const dialog = () => document.querySelector<HTMLDialogElement>(".signed-save-dialog[open]");
+      if (!await settle(() => !!dialog(), 5000)) throw new Error("the signature warning did not appear");
+      report.check("the warning states possible signature invalidation", dialog()!.textContent!.includes("Saving can invalidate them"), "signed save");
+      const buttons = [...dialog()!.querySelectorAll("button")];
+      report.check("Cancel has initial focus", document.activeElement === buttons.find((b)=>b.textContent === "Cancel"), "signed save");
+      const accepted = phase.endsWith("accept");
+      buttons.find((b)=>b.textContent === (accepted ? "Save anyway" : "Cancel"))!.click();
+      await host.idle();
+      report.check("the reader's save choice is respected", accepted
+        ? !host.edits()!.dirty && host.edits()!.doc !== original
+        : host.edits()!.doc === original && host.edits()!.dirty, "signed save");
+      break;
+    }
     case "signatures": await signatureCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");

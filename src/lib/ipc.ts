@@ -288,6 +288,7 @@ export interface Commands {
     reply: EditState;
   };
   annot_resize_signature: { args: { doc: number; mark: number; width: number }; reply: EditState };
+  signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };
   edit_undo: { args: { doc: number }; reply: EditState };
   edit_redo: { args: { doc: number }; reply: EditState };
   edit_state: { args: { doc: number }; reply: EditState };

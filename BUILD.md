@@ -1,5 +1,26 @@
 # BUILD.md --- tpdf
 
+Native UI probes now require a checks build:
+`npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app`
+(add `--debug` for a development build). It has a separate application identifier;
+normal `npm run tauri build` excludes the frontend harness. Existing probe commands
+below refer to this checks executable when they drive the UI. Run
+`python3 scripts/check_bundle_share.py --checks` on its frontend output; the normal
+gate requires zero harness code and deliberately refuses a checks build. The build
+gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
+the normal bundle separately before release.
+
+Protected signature storage can be exercised with synthetic maximum-size pixels:
+`cargo test --manifest-path src-tauri/Cargo.toml --lib native_store_roundtrips_maximum_pixels_and_forgets -- --ignored --nocapture`.
+It creates and removes its own OS storage entry; it needs an unlocked desktop.
+The regular gates compile it but do not contact Keychain/DPAPI.
+Run `uv run scripts/signed_save_check.py <checks-executable> testdata/incr-certified-2.pdf`
+to exercise warning text, initial Cancel focus, cancellation and accepted saving.
+The driver verifies unchanged file bytes after cancellation and changed bytes
+after acceptance; the application drives its own modal without Accessibility.
+
+
+
 How to get a clean clone building, what the quality gates are, and how a release is cut.
 
 Durable project knowledge lives in [`AGENTS.md`](AGENTS.md); the architecture and roadmap
@@ -4703,7 +4724,8 @@ to change the target, changes pixels outside it, cannot be reopened, or yields
 the wrong text. Without that flag it is an exploratory report, including expected
 PDFium failures; the process exit alone is not a verdict. `text-roundtrip` and
 `incremental-save` need fixtures; `fdpass-probe` is macOS-only. The self-contained
-Phase 5 font matrix, strict writer controls and native WebKit/PDFKit commands are
+Phase 5 font matrix, contained text-edit probe, strict writer controls and native
+WebKit/PDFKit commands are
 in `docs/PLAN.md` §7; they need no system font or private document.
 
 ---

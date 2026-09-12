@@ -642,3 +642,24 @@ describe("Edits", () => {
     expect(edits.state.marks).toEqual([]);
   });
 });
+
+
+it("awaits save consent before every writing command and sends nothing when declined", async () => {
+  const writes = [
+    (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
+    (e: Edits)=>e.redactCopy("source","copy"), (e: Edits)=>e.redactRasterCopy("source","copy"),
+    (e: Edits)=>e.redactDocument("source"), (e: Edits)=>e.extractPages("source","copy",[0]),
+    (e: Edits)=>e.splitDocument("source","copy",[[0]]), (e: Edits)=>e.mergeDocuments("source","copy",["other"]),
+  ];
+  for (const write of writes) {
+    core.invoke.mockReset();
+    const refusal = new Error("declined");
+    await expect(write(new Edits(7,1,async()=>{throw refusal;}))).rejects.toBe(refusal);
+    expect(core.invoke).not.toHaveBeenCalled();
+    let consent!: () => void;
+    const pending = write(new Edits(7,1,()=>new Promise<void>((resolve)=>{consent=resolve;})));
+    expect(core.invoke).not.toHaveBeenCalled();
+    consent(); await pending;
+    expect(core.invoke).toHaveBeenCalledOnce();
+  }
+});

@@ -1,7 +1,7 @@
 # tpdf — Architecture and Roadmap
 
 Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress;
-Phase 4 shipped in 26.9.5; Phase 5 feasibility work started.** The viewer
+Phase 4 shipped in 26.9.5; Phase 5 worker implementation started.** The viewer
 runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
 session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
 change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,
@@ -13,8 +13,27 @@ instructions, and read the result back as *verified* or *not verified, and why*.
 **Form filling and visual signatures shipped in 26.9.5 (2026-09-11)**: text fields,
 checkboxes, radio groups, dropdowns and lists, with shared answers, undo and saved
 appearances; drawn or imported signature images can be placed, moved and resized.
-**In-place text editing is in feasibility work (Phase 5)**; no editing command is
+**In-place text editing has an initial worker implementation (Phase 5)**; no editing command is
 available in the application yet. The current increment and remaining work live in §7.
+
+**Current priority: assurance before further text-editing UI.** Repair and CI-build
+all fuzz targets; cover AcroForm scanning, form changes and signature rasters;
+warn before signed-document writes; state visual-signature limits in the dialog;
+protect remembered pixels and bound image dimensions before decoding; exclude the
+native-check harness from normal builds. Verify these changes through focused
+faults, native checks and the full gate run. Windows confidentiality containment,
+macOS kernel memory limits and independent user validation remain separate open
+items; none is closed by the application-level safeguards above.
+
+The assurance changes are implemented locally. Verification on 2026-09-12 includes
+both frontend build profiles, the regular Rust/frontend gates (with the initial
+IPC sample/order and event-handler findings corrected), 15 targeted frontend
+mutations, 49 native form/signature/save-consent checks, a maximum-size Keychain
+round trip, and a Windows cross-check. Short instrumented fuzz runs executed
+34,326 AcroForm inputs and 83,753 rewrite inputs without a failure. Native Windows
+DPAPI operation and normal-bundle release smoke testing remain pre-release checks.
+
+
 
 That last sentence read *"Annotations, forms and redaction are not started, and no document is
 written in place"* until 2026-08-28 --- wrong on three of its four clauses, against work that
@@ -4197,7 +4216,7 @@ Whether that is worth a C++ dependency is a Phase 3 decision, not a Phase 0 one.
 
 ## 7. In-place text editing
 
-Built on the earlier text round-trip spike and the redaction interpreter.
+Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 
 ### Why it is hard
 
@@ -4277,14 +4296,11 @@ On Windows the example binary ends in `.exe`; the generated HTML can be opened
 for the browser check, but the WebKit/PDFKit result above is macOS-only. The Python
 probe accepts no arbitrary input PDF and is not imported by the application.
 
-**Next implementation:** identify editable runs through the content-stream
-interpreter, retaining the original operator address, font resource, glyph codes
-and text state. A browser cmap alone cannot supply the PDF code mapping. Start
-with an existing run whose replacement glyphs already have unambiguous codes;
-refuse unsupported runs and missing glyphs. Worker-side preview and rewriting,
-journal/undo, the selection overlay, save/reopen and independent rendering checks
-must then be connected before exposing an editing command. The earlier spike's
-ordinal correspondence is a fixture shortcut, not that implementation.
+**Next implementation:** connect the worker's supported runs and replacements to
+the edit journal, undo, selection overlay and worker-rendered preview before
+exposing an editing command. A browser cmap alone cannot supply PDF character
+codes. The earlier spike's ordinal correspondence is a fixture shortcut; the
+worker implementation below addresses content operators directly.
 
 System-font matching, font repair, subset extension, complex shaping and reflow
 remain unimplemented. The raster-preview fallback is a design decision, not a
@@ -4298,6 +4314,43 @@ Missing-glyph, no-op and overflowing replacements each fail the strict verdict.
 The WebKit runner rejects an empty success report, and withholding font registration
 fails all four eligible preview cases. These are controls over the instruments,
 not claims about editing arbitrary documents.
+
+### Worker text replacement — started 2026-09-12
+
+`textedit.rs` discovers and rewrites a conservative first grammar: pages made of
+isolated `BT Tf (Tm|Td) Tj ET` blocks, with standard Helvetica, explicit
+WinAnsiEncoding and printable ASCII. It reports the original operator address,
+text, font resource, size, text matrix and advance. Discovery uses the worker's
+shared document graph through `Request::TextRuns`. Unsupported content returns
+a reason; there is no text-editing UI yet.
+
+`Plan.text_edits` carries a content digest and original text with each replacement.
+The worker revalidates the entire batch before writing, refuses stale or duplicate
+addresses, missing characters and increased advance, and changes only the target
+string operand. It clones shared streams and sweeps unreachable originals. Save,
+copy and print use this writer; text edits forbid append and identity shortcuts.
+Encryption is restored by the existing rewrite pipeline. Text editing and redaction
+in one plan are refused until their coordinates can be reconciled.
+
+Content reads and decoding must be complete: invalid references, unsupported
+filters, corrupt or incomplete zlib data and trailing malformed operators refuse
+editing. The general page-content helper is unsuitable here because it skips bad
+streams and recovers partial decompression. The editor uses bounded strict zlib
+decoding, with limits on content bytes, operators, strings and replacement count.
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/text-edit/worker
+swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker
+```
+
+The worker probe creates a synthetic PDF, discovers runs across the process
+boundary, saves a replacement through the contained rewrite path and checks
+overflow and unsupported-character refusals. On macOS, PDFKit independently reads
+the saved replacement and unchanged second block, and compares their renderings:
+2,394 changed pixels within the edited line, zero outside. Unit tests cover shared
+streams, batch atomicity, stale edits, malformed content, encryption and the save,
+copy and print paths. Embedded fonts, general text-state interpretation and reflow
+remain outside this first grammar.
 
 ---
 

@@ -188,6 +188,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "ber_certificate": blobs,
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
+        "forms_scan": docs,
         "links_scan": docs,
         "docinfo_scan": docs + bombs,
         "encoding_scan": docs,

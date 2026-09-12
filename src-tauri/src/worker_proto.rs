@@ -148,6 +148,8 @@ pub enum Request {
     Outline,
     /// Read editable form widgets after first paint.
     Form,
+    /// Discover supported text runs in original page coordinates.
+    TextRuns { page: u32 },
     /// Read every comment in the document.
     ///
     /// Document-level and lazy, like [`Request::Mapping`] and for the same two
@@ -447,6 +449,7 @@ pub enum Reply {
     Outline(crate::outline::Outline),
     /// Form controls and their shared field answers.
     Form(crate::forms::Form),
+    TextRuns(crate::textedit::PageRuns),
     /// Every annotation a reader can be shown.
     Comments(crate::annots::Comments),
     /// Every link, with the destination each resolves to.
@@ -753,6 +756,10 @@ mod tests {
         /// Variants that reach a worker by another route, and why.
         const UNCARRIED: &[(&str, &str)] = &[
             (
+                "TextRuns",
+                "direct worker probe while the text-edit journal and UI are under construction",
+            ),
+            (
                 "Withdraw",
                 "broadcast to every worker to pre-empt a render already running, so it \
                  does not go through the queue an `Engine` method dispatches on",
@@ -963,6 +970,7 @@ mod tests {
             },
             Request::Outline,
             Request::Form,
+            Request::TextRuns { page: 0 },
             Request::Comments,
             Request::Links,
         ] {
@@ -1031,6 +1039,7 @@ mod tests {
             }),
             Reply::Outline(crate::outline::Outline::default()),
             Reply::Form(crate::forms::Form::default()),
+            Reply::TextRuns(crate::textedit::PageRuns::default()),
             Reply::Comments(crate::annots::Comments::default()),
             Reply::Links(crate::links::Links {
                 items: Vec::new(),
@@ -1080,6 +1089,7 @@ mod tests {
                 | Reply::Geometry(_)
                 | Reply::Outline(_)
                 | Reply::Form(_)
+                | Reply::TextRuns(_)
                 | Reply::Comments(_)
                 | Reply::Links(_)
                 | Reply::Mapping(_)

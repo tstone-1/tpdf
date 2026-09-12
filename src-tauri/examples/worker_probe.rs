@@ -65,6 +65,7 @@ fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -107,6 +108,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,

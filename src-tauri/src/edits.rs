@@ -1478,6 +1478,7 @@ impl Edits {
         let model = &open.model;
         let pages = snapshot(model).pages;
         Ok(Plan {
+            text_edits: Vec::new(),
             forms: model.form_changes(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
@@ -1618,6 +1619,7 @@ impl Edits {
         // file, which reads as the deletion having silently failed.
         let discards = planned_discards(model, &pages);
         Ok(Plan {
+            text_edits: Vec::new(),
             forms: model.form_changes(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
@@ -1744,6 +1746,9 @@ fn planned_discards(model: &Doc, pages: &[PageView]) -> Vec<PlannedDiscard> {
 /// kept out of five from a five-page document that lost two under it.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Plan {
+    /// Replacements validated against the worker's original content scan.
+    #[serde(default)]
+    pub text_edits: Vec<crate::textedit::Change>,
     /// Answers to write with explicit appearances in the sandbox.
     #[serde(default)]
     pub forms: Vec<crate::forms::Change>,
@@ -2044,7 +2049,7 @@ impl Plan {
         // leaving it out would let the print path hand over the original bytes
         // for a document the reader has highlighted --- which prints, correctly
         // and confusingly, without the highlights.
-        if !self.forms.is_empty() {
+        if !self.forms.is_empty() || !self.text_edits.is_empty() {
             return false;
         }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
@@ -2067,7 +2072,7 @@ impl Plan {
     /// is a thing that has already happened here once.
     #[must_use]
     pub fn is_appendable(&self) -> bool {
-        if !self.forms.is_empty() {
+        if !self.forms.is_empty() || !self.text_edits.is_empty() {
             return false;
         }
         // **Renamed from `only_adds_marks` when note edits landed, and the name

@@ -53,6 +53,7 @@ fn plan(turns: u8) -> Plan {
         notes: vec![],
         discards: vec![],
         forms: Vec::new(),
+        text_edits: Vec::new(),
         redactions: vec![PlannedRedaction {
             source: 0,
             shows: vec![],

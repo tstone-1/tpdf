@@ -3,7 +3,8 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 // Tauri expects a fixed port and surfaces Rust errors itself, so Vite must not
 // clear the screen or wander to another port.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  define: { __TPDF_CHECKS__: JSON.stringify(mode === "checks") },
   plugins: [svelte()],
   clearScreen: false,
   // Temporary checkouts under scratch are not a second copy of the test suite.
@@ -28,4 +29,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

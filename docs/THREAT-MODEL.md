@@ -1752,10 +1752,13 @@ cover the saved values and appearances.
 A visual signature is a PDF stamp, with no certificate, identity verification or
 cryptographic assurance. The webview can read a PNG/JPEG explicitly selected in
 its file input; it still has no general filesystem plugin permission. It rejects
-files larger than 10 MiB before decoding. The operating system's webview image
-decoder processes the original image, so this byte cap does not bound decoded
-source pixels or peak decoder memory. This input is separate from the worker's
-PDF rendering boundary and from the tile PNGs described in T8.
+files larger than 10 MiB and validates PNG/JPEG headers before decoding: at most
+8 megapixels and 8192 pixels per dimension. Animated PNGs, additional JPEG frames
+and JPEG dimension changes are refused. The decoded dimensions must match the
+header. These limits bound image dimensions, not all native decoder allocations;
+this input remains outside the PDF worker boundary described in T8.
+The dialog always states that the image supplies no identity or certificate-based
+verification, and the command is named "Place signature image".
 
 Before IPC, signatures are reduced to at most 131,072 RGBA pixels. Rust validates
 dimensions, exact byte length and nonzero opacity, and bounds retained signature
@@ -1764,11 +1767,21 @@ RGB image data and a separate alpha mask; the coordinator decodes no image file.
 Pixel comparisons through PDFium and PDFKit cover saved stamps on rotated and
 cropped pages, with unedited inputs as controls.
 
-Remembering a signature is explicit opt-in. The raster is stored unencrypted in
-the application's localStorage, accessible to scripts in that origin and to
-someone who can read the user profile. The dialog provides a forget operation;
-forgetting does not remove stamps already saved in PDFs. This is convenience
-storage, not protected credential storage.
+Remembering a signature is explicit opt-in. macOS uses Keychain; Windows writes
+only user-scoped DPAPI ciphertext to application-local storage. The IPC cannot
+choose the storage path or service. The legacy localStorage value is removed only
+after an identical protected copy has been read back; failures retain it and
+report the problem. "Forget saved signature" removes protected and legacy values,
+but cannot remove stamps already saved in PDFs. An active webview can still ask
+the application to load the saved pixels, and same-user compromise remains outside
+this protection. This is a visual image, not an authentication credential.
+
+Saving a signed/certified PDF, including a form whose DocMDP policy permits filling,
+now requires an explicit warning confirmation. Incomplete signature metadata also
+requires confirmation; cancellation sends no writing command. This closes silent
+invalidation in the normal UI, not the absence of incremental form updates or
+cryptographic validation. The existing writer can still invalidate signatures
+when a reader elects to continue.
 
 ### T7 — Distribution and update
 

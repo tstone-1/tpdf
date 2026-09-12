@@ -453,6 +453,14 @@ impl DocumentGraph {
         Ok(crate::verify::scan(&bytes, needles, self.password()))
     }
 
+    /// Discover edit candidates using the shared, bounded document parse.
+    ///
+    /// # Errors
+    /// Invalid or unsupported page content.
+    pub fn text_runs(&self, page: u32) -> Result<crate::textedit::PageRuns, String> {
+        crate::textedit::scan(self.parsed()?, page)
+    }
+
     /// Reads widgets from the shared, bounded object graph.
     pub fn form(&self) -> Result<crate::forms::Form, String> {
         crate::forms::scan(self.parsed()?)

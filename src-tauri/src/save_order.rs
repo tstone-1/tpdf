@@ -374,6 +374,7 @@ mod tests {
             notes: Vec::new(),
             discards: Vec::new(),
             forms: Vec::new(),
+            text_edits: Vec::new(),
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,

@@ -3401,6 +3401,10 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // leaves out anything on a page the *plan* does not carry, so this only
     // reaches a page that is being kept -- unless the reader deleted it in the
     // same breath, which is the case this ordering forgives.
+    if !plan.text_edits.is_empty() && !plan.redactions.is_empty() {
+        return Err("save text edits before applying redactions".into());
+    }
+    crate::textedit::write(&mut doc, &plan.text_edits)?;
     crate::forms::write(&mut doc, &plan.forms)?;
     rewrite_note_edits(&mut doc, &plan.notes)?;
 
@@ -3553,6 +3557,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         || redacted.fields > 0
         || redacted.images > 0
         || discarded > 0
+        || !plan.text_edits.is_empty()
     {
         crate::sweep::collect(&mut doc)?;
     }
