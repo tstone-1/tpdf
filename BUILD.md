@@ -4683,7 +4683,8 @@ knows how to start.
 ```bash
 # Spike 0.3, the gating one: can one text object be edited and the rest of the page
 # reproduced faithfully? Two routes, PDFium and lopdf, measured against each other.
-cargo run --release --manifest-path src-tauri/Cargo.toml --example text-roundtrip
+cargo run --release --manifest-path src-tauri/Cargo.toml --example text-roundtrip -- \
+    testdata/text-base14.pdf --strict-surgical
 
 # Spike 0.6: does an appended update section satisfy a reader that is not ours?
 cargo run --release --manifest-path src-tauri/Cargo.toml --example incremental-save
@@ -4697,8 +4698,13 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example thread-probe
 cargo run --release --manifest-path src-tauri/Cargo.toml --example fdpass-probe
 ```
 
-Each prints its own verdict and exits non-zero on failure. `text-roundtrip` and
-`incremental-save` need `testdata/`; `fdpass-probe` is macOS-only.
+`text-roundtrip --strict-surgical` exits non-zero if either surgical variant fails
+to change the target, changes pixels outside it, cannot be reopened, or yields
+the wrong text. Without that flag it is an exploratory report, including expected
+PDFium failures; the process exit alone is not a verdict. `text-roundtrip` and
+`incremental-save` need fixtures; `fdpass-probe` is macOS-only. The self-contained
+Phase 5 font matrix, strict writer controls and native WebKit/PDFKit commands are
+in `docs/PLAN.md` §7; they need no system font or private document.
 
 ---
 

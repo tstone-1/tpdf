@@ -1,6 +1,7 @@
 # tpdf — Architecture and Roadmap
 
-Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress.** The viewer
+Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress;
+Phase 4 shipped in 26.9.5; Phase 5 feasibility work started.** The viewer
 runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
 session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
 change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,
@@ -8,8 +9,12 @@ cropped or extracted. Annotations followed between 2026-08-18 and 2026-08-23 ---
 underline, strike-out, squiggly, drawing, box, ellipse, text box, stamp and comment --- and a
 document has been written **in place** since 2026-08-19. Redaction shipped in `26.8.11` on
 2026-08-27, end to end: mark a region, review the list, remove the words from the page's own
-instructions, and read the result back as *verified* or *not verified, and why*. **Form filling is in development** (Phase 4): text fields and checkboxes, with
-shared answers, undo and saved appearances. In-place text editing is not started (Phase 5).
+instructions, and read the result back as *verified* or *not verified, and why*.
+**Form filling and visual signatures shipped in 26.9.5 (2026-09-11)**: text fields,
+checkboxes, radio groups, dropdowns and lists, with shared answers, undo and saved
+appearances; drawn or imported signature images can be placed, moved and resized.
+**In-place text editing is in feasibility work (Phase 5)**; no editing command is
+available in the application yet. The current increment and remaining work live in §7.
 
 That last sentence read *"Annotations, forms and redaction are not started, and no document is
 written in place"* until 2026-08-28 --- wrong on three of its four clauses, against work that
@@ -4192,7 +4197,7 @@ Whether that is worth a C++ dependency is a Phase 3 decision, not a Phase 0 one.
 
 ## 7. In-place text editing
 
-Deliberately last, designed for from day one.
+Built on the earlier text round-trip spike and the redaction interpreter.
 
 ### Why it is hard
 
@@ -4229,6 +4234,70 @@ mangles an edit, this is why.
   matching with a visible warning where they do not. Within-block reflow.
 - **Later:** paragraph reflow across lines, size and style changes, new text blocks in
   arbitrary fonts.
+
+### First increment: font-preview feasibility — started 2026-09-12
+
+`scripts/text_edit_fonts.py` generates original geometric TrueType and CFF fonts,
+embeds each in a synthetic PDF, extracts the font bytes again and checks they are
+unchanged. No system fonts or customer documents are used. Its generated HTML checks
+font loading, character advances and distinctive glyph pixels separately;
+`scripts/text_edit_webkit.swift` runs it in native macOS WebKit and independently
+checks the PDF glyphs and extracted text through PDFKit.
+
+Measured on macOS, with twelve PDF/font cases and an invalid-font browser control:
+
+| Font case | WebKit loads | Expected glyphs and advances | Editing-preview decision |
+|---|---|---|---|
+| TrueType; OpenType containing CFF | yes | yes | candidate for characters in the cmap |
+| TrueType without a cmap | **yes** | **no: fallback font** | raster preview |
+| Raw CFF without an OpenType wrapper | no | no | raster preview |
+| Restricted, preview/print-only, bitmap-only, absent or conflicting rights | yes | yes | no editable font preview |
+| Editable; installable with no-subsetting flag | yes | yes | candidate; no-subsetting remains a separate constraint |
+| Invalid bytes | no | no | refuse font loading |
+
+The missing-cmap case is the important control: a successful `FontFace.load()`
+does not prove that the requested characters use that font. The restricted cases
+also load, so the browser cannot enforce the editor's embedding policy. The spike
+screens `OS/2.fsType` conservatively using the
+[OpenType specification](https://learn.microsoft.com/en-us/typography/opentype/spec/os2);
+unknown or contradictory flags are not treated as permission. Every intact cmap
+contains A and B and lacks Z, and the probe asserts both the supported and missing
+character cases. These checks establish preview prerequisites, not a licence grant
+or the ability to encode a character into a PDF content stream.
+
+Run the complete spike from the repository root:
+
+```bash
+cargo build --locked --manifest-path src-tauri/Cargo.toml --example text-roundtrip
+uv run --with fonttools --with pypdf scripts/text_edit_fonts.py scratch/text-edit --roundtrip-binary src-tauri/target/debug/examples/text-roundtrip
+swift scripts/text_edit_webkit.swift scratch/text-edit/index.html
+```
+
+On Windows the example binary ends in `.exe`; the generated HTML can be opened
+for the browser check, but the WebKit/PDFKit result above is macOS-only. The Python
+probe accepts no arbitrary input PDF and is not imported by the application.
+
+**Next implementation:** identify editable runs through the content-stream
+interpreter, retaining the original operator address, font resource, glyph codes
+and text state. A browser cmap alone cannot supply the PDF code mapping. Start
+with an existing run whose replacement glyphs already have unambiguous codes;
+refuse unsupported runs and missing glyphs. Worker-side preview and rewriting,
+journal/undo, the selection overlay, save/reopen and independent rendering checks
+must then be connected before exposing an editing command. The earlier spike's
+ordinal correspondence is a fixture shortcut, not that implementation.
+
+System-font matching, font repair, subset extension, complex shaping and reflow
+remain unimplemented. The raster-preview fallback is a design decision, not a
+working editing preview in this increment.
+
+The strict surgical check replaces AB with BA in both synthetic font formats and
+removes it in a separate copy. Both cases change zero pixels outside the target;
+an independent parser checks the resulting text, unchanged surrounding operators
+and byte-identical embedded font. PDFKit also checks the replacement's glyph order.
+Missing-glyph, no-op and overflowing replacements each fail the strict verdict.
+The WebKit runner rejects an empty success report, and withholding font registration
+fails all four eligible preview cases. These are controls over the instruments,
+not claims about editing arbitrary documents.
 
 ---
 
@@ -13082,6 +13151,8 @@ can build this one, since `make_hostile_pdf.py` is dependency-free.
 
 ### Phase 4 — Forms and visual signatures
 
+**Shipped in 26.9.5 (2026-09-11).**
+
 The first increment implements plain text fields and checkboxes. Answers live in
 one document journal, including shared widgets, and save through the sandboxed
 rewrite with explicit appearance streams. The application check covers entering,
@@ -13101,6 +13172,9 @@ Explicitly **not** cryptographic signing. XFA out of scope.
 
 §7, scoped as described there. Depends on the Phase 0 text round-trip spike and the
 operator-rewriting machinery built in Phase 3.
+
+**Started: font-preview and surgical round-trip feasibility.** See §7 for the
+measured results and the next implementation step. This is not yet an application feature.
 
 ### Phase 6 — Cryptographic signing
 

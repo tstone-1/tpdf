@@ -28,7 +28,11 @@
 //!
 //! Usage:
 //!   text-roundtrip <file.pdf> [--page N] [--needle STR] [--replacement STR]
-//!                  [--scale S] [--outdir DIR] [--dump]
+//!                  [--scale S] [--outdir DIR] [--dump] [--strict-surgical]
+//!
+//! `--strict-surgical` requires both surgical variants to succeed: nonzero
+//! changed pixels, zero collateral pixels, a readable result and expected text.
+//! It is a fixture check, not proof of ordinal mapping for arbitrary PDFs.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -60,6 +64,7 @@ struct Args {
     scale: f32,
     outdir: PathBuf,
     dump: bool,
+    strict_surgical: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -76,11 +81,16 @@ fn parse_args() -> Result<Args, String> {
         scale: 2.0,
         outdir: PathBuf::from("target/spike-0.3"),
         dump: false,
+        strict_surgical: false,
     };
 
     while let Some(flag) = args.next() {
         if flag == "--dump" {
             parsed.dump = true;
+            continue;
+        }
+        if flag == "--strict-surgical" {
+            parsed.strict_surgical = true;
             continue;
         }
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -194,9 +204,12 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
     // guaranteed by the format -- one Tj can be split across objects, and a
     // Form XObject contributes objects from a stream that is not the page's.
     if inventory.text_objects == inventory.show_operators {
-        println!("  [OK] counts agree, so ordinal mapping is usable on this file");
+        println!("  [OK] counts agree (necessary, not sufficient for ordinal mapping)");
     } else {
         println!("  [WARN] counts differ; ordinal mapping is NOT usable on this file");
+        if args.strict_surgical {
+            return Err("strict surgical check requires matching object/operator counts".into());
+        }
     }
 
     let target = inventory
@@ -237,16 +250,38 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
     println!("{header}");
     println!("{}", "-".repeat(header.len()));
 
-    let variants: Vec<(&str, VariantFn)> = vec![
-        ("A pdfium set_text (no regen)", route_a_set_text_no_regen),
-        ("A pdfium set_text", route_a_set_text),
-        ("A pdfium remove", route_a_remove),
-        ("B surgical set_text", route_b_set_text),
-        ("B surgical remove", route_b_remove),
+    // Some(text) identifies a required surgical result; an empty text means
+    // removal. Keep this independent of the labels used to print the table.
+    let variants: Vec<(&str, VariantFn, Option<&str>)> = vec![
+        (
+            "A pdfium set_text (no regen)",
+            route_a_set_text_no_regen,
+            None,
+        ),
+        ("A pdfium set_text", route_a_set_text, None),
+        ("A pdfium remove", route_a_remove, None),
+        (
+            "B surgical set_text",
+            route_b_set_text,
+            Some(&args.replacement),
+        ),
+        ("B surgical remove", route_b_remove, Some("")),
     ];
+    let mut surgical_passed = 0;
 
-    for (name, apply) in variants {
+    for (name, apply, expected) in variants {
         let out = args.outdir.join(format!("{}.pdf", slug(name)));
+        if args.strict_surgical && out.exists() {
+            // A writer that accidentally does nothing must not pass by reading
+            // the previous run's successful output. These paths are otherwise
+            // overwritten by the spike; refuse if one is also the input.
+            let output_path = out.canonicalize().map_err(|e| e.to_string())?;
+            let input_path = args.file.canonicalize().map_err(|e| e.to_string())?;
+            if output_path == input_path {
+                return Err("spike output must not be its input document".into());
+            }
+            std::fs::remove_file(&out).map_err(|e| e.to_string())?;
+        }
         let note = match apply(pdfium, args, target, &out) {
             Ok(note) => note,
             Err(e) => {
@@ -269,10 +304,8 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
             }
         };
 
-        let reparse = match LoDocument::load(&out) {
-            Ok(_) => "[OK]",
-            Err(_) => "[FAIL]",
-        };
+        let reparses = LoDocument::load(&out).is_ok();
+        let reparse = if reparses { "[OK]" } else { "[FAIL]" };
 
         let diff = diff(&baseline, &after, target_box)?;
         println!(
@@ -290,7 +323,18 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
         // the question -- black pixels over recoverable bytes is the failure
         // mode the whole subsystem exists to avoid. Extracted text is a second,
         // independent witness, and the two can disagree.
-        match extracted_text(pdfium, &out, args.page) {
+        let extracted = extracted_text(pdfium, &out, args.page);
+        if let (Some(expected), Ok(text)) = (expected, &extracted) {
+            if diff.changed_inside > 0
+                && diff.changed_outside == 0
+                && reparses
+                && !text.contains(&args.needle)
+                && (expected.is_empty() || text.contains(expected))
+            {
+                surgical_passed += 1;
+            }
+        }
+        match extracted {
             Ok(text) => {
                 let survives = text.contains(&args.needle);
                 let applied = text.contains(&args.replacement);
@@ -348,6 +392,14 @@ fn run(pdfium: &Pdfium, args: &Args) -> Result<(), String> {
     println!("`changed` counts device pixels differing from the baseline by more");
     println!("than {CHANNEL_TOLERANCE}/255 on any channel. OUTSIDE is the number that decides");
     println!("the spike: it is content the edit was never asked to touch.");
+    if args.strict_surgical {
+        if surgical_passed != 2 {
+            return Err(format!(
+                "strict surgical check: {surgical_passed}/2 variants passed"
+            ));
+        }
+        println!("[PASS] strict surgical check: replacement and removal");
+    }
     Ok(())
 }
 
@@ -878,8 +930,8 @@ fn route_b_remove(
     surgical(args, target, out, None)
 }
 
-/// Rewrites exactly one text-showing operator, leaving every other byte of the
-/// content stream as it was.
+/// Rewrites exactly one text-showing operator, preserving the other decoded
+/// operators. Re-encoding can change stream whitespace and operand syntax.
 ///
 /// `replacement` of `None` removes the operator entirely, which is redaction's
 /// primitive: the glyphs are not covered up, the instruction that drew them is
