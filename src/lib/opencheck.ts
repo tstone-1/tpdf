@@ -132,7 +132,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         : host.edits()!.doc === original && host.edits()!.dirty, "signed save");
       break;
     }
-    case "textedit": {
+    case "textedit":
+    case "textedit-latin1": {
+      const original = phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
@@ -147,16 +150,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       };
       const read = async () => String.fromCodePoint(...(await call("page_text", { doc: host.edits()!.doc, page: filePage(0), crop: null })).codes);
       await start();
-      check("source text is offered for replacement", field()!.value === "SYNTHETIC FIRST");
+      check("source text is offered for replacement", field()!.value === original);
       const hit = document.querySelector<HTMLElement>(".text-edit-run")!.getBoundingClientRect();
       check("the text target is visible and has area", hit.width > 50 && hit.height > 5 && hit.top >= 0);
-      field()!.value = "EDITED FIRST"; field()!.dispatchEvent(new Event("input", { bubbles: true }));
+      field()!.value = replacement; field()!.dispatchEvent(new Event("input", { bubbles: true }));
       // No Apply: switching tabs must drain the draft into its original document.
       await host.open(second); await host.idle();
       const otherTab = host.tabs().find((tab) => tab.id !== originalTab.id)!;
       check("the other tab remains unedited", !host.edits()!.state.dirty && (host.edits()!.state.text_edits?.length ?? 0) === 0);
       await host.activate(originalTab.id); await host.idle();
-      check("tab switching commits the typed replacement", host.edits()!.state.text_edits?.[0]?.replacement === "EDITED FIRST");
+      check("tab switching commits the typed replacement", host.edits()!.state.text_edits?.[0]?.replacement === replacement);
       const pixels = async () => {
         if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text tiles did not settle");
         await pause(100);
@@ -173,34 +176,34 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       };
       const editedPixels = await pixels();
       host.viewer()!.selectPage();
-      if (!await settle(() => host.viewer()!.selectedText.includes("EDITED FIRST"), SETTLE_MS)) throw new Error("selection retained source text after editing");
-      check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes("SYNTHETIC FIRST"));
+      if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
+      check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
       const edited = await read();
-      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes("EDITED FIRST") && !edited.includes("SYNTHETIC FIRST") && edited.includes("SYNTHETIC SECOND"));
-      const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(0), query: "EDITED FIRST", options: { matchCase: true, wholeWord: false, regex: false } });
+      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes("SYNTHETIC SECOND"));
+      const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(0), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
       check("unsaved search finds the replacement", matches.matches.length === 1);
       host.run("edit.undo"); await host.idle();
-      check("undo restores source text", (await read()).includes("SYNTHETIC FIRST") && !host.edits()!.state.dirty);
+      check("undo restores source text", (await read()).includes(original) && !host.edits()!.state.dirty);
       const originalPixels = await pixels();
       check("undo repaints the original text on screen", originalPixels.length === editedPixels.length && originalPixels.some((value, index) => value !== editedPixels[index]));
       check("undo clears the stale selection", !host.viewer()!.selectedText);
       host.viewer()!.selectPage();
-      if (!await settle(() => host.viewer()!.selectedText.includes("SYNTHETIC FIRST"), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
+      if (!await settle(() => host.viewer()!.selectedText.includes(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
       host.run("edit.redo"); await host.idle();
-      check("redo restores edited text", (await read()).includes("EDITED FIRST"));
+      check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();
       check("redo restores exactly the edited pixels", redoPixels.length === editedPixels.length && redoPixels.every((value, index) => value === editedPixels[index]));
       await start(); field()!.value = "Z".repeat(80);
       document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
       let refused = false; try { await host.idle(); } catch { refused = true; }
-      check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === "EDITED FIRST");
+      check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
       document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       await host.idle();
       host.run("file.save"); await host.idle();
       if (!await settle(() => !host.edits()?.state.dirty, SETTLE_MS)) throw new Error("text save did not finish");
-      check("saved and reopened text matches the unsaved revision", (await read()).includes("EDITED FIRST"));
+      check("saved and reopened text matches the unsaved revision", (await read()).includes(replacement));
       await host.activate(otherTab.id); await host.idle();
-      check("saving did not change the other document", (await read()).includes("SYNTHETIC FIRST") && !host.edits()!.state.dirty);
+      check("saving did not change the other document", (await read()).includes(original) && !host.edits()!.state.dirty);
       break;
     }
     case "signatures": await signatureCheck(host, expected, report); break;

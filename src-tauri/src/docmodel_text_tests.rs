@@ -11,6 +11,30 @@ fn change(page: u32, operator: u32, replacement: &str) -> crate::textedit::Chang
 }
 
 #[test]
+fn textedit_journal_latin1_limit_counts_characters_not_utf8_bytes() {
+    let mut doc = Doc::open(1);
+    let page = doc.working().order()[0];
+    let mut update = change(0, 3, &"ä".repeat(crate::textedit::MAX_TEXT));
+    update.original = "ö".repeat(crate::textedit::MAX_TEXT);
+    doc.replace_text(page, update.clone()).unwrap();
+    assert_eq!(doc.text_changes(), vec![update.clone()]);
+    for original in [false, true] {
+        let mut bad = update.clone();
+        if original {
+            bad.original.push('ö');
+        } else {
+            bad.replacement.push('ä');
+        }
+        assert!(doc.replace_text(page, bad).is_err());
+        assert_eq!(doc.text_changes(), vec![update.clone()]);
+    }
+    assert!(doc.undo());
+    assert!(doc.text_changes().is_empty());
+    assert!(doc.redo());
+    assert_eq!(doc.text_changes(), vec![update]);
+}
+
+#[test]
 fn textedit_journal_replays_replacements_across_snapshots() {
     let mut doc = Doc::open(2);
     let page = doc.working().order()[0];

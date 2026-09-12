@@ -1,5 +1,5 @@
 // Independent readback of text-edit-probe's synthetic output on macOS.
-// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker
+// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1]
 import Foundation
 import PDFKit
 import CoreGraphics
@@ -8,11 +8,14 @@ func fail(_ message: String) -> Never {
     print("[FAIL] \(message)")
     exit(1)
 }
-guard CommandLine.arguments.count == 2 else { fail("expected probe output directory") }
+guard CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--latin1") else { fail("expected probe output directory") }
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
+let latin1 = CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--latin1"
+let original = latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
+let replacement = latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 let width = 600, height = 480
 var pictures = [[UInt8]]()
-for (name, first) in [("synthetic-before.pdf", "SYNTHETIC FIRST"), ("synthetic-after.pdf", "EDITED FIRST")] {
+for (name, first) in [("synthetic-before.pdf", original), ("synthetic-after.pdf", replacement)] {
     guard let document = PDFDocument(url: root.appendingPathComponent(name)), document.pageCount == 1,
           let page = document.page(at: 0),
           page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == first + " SYNTHETIC SECOND"

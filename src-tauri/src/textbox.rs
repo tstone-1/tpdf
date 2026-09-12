@@ -14,9 +14,9 @@
 //! `.notdef`, and an embedded font must be extended to add one — because a
 //! standard font has no subset: every reader is required to have all of it.
 //!
-//! The cost is the encoding. `/WinAnsiEncoding` covers Latin-1 and no more, so
-//! Cyrillic, Greek, CJK and anything above U+00FF cannot be written at all. That
-//! is a real limit and it is enforced rather than hoped for: [`encodable`]
+//! This writer supports the ASCII and Latin-1 subset of `/WinAnsiEncoding`.
+//! Cyrillic, Greek, CJK and characters above U+00FF are refused here; WinAnsi
+//! itself also defines some punctuation outside Latin-1. [`encodable`]
 //! answers whether a string can be written, and the command refuses one that
 //! cannot rather than drawing a box of `.notdef` boxes.
 //!
@@ -30,10 +30,10 @@
 //! predicts. A wrong entry makes the two disagree, and a table agreeing with the
 //! reader that shares its assumptions would not be evidence of anything.
 //!
-//! Accented Latin-1 letters take their base letter's width, which is a fact
-//! about Helvetica rather than an approximation: `ä` and `a` both advance 556,
-//! as do `ö`/`o`, `ü`/`u` and `ß`. The same probe covers it, because a German
-//! line is one of the strings it measures.
+//! Latin-1 widths need their own table: umlauts share the base vowel's width,
+//! but accented lowercase i advances 278 rather than 222, and sharp s advances
+//! 611 rather than s's 500. A short rendered sentence did not detect those
+//! errors; the independent metrics check now enumerates the entire supported set.
 
 /// The size a text box's words are set at, in points.
 ///
@@ -60,9 +60,7 @@ pub const INSET: f64 = 2.0;
 
 /// Advance widths for Helvetica, in units of 1/1000 em, for ASCII 32..=126.
 ///
-/// Indexed by `code - 32`. Everything outside that range goes through
-/// [`advance_of`], which maps the Latin-1 letters onto their base letter and
-/// falls back to `n` for the handful that are neither.
+/// Indexed by `code - 32`; [`LATIN1_WIDTHS`] covers U+00A0..U+00FF.
 const WIDTHS: [u16; 95] = [
     278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, // 32..47
     556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, // 48..63
@@ -72,41 +70,26 @@ const WIDTHS: [u16; 95] = [
     556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, // 112..126
 ];
 
-/// The width of one character, in units of 1/1000 em.
-///
-/// **Latin-1 accents take their base letter's width**, which is Helvetica's own
-/// arrangement and not a rounding: the accent is drawn above the letter and adds
-/// no advance. Anything else answers `n`'s width — reachable only for a
-/// character [`encodable`] would already have refused, so it is a floor under
-/// the arithmetic rather than a rendering decision.
+// Helvetica metrics for WinAnsi codes 160..=255, including space/hyphen aliases.
+// Independently checked against ReportLab's Helvetica glyph metrics:
+// https://github.com/MrBitBucket/reportlab-mirror/blob/master/src/reportlab/pdfbase/_fontdata_widths_helvetica.py
+const LATIN1_WIDTHS: [u16; 96] = [
+    278, 333, 556, 556, 556, 556, 260, 556, 333, 737, 370, 556, 584, 333, 737, 333, 400, 584, 333,
+    333, 333, 556, 537, 278, 333, 333, 365, 556, 834, 834, 834, 611, 667, 667, 667, 667, 667, 667,
+    1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778,
+    722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 500, 556, 556, 556, 556,
+    278, 278, 278, 278, 556, 556, 556, 556, 556, 556, 556, 584, 611, 556, 556, 556, 556, 500, 556,
+    500,
+];
+
+/// The exact standard-font advance, in units of 1/1000 em. Unsupported
+/// characters use n's width only while displaying a draft that cannot be saved.
 fn advance_of(ch: char) -> u16 {
-    let code = ch as u32;
-    if (32..=126).contains(&code) {
-        return WIDTHS[(code - 32) as usize];
+    match ch as u32 {
+        code @ 32..=126 => WIDTHS[(code - 32) as usize],
+        code @ 160..=255 => LATIN1_WIDTHS[(code - 160) as usize],
+        _ => 556,
     }
-    let base = match ch {
-        'À'..='Å' => 'A',
-        'Æ' => return 1000,
-        'Ç' => 'C',
-        'È'..='Ë' => 'E',
-        'Ì'..='Ï' => 'I',
-        'Ñ' => 'N',
-        'Ò'..='Ö' | 'Ø' => 'O',
-        'Ù'..='Ü' => 'U',
-        'Ý' => 'Y',
-        'ß' => 's',
-        'à'..='å' => 'a',
-        'æ' => return 889,
-        'ç' => 'c',
-        'è'..='ë' => 'e',
-        'ì'..='ï' => 'i',
-        'ñ' => 'n',
-        'ò'..='ö' | 'ø' => 'o',
-        'ù'..='ü' => 'u',
-        'ý' | 'ÿ' => 'y',
-        _ => 'n',
-    };
-    advance_of(base)
 }
 
 /// How wide a string is when set in Helvetica at `size` points.
@@ -384,11 +367,12 @@ mod tests {
     }
 
     #[test]
-    fn an_accented_letter_advances_exactly_as_its_base_letter_does() {
-        // Helvetica's own arrangement rather than an approximation: the accent
-        // is drawn above the letter and adds no advance. `helvetica-probe`
-        // measures the same claim against what PDFium draws, on a German line —
-        // this one says the table means to do it.
+    fn umlauts_share_base_widths_but_latin1_exceptions_do_not() {
+        // Pin the exceptions missed by the former base-letter fallback, along
+        // with umlauts that really do keep the base vowel's advance.
+        assert_eq!(advance("ßîø", 1000.0), 611.0 + 278.0 + 611.0);
+        assert_eq!(advance("©¼°", 1000.0), 737.0 + 834.0 + 400.0);
+        assert_eq!(advance("\u{a0}\u{ad}", 1000.0), 278.0 + 333.0);
         assert_eq!(advance("ä", SIZE_PT), advance("a", SIZE_PT));
         assert_eq!(advance("ö", SIZE_PT), advance("o", SIZE_PT));
         assert_eq!(advance("ü", SIZE_PT), advance("u", SIZE_PT));

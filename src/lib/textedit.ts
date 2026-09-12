@@ -28,8 +28,8 @@ export function changedTextPages(before: readonly TextChange[], after: readonly 
 }
 
 export function replacementError(value: string): string | null {
-  return value.length > 4096 || /[^\x20-\x7e]/.test(value)
-    ? "Use at most 4096 printable English characters. Accents and line breaks are not supported yet."
+  return value.length > 4096 || /[^\x20-\x7e\xa0-\xff]/.test(value)
+    ? "Use at most 4096 printable Latin-1 characters. Line breaks and other scripts are not supported yet."
     : null;
 }
 

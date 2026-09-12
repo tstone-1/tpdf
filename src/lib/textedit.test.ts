@@ -47,7 +47,7 @@ describe("existing text editing", () => {
   it("bounds draft characters while allowing deletion", () => {
     expect(replacementError("")).toBeNull();
     expect(replacementError("x".repeat(4096))).toBeNull();
-    for (const value of ["x".repeat(4097), "a\nb", "\u00e4", "\u0000", "\u007f"]) expect(replacementError(value)).not.toBeNull();
+    for (const value of ["x".repeat(4097), "a\nb", "\u03b1", "\u0000", "\u007f"]) expect(replacementError(value)).not.toBeNull();
   });
   it("starts a drain immediately and waits for the backend before accepting it", async () => {
     let finish!: (value: EditState) => void;
@@ -62,10 +62,20 @@ describe("existing text editing", () => {
     expect(field.disabled).toBe(false);
     editor.commit(); expect(write).toHaveBeenCalledTimes(1);
   });
+  it("sends accented replacements unchanged through the save drain", async () => {
+    const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+    const { editor, field } = mount(write);
+    field.value = "GEPRÜFT ß"; editor.commit(); await editor.settle();
+    expect(write).toHaveBeenCalledExactlyOnceWith({ ...change, replacement: "GEPRÜFT ß" });
+    expect(replacementError("ä".repeat(4096))).toBeNull();
+    expect(replacementError("ä".repeat(4097))).not.toBeNull();
+    for (let code = 160; code <= 255; code++) expect(replacementError(String.fromCharCode(code))).toBeNull();
+    for (const value of ["€", "a\u0308", "日本語", "\x80", "\x9f"]) expect(replacementError(value)).not.toBeNull();
+  });
   it("keeps invalid and refused drafts from passing the save drain", async () => {
     const write = vi.fn(async () => { throw new Error("replacement exceeds the original width"); });
     const { editor, field } = mount(write);
-    field.value = "\u00e4"; editor.commit(); await expect(editor.settle()).rejects.toThrow("printable");
+    field.value = "\u03b1"; editor.commit(); await expect(editor.settle()).rejects.toThrow("printable");
     expect(write).not.toHaveBeenCalled();
     field.value = "ACME"; field.dispatch("input", {}); editor.commit();
     await expect(editor.settle()).rejects.toThrow("original width");
@@ -88,7 +98,7 @@ describe("existing text editing", () => {
   it("cancel discards a draft and its refusal without writing", async () => {
     const write = vi.fn(async () => state);
     const { editor, form, field } = mount(write);
-    field.value = "\u00e4"; editor.commit();
+    field.value = "\u03b1"; editor.commit();
     form.dispatch("keydown", { key: "Escape" });
     await expect(editor.settle()).resolves.toBeUndefined();
     editor.commit(); expect(write).not.toHaveBeenCalled();

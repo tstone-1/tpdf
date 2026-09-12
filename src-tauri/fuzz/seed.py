@@ -182,11 +182,13 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
-def editable_text(multiline: bool = False, encoding: str = "plain") -> bytes:
+def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False) -> bytes:
     """A supported seed reaches the text writer instead of only refusal paths."""
     content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
     if multiline:
         content = b"1 0 0 1 0 0 cm BT /F1 12 Tf 40 TL ET BT 1 0 0 1 40 180 Tm (ACME SYNTHETIC TEXT) Tj T* (SECOND LINE) Tj T* ET"
+    if latin1:
+        content = content.replace(b"ACME SYNTHETIC TEXT", b"ACME \xC4\xD6\xDC \xDF")
     filters = b""
     if encoding != "plain":
         assert encoding in ("ascii85", "ascii85-flate")
@@ -219,6 +221,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "textedit_scan": docs + [("editable-text", editable_text()),
                                  ("editable-multiline", editable_text(multiline=True)),
                                  ("editable-ascii85", editable_text(encoding="ascii85")),
+                                 ("editable-latin1", editable_text(latin1=True, encoding="ascii85-flate")),
                                  ("editable-ascii85-flate", editable_text(encoding="ascii85-flate"))],
         "links_scan": docs,
         "docinfo_scan": docs + bombs,

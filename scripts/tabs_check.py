@@ -21,7 +21,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "forms", "signatures", "textedit"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "forms", "signatures", "textedit", "textedit-latin1"), default="tabs")
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
     args = parser.parse_args()

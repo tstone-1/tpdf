@@ -4379,8 +4379,10 @@ not claims about editing arbitrary documents.
 ### Worker text replacement — started 2026-09-12
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
-explicit WinAnsiEncoding and printable ASCII. It accepts font/leading setup across
-text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
+explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
+and encoded to single PDF bytes, with exact standard Helvetica advances; the
+4,096-character bound counts characters rather than UTF-8 bytes. It accepts
+font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array). Each
 `Tj` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
@@ -10604,7 +10606,8 @@ kind that refuses a note at all.
 
 One of the fourteen standard fonts, so no file is embedded and nothing is subsetted:
 that side-steps both font traps this repository already records, because a standard
-font has no subset. The cost is `/WinAnsiEncoding`, which is Latin-1 and no more.
+font has no subset. The writer supports the Latin-1 subset of `/WinAnsiEncoding`;
+additional WinAnsi punctuation is not supported by this writer.
 
 **The widths table is the risk in this increment**, and it is the kind of risk no unit
 test can retire: a wrong entry still draws, still wraps, and wraps in the wrong place,
@@ -10631,10 +10634,12 @@ than one ending in `l`, which is exactly the spread the table shows. Ink *exceed
 the advance is a hard failure --- that is text outside the box the wrap arithmetic
 promised.
 
-The German line is the one that matters most and agrees to 0.44 pt, which is the claim
-that an accented Latin-1 letter advances exactly as its base letter does. That is
-Helvetica's own arrangement rather than an approximation, and the whole reason a
-95-entry ASCII table can serve German text.
+The German line's original agreement to 0.44 pt did not establish every character's
+advance. Corrected on 2026-09-12: Helvetica's sharp s advances 611, accented lowercase
+i 278, and slashed o 611; the previous base-letter fallback returned 500, 222 and 556.
+The shared width calculation now has an exact 96-entry Latin-1 table. The independent
+ReportLab fixture generator checks all 191 supported widths, including punctuation,
+instead of inferring individual widths from one sentence's ink bounds.
 
 **And PDFKit confirms it independently.** `--mode preview --kind textbox` now asserts
 that the drawn line is as wide as `textbox::advance` says it should be: 110.0 pt drawn

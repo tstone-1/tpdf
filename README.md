@@ -369,11 +369,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Apply previews the actual PDF rendering;
-save writes it. The unreleased editor supports simple Helvetica/ASCII text,
-including separate lines and multiline text blocks produced by ReportLab with
-its usual ASCII85/Flate encoding. Replacements must fit the original width. Unsupported pages
-are refused. Text edits support undo and redo and must be saved before marking
-redactions.
+save writes it. The unreleased editor supports simple Helvetica text with Latin-1
+characters, including umlauts and ß, and separate lines or multiline text blocks
+produced by ReportLab with its usual ASCII85/Flate encoding. Replacements must fit
+the original width. Unsupported pages are refused. Text edits support undo and redo
+and must be saved before marking redactions.
 <!-- built: edit.editText -->
 
 ## Not built yet

@@ -1,5 +1,6 @@
 //! Run `cargo run --example text-edit-probe -- <scratch-directory> [fixture.pdf]`.
 //! The optional fixture must contain the same two synthetic lines and page geometry.
+//! Add `--latin1` after the fixture to check the accented ReportLab variant.
 //! Creates synthetic PDFs only. The example re-execs as its contained worker.
 
 use std::{fs::File, path::PathBuf};
@@ -51,6 +52,21 @@ fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .ok_or("usage: text-edit-probe <scratch-directory>")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let latin1 = match std::env::args().nth(3).as_deref() {
+        None => false,
+        Some("--latin1") => true,
+        _ => return Err("expected --latin1 after the fixture path".into()),
+    };
+    let original = if latin1 {
+        "SYNTHETIC ÄÖÜ ß"
+    } else {
+        "SYNTHETIC FIRST"
+    };
+    let replacement = if latin1 {
+        "GEPRÜFT ß"
+    } else {
+        "EDITED FIRST"
+    };
     let source = dir.join("synthetic-before.pdf");
     let target = dir.join("synthetic-after.pdf");
     // A failed run must not leave a previous run's success for PDFKit to read.
@@ -66,7 +82,7 @@ fn run() -> Result<(), String> {
     let mut worker = Worker::spawn(&source, &library)?;
     let mapped = runs(&mut worker)?;
     if mapped.runs.len() != 2
-        || mapped.runs[0].text != "SYNTHETIC FIRST"
+        || mapped.runs[0].text != original
         || mapped.runs[1].text != "SYNTHETIC SECOND"
     {
         return Err("worker discovered incorrect text runs".into());
@@ -90,7 +106,7 @@ fn run() -> Result<(), String> {
             revision: mapped.revision,
             operator: mapped.runs[0].operator,
             original: mapped.runs[0].text.clone(),
-            replacement: "EDITED FIRST".into(),
+            replacement: replacement.into(),
         }],
     };
     let original_bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
@@ -138,13 +154,13 @@ fn run() -> Result<(), String> {
         .iter()
         .filter_map(|value| char::from_u32(*value))
         .collect();
-    if !extracted.contains("EDITED FIRST")
-        || extracted.contains("SYNTHETIC FIRST")
+    if !extracted.contains(replacement)
+        || extracted.contains(original)
         || !extracted.contains("SYNTHETIC SECOND")
     {
         return Err(format!("preview extraction disagrees: {extracted}"));
     }
-    for (query, count) in [("EDITED FIRST", 1), ("SYNTHETIC FIRST", 0)] {
+    for (query, count) in [(replacement, 1), (original, 0)] {
         let response = worker.call(&view(Request::Search {
             page: 0,
             pages: vec![],
@@ -183,7 +199,7 @@ fn run() -> Result<(), String> {
     {
         return Err("invalid draft preflight succeeded".into());
     }
-    if runs(&mut worker)?.runs[0].text != "SYNTHETIC FIRST"
+    if runs(&mut worker)?.runs[0].text != original
         || pixels(&mut worker, &tile)? != before
         || std::fs::read(&source).map_err(|e| e.to_string())? != original_bytes
     {
@@ -206,17 +222,17 @@ fn run() -> Result<(), String> {
     let mut saved = Worker::spawn(&target, &library)?;
     let after = runs(&mut saved)?;
     if after.runs.len() != 2
-        || after.runs[0].text != "EDITED FIRST"
+        || after.runs[0].text != replacement
         || after.runs[1].text != "SYNTHETIC SECOND"
     {
         return Err("worker rewrite changed the wrong text".into());
     }
     println!("[PASS] contained discovery and replacement; second text block preserved");
-    for (replacement, reason) in [
+    for (invalid_text, reason) in [
         ("Z".repeat(80), "exceed the original"),
-        ("\u{03b1}".into(), "ASCII only"),
+        ("\u{03b1}".into(), "Latin-1 only"),
     ] {
-        plan.text_edits[0].replacement = replacement;
+        plan.text_edits[0].replacement = invalid_text;
         let mut rejected =
             File::create(dir.join("synthetic-refused.pdf")).map_err(|e| e.to_string())?;
         let error = write(&plan, &mut rejected, save::Job::Save)
@@ -226,7 +242,7 @@ fn run() -> Result<(), String> {
         }
     }
     println!("[PASS] overflow and unsupported characters refused without output");
-    plan.text_edits[0].replacement = "EDITED FIRST".into();
+    plan.text_edits[0].replacement = replacement.into();
     plan.redactions.push(tpdf_lib::edits::PlannedRedaction {
         source: 0,
         shows: vec![],
