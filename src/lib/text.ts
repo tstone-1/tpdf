@@ -407,6 +407,8 @@ export class TextCache {
   }
 
   /** Drops one page's extraction, and everything derived from it. */
+  invalidatePage(page: FilePage): void { this.forget(page); }
+
   private forget(page: FilePage): void {
     // Including the record that asking was pointless. This is a page whose
     // *question* changed --- a new crop box means a new extraction --- so a

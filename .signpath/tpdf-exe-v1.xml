@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Proposed configuration for the first test-signing request after onboarding.
+     Register as tpdf-exe-v1; pass version from tauri.conf.json. The uploaded
+     GitHub artifact is a ZIP containing only tpdf.exe. PDFium is upstream code
+     and must not be signed with the project's Foundation certificate.
+     Reference: https://docs.signpath.io/artifact-configuration/examples
+     Validate this configuration in SignPath before enabling signing in CI. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="tpdf.exe" product-name="tpdf" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

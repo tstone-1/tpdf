@@ -3127,6 +3127,7 @@ async function appCommandChecks(
   let canRedo = false;
 
   const actions: AppActions = {
+    editText: () => { fired.push("editText"); },
     signature: () => { fired.push("signature"); },
     fillForm: () => {},
     viewer: () => viewer,
@@ -3840,6 +3841,7 @@ async function appCommandChecks(
       ...shell("drawBox"),
       read: () => fired.join(","),
     },
+    { id: "edit.editText", ...shell("editText"), read: () => fired.join(",") },
     { id: "edit.addSignature", ...shell("signature"), read: () => fired.join(",") },
     {
       // **The one crop command that can be driven here**, and that is why it is

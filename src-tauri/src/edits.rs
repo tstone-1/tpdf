@@ -456,6 +456,9 @@ fn channel(value: f32) -> f32 {
 /// an answer, and the only way for it to be wrong is to be stale.
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct EditState {
+    /// Pending text bodies identify which rendered pages and character caches changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_edits: Vec<crate::textedit::Change>,
     /// Pending form answers, shared by all widgets of each field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forms: Vec<crate::forms::Change>,
@@ -510,13 +513,12 @@ pub struct EditState {
 
 /// Every open document's edit model.
 ///
-/// A `Mutex` rather than a `RwLock`: every operation here mutates except
-/// [`state`](Edits::state), the lock is held for a `HashMap` lookup and a page
-/// walk, and nothing is on the tile path --- the frontend composes turns from a
-/// state reply it already has, so a render does not come through here.
-#[derive(Default)]
+/// A short-lived `Mutex` protects the journal. State reads walk the page model;
+/// tiles copy only bounded pending text changes and never wait for a fingerprint.
+/// The frontend composes page turns from the state reply it already has.
+#[derive(Clone, Default)]
 pub struct Edits {
-    docs: Mutex<HashMap<u32, Open>>,
+    docs: Arc<Mutex<HashMap<u32, Open>>>,
 }
 
 /// Runs the fingerprint, and answers `None` rather than unwinding.
@@ -549,6 +551,16 @@ fn answered(take: impl FnOnce() -> Option<Fingerprint>) -> Option<Fingerprint> {
 }
 
 impl Edits {
+    /// Pending text bodies for rendering; this never waits for a file fingerprint.
+    pub fn text_changes(&self, doc: u32) -> Vec<crate::textedit::Change> {
+        self.docs
+            .lock()
+            .expect("edits lock")
+            .get(&doc)
+            .map(|open| open.model.text_changes())
+            .unwrap_or_default()
+    }
+
     /// Starts a model for a freshly opened document.
     ///
     /// Replaces any model already under that handle. That is not defensive: the
@@ -1407,6 +1419,22 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Record a worker-validated text replacement; no parser runs here.
+    pub fn replace_text(
+        &self,
+        doc: u32,
+        page: u64,
+        change: crate::textedit::Change,
+    ) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .replace_text(PageId::from_raw(page), change)
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Journals an answer already checked against a worker's field description.
     pub fn fill(
         &self,
@@ -1478,7 +1506,7 @@ impl Edits {
         let model = &open.model;
         let pages = snapshot(model).pages;
         Ok(Plan {
-            text_edits: Vec::new(),
+            text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
@@ -1619,7 +1647,7 @@ impl Edits {
         // file, which reads as the deletion having silently failed.
         let discards = planned_discards(model, &pages);
         Ok(Plan {
-            text_edits: Vec::new(),
+            text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
@@ -1716,6 +1744,19 @@ fn planned_notes(model: &Doc, pages: &[PageView]) -> Vec<PlannedNoteEdit> {
                 body: edit.body.clone(),
                 made: edit.made.clone(),
             }
+        })
+        .collect()
+}
+
+/// Only replacements on the pages the writer will keep reach its plan.
+fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<crate::textedit::Change> {
+    model
+        .text_changes()
+        .into_iter()
+        .filter(|change| {
+            pages
+                .iter()
+                .any(|page| page.source == PageSource::Baseline(change.page))
         })
         .collect()
 }
@@ -2167,7 +2208,8 @@ impl From<Refusal> for crate::failure::Failure {
             | Refusal::ReplyMismatch(_) => crate::failure::Action::Report,
             // Something the reader can change: keep a page, drag a box with area
             // in it, take their own reply off first.
-            Refusal::LastPage(_)
+            Refusal::TextEdit(_)
+            | Refusal::LastPage(_)
             | Refusal::DegenerateCrop(_)
             | Refusal::DegeneratePage(_)
             | Refusal::CropOnMadePage(_)
@@ -2185,6 +2227,7 @@ impl From<Refusal> for crate::failure::Failure {
 
 pub(crate) fn describe(why: Refusal) -> String {
     match why {
+        Refusal::TextEdit(message) => message.into(),
         Refusal::NoSuchPage(_) => "no such page".into(),
         Refusal::PageDeleted(_) => "that page has been deleted".into(),
         Refusal::AnchorIsTarget(_) => "a page cannot be moved after itself".into(),
@@ -2399,6 +2442,7 @@ fn snapshot(model: &Doc) -> EditState {
 
     let (applied, _) = model.depth();
     EditState {
+        text_edits: model.text_changes(),
         forms: model.form_changes(),
         pages,
         marks,

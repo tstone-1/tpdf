@@ -1,4 +1,46 @@
 {
+  "text_edits": [
+    {
+      "page": 0,
+      "revision": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "operator": 3,
+      "original": "ACME original",
+      "replacement": "ACME edit"
+    }
+  ],
   "forms": [
     {
       "object": [

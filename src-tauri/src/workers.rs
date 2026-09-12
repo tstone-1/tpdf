@@ -546,6 +546,7 @@ struct Held {
 /// while the others do the same. Everything here is short critical sections ---
 /// no lock is ever held across a render.
 pub(crate) struct Workers {
+    pub(crate) views: crate::textview::Source,
     library_dir: PathBuf,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
@@ -603,6 +604,7 @@ impl Workers {
         deadline: Duration,
     ) -> Self {
         Self {
+            views: crate::textview::Source::default(),
             spare: Spare::default(),
             adopted: std::sync::atomic::AtomicU64::new(0),
             library_dir,
@@ -1359,6 +1361,21 @@ impl Workers {
     /// through [`mismatched`] --- the type says a reply arrived, not that it
     /// answers the question asked.
     fn ask(&self, doc: u32, request: &Request) -> Result<Reply, String> {
+        let changes = if request.supports_text_view() {
+            self.views.changes(doc)
+        } else {
+            Vec::new()
+        };
+        let wrapped;
+        let request = if changes.is_empty() {
+            request
+        } else {
+            wrapped = Request::TextView {
+                changes,
+                request: Box::new(request.clone()),
+            };
+            &wrapped
+        };
         self.with_worker(doc, |worker| {
             let response = worker.call(request)?;
             if !response.ok {
@@ -1376,19 +1393,22 @@ impl Workers {
         // by can be addressed at the worker holding it rather than shouted at
         // every worker of every open document.
         self.with_worker_for(request.doc, request.rid, |worker| {
-            let response = worker.call(&Request::Tile {
-                rid: request.rid,
-                page: request.page,
-                crop: request.crop,
-                scale: request.scale,
-                turns: request.turns,
-                invert: request.invert,
-                x: request.x,
-                y: request.y,
-                width: request.width,
-                height: request.height,
-                png: request.format == TileFormat::Png,
-            })?;
+            let response = worker.call(&self.views.request(
+                request.doc,
+                Request::Tile {
+                    rid: request.rid,
+                    page: request.page,
+                    crop: request.crop,
+                    scale: request.scale,
+                    turns: request.turns,
+                    invert: request.invert,
+                    x: request.x,
+                    y: request.y,
+                    width: request.width,
+                    height: request.height,
+                    png: request.format == TileFormat::Png,
+                },
+            ))?;
 
             if !response.ok {
                 return Err(response.error);
@@ -1904,6 +1924,24 @@ impl Engine for Workers {
         match self.ask(doc, &Request::Outline)? {
             Reply::Outline(outline) => Ok(outline),
             other => Err(mismatched("outline", &other)),
+        }
+    }
+
+    fn text_runs(
+        &self,
+        doc: u32,
+        page: u32,
+        changes: &[crate::textedit::Change],
+    ) -> Result<crate::textedit::PageRuns, String> {
+        match self.ask(
+            doc,
+            &Request::TextRuns {
+                page,
+                changes: changes.to_vec(),
+            },
+        )? {
+            Reply::TextRuns(runs) => Ok(runs),
+            other => Err(mismatched("text runs", &other)),
         }
     }
 

@@ -239,6 +239,12 @@ The account behind this section --- what was measured, what it cost, and which e
 
 ---
 
+The SignPath Foundation application was submitted on 2026-09-12; a response and
+signing setup are pending. `BUILD.md`'s
+*Windows signing onboarding* records the sample workflow, account prerequisites
+and signing order. The public policy is in `README.md`; Windows releases remain
+unsigned until acceptance and a verified signing rehearsal.
+
 ## Stack
 
 TypeScript 7 is installed as `@typescript/native` (an npm alias); it supplies `tsc`.

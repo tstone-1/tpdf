@@ -74,6 +74,7 @@ struct RawPlan {
     discards: Vec<RawDiscard>,
     redactions: Vec<RawRedaction>,
     forms: Vec<RawForm>,
+    text_edits: Vec<RawText>,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -124,6 +125,15 @@ struct RawMark {
     author: String,
     note: String,
     made: String,
+}
+
+#[derive(Arbitrary, Debug)]
+struct RawText {
+    page: u8,
+    revision: [u8; 32],
+    operator: u16,
+    original: String,
+    replacement: String,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -239,7 +249,18 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
         }
     };
     let plan = Plan {
-        text_edits: Vec::new(),
+        text_edits: raw
+            .text_edits
+            .into_iter()
+            .take(128)
+            .map(|change| tpdf_lib::textedit::Change {
+                page: u32::from(change.page),
+                revision: change.revision.to_vec(),
+                operator: u32::from(change.operator),
+                original: change.original,
+                replacement: change.replacement,
+            })
+            .collect(),
         forms: raw
             .forms
             .into_iter()

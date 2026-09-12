@@ -299,6 +299,7 @@ export interface AppActions {
   drawTextBox(): void;
   /** Draw or import a visual signature, then place it on a page. */
   signature(): void;
+  editText(): void;
   /**
    * Arms the freehand tool for one drawing.
    *
@@ -812,6 +813,12 @@ export function registerAppCommands(
       title: "Draw an ellipse...",
       enabled: withDocument,
       run: () => actions.drawEllipse(),
+    },
+    {
+      id: "edit.editText",
+      title: "Edit existing text...",
+      enabled: withDocument,
+      run: () => actions.editText(),
     },
     {
       id: "edit.addSignature",

@@ -141,3 +141,10 @@ path = "fuzz_targets/forms_scan.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "textedit_scan"
+path = "fuzz_targets/textedit_scan.rs"
+test = false
+doc = false
+bench = false

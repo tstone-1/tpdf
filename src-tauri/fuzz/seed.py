@@ -129,6 +129,11 @@ def metadata_bomb(payload: int) -> bytes:
         4: b"<< /Type /Metadata /Subtype /XML /Filter [/FlateDecode /FlateDecode] "
         b"/Length " + str(len(blob)).encode() + b" >>\nstream\n" + blob + b"\nendstream",
     }
+    return pdf_objects(objects)
+
+
+def pdf_objects(objects: dict[int, bytes]) -> bytes:
+    """Serialize contiguous synthetic objects with exact cross-reference offsets."""
     out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
     offsets: dict[int, int] = {}
     for number in sorted(objects):
@@ -176,6 +181,18 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
+def editable_text() -> bytes:
+    """A supported seed reaches the text writer instead of only refusal paths."""
+    content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
+    return pdf_objects({
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        4: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        5: b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
+    })
+
+
 def corpora() -> dict[str, list[tuple[str, bytes]]]:
     """What each target is seeded with, and from where."""
     blobs = signature_blobs()
@@ -189,6 +206,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
+        "textedit_scan": docs + [("editable-text", editable_text())],
         "links_scan": docs,
         "docinfo_scan": docs + bombs,
         "encoding_scan": docs,

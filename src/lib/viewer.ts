@@ -1,3 +1,5 @@
+import { filePage } from "./pages";
+import { changedTextPages, type TextChange } from "./textedit";
 /**
  * The reading surface: input, a frame loop, and a {@link Scroller} under it.
  *
@@ -4618,6 +4620,23 @@ export class Viewer {
           : "";
   }
 
+  private textEdits: readonly TextChange[] = [];
+
+  setTextEdits(changes: readonly TextChange[]): boolean {
+    const changed = changedTextPages(this.textEdits, changes);
+    this.textEdits = changes;
+    if (!changed.length) return false;
+    for (const page of changed) {
+      this.text.invalidatePage(filePage(page));
+      const slot = this.pages.slotOf(page);
+      if (slot !== undefined) this.scroller.invalidatePage(slot);
+    }
+    this.clearSelection();
+    if (this.searcher.query) this.search(this.searcher.query);
+    this.wake();
+    return true;
+  }
+
   /** A file widget placed through the same mapping as comments and links. */
   showForm(widget: import("./forms").FormWidget): void {
     const slot = this.pages.slotOf(widget.page);
@@ -4625,7 +4644,7 @@ export class Viewer {
   }
 
   /** Places a field under current crop and rotation. */
-  formAnchor(widget: import("./forms").FormWidget): (Anchor & { clip: string; scale: number }) | null {
+  formAnchor(widget: Pick<import("./forms").FormWidget, "page" | "display_rect">): (Anchor & { clip: string; scale: number }) | null {
     const slot = this.pages.slotOf(widget.page);
     if (slot === undefined) return null;
     const box = this.viewRectOn(slot, widget.display_rect);

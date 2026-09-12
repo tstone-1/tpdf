@@ -347,6 +347,7 @@ mod tests {
     /// A model with or without unsaved changes, and nothing else in it.
     fn state(dirty: bool) -> EditState {
         EditState {
+            text_edits: Vec::new(),
             pages: Vec::new(),
             can_undo: false,
             can_redo: false,

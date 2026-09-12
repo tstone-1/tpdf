@@ -465,6 +465,12 @@ pub(crate) enum Job {
         doc: u32,
         reply: Reply<crate::forms::Form>,
     },
+    TextRuns {
+        doc: u32,
+        page: u32,
+        changes: Vec<crate::textedit::Change>,
+        reply: Reply<crate::textedit::PageRuns>,
+    },
     Comments {
         doc: u32,
         reply: Reply<Comments>,
@@ -504,6 +510,7 @@ pub(crate) enum Job {
 /// Handle to the render thread. Cheap to clone.
 #[derive(Clone)]
 pub struct RenderService {
+    views: crate::textview::Source,
     tx: Sender<Job>,
     /// Which requests are outstanding and which have been withdrawn. See
     /// `queue.rs`, which is where that state machine lives and is tested.
@@ -516,6 +523,27 @@ pub struct RenderService {
 }
 
 impl RenderService {
+    /// Uses journaled text for rendering, selection and search, while retaining the source for saves.
+    pub fn follow_text_edits(&self, edits: &crate::edits::Edits) {
+        self.views.follow(edits);
+    }
+
+    /// Reads baseline text operands and preflights a proposed pending batch in the worker.
+    pub fn text_runs(
+        &self,
+        doc: u32,
+        page: u32,
+        changes: Vec<crate::textedit::Change>,
+        reply: Reply<crate::textedit::PageRuns>,
+    ) {
+        let _ = self.tx.send(Job::TextRuns {
+            doc,
+            page,
+            changes,
+            reply,
+        });
+    }
+
     /// Starts the render thread on the backend this platform and environment
     /// select.
     ///
@@ -577,20 +605,24 @@ impl RenderService {
         let pool = pool.max(1);
         let (tx, rx) = channel::<Job>();
         let queue = SharedQueue::default();
+        let views = crate::textview::Source::default();
 
         let workers = match backend {
             Backend::InProcess => {
                 let thread_queue = queue.clone();
+                let thread_views = views.clone();
                 // One thread, because concurrent Pdfium in this process is
                 // undefined behaviour whatever the handles are (module note).
                 std::thread::Builder::new()
                     .name("tpdf-render".into())
-                    .spawn(move || match InProcess::start(&library_dir, thread_queue) {
-                        Ok(engine) => serve(rx, &engine),
-                        // Drain the queue, failing every job with the bind
-                        // error, so callers get a diagnosable message instead
-                        // of a hang.
-                        Err(e) => drain(rx, &e),
+                    .spawn(move || {
+                        match InProcess::start(&library_dir, thread_queue, thread_views) {
+                            Ok(engine) => serve(rx, &engine),
+                            // Drain the queue, failing every job with the bind
+                            // error, so callers get a diagnosable message instead
+                            // of a hang.
+                            Err(e) => drain(rx, &e),
+                        }
                     })
                     .expect("failed to spawn render thread");
                 None
@@ -605,13 +637,10 @@ impl RenderService {
                 // is enough. It becomes a parameter the day something needs to
                 // hold two services at different deadlines at once.
                 let deadline = call_deadline();
-                let engine = Arc::new(Workers::new(
-                    library_dir,
-                    queue.clone(),
-                    pool,
-                    idle_after,
-                    deadline,
-                ));
+                let mut engine =
+                    Workers::new(library_dir, queue.clone(), pool, idle_after, deadline);
+                engine.views = views.clone();
+                let engine = Arc::new(engine);
                 // Immediately, and this is the point of the whole mechanism: the
                 // link, the sandbox and the font walk happen while Tauri and
                 // WebKit are still coming up -- ~250 ms of which none is ours --
@@ -625,6 +654,7 @@ impl RenderService {
         };
 
         Self {
+            views,
             tx,
             queue,
             workers,
@@ -1139,6 +1169,12 @@ pub(crate) trait Engine {
     ) -> Result<Vec<redact::RegionPlan>, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
     fn form(&self, doc: u32) -> Result<crate::forms::Form, String>;
+    fn text_runs(
+        &self,
+        doc: u32,
+        page: u32,
+        changes: &[crate::textedit::Change],
+    ) -> Result<crate::textedit::PageRuns, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
     fn links(&self, doc: u32) -> Result<Links, String>;
@@ -1211,6 +1247,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         } => reply(engine.redaction_plans(doc, page, &regions)),
         Job::Outline { doc, reply } => reply(engine.outline(doc)),
         Job::Form { doc, reply } => reply(engine.form(doc)),
+        Job::TextRuns {
+            doc,
+            page,
+            changes,
+            reply,
+        } => reply(engine.text_runs(doc, page, &changes)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
@@ -1248,6 +1290,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::RedactPlans { reply, .. } => reply(Err(error.to_string())),
             Job::Outline { reply, .. } => reply(Err(error.to_string())),
             Job::Form { reply, .. } => reply(Err(error.to_string())),
+            Job::TextRuns { reply, .. } => reply(Err(error.to_string())),
             Job::Comments { reply, .. } => reply(Err(error.to_string())),
             Job::Links { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
@@ -1270,6 +1313,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
 /// here would suggest otherwise while never being contended. The worker backend
 /// is the one that gets a pool.
 struct InProcess {
+    views: crate::textview::Source,
     bindings: Bindings,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
@@ -1279,7 +1323,11 @@ struct InProcess {
 
 impl InProcess {
     /// Binds Pdfium, which is the only part of this that can fail up front.
-    fn start(library_dir: &Path, queue: SharedQueue) -> Result<Self, String> {
+    fn start(
+        library_dir: &Path,
+        queue: SharedQueue,
+        views: crate::textview::Source,
+    ) -> Result<Self, String> {
         let pdfium = bind_pdfium(library_dir)?;
         // Loading and binding the Pdfium dylib is a fixed cost paid before any
         // document can be opened, so it needs its own line in the startup
@@ -1287,6 +1335,7 @@ impl InProcess {
         // bind Pdfium at all there, which is the point.
         mark("pdfium bound");
         Ok(Self {
+            views,
             bindings: progressive::bindings_of(pdfium),
             docs: std::cell::RefCell::new(Vec::new()),
             queue,
@@ -1368,15 +1417,19 @@ impl Engine for InProcess {
         };
 
         let docs = self.docs.borrow();
-        let result = open_slot(&docs, request.doc)
-            .and_then(|doc| render_tile(self.bindings, doc, request, &token));
+        let result = open_slot(&docs, request.doc).and_then(|doc| {
+            doc.with_text_view(&self.views.changes(request.doc), |view| {
+                render_tile(self.bindings, view, request, &token)
+            })
+        });
         drop(docs);
         self.queue.with(|queue| queue.release(request.rid));
         result
     }
 
     fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String> {
-        run_text(open_slot(&self.docs.borrow(), doc)?, page, crop)
+        open_slot(&self.docs.borrow(), doc)?
+            .with_text_view(&self.views.changes(doc), |view| run_text(view, page, crop))
     }
 
     fn search(
@@ -1390,10 +1443,12 @@ impl Engine for InProcess {
     ) -> Result<PageMatches, String> {
         let docs = self.docs.borrow();
         let document = open_slot(&docs, doc)?;
-        if pages.is_empty() {
-            return run_search(document, page, query, options, carry);
-        }
-        packed(run_search_range(document, pages, query, options, carry)?)
+        document.with_text_view(&self.views.changes(doc), |view| {
+            if pages.is_empty() {
+                return run_search(view, page, query, options, carry);
+            }
+            packed(run_search_range(view, pages, query, options, carry)?)
+        })
     }
 
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String> {
@@ -1401,12 +1456,9 @@ impl Engine for InProcess {
     }
 
     fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
-        run_content(
-            self.bindings,
-            open_slot(&self.docs.borrow(), doc)?,
-            page,
-            &CancelToken::default(),
-        )
+        open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.changes(doc), |view| {
+            run_content(self.bindings, view, page, &CancelToken::default())
+        })
     }
 
     fn geometry(
@@ -1437,6 +1489,16 @@ impl Engine for InProcess {
 
     fn form(&self, doc: u32) -> Result<crate::forms::Form, String> {
         open_slot(&self.docs.borrow(), doc)?.graph().form()
+    }
+    fn text_runs(
+        &self,
+        doc: u32,
+        page: u32,
+        changes: &[crate::textedit::Change],
+    ) -> Result<crate::textedit::PageRuns, String> {
+        let docs = self.docs.borrow();
+        let document = open_slot(&docs, doc)?;
+        document.with_text_view(changes, |_| document.graph().text_runs(page))
     }
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {

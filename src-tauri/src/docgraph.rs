@@ -55,12 +55,15 @@ use crate::redact;
 /// is the one that forced this (`crate::encoding`). PDFium exposes no API for it,
 /// so the bytes have to be reachable a second time.
 ///
-/// Two variants because the two backends genuinely differ: a worker is handed a
+/// Source bytes can be retained for a preview, mapped by a worker, or read from a
+/// path by the fallback backend. A worker is handed a
 /// mapping and never learns a path, which is the property `docs/THREAT-MODEL.md`
 /// §3 rests on, and the in-process backend has only a path.
 pub enum Source {
     /// The mapping the worker was handed. Already in memory; no re-read.
     Bytes(&'static [u8]),
+    /// A worker-owned rendered revision; never written to the filesystem.
+    Owned(std::sync::Arc<[u8]>),
     /// A path the in-process backend opened. Read on demand, once.
     Path(PathBuf),
 }
@@ -200,7 +203,7 @@ impl DocumentGraph {
     ///
     /// The bytes not being readable, or `lopdf` refusing them. The error is
     /// cloned out rather than borrowed, so every caller can hand it on.
-    fn parsed(&self) -> Result<&Document, String> {
+    pub(crate) fn parsed(&self) -> Result<&Document, String> {
         self.parsed
             .get_or_init(|| {
                 let bytes = self
@@ -225,6 +228,7 @@ impl DocumentGraph {
     fn bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
         match self.source.as_ref()? {
             Source::Bytes(bytes) => Some(std::borrow::Cow::Borrowed(*bytes)),
+            Source::Owned(bytes) => Some(std::borrow::Cow::Borrowed(bytes)),
             Source::Path(path) => std::fs::read(path).ok().map(std::borrow::Cow::Owned),
         }
     }
