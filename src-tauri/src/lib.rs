@@ -42,6 +42,7 @@ pub mod ocr_vision;
 pub mod ocr_windows;
 pub mod ocr_worker;
 pub mod textedit;
+pub mod textview;
 // The OS opener, and the one place a `/URI` string is judged. Separate modules
 // because they are separate questions: `weburl` decides whether an address may
 // be opened and what a reader is shown, `opener` hands the result to the
@@ -714,6 +715,7 @@ pub fn run() {
             diag::start(log_file(app.handle()));
             let dir = pdfium_library_dir(app.handle());
             let service = RenderService::start(dir);
+            service.follow_text_edits(&app.state::<edits::Edits>());
             if let Some(pending) = start_eager_open(&service) {
                 app.manage(pending);
             }
@@ -812,6 +814,8 @@ pub fn run() {
             page_text,
             search_page,
             document_outline,
+            document_text_runs,
+            text_replace,
             document_form,
             form_fill,
             document_comments,

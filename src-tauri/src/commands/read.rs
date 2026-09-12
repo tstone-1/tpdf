@@ -257,3 +257,49 @@ pub async fn form_fill(
     }
     edits.fill(doc, object, value)
 }
+
+/// Supported baseline text operands on one stable journal page.
+#[tauri::command]
+pub async fn document_text_runs(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, crate::edits::Edits>,
+    doc: u32,
+    page: u64,
+) -> Result<crate::textedit::PageRuns, String> {
+    let source = text_page(&edits, doc, page)?;
+    let (reply, rx) = reply_channel();
+    service.text_runs(doc, source, Vec::new(), reply);
+    await_reply("document_text_runs", rx).await
+}
+
+fn text_page(edits: &crate::edits::Edits, doc: u32, page: u64) -> Result<u32, String> {
+    let state = edits.state(doc)?;
+    match state.pages.iter().find(|p| p.id == page).map(|p| p.source) {
+        Some(crate::docmodel::PageSource::Baseline(index)) => Ok(index),
+        _ => Err("This page has no editable original text".into()),
+    }
+}
+
+/// Builds the proposed rendering in a worker before recording the replacement.
+#[tauri::command]
+pub async fn text_replace(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, crate::edits::Edits>,
+    doc: u32,
+    page: u64,
+    change: crate::textedit::Change,
+) -> Result<crate::edits::EditState, String> {
+    let source = text_page(&edits, doc, page)?;
+    if change.page != source {
+        return Err("Text no longer belongs to this page".into());
+    }
+    let mut pending = edits.text_changes(doc);
+    pending.retain(|old| (old.page, old.operator) != (change.page, change.operator));
+    if change.replacement != change.original {
+        pending.push(change.clone());
+    }
+    let (reply, rx) = reply_channel();
+    service.text_runs(doc, source, pending, reply);
+    await_reply("text_replace", rx).await?;
+    edits.replace_text(doc, page, change)
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { TextEditor } from "./lib/textedit";
   import { FormLayer } from "./lib/forms";
   import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -136,6 +137,7 @@
   const documentTasks = new DocumentTasks((busy) => {
     documentBusy = busy;
     formLayer?.setBusy(busy);
+    textEditor?.setBusy(busy);
   });
   const tabs = new DocumentTabs<DocumentTab>();
   let tabRows = $state<{ id: number; path: string; dirty: boolean }[]>([]);
@@ -143,11 +145,14 @@
   const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
   let committingPopup = false;
   let formLayer: FormLayer | null = null;
+  let textEditor: TextEditor | null = null;
+  let textEditorGeneration = 0;
 
   function commitPopups(): void {
     committingPopup = true;
     try {
       formLayer?.commit();
+      textEditor?.commit();
       viewer?.closeMark();
       viewer?.closeComment();
     } finally { committingPopup = false; }
@@ -168,6 +173,7 @@
     commitPopups();
     await pendingEdit;
     await formLayer?.settle();
+    await textEditor?.settle();
     notePlace();
     places.flush();
   }
@@ -220,6 +226,9 @@
 
   function clearActiveDocument(): void {
     clearTimeout(findTimer);
+    textEditorGeneration++;
+    textEditor?.destroy();
+    textEditor = null;
     formLayer?.destroy();
     formLayer = null;
     viewer?.destroy();
@@ -619,6 +628,7 @@
     stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
     signature: () => void addSignature(),
+    editText: () => void editExistingText(),
     draw: () => viewer?.armDraw("ink"),
     erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,
@@ -1173,6 +1183,39 @@
     return pendingEdit;
   }
 
+  async function editExistingText(): Promise<void> {
+    const model = edits, mounted = viewer, host = surface;
+    if (!model || !mounted || !host || documentBusy) return;
+    const generation = ++textEditorGeneration;
+    try {
+      await settleDocument();
+      if (generation !== textEditorGeneration || edits !== model || viewer !== mounted) return;
+      if (model.state.redactions.length) throw new Error("Finish or remove pending redactions before editing text.");
+      const page = model.state.pages[(status?.page ?? 1) - 1];
+      if (!page) return;
+      const runs = await call("document_text_runs", { doc: model.doc, page: page.id });
+      if (generation !== textEditorGeneration || edits !== model || viewer !== mounted) return;
+      if (!runs.runs.length) throw new Error("This page has no supported text to edit.");
+      textEditor?.destroy();
+      const editor = new TextEditor(host, page.id, runs,
+        (run) => mounted.formAnchor({ page: runs.page, display_rect: run.display_rect }),
+        async (change) => {
+          let result: EditState | undefined;
+          let failure: unknown;
+          await applyEdit(async (current) => {
+            if (current !== model) throw new Error("The document changed before the text was applied.");
+            try { result = await current.replaceText(page.id, change); return result; }
+            catch (error) { failure = error; throw error; }
+          });
+          if (!result) throw failure ?? new Error("Text editing is currently unavailable.");
+          return result;
+        }, () => { editor.destroy(); if (textEditor === editor) textEditor = null; });
+      textEditor = editor; editor.update(model.state); editor.setBusy(documentBusy);
+    } catch (error) {
+      if (generation === textEditorGeneration && edits === model) say(`Cannot edit this text: ${String(error)}`);
+    }
+  }
+
   async function runEdit(
     run: (edits: Edits) => Promise<EditState>,
   ): Promise<void> {
@@ -1197,6 +1240,8 @@
       }
       viewer?.setMarks(after.marks);
       formLayer?.update(after);
+      if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
+      textEditor?.update(after);
       // The pending redactions arrive on the same reply and are pushed the same
       // way. Not through `setMarks`: they are a separate list for the reason
       // `docmodel.rs` states, and one setter taking both would be the first
@@ -1462,6 +1507,7 @@
       commitPopups();
       await pendingEdit;
       await formLayer?.settle();
+      await textEditor?.settle();
       const path = openPathName;
       const place = currentPlace(false);
       try {
@@ -1604,6 +1650,7 @@
       try {
         await pendingEdit;
         await formLayer?.settle();
+        await textEditor?.settle();
         const proceed = await confirmDialog(
           "Creates an image-only PDF. Text will no longer be selectable; links, forms and signatures will not remain interactive/valid. Original unchanged.",
           {
@@ -1691,6 +1738,7 @@
       commitPopups();
       await pendingEdit;
       await formLayer?.settle();
+      await textEditor?.settle();
       const path = openPathName;
       const place = currentPlace(false);
       say(null);
@@ -2734,7 +2782,7 @@
           activate: activateTab,
           close: closeTab,
           run: (id) => { commands.run(id); },
-          idle: async () => { await pendingEdit; await formLayer?.settle(); await documentTasks.idle(); await tick(); },
+          idle: async () => { await pendingEdit; await formLayer?.settle(); await textEditor?.settle(); await documentTasks.idle(); await tick(); },
         })
       )
         return;
@@ -2917,6 +2965,9 @@
       // field no longer shows, because `query` is cleared below.
       clearTimeout(findTimer);
       replaced = true;
+      textEditorGeneration++;
+      textEditor?.destroy();
+      textEditor = null;
       formLayer?.destroy();
       formLayer = null;
       viewer?.destroy();
@@ -3088,6 +3139,7 @@
         commitPopups();
         await pendingEdit;
         await formLayer?.settle();
+        await textEditor?.settle();
         await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
           askSignatureSave, merging);
       });
@@ -3233,6 +3285,7 @@
         onStatus: (next) => {
           status = next;
           formLayer?.layout();
+          textEditor?.layout();
           // Here rather than in a `$derived`, because this is the only moment
           // the coverage actually changes, and the gate wants one reading of
           // the clock per change rather than one per render.
@@ -3298,6 +3351,7 @@
       // one and then a jump --- and before `focus`, which does not move the view
       // but would make the jump look like something they did.
       viewer.setPages(opening.state.pages);
+      viewer.setTextEdits(opening.state.text_edits ?? []);
       viewer.setMarks(opening.state.marks);
       viewer.setRedactions(opening.state.redactions);
       sidebar.thumbnails?.setPages(opening.state.pages.length);
@@ -3436,6 +3490,9 @@
         // while `title` is empty runs its frame loop against a detached surface
         // and keeps writing `status`, which the header renders --- a page count
         // and a zoom for a document with no body under them.
+        textEditorGeneration++;
+        textEditor?.destroy();
+        textEditor = null;
         formLayer?.destroy();
         formLayer = null;
         viewer?.destroy();

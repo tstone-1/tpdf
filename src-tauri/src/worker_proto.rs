@@ -29,6 +29,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Request {
+    /// A read of a worker-owned text revision. Nested views and writers are refused.
+    TextView {
+        changes: Vec<crate::textedit::Change>,
+        request: Box<Request>,
+    },
     /// Parse the mapped document and report its geometry.
     Open {
         /// Collect only page 1's size instead of the whole table. Enumerating
@@ -149,7 +154,11 @@ pub enum Request {
     /// Read editable form widgets after first paint.
     Form,
     /// Discover supported text runs in original page coordinates.
-    TextRuns { page: u32 },
+    TextRuns {
+        page: u32,
+        #[serde(default)]
+        changes: Vec<crate::textedit::Change>,
+    },
     /// Read every comment in the document.
     ///
     /// Document-level and lazy, like [`Request::Mapping`] and for the same two
@@ -711,6 +720,26 @@ pub(crate) fn read_reply_line(reader: &mut impl BufRead, limit: u64) -> Result<S
     }
 }
 
+impl Request {
+    pub(crate) fn supports_text_view(&self) -> bool {
+        matches!(
+            self,
+            Self::Tile { .. } | Self::Text { .. } | Self::Search { .. } | Self::Content { .. }
+        )
+    }
+
+    pub(crate) fn tile_rid(&self) -> Option<u64> {
+        match self {
+            Self::Tile { rid, .. } => Some(*rid),
+            Self::TextView { request, .. } => match request.as_ref() {
+                Self::Tile { rid, .. } => Some(*rid),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -747,6 +776,7 @@ mod tests {
             ("Outline", "outline"),
             ("Comments", "comments"),
             ("Form", "form"),
+            ("TextRuns", "text_runs"),
             ("Links", "links"),
             ("Mapping", "mapping"),
             ("Properties", "properties"),
@@ -756,8 +786,8 @@ mod tests {
         /// Variants that reach a worker by another route, and why.
         const UNCARRIED: &[(&str, &str)] = &[
             (
-                "TextRuns",
-                "direct worker probe while the text-edit journal and UI are under construction",
+                "TextView",
+                "wraps only rendering and text reads with the current worker-owned revision",
             ),
             (
                 "Withdraw",
@@ -919,10 +949,56 @@ mod tests {
     use super::{read_reply_line, ReplyError, Request, Response};
 
     #[test]
+    fn text_view_keeps_tile_cancellation_identity_and_rejects_nesting() {
+        let tile = Request::Tile {
+            rid: 19,
+            page: 0,
+            scale: 1.0,
+            turns: 0,
+            invert: false,
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            png: false,
+            crop: None,
+        };
+        assert_eq!(tile.tile_rid(), Some(19));
+        let view = Request::TextView {
+            changes: vec![],
+            request: Box::new(tile),
+        };
+        assert_eq!(view.tile_rid(), Some(19));
+        assert!(!view.supports_text_view());
+        assert_eq!(
+            Request::TextView {
+                changes: vec![],
+                request: Box::new(view)
+            }
+            .tile_rid(),
+            None
+        );
+        assert!(!Request::Properties.supports_text_view());
+    }
+
+    #[test]
     fn a_request_survives_the_wire() {
         // The two sides are separate processes, so a field that fails to
         // round-trip fails at runtime and nowhere else.
         for request in [
+            Request::TextView {
+                changes: vec![crate::textedit::Change {
+                    page: 0,
+                    revision: vec![1; 32],
+                    operator: 3,
+                    original: "ACME original".into(),
+                    replacement: "ACME".into(),
+                }],
+                request: Box::new(Request::Text {
+                    page: 0,
+                    crop: None,
+                }),
+            },
             Request::Open {
                 lazy_geometry: true,
             },
@@ -970,7 +1046,10 @@ mod tests {
             },
             Request::Outline,
             Request::Form,
-            Request::TextRuns { page: 0 },
+            Request::TextRuns {
+                page: 0,
+                changes: Vec::new(),
+            },
             Request::Comments,
             Request::Links,
         ] {

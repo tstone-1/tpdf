@@ -34,7 +34,10 @@ fn fixture() -> Document {
 }
 
 fn runs(worker: &mut Worker) -> Result<textedit::PageRuns, String> {
-    let reply = worker.call(&Request::TextRuns { page: 0 })?;
+    let reply = worker.call(&Request::TextRuns {
+        page: 0,
+        changes: Vec::new(),
+    })?;
     match reply.reply {
         Some(Reply::TextRuns(runs)) if reply.ok => Ok(runs),
         _ => Err(format!("text run discovery failed: {}", reply.error)),
@@ -85,6 +88,103 @@ fn run() -> Result<(), String> {
             replacement: "EDITED FIRST".into(),
         }],
     };
+    let original_bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
+    let tile = Request::Tile {
+        rid: 91,
+        page: 0,
+        scale: 1.0,
+        turns: 0,
+        invert: false,
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 240,
+        png: false,
+        crop: None,
+    };
+    let pixels = |worker: &mut Worker, request: &Request| -> Result<Vec<u8>, String> {
+        let response = worker.call(request)?;
+        if !response.ok {
+            return Err(response.error);
+        }
+        Ok(worker.tile.as_slice()[..response.bytes].to_vec())
+    };
+    let before = pixels(&mut worker, &tile)?;
+    let view = |request: Request| Request::TextView {
+        changes: plan.text_edits.clone(),
+        request: Box::new(request),
+    };
+    let preview = pixels(&mut worker, &view(tile.clone()))?;
+    if before == preview {
+        return Err("text preview did not change rendered pixels".into());
+    }
+    if before[110 * 300 * 4..] != preview[110 * 300 * 4..] {
+        return Err("text preview changed the untouched second line".into());
+    }
+    let text = worker.call(&view(Request::Text {
+        page: 0,
+        crop: None,
+    }))?;
+    let Some(Reply::Text(text)) = text.reply.filter(|_| text.ok) else {
+        return Err("preview extraction failed".into());
+    };
+    let extracted: String = text
+        .codes
+        .iter()
+        .filter_map(|value| char::from_u32(*value))
+        .collect();
+    if !extracted.contains("EDITED FIRST")
+        || extracted.contains("SYNTHETIC FIRST")
+        || !extracted.contains("SYNTHETIC SECOND")
+    {
+        return Err(format!("preview extraction disagrees: {extracted}"));
+    }
+    for (query, count) in [("EDITED FIRST", 1), ("SYNTHETIC FIRST", 0)] {
+        let response = worker.call(&view(Request::Search {
+            page: 0,
+            pages: vec![],
+            query: query.into(),
+            options: Default::default(),
+            carry: None,
+        }))?;
+        let Some(Reply::Search(found)) = response.reply.filter(|_| response.ok) else {
+            return Err("preview search failed".into());
+        };
+        if found.matches.len() != count {
+            return Err("preview search retained stale text".into());
+        }
+    }
+    for request in [
+        Request::Open {
+            lazy_geometry: false,
+        },
+        view(Request::Text {
+            page: 0,
+            crop: None,
+        }),
+    ] {
+        if worker.call(&view(request))?.ok {
+            return Err("text view accepted metadata or a nested wrapper".into());
+        }
+    }
+    let mut invalid = plan.text_edits.clone();
+    invalid[0].replacement = "Z".repeat(80);
+    if worker
+        .call(&Request::TextRuns {
+            page: 0,
+            changes: invalid,
+        })?
+        .ok
+    {
+        return Err("invalid draft preflight succeeded".into());
+    }
+    if runs(&mut worker)?.runs[0].text != "SYNTHETIC FIRST"
+        || pixels(&mut worker, &tile)? != before
+        || std::fs::read(&source).map_err(|e| e.to_string())? != original_bytes
+    {
+        return Err("preview mutated the original or undo did not restore it".into());
+    }
+    println!("[PASS] preview pixels, extraction and search agree; undo restores source; invalid/nested views refused");
     let writer = save::InWorker::at(library.clone());
     let write = |plan: &Plan, out: &mut File, job: save::Job| -> Result<usize, String> {
         let mut input = File::open(&source).map_err(|e| e.to_string())?;

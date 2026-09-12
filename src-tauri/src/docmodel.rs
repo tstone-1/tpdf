@@ -100,6 +100,9 @@ use std::num::NonZeroU64;
 /// cheap rather than where it was measured --- there is nothing to measure yet.
 pub const SNAPSHOT_EVERY: usize = 32;
 
+// Both applied and redoable text bodies count toward the retained-history bound.
+const MAX_TEXT_VERSIONS: usize = 512;
+
 /// A page's identity, stable for the life of the working document.
 ///
 /// Opaque on purpose. It is not a position, it is not the baseline page number,
@@ -1040,6 +1043,12 @@ pub struct Page {
 /// A page operation. Every variant addresses pages by identity.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Command {
+    /// Replace or restore a baseline text operand, using an immutable body.
+    ReplaceText {
+        page: PageId,
+        operator: u32,
+        version: Option<u32>,
+    },
     /// Replace a shared form field answer, by immutable version.
     Fill { object: ObjectId, version: u32 },
     /// Turn a page by `turns` quarter turns clockwise; negative turns the other
@@ -1210,7 +1219,8 @@ impl Command {
     /// answer is one that can be asked after the answer has gone.
     pub fn subject(self) -> Option<PageId> {
         match self {
-            Command::Rotate { page, .. }
+            Command::ReplaceText { page, .. }
+            | Command::Rotate { page, .. }
             | Command::Crop { page, .. }
             | Command::Delete { page }
             | Command::Move { page, .. }
@@ -1234,6 +1244,8 @@ impl Command {
 /// A refusal leaves the working document and the journal exactly as they were.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Refusal {
+    /// A stale text address or a bound on retained replacement bodies.
+    TextEdit(&'static str),
     /// No page has ever had this id.
     NoSuchPage(PageId),
     /// The id names a page that was deleted. Distinct from
@@ -1383,6 +1395,7 @@ pub enum Refusal {
 /// Baseline plus the commands applied so far, materialized.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Working {
+    text_edits: BTreeMap<(PageId, u32), u32>,
     forms: BTreeMap<ObjectId, u32>,
     order: Vec<PageId>,
     pages: HashMap<PageId, Page>,
@@ -1500,6 +1513,7 @@ impl Working {
             })
             .collect();
         Working {
+            text_edits: BTreeMap::new(),
             forms: BTreeMap::new(),
             order: ids,
             pages: table,
@@ -1749,6 +1763,21 @@ impl Working {
     /// by each arm remembering to unwind.
     fn apply(&mut self, cmd: Command) -> Result<(), Refusal> {
         match cmd {
+            Command::ReplaceText {
+                page,
+                operator,
+                version,
+            } => {
+                self.live(page)?;
+                match version {
+                    Some(version) => {
+                        self.text_edits.insert((page, operator), version);
+                    }
+                    None => {
+                        self.text_edits.remove(&(page, operator));
+                    }
+                }
+            }
             Command::Fill { object, version } => {
                 self.forms.insert(object, version);
             }
@@ -2017,6 +2046,8 @@ struct Entry {
 /// A document being edited: baseline, working view, journal and cursor.
 #[derive(Clone, Debug)]
 pub struct Doc {
+    text_versions: HashMap<u32, crate::textedit::Change>,
+    next_text_version: u32,
     forms: HashMap<u32, crate::forms::Value>,
     next_form: u32,
     baseline: u32,
@@ -2093,6 +2124,8 @@ impl Doc {
     /// Opens a document of `pages` baseline pages with an empty journal.
     pub fn open(pages: u32) -> Doc {
         Doc {
+            text_versions: HashMap::new(),
+            next_text_version: 1,
             forms: HashMap::new(),
             next_form: 1,
             baseline: pages,
@@ -2114,6 +2147,95 @@ impl Doc {
             rewrites: HashMap::new(),
             next_rewrite: 1,
         }
+    }
+
+    /// Journal a worker-validated replacement against a stable page identity.
+    /// The source text and digest always describe the opened document, even
+    /// when replacing an earlier pending answer for this same operand.
+    pub fn replace_text(
+        &mut self,
+        page: PageId,
+        change: crate::textedit::Change,
+    ) -> Result<(), Refusal> {
+        self.now.live(page)?;
+        if !self.now.redactions.is_empty() {
+            return Err(Refusal::TextEdit(
+                "save or undo redactions before editing text",
+            ));
+        }
+        if self.now.pages[&page].source != PageSource::Baseline(change.page) {
+            return Err(Refusal::TextEdit("text no longer belongs to this page"));
+        }
+        if change.revision.len() != 32
+            || change.original.len() > crate::textedit::MAX_TEXT
+            || change.replacement.len() > crate::textedit::MAX_TEXT
+        {
+            return Err(Refusal::TextEdit("text replacement exceeds its limit"));
+        }
+        let key = (page, change.operator);
+        if let Some(version) = self.now.text_edits.get(&key) {
+            let previous = &self.text_versions[version];
+            if previous.revision != change.revision || previous.original != change.original {
+                return Err(Refusal::TextEdit("text changed since it was selected"));
+            }
+            if previous.replacement == change.replacement {
+                return Ok(());
+            }
+        }
+        if change.original == change.replacement {
+            if self.now.text_edits.contains_key(&key) {
+                self.apply(Command::ReplaceText {
+                    page,
+                    operator: change.operator,
+                    version: None,
+                })?;
+            }
+            return Ok(());
+        }
+        if !self.now.text_edits.contains_key(&key)
+            && self.text_changes().len() >= crate::textedit::MAX_CHANGES
+        {
+            return Err(Refusal::TextEdit("too many text replacements"));
+        }
+        let discarded = self.journal[self.cursor..]
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.cmd,
+                    Command::ReplaceText {
+                        version: Some(_),
+                        ..
+                    }
+                )
+            })
+            .count();
+        if self.text_versions.len() - discarded >= MAX_TEXT_VERSIONS {
+            return Err(Refusal::TextEdit(
+                "text edit history is full; save and reopen before continuing",
+            ));
+        }
+        let version = self.next_text_version;
+        let next = version
+            .checked_add(1)
+            .ok_or(Refusal::TextEdit("text edit history is full"))?;
+        self.apply(Command::ReplaceText {
+            page,
+            operator: change.operator,
+            version: Some(version),
+        })?;
+        self.text_versions.insert(version, change);
+        self.next_text_version = next;
+        Ok(())
+    }
+
+    /// Pending replacements on live pages, in original content coordinates.
+    pub fn text_changes(&self) -> Vec<crate::textedit::Change> {
+        self.now
+            .text_edits
+            .iter()
+            .filter(|((page, _), _)| self.now.pages.contains_key(page))
+            .map(|(_, version)| self.text_versions[version].clone())
+            .collect()
     }
 
     /// Records one answer as one undoable edit.
@@ -2286,6 +2408,11 @@ impl Doc {
     /// deleted. **The id is issued after those checks**, so a refused redaction
     /// spends nothing.
     pub fn redact(&mut self, redaction: Redaction) -> Result<RedactionId, Refusal> {
+        if !self.text_changes().is_empty() {
+            return Err(Refusal::TextEdit(
+                "save or undo text edits before redacting",
+            ));
+        }
         if !redaction.area.covers_area() {
             return Err(Refusal::EmptyRedaction);
         }
@@ -2894,6 +3021,7 @@ impl Doc {
         // and the ids are never re-issued, so nothing else would ever notice.
         for discarded in &self.journal[self.cursor..] {
             match discarded.cmd {
+                Command::ReplaceText { version: Some(version), .. } => { self.text_versions.remove(&version); }
                 Command::Fill { version, .. } => { self.forms.remove(&version); }
                 Command::Annotate { mark, note, .. } => {
                     self.marks.remove(&mark);
@@ -2921,7 +3049,8 @@ impl Doc {
                 // forgetting the quiet outcome. These five issue nothing, so
                 // spelling them out costs a line each and makes the next
                 // command that does issue something a compile error.
-                Command::Rotate { .. }
+                Command::ReplaceText { version: None, .. }
+                | Command::Rotate { .. }
                 | Command::Crop { .. }
                 | Command::Delete { .. }
                 | Command::Move { .. }
@@ -5619,3 +5748,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "docmodel_text_tests.rs"]
+mod text_tests;

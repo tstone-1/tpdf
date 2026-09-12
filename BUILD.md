@@ -4874,6 +4874,57 @@ and the defect does not, so a sixth adds nothing: check the message, then delete
 
 ---
 
+## Windows signing onboarding
+
+The maintainer submitted the SignPath Foundation application on 2026-09-12.
+The application is awaiting a response; account configuration, a certificate
+and a signed Windows build have not yet been verified.
+The proposed [code signing policy](README.md#code-signing-policy) records the owner,
+approval model and actual network behaviour. Do not change its status or add a
+claim that signing is provided until onboarding succeeds.
+
+The manual `SignPath onboarding samples` workflow builds the normal executable,
+MSI and NSIS on `windows-2025`, checks the production frontend excludes the harness,
+and records the source commit, executable metadata and SHA-256 digests. It uploads
+separate executable and installer artifacts without release or signing credentials.
+After committing the workflow to the default branch, run:
+
+```sh
+gh workflow run signpath-onboarding.yml --ref main
+gh run list --workflow signpath-onboarding.yml --limit 5
+```
+
+Use a commit whose regular CI is green. These are onboarding samples, not a
+release verification. The workflow has not yet been run on GitHub.
+`.signpath/tpdf-exe-v1.xml` proposes a narrowly scoped executable configuration
+for the first signing test: only `tpdf.exe`, product `tpdf`, with a required
+version parameter. Validate it in SignPath and register it as `tpdf-exe-v1`.
+
+Account setup needs the maintainer's chosen email, two-factor authentication on
+GitHub and SignPath, Foundation acceptance, and a project linked to the public
+repository. Use SignPath's GitHub connector with a CI submitter and a separate
+human approver. The first integration should use the assigned organization ID,
+project slug, test signing policy, and a submitter token stored as a GitHub secret;
+never put the token in this repository or pass it in a command line.
+
+Before changing `release.yml`, demonstrate one signing request from a
+GitHub-hosted build using its uploaded artifact ID. Confirm the signed executable's
+identity and signature against the expected test certificate. Then resolve the
+installer sequence with SignPath: sign the application before packaging, cover
+the NSIS uninstaller as well as setup, and sign the MSI and NSIS outer containers.
+Do not sign upstream `pdfium.dll` with the Foundation certificate.
+Only after Authenticode signing is complete may the updater signatures and
+`latest.json` be generated from the final installer bytes. Replacing an installer
+after the current Tauri action publishes it would invalidate its updater signature.
+Rehearse installation and updating before enabling release signing.
+
+The [Foundation terms](https://signpath.org/terms) require manual release approval
+and verifiable project reputation; acceptance is not automatic. The
+[GitHub connector](https://docs.signpath.io/trusted-build-systems/github) requires
+GitHub-hosted jobs leading to OSS signing, so local or self-hosted builds are not
+substitutes. Also disclose the automatic update check: the Foundation's example
+privacy sentence about network activity only on request does not describe tpdf.
+
 ## Cutting a release
 
 **26.9.5 local verification, Windows x64, 2026-09-11:** all 23 gates passed
@@ -5939,6 +5990,21 @@ starts at 0 and increments within the month.
     curl -s https://github.com/tstone-1/tpdf/releases/latest/download/latest.json | head -20
     ```
 
+    **Windows live update verified 2026-09-12, from 26.9.5 to 26.9.6.** The old
+    installation offered the published update; applying it installed the executable
+    extracted from the verified CI MSI, after normalizing Tauri's installer-kind
+    marker. The new application explicitly reported itself as current. A synthetic
+    PDF rendered with the packaged engine and no workers survived exit.
+
+    **An updater relaunch can drop `TPDF_SESSION_FILE`.** The first Windows run
+    reopened the normal last document. Automated updater checks must also back up,
+    temporarily clear and finally restore
+    `%APPDATA%\com.timostein.tpdf\session.json`, with the application closed.
+    Repeating the check this way kept the relaunched window empty and restored the
+    normal session byte for byte, alongside the original executable and registry
+    exports. Require the explicit latest-version message: an absent update button
+    can also mean that the network check failed.
+
     **Check the negative direction too, and it is the cheaper half:** launch the *newest*
     release and confirm the toolbar stays empty. An updater that offers an update to the
     version already running looks identical to a working one right up to the moment somebody
@@ -5964,3 +6030,21 @@ every user installing it by hand. The private key is deliberately **not** on any
 machine: see the trap *Turning on updater artifacts makes every build demand the signing
 key* for why `createUpdaterArtifacts` lives in a CI-only overlay rather than in
 `tauri.conf.json`.
+
+### Existing-text workflow (unreleased)
+
+Use synthetic inputs and the isolated checks application. On macOS:
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/text-edit/worker
+npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app
+python3 scripts/tabs_check.py "src-tauri/target/release/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf" scratch/text-edit/worker/synthetic-before.pdf --phase textedit --saved-copy scratch/text-edit/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker
+```
+
+PDFKit independently reads text and compares pixels from the file saved through
+the UI. Windows uses the isolated checks executable with the same
+`tabs_check.py --phase textedit` arguments. The native check covers draft draining
+across tabs, unsaved rendering, selection, search, undo/redo, refusal and saving.
+Fuzzing includes `textedit_scan`, seeded with an editable synthetic document, plus
+pending text changes in `save_rewrite_update`; the regular fuzz gate builds both.

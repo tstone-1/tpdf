@@ -515,9 +515,9 @@ jobs:
           and then appended to says so plainly.
 
           **What it is not, yet.** Signature verification, inserting pages
-          **from another file**, certificate-based signing and text editing are not built. See the
+          **from another file**, certificate-based signing and general text editing are not built. See the
           roadmap in `docs/PLAN.md`.
-          <!-- not-built: edit.insertPages edit.signDocument edit.editText -->
+          <!-- not-built: edit.insertPages edit.signDocument -->
 
           (Stamps were listed here until `26.8.8`, one release after they
           shipped, and *Merge documents* was missing from the paragraph above
@@ -555,6 +555,8 @@ jobs:
 
           **macOS** — signed with a Developer ID identity and notarized by
           Apple. Open it normally; no Gatekeeper bypass needed. Apple Silicon only.
+
+          [Code signing policy](https://github.com/tstone-1/tpdf#code-signing-policy)
 
           **Windows** — unsigned. SmartScreen warns on first launch: choose
           *More info* → *Run anyway*.

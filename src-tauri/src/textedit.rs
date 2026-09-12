@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 
 const MAX_CONTENT: usize = 1024 * 1024;
 const MAX_OPERATIONS: usize = 4096;
-const MAX_TEXT: usize = 4096;
-const MAX_CHANGES: usize = 128;
+pub(crate) const MAX_TEXT: usize = 4096;
+pub(crate) const MAX_CHANGES: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Run {
@@ -24,6 +24,8 @@ pub struct Run {
     /// Text matrix in the page's original user space, before crop and rotation.
     pub matrix: [f64; 6],
     pub advance: f64,
+    /// Hit rectangle in the original displayed page, before journal crop and turns.
+    pub display_rect: [f32; 4],
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -236,7 +238,26 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
             _ => return Err("unsupported text positioning".into()),
         }
         let text = ascii(ops[3].operands[0].as_str().map_err(|e| e.to_string())?)?;
+        let geometry = crate::pagetree::displayed_page(doc, id);
+        let advance = crate::textbox::advance(text, size);
+        let x = matrix[4] - f64::from(geometry.origin.0);
+        let y = matrix[5] - f64::from(geometry.origin.1);
+        let display_rect = crate::text::to_device(
+            geometry.turns,
+            geometry.width,
+            geometry.height,
+            [
+                x,
+                y - size * matrix[3] * 0.25,
+                x + advance * matrix[0],
+                y + size * matrix[3],
+            ],
+        );
+        if display_rect.iter().any(|v| !v.is_finite()) {
+            return Err("text bounds exceed the display range".into());
+        }
         result.runs.push(Run {
+            display_rect,
             operator: (block * 5 + 3) as u32,
             text: text.into(),
             font: String::from_utf8_lossy(name).into_owned(),

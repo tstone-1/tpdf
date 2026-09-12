@@ -13,8 +13,10 @@ squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stam
 comment on it, move what you put there, erase any of it, rewrite, answer or delete a comment
 somebody else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
-back and reported either way. What is *not* built is the list further down, and in-place
-text editing is the one that matters. Fill text fields, checkboxes, radio groups,
+back and reported either way. What is *not* built is the list further down, and
+general text editing is the one that matters. A first editor supports simple Helvetica
+text runs with printable English characters and replacements within the original width.
+Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
@@ -22,6 +24,33 @@ SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for th
 architecture and roadmap, [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security
 position, [`BUILD.md`](BUILD.md) to build it yourself, and [`AGENTS.md`](AGENTS.md) for
 project conventions.
+
+## Code signing policy
+
+Windows releases are currently unsigned. An application to SignPath Foundation
+was submitted on 2026-09-12; acceptance and signing are pending. The proposed
+provider is [SignPath.io](https://signpath.io/), with a certificate held by
+[SignPath Foundation](https://signpath.org/). macOS releases already use Apple
+Developer ID signing and notarization.
+
+The committer, reviewer and proposed signing approver is
+[Timo Stein (tstone-1)](https://github.com/tstone-1). Under the proposed policy,
+each Windows release requires his manual signing approval. GitHub and SignPath
+accounts involved in signing must use two-factor authentication. Only project-owned
+binaries built on GitHub-hosted runners may be submitted; upstream PDFium binaries
+remain covered by their own provenance and notices.
+
+### Privacy
+
+PDF contents, passwords, form answers and signature images are processed locally;
+tpdf does not upload them or include analytics or telemetry. It automatically
+checks GitHub for an update once per launch. This sends an ordinary HTTPS request,
+including the connection's IP address and request metadata, to GitHub. Downloading
+and installing an update requires a click. GitHub's handling of those requests is
+covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+Links in PDFs open in the browser only after confirmation, where the destination's
+privacy policy applies. The current app has no setting to disable the automatic
+update check; it remains usable offline.
 
 ## What the viewer does today
 
@@ -336,6 +365,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   document somebody encrypted on purpose. Print the whole document instead --- that is
   handed over unchanged.
 
+Use **Edit text** or **Edit existing text** in the command palette to choose an
+outlined text run on the current page. Apply previews the actual PDF rendering;
+save writes it. Unsupported pages are refused. Text edits support undo and redo
+and must be saved before marking redactions.
+<!-- built: edit.editText -->
+
 ## Not built yet
 
 This list is checked rather than remembered: each bullet carries the command that would
@@ -369,8 +404,7 @@ unbuilt while they shipped.
   inside another block. A picture on the page itself is removed, bytes included.
 - Certificate-based digital signing and signature verification.
   <!-- not-built: edit.signDocument -->
-- In-place text editing
-  <!-- not-built: edit.editText -->
+- General text editing: embedded fonts, non-ASCII text, paragraph reflow and complex content streams.
 
 ## What Phase 0 established
 

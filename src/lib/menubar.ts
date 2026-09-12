@@ -174,6 +174,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // After the two shapes, because it is the third thing a drag can place and
       // a reader choosing between them is choosing what appears.
       "edit.addTextBox",
+      "edit.editText",
       "edit.addSignature",
       // The four stamps, immediately after the text box because a stamp is the
       // other thing a drag puts *words* on the page --- the difference being

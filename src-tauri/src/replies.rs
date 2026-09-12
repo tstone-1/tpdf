@@ -250,6 +250,22 @@ fn samples() -> BTreeMap<&'static str, String> {
             rgba: vec![0, 20, 30, 255],
         },
     );
+    put(
+        "PageRuns",
+        &crate::textedit::PageRuns {
+            page: 0,
+            revision: vec![1; 32],
+            runs: vec![crate::textedit::Run {
+                operator: 3,
+                text: "ACME text".into(),
+                font: "F1".into(),
+                size: 12.0,
+                matrix: [1.0, 0.0, 0.0, 1.0, 40.0, 180.0],
+                advance: 60.0,
+                display_rect: [40.0, 48.0, 100.0, 63.0],
+            }],
+        },
+    );
     put("Form", &{
         let text = crate::forms::Widget {
             object: (12, 0),
@@ -291,6 +307,13 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "EditState",
         &edits::EditState {
+            text_edits: vec![crate::textedit::Change {
+                page: 0,
+                revision: vec![1; 32],
+                operator: 3,
+                original: "ACME original".into(),
+                replacement: "ACME edit".into(),
+            }],
             forms: vec![crate::forms::Change {
                 object: (12, 0),
                 value: crate::forms::Value::Text("ACME answer".into()),

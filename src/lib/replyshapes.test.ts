@@ -59,6 +59,8 @@ import { describe, expect, it } from "vitest";
 
 import type { SignatureImage } from "./signature";
 import Image_ from "../../src-tauri/testdata/replies/Image.json";
+import type { TextRuns } from "./textedit";
+import PageRuns_ from "../../src-tauri/testdata/replies/PageRuns.json";
 import type { Form } from "./forms";
 import Form_ from "../../src-tauri/testdata/replies/Form.json";
 import type { Comments } from "./comments";
@@ -140,6 +142,7 @@ type Shape<T> = Record<keyof T, readonly Kind[]>;
  */
 const SCHEMA = {
   Image: { width: ["number"], height: ["number"], rgba: ["array"] } satisfies Shape<SignatureImage>,
+  PageRuns: { page: ["number"], revision: ["array"], runs: ["array"] } satisfies Shape<TextRuns>,
   Form: { widgets: ["array"] } satisfies Shape<Form>,
   Applied: {
     regions: ["number"],
@@ -172,6 +175,7 @@ const SCHEMA = {
   } satisfies Shape<DocumentInfo>,
   EditState: {
     forms: ["array"],
+      text_edits: ["array"],
     pages: ["array"],
     can_undo: ["boolean"],
     can_redo: ["boolean"],
@@ -279,6 +283,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Copied: Copied_ satisfies Widen<Copied>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,
+  PageRuns: PageRuns_ satisfies Widen<TextRuns>,
   Form: Form_ satisfies Widen<Form>,
   EditState: EditState_ satisfies Widen<EditState>,
   Links: Links_ satisfies Widen<Links>,

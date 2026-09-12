@@ -138,6 +138,7 @@ TARGETS = {
         "a real CMS blob with one certificate in it is a few kilobytes",
     ),
     "lopdf_load": (65536, "a document needs a header, an xref and a page tree"),
+    "textedit_scan": (65536, "strict content discovery and validated text replacement"),
     "forms_scan": (65536, "hostile AcroForm field trees and appearances"),
     "annots_scan": (65536, "as lopdf_load: the subject is a whole document"),
     "links_scan": (65536, "as lopdf_load"),

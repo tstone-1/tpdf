@@ -1,0 +1,90 @@
+name: SignPath onboarding samples
+
+# Produces review samples on a GitHub-hosted runner, as required by SignPath's
+# OSS origin verification. This does not sign, publish, or offer an update.
+# Once accepted, use the executable artifact ID with SignPath's GitHub action;
+# a local upload cannot establish the required build provenance.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  samples:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1 + changelog
+        with:
+          workspaces: src-tauri
+      - name: Install dependencies and the pinned PDFium
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/fetch_pdfium.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the normal Windows application and installers
+        # No updater overlay: these samples need neither update nor Apple keys.
+        run: npm run tauri build -- --bundles msi,nsis
+      - name: Check the production frontend
+        run: python scripts/check_bundle_share.py
+      - name: Collect samples and verify executable identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $exe = Get-Item src-tauri/target/release/tpdf.exe
+          $info = $exe.VersionInfo
+          if ($info.ProductName -cne $config.productName -or $info.ProductVersion -cne $config.version) {
+            throw "Executable product metadata does not match tauri.conf.json"
+          }
+          $msi = @(Get-ChildItem src-tauri/target/release/bundle/msi/*.msi)
+          $nsis = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($msi.Count -ne 1 -or $nsis.Count -ne 1) {
+            throw "Expected exactly one MSI and one NSIS installer"
+          }
+          New-Item -ItemType Directory -Path signpath-samples | Out-Null
+          Copy-Item $msi[0].FullName,$nsis[0].FullName signpath-samples/
+          [ordered]@{
+            commit = $env:GITHUB_SHA
+            product = $info.ProductName
+            productVersion = $info.ProductVersion
+            fileVersion = $info.FileVersion
+            executableSha256 = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+            msiSha256 = (Get-FileHash $msi[0].FullName -Algorithm SHA256).Hash
+            nsisSha256 = (Get-FileHash $nsis[0].FullName -Algorithm SHA256).Hash
+          } | ConvertTo-Json | Set-Content signpath-samples/build.json
+      - name: Upload executable for the first signing test
+        id: executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signpath-unsigned-executable
+          path: src-tauri/target/release/tpdf.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload installer review samples
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signpath-unsigned-installers
+          path: signpath-samples/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Record the artifact identity
+        shell: pwsh
+        env:
+          EXECUTABLE_ARTIFACT_ID: ${{ steps.executable.outputs.artifact-id }}
+        run: |
+          "Unsigned onboarding samples for commit $env:GITHUB_SHA." >> $env:GITHUB_STEP_SUMMARY
+          "Executable artifact ID: $env:EXECUTABLE_ARTIFACT_ID." >> $env:GITHUB_STEP_SUMMARY
+          "No Authenticode signing or publication was performed." >> $env:GITHUB_STEP_SUMMARY

@@ -261,6 +261,11 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation("textedit journal: retain a restored operand", "src/docmodel.rs", "self.text_edits.remove(&(page, operator));", "let _ = (page, operator);", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
+    Mutation("textedit journal: retain discarded redo bodies", "src/docmodel.rs", "self.text_versions.remove(&version);", "let _ = version;", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
+    Mutation("textedit journal: remove the history bound", "src/docmodel.rs", "self.text_versions.len() - discarded >= MAX_TEXT_VERSIONS", "self.text_versions.len() - discarded >= usize::MAX", "textedit_journal_bounds_history_but_reclaims_the_redo_tail"),
+    Mutation("textedit journal: omit extraction filtering", "src/edits.rs", "page.source == PageSource::Baseline(change.page)", "true", "textedit_plans_follow_page_identity_and_filter_deleted_or_extracted_pages"),
+    Mutation("textedit journal: accept a changed original", "src/docmodel.rs", "previous.revision != change.revision || previous.original != change.original", "previous.revision != change.revision", "textedit_journal_refuses_stale_or_unbounded_input_atomically"),
     Mutation("textedit: let print use the original bytes", "src/edits.rs", "pub fn is_identity(&self) -> bool {", "pub fn is_identity(&self) -> bool {\n        if !self.text_edits.is_empty() { return true; }", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: allow mixed edits to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() {", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: accept a partially parsed content stream", "src/textedit.rs", "Content::decode_strict(&bytes)", "Content::decode(&bytes)", "textedit_rejects_partial_or_undecodable_content"),

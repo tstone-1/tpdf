@@ -114,6 +114,7 @@ export interface Split {
 /** Mirrors `edits::EditState`. */
 export interface EditState {
   forms?: import("./forms").FormChange[];
+  text_edits?: import("./textedit").TextChange[];
   pages: PageView[];
   marks: MarkView[];
   /**
@@ -237,6 +238,10 @@ export class Edits {
   /** Quarter-turns an edit has applied to the page in slot `page`. */
   turnsOf(page: number): number {
     return this.current.pages[page]?.turns ?? 0;
+  }
+
+  async replaceText(page: number, change: import("./textedit").TextChange): Promise<EditState> {
+    return this.adopt(await call("text_replace", { doc: this.doc, page, change }));
   }
 
   /** Fill one shared form field through the validated backend command. */

@@ -79,6 +79,10 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation("text editor: undo invalidates content", "src/lib/textedit.ts", "...old.keys(), ...next.keys()", "...next.keys()", "invalidates added, changed and undone pages without invalidating reordered changes"),
+    Mutation("text editor: failed draft blocks save", "src/lib/textedit.ts", "if (this.failure) throw this.failure;", "if (false) throw this.failure;", "keeps invalid and refused drafts from passing the save drain"),
+    Mutation("text editor: original source address", "src/lib/textedit.ts", "original: run.text, replacement", "original: this.accepted, replacement", "undo refreshes a clean input and restoration keeps the original source address"),
+
     Mutation("assurance: signature dimensions before decoding", "src/lib/signature.ts", "const expected = signatureDimensions(bytes);", "const expected = {width:1,height:1};", "refuses bombs, animation, truncation, duplicate frames and late dimension changes before decode"),
     Mutation("assurance: signature pixel ceiling", "src/lib/signature.ts", "width * height > MAX_IMPORT_PIXELS", "width * height > MAX_IMPORT_PIXELS * 2", "refuses bombs, animation, truncation, duplicate frames and late dimension changes before decode"),
     Mutation("assurance: signature late dimension change", "src/lib/signature.ts", "if (marker === 0xdc) throw invalid();", "if (false) throw invalid();", "refuses bombs, animation, truncation, duplicate frames and late dimension changes before decode"),
@@ -4318,7 +4322,7 @@ MUTATIONS += [
         # anything can go red about it.
         "release-notes: call a shipped command unbuilt",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.insertPages edit.signDocument edit.editText -->",
+        "          <!-- not-built: edit.insertPages edit.signDocument -->",
         "          <!-- not-built: edit.insertPages edit.fillForm file.redactCopy -->",
         "calls nothing unbuilt that the application registers",
     ),
@@ -4338,7 +4342,7 @@ MUTATIONS += [
         # nothing, which is also the only shape this can fail as.
         "release-notes: claim something the README does not",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.insertPages edit.signDocument edit.editText -->",
+        "          <!-- not-built: edit.insertPages edit.signDocument -->",
         "          <!-- not-built: edit.insertPages edit.signDocument edit.editTextBox -->",
         "agrees with the README about what is not built",
     ),
@@ -4360,7 +4364,7 @@ MUTATIONS += [
         # it.
         "readme: say a shipped command is not built",
         "README.md",
-        "  <!-- not-built: edit.editText -->",
+        "  <!-- not-built: edit.signDocument -->",
         "  <!-- not-built: edit.stamp.approved -->",
         "claims nothing absent that the application registers",
     ),
@@ -5127,6 +5131,7 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    "src/lib/textedit.test.ts",
     "src/lib/signature.test.ts",
     "src/lib/forms.test.ts",
     "src/lib/documenttabs.test.ts",

@@ -15,7 +15,8 @@ export interface ToolGroup {
 /** Presentation only: command execution and guards stay in the registry. */
 export const TOOL_ACTIONS: ToolItem[] = [
   { id: "edit.addComment", label: "Comment" },
-  { id: "edit.addTextBox", label: "Text" },
+  { id: "edit.addTextBox", label: "Text box" },
+  { id: "edit.editText", label: "Edit text" },
   { id: "edit.addSignature", label: "Signature image" },
 ];
 

@@ -1,7 +1,7 @@
 # tpdf — Architecture and Roadmap
 
 Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress;
-Phase 4 shipped in 26.9.5; Phase 5 worker implementation started.** The viewer
+Phase 4 shipped in 26.9.5; Phase 5 first application editor implemented, unreleased.** The viewer
 runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
 session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
 change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,
@@ -13,17 +13,16 @@ instructions, and read the result back as *verified* or *not verified, and why*.
 **Form filling and visual signatures shipped in 26.9.5 (2026-09-11)**: text fields,
 checkboxes, radio groups, dropdowns and lists, with shared answers, undo and saved
 appearances; drawn or imported signature images can be placed, moved and resized.
-**In-place text editing has an initial worker implementation (Phase 5)**; no editing command is
-available in the application yet. The current increment and remaining work live in §7.
+**In-place text editing has a first application implementation (Phase 5, unreleased)**:
+choose a supported text run, apply a replacement, preview it through PDFium, undo/redo
+and save. The supported grammar and remaining work live in §7.
 
-**Current priority: assurance before further text-editing UI.** Repair and CI-build
-all fuzz targets; cover AcroForm scanning, form changes and signature rasters;
-warn before signed-document writes; state visual-signature limits in the dialog;
-protect remembered pixels and bound image dimensions before decoding; exclude the
-native-check harness from normal builds. Verify these changes through focused
-faults, native checks and the full gate run. Windows confidentiality containment,
-macOS kernel memory limits and independent user validation remain separate open
-items; none is closed by the application-level safeguards above.
+**Current priority: verify the first text editor on Windows, then broaden supported text.** The immediate
+assurance changes shipped in 26.9.6: CI builds every fuzz target, signed-document
+writes require consent, signature images have explicit limits and protected storage,
+image dimensions are bounded before decoding, and normal builds exclude the native
+check harness. Windows confidentiality containment, macOS kernel memory limits and
+independent user validation remain open; none is closed by these safeguards.
 
 The assurance changes are implemented. Verification on 2026-09-12 includes
 both frontend build profiles, the regular Rust/frontend gates (with the initial
@@ -72,8 +71,16 @@ Local release checks passed all 24 gates, the Windows cross-check, 15 frontend
 and six Rust mutations, and the macOS normal-bundle menu/save checks. The separate
 checks bundle passed 313 text-heavy and 218 vector-heavy viewer checks. Windows
 printing passed all 10 checks; the current OCR corpus results are recorded in BUILD.md.
-The next step is to publish the assurance release after its release checks,
-then resume the text-editing UI work in §7.
+The assurance release [26.9.6](https://github.com/tstone-1/tpdf/releases/tag/v26.9.6)
+was published on 2026-09-12 at `928d102`. Rehearsal and final release jobs passed
+on both platforms, with all 24 gates on each. All eight published assets and the
+updater URLs were downloaded anonymously and matched the verified local bytes.
+The final macOS artifacts passed signature, Gatekeeper and stapled-ticket checks;
+the Windows MSI contained exactly the application, pinned PDFium and required notices.
+The live Windows updater offered 26.9.6 from 26.9.5, installed the verified binary,
+and explicitly reported the new version as current. The repeated updater check restored
+the normal session, original installation and registry exports byte for byte; BUILD.md
+records the relaunch isolation requirement. The subsequent text editor is recorded in §7.
 
 
 
@@ -4338,11 +4345,20 @@ On Windows the example binary ends in `.exe`; the generated HTML can be opened
 for the browser check, but the WebKit/PDFKit result above is macOS-only. The Python
 probe accepts no arbitrary input PDF and is not imported by the application.
 
-**Next implementation:** connect the worker's supported runs and replacements to
-the edit journal, undo, selection overlay and worker-rendered preview before
-exposing an editing command. A browser cmap alone cannot supply PDF character
+**Next implementation:** connect the worker's supported runs and the edit journal
+to the application command, selection overlay and worker-rendered preview before
+exposing text editing in the UI. A browser cmap alone cannot supply PDF character
 codes. The earlier spike's ordinal correspondence is a fixture shortcut; the
 worker implementation below addresses content operators directly.
+
+The edit journal now retains immutable replacement versions, supports undo/redo
+across snapshots, and drops abandoned redo bodies. It keeps original page identities
+through moves and filters deleted or unselected pages out of save/extract plans.
+Restoring the original text clears the pending replacement. History is limited to
+512 retained bodies and 128 active operands; text edits and redactions refuse each
+other before entering the journal. Eight focused tests include a real rewrite after
+page movement and extraction; five targeted mutations prove the principal guards.
+The application command, selection overlay and worker-rendered preview remain next.
 
 System-font matching, font repair, subset extension, complex shaping and reflow
 remain unimplemented. The raster-preview fallback is a design decision, not a
@@ -4364,7 +4380,10 @@ isolated `BT Tf (Tm|Td) Tj ET` blocks, with standard Helvetica, explicit
 WinAnsiEncoding and printable ASCII. It reports the original operator address,
 text, font resource, size, text matrix and advance. Discovery uses the worker's
 shared document graph through `Request::TextRuns`. Unsupported content returns
-a reason; there is no text-editing UI yet.
+a reason. The toolbar and command palette expose **Edit existing text** on the current
+page. Outlined runs use the viewer's crop and rotation mapping; an anchored field
+applies a bounded replacement to the shared journal. Invalid drafts block saves and
+tab changes until corrected or cancelled.
 
 `Plan.text_edits` carries a content digest and original text with each replacement.
 The worker revalidates the entire batch before writing, refuses stale or duplicate
@@ -4373,6 +4392,14 @@ string operand. It clones shared streams and sweeps unreachable originals. Save,
 copy and print use this writer; text edits forbid append and identity shortcuts.
 Encryption is restored by the existing rewrite pipeline. Text editing and redaction
 in one plan are refused until their coordinates can be reconciled.
+
+Unsaved text uses one cached worker-owned PDF revision, capped at 64 MiB serialized.
+Tiles, text selection, search and content bounds all read that revision. Source
+metadata and save validation continue to read the original document. Editing or
+undoing invalidates affected tile/text caches, clears selection, refreshes thumbnails
+and restarts active search. No font is exported to the browser for this increment.
+The journal retains at most 128 active replacements and 512 immutable versions,
+including redo; page moves and deletions preserve their original source addresses.
 
 Content reads and decoding must be complete: invalid references, unsupported
 filters, corrupt or incomplete zlib data and trailing malformed operators refuse
@@ -4393,6 +4420,14 @@ the saved replacement and unchanged second block, and compares their renderings:
 streams, batch atomicity, stale edits, malformed content, encryption and the save,
 copy and print paths. Embedded fonts, general text-state interpretation and reflow
 remain outside this first grammar.
+
+Application verification on macOS on 2026-09-12 passed 15 native checks: draft
+commit across tabs, displayed pixels, selected text, search, undo/redo, refusal
+and save/reopen. PDFKit independently read the UI-saved result and found 2,394
+changed pixels inside the edited line and zero outside. Three targeted frontend
+mutations were caught. A short instrumented `textedit_scan` run executed 34,074
+inputs without a finding. Windows all-target cross-clippy passes; Windows runtime
+verification of this new workflow remains open.
 
 ---
 
@@ -13268,8 +13303,9 @@ Explicitly **not** cryptographic signing. XFA out of scope.
 §7, scoped as described there. Depends on the Phase 0 text round-trip spike and the
 operator-rewriting machinery built in Phase 3.
 
-**Started: font-preview and surgical round-trip feasibility.** See §7 for the
-measured results and the next implementation step. This is not yet an application feature.
+**First application editor implemented, unreleased.** See §7 for the strict Helvetica
+grammar, worker preview, journal and native workflow. General embedded fonts,
+non-ASCII text and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 

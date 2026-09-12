@@ -249,6 +249,8 @@ impl<H: Copy> PageCache<H> {
 /// document would be self-referential. A handle is a plain pointer, copied out
 /// under a short borrow, and the document closes every one it holds on drop.
 pub struct RawDocument {
+    // Kept until Drop has closed every PDFium handle borrowing this allocation.
+    owned_bytes: Option<std::sync::Arc<[u8]>>,
     bindings: Bindings,
     handle: FPDF_DOCUMENT,
     form: Option<RawForm>,
@@ -522,6 +524,7 @@ impl RawDocument {
 
         let form = RawForm::open(bindings, handle);
         Ok(Self {
+            owned_bytes: None,
             bindings,
             handle,
             form,
@@ -563,8 +566,29 @@ impl RawDocument {
         bytes: &'static [u8],
         password: Option<&str>,
     ) -> Result<Self, Refusal> {
-        // SAFETY: the buffer is `'static`, so it outlives the document, which is
-        // exactly what this call requires and what the safe wrapper cannot
+        // The static mapping needs no retained allocation.
+        Self::open_memory(bindings, bytes, password)
+    }
+
+    /// Opens owned preview bytes and retains them until PDFium closes the document.
+    pub fn open_owned(
+        bindings: Bindings,
+        bytes: std::sync::Arc<[u8]>,
+        password: Option<&str>,
+    ) -> Result<Self, Refusal> {
+        let mut document = Self::open_memory(bindings, &bytes, password)?;
+        document.owned_bytes = Some(bytes);
+        Ok(document)
+    }
+
+    // Only the static and retained-allocation constructors may call this helper.
+    fn open_memory(
+        bindings: Bindings,
+        bytes: &[u8],
+        password: Option<&str>,
+    ) -> Result<Self, Refusal> {
+        // SAFETY: the caller retains the buffer until this document is dropped,
+        // which is exactly what this call requires and what the safe wrapper cannot
         // express.
         let handle = unsafe { bindings.FPDF_LoadMemDocument64(bytes, password) };
         if handle.is_null() {
@@ -574,6 +598,7 @@ impl RawDocument {
 
         let form = RawForm::open(bindings, handle);
         Ok(Self {
+            owned_bytes: None,
             bindings,
             handle,
             form,

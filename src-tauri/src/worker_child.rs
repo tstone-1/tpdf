@@ -516,7 +516,7 @@ fn spawn_reader(tx: Sender<Request>, queue: SharedQueue) {
                 match serde_json::from_str::<Request>(&line) {
                     Ok(Request::Withdraw { rid }) => queue.with(|queue| queue.withdraw(rid)),
                     Ok(request) => {
-                        if let Request::Tile { rid, .. } = request {
+                        if let Some(rid) = request.tile_rid() {
                             // Registered on arrival, so a withdrawal that beats
                             // the render thread to it still finds something to
                             // mark.
@@ -547,7 +547,20 @@ fn handle(
     inputs: Option<&Shm>,
     request: &Request,
 ) -> Response {
+    if request.supports_text_view() {
+        document.clear_text_view();
+    }
     match request {
+        Request::TextView { changes, request } => {
+            if !request.supports_text_view() {
+                return Response::err("text views accept only rendering and text reads");
+            }
+            document
+                .with_text_view(changes, |view| {
+                    Ok(handle(bindings, view, queue, tile, None, None, request))
+                })
+                .unwrap_or_else(Response::err)
+        }
         Request::Open { lazy_geometry } => open(document, *lazy_geometry),
         Request::Tile { .. } => render(bindings, document, queue, tile, request),
         // Consumed on the reader thread; reaching here would mean the dispatch
@@ -599,10 +612,12 @@ fn handle(
             }
         }
         Request::Outline => Response::reply(Reply::Outline(render::run_outline(document))),
-        Request::TextRuns { page } => match document.graph().text_runs(*page) {
-            Ok(runs) => Response::reply(Reply::TextRuns(runs)),
-            Err(error) => Response::err(error),
-        },
+        Request::TextRuns { page, changes } => {
+            match document.with_text_view(changes, |_| document.graph().text_runs(*page)) {
+                Ok(runs) => Response::reply(Reply::TextRuns(runs)),
+                Err(error) => Response::err(error),
+            }
+        }
         Request::Form => match document.graph().form() {
             Ok(form) => Response::reply(Reply::Form(form)),
             Err(error) => Response::err(error),

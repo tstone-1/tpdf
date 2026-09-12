@@ -73,9 +73,48 @@ pub struct OpenDocument {
     /// [`crate::textcache`], which is where the policy and the reason nothing
     /// invalidates it are written down.
     text: RefCell<TextCache>,
+    preview: RefCell<Option<crate::textview::Preview>>,
 }
 
 impl OpenDocument {
+    /// Keeps a bounded, owned preview alive for as long as PDFium borrows its bytes.
+    pub(crate) fn open_owned(bindings: Bindings, bytes: Arc<[u8]>) -> Result<Self, Refusal> {
+        Ok(Self {
+            pdfium: RawDocument::open_owned(bindings, bytes.clone(), None)?,
+            graph: DocumentGraph::new(Source::Owned(bytes), None),
+            text: RefCell::new(TextCache::new()),
+            preview: RefCell::new(None),
+        })
+    }
+
+    pub(crate) fn clear_text_view(&self) {
+        *self.preview.borrow_mut() = None;
+    }
+
+    /// Reads one cached rendering of the pending replacements without mutating the source.
+    pub(crate) fn with_text_view<T>(
+        &self,
+        changes: &[crate::textedit::Change],
+        read: impl FnOnce(&Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        if changes.is_empty() {
+            self.clear_text_view();
+            return read(self);
+        }
+        let mut cached = self.preview.borrow_mut();
+        if cached.as_ref().is_none_or(|view| view.changes != changes) {
+            // Release the preceding revision before allocating its replacement.
+            *cached = None;
+            *cached = Some(crate::textview::Preview::build(self, changes)?);
+        }
+        read(
+            &cached
+                .as_ref()
+                .ok_or("text preview is unavailable")?
+                .document,
+        )
+    }
+
     /// Opens a document from a path, for a caller that has one.
     ///
     /// The probe's route in. The viewer's is [`OpenDocument::open_bytes`] --- a
@@ -93,6 +132,7 @@ impl OpenDocument {
                 password.map(str::to_string),
             ),
             text: RefCell::new(TextCache::new()),
+            preview: RefCell::new(None),
         })
     }
 
@@ -114,6 +154,7 @@ impl OpenDocument {
             pdfium: RawDocument::open_bytes(bindings, bytes, password)?,
             graph: DocumentGraph::new(Source::Bytes(bytes), password.map(str::to_string)),
             text: RefCell::new(TextCache::new()),
+            preview: RefCell::new(None),
         })
     }
 
