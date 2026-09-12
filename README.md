@@ -97,11 +97,18 @@ measured the Windows render constants come out 1.5–1.8x worse.
   read-only fields remain unchanged. JavaScript and XFA are not supported.
   <!-- built: edit.fillForm -->
 
-- **Add a visual signature** with **Sign** in the toolbar or **Add signature** in the
-  command palette. Draw it or import a PNG/JPEG, then drag to place it on the page.
+- **Add a visual signature** with **Signature image** in the toolbar or
+  **Place signature image** in the command palette. Draw it or import a PNG/JPEG,
+  then drag to place it on the page.
   Move it, resize it with Smaller/Larger, or remove it; every edit supports undo.
-  Saving embeds its appearance as a PDF stamp. Remembering it on this device is optional.
+  Saving embeds its appearance as a PDF stamp, without identity or certificate verification.
+  Remembering it is optional and uses macOS Keychain or Windows user-scoped DPAPI.
+  Imported PNG/JPEG dimensions are bounded before image decoding.
   <!-- built: edit.addSignature -->
+
+- **Saving signed or certified documents requires confirmation.** The current writer
+  may invalidate their cryptographic signatures, including when filling permitted
+  form fields. This warning does not verify the signatures.
 
 
 - **Turn a page in the document**, not only in the view --- with undo and redo, and a

@@ -90,6 +90,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from mac_check_app import MacCheckApp
+
+APP: MacCheckApp
+
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "src-tauri/target/release/bundle/macos/tpdf.app"
 FIXTURE = ROOT / "testdata/outline-simple.pdf"
@@ -139,7 +143,7 @@ def digest(path: Path) -> str:
 def enabled(menu: int, item: str) -> bool:
     try:
         answer = osa(
-            'tell application "System Events" to tell process "tpdf" to return enabled of '
+            f'tell application "System Events" to tell {APP.process} to return enabled of '
             f'menu item "{item}" of menu 1 of menu bar item {menu} of menu bar 1'
         )
     except RuntimeError as why:
@@ -169,7 +173,7 @@ def window_count(timeout: float = 20) -> int:
     """
     return int(
         osa(
-            'tell application "System Events" to tell process "tpdf" to return count of windows',
+            f'tell application "System Events" to tell {APP.process} to return count of windows',
             timeout=timeout,
         )
     )
@@ -184,7 +188,7 @@ def kill_app() -> None:
     run rather than a line in it. Only phase 7's failure path reaches this: every
     other outcome leaves an application that answers.
     """
-    subprocess.run(["pkill", "-x", "tpdf"], capture_output=True)
+    APP.kill()
 
 
 class MenuGone(Exception):
@@ -200,11 +204,11 @@ class MenuGone(Exception):
 
 
 def click(menu: int, item: str, settle: float = 3.0) -> None:
-    osa('tell application "tpdf" to activate')
+    APP.activate()
     time.sleep(0.5)
     try:
         osa(
-            'tell application "System Events" to tell process "tpdf" to click '
+            f'tell application "System Events" to tell {APP.process} to click '
             f'menu item "{item}" of menu 1 of menu bar item {menu} of menu bar 1'
         )
     except RuntimeError as why:
@@ -281,10 +285,9 @@ def main() -> int:
     shutil.copy2(fixture, target)
     before = digest(target)
 
-    subprocess.run(["osascript", "-e", 'tell application "tpdf" to quit'],
-                   capture_output=True)
-    time.sleep(2)
-    subprocess.run(["open", "-a", str(app.resolve()), str(target)], check=True)
+    global APP
+    APP = MacCheckApp(app)
+    APP.start(target)
     if not wait_for_document():
         print("[FAIL] no document was open 30s after launch (Print never enabled)")
         return 2
@@ -419,8 +422,7 @@ def main() -> int:
               "or run menu_check.py to see what the bar holds now")
         return 2
     finally:
-        subprocess.run(["osascript", "-e", 'tell application "tpdf" to quit'],
-                       capture_output=True)
+        APP.quit()
 
     if problems:
         print(f"[FAIL] {problems} problem(s) writing or printing the open document")

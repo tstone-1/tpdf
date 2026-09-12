@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [Unreleased]
+## [26.9.6] - 2026-09-12
 
 - Warn before writing signed or certified PDFs, including permitted form filling;
   Cancel is the initial choice. Merging also warns about signatures in incoming files.
@@ -26,6 +26,8 @@ have the binary.)
 - Protect remembered signature pixels with macOS Keychain or Windows user-scoped
   DPAPI, migrating legacy storage only after an identical protected readback.
 - Exclude native-check JavaScript from normal builds; provide a separate checks build.
+- Assign Windows renderer workers to their cleanup job during process creation,
+  preventing suspended workers from surviving application exit.
 - Build every fuzz target in CI and extend inputs to form answers, signature rasters
   and direct AcroForm scanning.
 - Use the TypeScript 7 native compiler alongside the compiler API required by Svelte.
