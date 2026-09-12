@@ -317,6 +317,9 @@ pub fn rewrite(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, Refusal>
 
 fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String> {
     let started = Instant::now();
+    if !plan.text_edits.is_empty() {
+        return Err("save text edits before applying redactions".into());
+    }
     if plan.redactions.is_empty() || plan.redactions.iter().any(|r| r.areas.is_empty()) {
         return Err("no complete redaction regions were supplied".into());
     }

@@ -207,18 +207,16 @@ and built artifacts sit in `target/release/examples/`. **That gate flag is load-
 proved so rather than assumed** --- without `--examples` the `bins` gate covers only the app, and
 an undefined extern called from one example's `main` is what turns it red with `LNK2019`.
 
-**The JavaScript harness does ship, and that is a decision.** `App.svelte` statically
-imports every webview entry point, so the functional checks and the benchmarks sit in the
-bundle `frontendDist` embeds whole into the binary --- about a third of it. They stay
-because the checks observe the artifact that ships, and because the payload is not what decides
-cold start. No share is written here, for the reason no trap count is: the one that was
-(`77.1 kB of a 221.2 kB bundle`, 2026-08-02) sat in two documents for a month while the bundle
-doubled, and nobody could compute the current one from either. The authority is
-`scripts/check_bundle_share.py`, which attributes the built sourcemap per module and fails on
-two ceilings, and it is the `bundleshare` gate. The honest cost is `spike_print` and
-`spike_exit`, registered commands callable by
-any script the webview runs; the CSP (`default-src 'self'`, no `'unsafe-inline'`) is what bounds
-that, and residual risk 7 in `docs/THREAT-MODEL.md` carries the seam.
+**Normal builds exclude the JavaScript test harness.** `src/lib/harness.ts` uses
+compile-time guards around dynamic imports; `npm run build` removes them, while
+`npm run build:checks` retains them for native UI checks. Use
+`npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app`
+for a separate application identifier with the checks enabled. This supersedes
+the earlier decision to ship all harness code. The production modules are shared;
+a check build is not byte-identical to the released artifact, so release smoke
+tests must also exercise the normal bundle. `scripts/check_bundle_share.py` checks
+all emitted JavaScript chunks and refuses any harness implementation in a normal
+build; `--checks` instead requires every entry and bounds its size.
 
 Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
 network authority, under resource and time limits, restartable on crash. Document
@@ -242,16 +240,34 @@ The account behind this section --- what was measured, what it cost, and which e
 
 ## Stack
 
+TypeScript 7 is installed as `@typescript/native` (an npm alias); it supplies `tsc`.
+`typescript` aliases `@typescript/typescript6` because `svelte-check` 4.7.6 still
+requires the TypeScript 5/6 compiler API. `npm run check` runs both the native
+compiler and Svelte diagnostics. Remove the compatibility alias only when the
+Svelte checker supports the new compiler API; a plain TypeScript 7 replacement
+cannot supply the API that checker imports. See Microsoft's
+[side-by-side migration guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
+
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
 `Arc` in the journal, limited to 512x256 pixels (including rotated equivalents)
 per image and 4 MiB across retained marks. The worker writes a PDF Stamp appearance
 with an RGB image and alpha soft mask. Placement stores inverse-rotated pixels in
 the mark's original display space, so later page turns rotate the image with it.
-`SignatureDialog` remembers pixels in localStorage only on explicit opt-in.
+`SignatureDialog` remembers pixels only on explicit opt-in, in macOS Keychain or
+user-scoped Windows DPAPI storage. `signaturestore.ts` migrates the legacy
+localStorage entry only after protected readback matches. PNG/JPEG headers are
+validated before decoding: at most 10 MiB compressed, 8 megapixels and 8192 pixels
+per dimension; animations and changing dimensions are refused.
 `tabs_check.py --phase signatures` checks the real application; the independent
 PDFium and PDFKit pixel readers and fixture commands are in `BUILD.md`.
 This creates visual marks only; it does not create certificate-based signatures.
+
+Before any save/copy writing command, the application reads digital-signature
+metadata from the worker and asks for consent if signatures/certification exist
+or enumeration was incomplete. DocMDP permission to fill forms does not bypass
+the warning: the current rewrite cannot preserve that cryptographic history.
+Cancellation reaches no writing IPC. This is a warning, not signature validation.
 
 AcroForm filling uses `forms.rs` inside the document worker, with shared field
 answers in the edit journal and `Plan.forms`. Every save carrying answers takes
@@ -604,9 +620,9 @@ future-date check, a
 workflow-parity check, a workflow-fixture check, a mutation-anchor check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
-`cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
+a locked build of all fuzz targets, `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
 doc-comment check, a command-classification check, a file-writer check, `npm run check`,
-`npm run test`, `npm run build`, a bundle-share check, and a third-party-notices check. Three of them are
+`npm run test`, both frontend build profiles (leaving normal assets), a bundle-share check, and a third-party-notices check. Three of them are
 ordered rather than merely present: `toolchain` runs **first**, because every result after it
 is a statement about whichever compiler actually ran, and `notices` runs **last**, because it
 reads the build's own sourcemaps to see which npm packages shipped --- with `bundleshare`
@@ -686,12 +702,12 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
   every one written by a commit dated 2026-08-28. A stamp in the future does not merely
   mislead about one measurement; it makes every stamp written in the same sitting unreliable,
   and nothing else notices.
-- `bundleshare` --- the unattended harness ships inside the bundle on purpose, and the argument
-  for it was written against a number half the current size, in two documents, unread for a
-  month. It attributes the built sourcemap per module and bounds the harness family by share
-  *and* by absolute, because the share alone missed a month in which both halves grew together.
-- `notices` --- runs last, because it reads the build's own sourcemaps to see which npm packages
-  shipped.
+- `fuzz` --- build every target in the separate fuzz package, whose lockfile and
+  plan generator can drift independently of the application. `forms_scan` covers
+  AcroForm traversal; rewrite inputs include form answers and signature rasters.
+- `bundleshare` --- require zero harness implementation across all normal-build
+  chunks; `--checks` verifies the separate native-check build includes every entry.
+
 
 **`save.rs` is a directory module since 2026-09-01**, and the reason to know that before
 editing it is `scripts/mutate_rust.py`: dozens of mutation anchors name `src/save/marks.rs` rather than

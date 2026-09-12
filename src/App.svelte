@@ -13,10 +13,10 @@
     open as openDialog,
     save as saveDialog,
   } from "@tauri-apps/plugin-dialog";
-  import { runAutobenchIfRequested } from "./lib/autobench";
-  import { runScrollBenchIfRequested } from "./lib/scrollbench";
-  import { runStartupTimelineIfRequested } from "./lib/startup";
-  import { runViewerCheckIfRequested } from "./lib/viewercheck";
+  import { runAutobenchIfRequested } from "./lib/harness";
+  import { runScrollBenchIfRequested } from "./lib/harness";
+  import { runStartupTimelineIfRequested } from "./lib/harness";
+  import { runViewerCheckIfRequested } from "./lib/harness";
   import type { Drawn, ScreenPoint } from "./lib/viewer";
   import {
     handleWindowKey,
@@ -62,6 +62,7 @@
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
+  import { confirmSignatureSave, askSignatureSave, SaveCancelled } from "./lib/signedsave";
   import { SignatureDialog } from "./lib/signaturedialog";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
@@ -109,9 +110,9 @@
     type Place,
     type Session,
   } from "./lib/session";
-  import { runMarkCheckIfRequested } from "./lib/markcheck";
-  import { runSessionCheckIfRequested } from "./lib/sessioncheck";
-  import { runOpenCheckIfRequested } from "./lib/opencheck";
+  import { runMarkCheckIfRequested } from "./lib/harness";
+  import { runSessionCheckIfRequested } from "./lib/harness";
+  import { runOpenCheckIfRequested } from "./lib/harness";
   import { Serial } from "./lib/serial";
   import { DegradedLabel } from "./lib/degraded";
   import { Updates, updateLabel, updateNotice, type UpdateState } from "./lib/update";
@@ -1466,6 +1467,7 @@
       try {
         await edits.save(path);
       } catch (e) {
+        if (e instanceof SaveCancelled) return;
         // Read through the seam rather than cast here, so that what a rejection
         // is understood to carry has one definition. Three catches wrote this by
         // hand and the fourth -- printing -- wrote none of it.
@@ -1537,6 +1539,7 @@
       const said = afterCopy(await edits.saveCopy(openPathName, chosen));
       if (said) say(said);
     } catch (e) {
+        if (e instanceof SaveCancelled) return;
       say(String(e));
     }
     });
@@ -1571,6 +1574,7 @@
       say(result.message, result.offers);
       redactedCopyPath = chosen;
     } catch (e) {
+        if (e instanceof SaveCancelled) return;
       // Every refusal reaches here, and the one worth the room is the region
       // that covers something a removal cannot take: `lib.rs` refuses before
       // writing anything and names what and where.
@@ -1631,6 +1635,7 @@
         ),
       );
     } catch (e) {
+        if (e instanceof SaveCancelled) return;
       say(`Image-only redaction failed. No verified copy was saved. ${String(e)}`);
     } finally {
       blockingTask = null;
@@ -1693,6 +1698,7 @@
       try {
         said = afterRedaction(await edits.redactDocument(path));
       } catch (e) {
+        if (e instanceof SaveCancelled) return;
         const failure = refusalOf(e);
         const prompt = afterRefusal(failure);
         // Nothing happened: the file is the file and the reader still has their
@@ -1747,6 +1753,7 @@
       );
       if (said) say(said);
     } catch (e) {
+        if (e instanceof SaveCancelled) return;
       say(String(e));
     }
     });
@@ -1781,6 +1788,7 @@
       if (!chosen) return;
       say(afterSplit(await edits.splitDocument(openPathName, chosen, groups)));
     } catch (e) {
+        if (e instanceof SaveCancelled) return;
       say(String(e));
     }
     });
@@ -1827,6 +1835,7 @@
       if (!chosen) return;
       say(afterMerge(await edits.mergeDocuments(openPathName, chosen, others)));
     } catch (e) {
+        if (e instanceof SaveCancelled) return;
       say(String(e));
     }
     });
@@ -3075,7 +3084,13 @@
       // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
       // backend, and holding the first page behind it would put an IPC round
       // trip on the startup path for an answer that is "nothing is edited".
-      const opening = retained?.edits ?? new Edits(doc.id, doc.page_count);
+      const opening = retained?.edits ?? new Edits(doc.id, doc.page_count, async (merging = false) => {
+        commitPopups();
+        await pendingEdit;
+        await formLayer?.settle();
+        await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
+          askSignatureSave, merging);
+      });
       edits = opening;
       dirty = opening.state.dirty;
       // Mark ids start again with the model, so an entry kept from the last

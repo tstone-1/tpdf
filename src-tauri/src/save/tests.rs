@@ -161,6 +161,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -186,6 +187,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -3476,6 +3478,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: vec![PlannedMark {
             kind,
             // The biconditional the model enforces, restated here because
@@ -3571,6 +3574,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         }],
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
     };
     assert!(
         plan.is_appendable(),
@@ -6814,6 +6818,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6869,6 +6874,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6929,6 +6935,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plain.is_identity());
@@ -6965,6 +6972,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
@@ -9878,5 +9886,117 @@ fn a_filled_form_rewrite_keeps_the_password_and_values() {
             .filter(|w| w.value == crate::forms::Value::Text("encrypted answer".into()))
             .count(),
         2
+    );
+}
+
+#[test]
+fn textedit_reaches_save_copy_print_and_forbids_append() {
+    let mut document = crate::textedit::tests::fixture();
+    let edit = crate::textedit::tests::change(&document);
+    let mut original = Vec::new();
+    document.save_to(&mut original).unwrap();
+    let mut plan = plan_of(&[0, 0]);
+    assert!(plan.is_identity());
+    plan.text_edits.push(edit.clone());
+    assert!(!plan.is_identity());
+    for job in [Job::Save, Job::Print { view: 0 }] {
+        let bytes = rewrite_update(&original, &plan, job, None).unwrap();
+        let saved = crate::encoding::load(&bytes, None).unwrap();
+        assert_eq!(
+            crate::textedit::scan(&saved, 0).unwrap().runs[0].text,
+            "EDITED FIRST"
+        );
+        assert_eq!(
+            crate::textedit::scan(&saved, 1).unwrap().runs[0].text,
+            "SYNTHETIC FIRST"
+        );
+    }
+    // Exercise the public copy entry point too, including its staging path.
+    let dir = Scratch::new("text-edit");
+    let source = dir.0.join("synthetic.pdf");
+    let target = dir.0.join("edited.pdf");
+    std::fs::write(&source, &original).unwrap();
+    copy_here(&source, &plan, &target, None).unwrap();
+    let bytes = std::fs::read(&target).unwrap();
+    let saved = crate::encoding::load(&bytes, None).unwrap();
+    assert_eq!(
+        crate::textedit::scan(&saved, 0).unwrap().runs[0].text,
+        "EDITED FIRST"
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), original);
+
+    let mut marked = plan_with_mark(one_quad());
+    assert!(marked.is_appendable());
+    marked.text_edits.push(edit);
+    assert!(!marked.is_appendable());
+    // A forged append request must fail at the writer as well as its selector.
+    assert!(append_update(original.clone(), &marked, None).is_err());
+}
+
+#[test]
+fn textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans() {
+    let mut document = crate::textedit::tests::fixture();
+    let mut plan = plan_of(&[0, 0]);
+    let first = crate::textedit::tests::change(&document);
+    plan.text_edits = vec![first.clone(), crate::textedit::Change { page: 1, ..first }];
+    let mut original = Vec::new();
+    document.save_to(&mut original).unwrap();
+    let bytes = rewrite_update(&original, &plan, Job::Save, None).unwrap();
+    let saved = crate::encoding::load(&bytes, None).unwrap();
+    for object in saved.objects.values() {
+        if let Ok(stream) = object.as_stream() {
+            let decoded = stream.get_plain_content().unwrap();
+            assert!(!decoded
+                .windows(b"SYNTHETIC FIRST".len())
+                .any(|w| w == b"SYNTHETIC FIRST"));
+        }
+    }
+    assert!(rewrite_update(&bytes, &plan, Job::Save, None)
+        .unwrap_err()
+        .message
+        .contains("changed since"));
+    // Invalid redaction content is sufficient: the text/redaction guard must
+    // refuse the combination before either subsystem uses these coordinates.
+    plan.redactions.push(
+        serde_json::from_value(serde_json::json!({
+            "source": 0, "shows": [], "text_objects": 0, "taking": [], "forms": [],
+            "form_counts": [], "images": [], "areas": []
+        }))
+        .unwrap(),
+    );
+    assert!(rewrite_update(&original, &plan, Job::Save, None)
+        .unwrap_err()
+        .message
+        .contains("save text edits"));
+}
+
+#[test]
+fn textedit_preserves_encryption() {
+    let mut document = crate::textedit::tests::fixture();
+    let edit = crate::textedit::tests::change(&document);
+    document
+        .trailer
+        .set("ID", vec![Object::string_literal("synthetic-text-id"); 2]);
+    let encryption = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+        document: &document,
+        owner_password: "synthetic-owner",
+        user_password: "synthetic-reader",
+        key_length: 128,
+        permissions: lopdf::Permissions::default(),
+    })
+    .unwrap();
+    document.encrypt(&encryption).unwrap();
+    let mut bytes = Vec::new();
+    document.save_to(&mut bytes).unwrap();
+    let mut plan = plan_of(&[0, 0]);
+    plan.text_edits.push(edit);
+    let written = rewrite_update(&bytes, &plan, Job::Save, Some("synthetic-reader")).unwrap();
+    let mut locked = lopdf::Document::load_mem(&written).unwrap();
+    assert!(locked.is_encrypted());
+    assert!(locked.decrypt("wrong-password").is_err());
+    let saved = crate::encoding::load(&written, Some("synthetic-reader")).unwrap();
+    assert_eq!(
+        crate::textedit::scan(&saved, 0).unwrap().runs[0].text,
+        "EDITED FIRST"
     );
 }

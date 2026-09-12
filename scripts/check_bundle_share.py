@@ -1,74 +1,13 @@
 #!/usr/bin/env python3
-"""Measures how much of the shipped frontend bundle is the unattended harness.
+"""Require a normal build to contain no optional check/benchmark implementation.
 
-`App.svelte` statically imports every webview entry point, so the functional
-checks and the benchmarks are inside the bundle `frontendDist` embeds whole into
-the binary. That is a decision rather than an oversight -- `AGENTS.md` and
-`docs/RATIONALE.md` both argue it, on the ground that the checks have to observe
-the artifact that ships and that the payload is not what decides cold start.
-
-**The decision is not what this gate exists for. Its cost basis is.** The
-argument was written on 2026-08-02 against `77.1 kB of a 221.2 kB bundle`, and
-that figure sat in two documents as a bare number for a month while the bundle
-doubled. Nobody could compute the current share from the documents, on a project
-whose first stated property is cold start, in a repository whose own convention
-is that no measured count lives in prose -- the authority is a command. This is
-that command, so the two paragraphs can state the claim and point here.
-
-Measured 2026-08-31, `chromium/7881` tree at `a730973` + this wave:
-
-    bundle 447,082 units; harness family 151,362 units, 33.86%
-    viewercheck 128,210 / scrollbench 6,093 / markcheck 4,439 /
-    sessioncheck 3,944 / startup 3,284 / autobench 2,223 /
-    opencheck 1,921 / checkreport 1,248
-
-Worth reading off that: the **share** is where it was (34.9% in the 2026-08-02
-measurement) while the **absolute** has doubled, so a check on either one alone
-is half blind -- a share ceiling cannot see both halves growing together, and an
-absolute ceiling condemns a bundle that grew for reasons that are not the
-harness. Both are asserted, and both numbers are printed whichever way the
-verdict goes, so the next reader never has to derive them.
-
-## Method, and its limit
-
-Vite emits a sourcemap whose `mappings` field says which source each run of
-generated characters came from. Decoding it and summing each segment's span
-attributes the *minified* output per module, which is the quantity the decision
-is about; source bytes are not, because `viewercheck.ts` is heavily commented
-and comments do not ship. `third_party_notices.py` reads the same artifact for
-the same reason: it is the build's own account of what it shipped, so it cannot
-drift from what shipped.
-
-**The limit, stated because a proxy with an unstated limit is worse than no
-proxy.** Sourcemap columns are UTF-16 code units, not bytes, so the totals here
-are code units. On today's bundle they reconcile to within 205 of the file's
-447,245 bytes on disk (0.05%), which is the non-ASCII content; the run prints that
-reconciliation, and a large gap means the assumption has stopped holding rather
-than that the harness moved. Bytes a segment does not cover -- a line the
-bundler emitted from nothing -- are counted as unmapped and printed, never
-silently folded into a module.
-
-## What can go red, and why each one is here
-
-An absent input that passes is this repository's most-documented defect class,
-so nothing here has a quiet path:
-
-  1. **No sourcemap, or more than one.** A renamed or missing artifact fails
-     loudly. A run with nothing to measure must not report a small share.
-  2. **A family member with no bytes in the bundle.** Rename `viewercheck.ts`
-     and a hard-coded family list measures zero and passes with a share of
-     nothing. Every named member must be attributed a non-zero span.
-  3. **An entry point `App.svelte` imports that is not on the list.** The
-     component's `run*IfRequested` imports and the family's entry points are
-     diffed as sets, both ways, so a seventh harness cannot join the bundle
-     without joining the measurement. `markcheck.ts` did exactly that after the
-     prose was written, which is why the prose also said "six".
-  4. **A production module importing `checkreport.ts`.** It is counted as
-     harness because only the entry points reach it; that is a fact about the
-     tree, so it is checked rather than assumed.
-  5. **Either ceiling exceeded.**
+Run after `npm run build`. For the native test build use `--checks` after
+`npm run build:checks`: every entry must then be present and within the size
+ceilings. Both modes examine ALL JavaScript chunks, so lazy loading cannot hide
+shipped harness code. Sourcemap spans measure UTF-16 code units, not source size.
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -80,8 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # is stale the next time anything in the bundle changes.
 BUNDLE_GLOB = "dist/assets/index-*.js"
 
-# The entry points `App.svelte` imports, each of which replaces or drives the
-# application under an environment variable and is reachable no other way.
+# Entry points reached through the compile-time guarded harness wrapper.
 ENTRY_POINTS = {
     "viewercheck.ts",
     "markcheck.ts",
@@ -100,27 +38,10 @@ SHARED = {"checkreport.ts", "signaturecheck.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 
-# The import shape the entry points are wired with, in `App.svelte`.
-ENTRY_IMPORT = re.compile(r'import\s*\{\s*run\w*IfRequested\s*\}\s*from\s*"\./lib/(\w+)"')
+# Dynamic runtime imports in the wrapper; type-only references do not count.
+ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 
-# Ceilings, with headroom rather than at the measurement.
-#
-# The share is the number the decision rests on: a third of what ships is the
-# harness, and the argument is that what ships is not the lever on cold start.
-# It has moved about one point in a month (34.9% -> 33.84%) while the absolute
-# doubled, so 40% leaves room for a real harness increment and still refuses the
-# shape the recorded decision could not survive -- the harness becoming the
-# majority of the bundle is a different decision, not a larger version of this
-# one.
-#
-# The absolute is the half the share cannot see. 200,000 is ~32% above today,
-# which `viewercheck.ts` alone would reach if it grew again the way it grew
-# between 2026-07-31 and 2026-08-31 (3,337 -> 10,898 lines). That is the growth
-# nobody could see, so that is the growth this number is aimed at.
-#
-# Both are deadlines, not targets. When one fires the question is whether the
-# 2026-08-02 argument still holds at the new size -- re-measure the `blank`
-# variant against the payload before raising either.
+# Cost ceilings apply only to the explicit native-check build.
 SHARE_CEILING = 40.0
 BYTES_CEILING = 200_000
 
@@ -165,7 +86,7 @@ def attribute(bundle: Path, sourcemap: Path) -> "tuple[dict, int, int]":
     source_index = 0
 
     for line_no, encoded in enumerate(spec.get("mappings", "").split(";")):
-        width = len(lines[line_no]) if line_no < len(lines) else 0
+        width = len(lines[line_no].encode("utf-16-le")) // 2 if line_no < len(lines) else 0
         column = 0
         segments: "list[tuple[int, int | None]]" = []
         for piece in encoded.split(","):
@@ -194,7 +115,7 @@ def attribute(bundle: Path, sourcemap: Path) -> "tuple[dict, int, int]":
                 per[name] = per.get(name, 0) + span
         unmapped += 1  # the newline
 
-    return per, unmapped, len(body)
+    return per, unmapped, len(body.encode("utf-16-le")) // 2
 
 
 def sole_bundle() -> "tuple[Path, Path]":
@@ -227,8 +148,8 @@ def sole_bundle() -> "tuple[Path, Path]":
 
 
 def declared_entry_points() -> "set[str]":
-    """The `run*IfRequested` modules `App.svelte` imports, as bare filenames."""
-    text = (ROOT / "src" / "App.svelte").read_text(encoding="utf-8")
+    """The runtime imports in the optional harness wrapper, as bare filenames."""
+    text = (ROOT / "src" / "lib" / "harness.ts").read_text(encoding="utf-8")
     return {f"{name}.ts" for name in ENTRY_IMPORT.findall(text)}
 
 
@@ -246,101 +167,64 @@ def shared_importers() -> "list[str]":
 
 
 def main() -> int:
-    """Measures the harness family's share of the bundle and asserts the ceilings."""
+    """Measure every shipped chunk and assert the selected build's contract."""
+    checks = sys.argv[1:] == ["--checks"]
+    if sys.argv[1:] and not checks:
+        print("usage: check_bundle_share.py [--checks]", file=sys.stderr)
+        return 2
     try:
-        bundle, sourcemap = sole_bundle()
-        per, unmapped, generated = attribute(bundle, sourcemap)
-    except (FileNotFoundError, ValueError, OSError) as exc:
+        sole_bundle()  # A missing or stale main artifact must never read as zero.
+        per, unmapped, generated, disk = {}, 0, 0, 0
+        bundles = sorted(ROOT.glob("dist/assets/*.js"))
+        for bundle in bundles:
+            sourcemap = bundle.with_suffix(".js.map")
+            # Vite's Babel helper chunk has no source map. Admit only the
+            # inspected generated helper by digest, never an arbitrary missing map.
+            if (not sourcemap.exists() and bundle.name.startswith("defineProperty-")
+                    and hashlib.sha256(bundle.read_bytes()).hexdigest() == "c2ae68c1ad7462e777ccd4e1e3f84b3bc07ab81458f0dd0ea042a9e1b4d23afb"):
+                found, unknown, units = {}, bundle.stat().st_size, bundle.stat().st_size
+            else:
+                found, unknown, units = attribute(bundle, sourcemap)
+            if units == 0:
+                raise ValueError(f"empty bundle: {bundle}")
+            for source, count in found.items():
+                per[source] = per.get(source, 0) + count
+            unmapped += unknown
+            generated += units
+            disk += bundle.stat().st_size
+    except (ValueError, OSError, KeyError, IndexError) as exc:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 1
 
-    family: "dict[str, int]" = {}
+    family = {}
     for source, units in per.items():
         name = source.replace("\\", "/").rsplit("/", 1)[-1]
         if name in FAMILY and "/src/lib/" in source.replace("\\", "/"):
             family[name] = family.get(name, 0) + units
-
     total = sum(family.values())
-    share = 100.0 * total / generated if generated else 0.0
-
-    print(f"       bundle {bundle.name}: {generated:,} units")
-    attributed = sum(per.values())
-    print(
-        f"       attributed {attributed:,} + unmapped {unmapped:,} = "
-        f"{attributed + unmapped:,}, against {bundle.stat().st_size:,} bytes on disk"
-    )
-    for name in sorted(FAMILY, key=lambda n: -family.get(n, 0)):
-        got = family.get(name, 0)
-        print(f"       {got:>8,}  {name}" + ("" if got else "   <- absent from the bundle"))
-    print(
-        f"       family {total:,} units of {generated:,} = {share:.2f}%  "
-        f"(ceilings {BYTES_CEILING:,} and {SHARE_CEILING:.1f}%)"
-    )
-
-    problems: "list[str]" = []
-
-    missing = sorted(name for name in FAMILY if not family.get(name))
-    if missing:
-        problems.append(
-            "no bytes in the bundle for: " + ", ".join(missing) + " -- renamed, or "
-            "no longer imported. A family member measured as zero makes the share "
-            "smaller for the one reason that is not a smaller harness."
-        )
-
+    share = 100.0 * total / generated
+    print(f"       {len(bundles)} chunks: {disk:,} bytes, {generated:,} units, {unmapped:,} unmapped")
+    print(f"       harness: {total:,} units ({share:.2f}%)")
+    problems = []
     declared = declared_entry_points()
     if declared != ENTRY_POINTS:
-        extra = sorted(declared - ENTRY_POINTS)
-        gone = sorted(ENTRY_POINTS - declared)
-        if extra:
-            problems.append(
-                "App.svelte imports an entry point this check does not count: "
-                + ", ".join(extra)
-            )
-        if gone:
-            problems.append(
-                "counted as an entry point but App.svelte no longer imports it: "
-                + ", ".join(gone)
-            )
-
+        problems.append(f"harness entry inventory differs: extra {sorted(declared - ENTRY_POINTS)}, missing {sorted(ENTRY_POINTS - declared)}")
     borrowed = shared_importers()
     if borrowed:
-        problems.append(
-            "checkreport is counted as harness because only the entry points "
-            "reach it, and it is now imported by: " + ", ".join(borrowed)
-        )
-
-    if total > BYTES_CEILING:
-        problems.append(
-            f"the harness family is {total:,} units, over the {BYTES_CEILING:,} "
-            "ceiling"
-        )
-    if share > SHARE_CEILING:
-        problems.append(
-            f"the harness family is {share:.2f}% of the bundle, over the "
-            f"{SHARE_CEILING:.1f}% ceiling"
-        )
-
+        problems.append("production imports checkreport: " + ", ".join(borrowed))
+    if checks:
+        missing = sorted(name for name in FAMILY if not family.get(name))
+        if missing:
+            problems.append("no bytes in the check build for: " + ", ".join(missing))
+        if total > BYTES_CEILING or share > SHARE_CEILING:
+            problems.append("check harness exceeds its size ceilings")
+    elif total:
+        problems.append("normal build contains optional harness implementation")
     if problems:
-        print(
-            f"[FAIL] {len(problems)} problem(s) with the shipped harness share.\n"
-            "       The harness ships on purpose -- see AGENTS.md and "
-            "docs/RATIONALE.md. What is\n"
-            "       bounded here is its cost basis, which aged unread for a month "
-            "the last time\n"
-            "       it lived in prose. A ceiling firing is a question about whether "
-            "the 2026-08-02\n"
-            "       argument still holds at this size, not a licence to raise the "
-            "number.",
-            file=sys.stderr,
-        )
         for problem in problems:
-            print(f"       {problem}", file=sys.stderr)
+            print(f"[FAIL] {problem}", file=sys.stderr)
         return 1
-
-    print(
-        f"[OK] the shipped harness is {total:,} units, {share:.2f}% of "
-        f"{generated:,} -- under both ceilings."
-    )
+    print("[OK] " + ("check harness present and bounded" if checks else "normal build excludes the check harness"))
     return 0
 
 

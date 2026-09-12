@@ -78,17 +78,12 @@ metadata` structurally cannot see: the C++ libraries compiled into
 libpdfium, enumerated from `vendor/pdfium/licenses/`. All three of its failure
 modes were proved by mutation before it was trusted.
 
-`bundleshare` sits between them, for the first half of the same reason: it reads
-the same sourcemaps and so needs `build` above it, and it goes before `notices`
-because `notices` is the one that must be last. What it bounds is not the
-decision to ship the unattended harness inside the bundle -- that is argued in
-`AGENTS.md` and `docs/RATIONALE.md` -- but the cost basis of that argument, which
-was written against `77.1 kB of a 221.2 kB bundle` and then sat in two documents
-as a bare number while the bundle doubled. It asserts a share and an absolute,
-because either alone is half blind: the share missed a month in which both halves
-grew together, and an absolute alone condemns a bundle that grew for reasons that
-are not the harness. Its five failure modes were each planted before it was
-trusted, the absent-input ones included.
+`bundleshare` reads every emitted JavaScript chunk after the normal build and
+requires zero optional harness implementation. The separate `build:checks`
+profile is for native UI probes; it must never be packaged as a normal release.
+
+`fuzz` builds all targets in the independent fuzz package with its locked graph.
+This catches stale Plan constructors even when the application compiles cleanly.
 
 `traps` is the one gate whose subject is prose, and it is here because prose is
 the only artifact in this repository that nothing mutates. `docs/TRAPS.md` is
@@ -231,6 +226,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a test failed, or Cargo.lock is stale",
         ),
         (
+            "fuzz",
+            ["cargo", "build", "--manifest-path", str(ROOT / "src-tauri" / "fuzz" / "Cargo.toml"), "--locked", "--bins"],
+            "a fuzz target does not build, or its lockfile is stale",
+        ),
+        (
             "bins",
             [
                 "cargo",
@@ -280,8 +280,8 @@ def gates() -> "list[tuple[str, list[str], str]]":
         ),
         (
             "build",
-            [npm(), "run", "build"],
-            "the frontend does not build",
+            [sys.executable, str(ROOT / "scripts" / "build_frontend.py")],
+            "a frontend build profile does not build or loses its checks",
         ),
         (
             "bundleshare",

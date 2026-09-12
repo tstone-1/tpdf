@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   certificateRows,
@@ -852,4 +852,42 @@ describe("a certificate that could not be read", () => {
     // must not collapse; the first is about tpdf, the second about the file.
     expect(row?.value).toContain("present");
   });
+});
+
+
+import { signatureSaveMessage, confirmSignatureSave, SaveCancelled } from "./signedsave";
+describe("digital signature save consent", () => {
+  it("warns for signed documents and every certification permission, including allowed form filling", () => {
+    for (const certification of [0,1,2,3]) {
+      expect(signatureSaveMessage({...blank(),signatures:[{...signed(),certification}]})).toContain("Saving can invalidate");
+    }
+    expect(signatureSaveMessage({...blank(),signatures:[{...signed(),signed:false,certification:2}]})).not.toBeNull();
+    expect(signatureSaveMessage({...blank(),signatures:[{...signed(),signed:false}]})).toBeNull();
+    expect(signatureSaveMessage(blank())).toBeNull();
+  });
+  it("requires consent when signature enumeration is incomplete or fails", async () => {
+    for (const key of ["locked","unreadable","fields_dropped","signatures_dropped","values_clipped"] as const) {
+      const properties = blank(); Object.assign(properties.limits,{[key]:key === "locked" ? true : 1});
+      expect(signatureSaveMessage(properties)).toContain("could not be read completely");
+    }
+    const confirm = vi.fn().mockResolvedValue(false);
+    await expect(confirmSignatureSave(async()=>{throw new Error("worker failed");},confirm)).rejects.toBeInstanceOf(SaveCancelled);
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+  it("continues only on consent and avoids a prompt for known unsigned documents", async () => {
+    const confirm = vi.fn().mockResolvedValue(false);
+    const properties = {...blank(),signatures:[signed()]};
+    await expect(confirmSignatureSave(async()=>properties,confirm)).rejects.toBeInstanceOf(SaveCancelled);
+    confirm.mockResolvedValue(true);
+    await confirmSignatureSave(async()=>properties,confirm);
+    confirm.mockClear(); await confirmSignatureSave(async()=>blank(),confirm);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+});
+
+it("warns on merges even when the open base is unsigned because incoming files may be signed", async () => {
+  const read = vi.fn().mockResolvedValue(blank()), confirm = vi.fn().mockResolvedValue(false);
+  await expect(confirmSignatureSave(read,confirm,true)).rejects.toBeInstanceOf(SaveCancelled);
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("selected files"));
+  expect(read).not.toHaveBeenCalled();
 });

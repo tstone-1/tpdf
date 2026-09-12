@@ -313,6 +313,7 @@ fn whole(pages: u32) -> Plan {
         notes: Vec::new(),
         discards: Vec::new(),
         forms: Vec::new(),
+        text_edits: Vec::new(),
         marks: Vec::new(),
     }
 }

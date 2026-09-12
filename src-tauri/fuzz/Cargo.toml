@@ -35,7 +35,7 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 # The same version the application resolves, so a target that calls
 # `Document::load_mem_with_options` calls the code that ships. MIT.
-lopdf = "0.44"
+lopdf = "0.45"
 
 # The application's own library. Every walker target goes through this rather
 # than through a copy, so what is fuzzed is what runs -- `annots::scan`,
@@ -131,6 +131,13 @@ bench = false
 [[bin]]
 name = "save_rewrite_update"
 path = "fuzz_targets/save_rewrite_update.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "forms_scan"
+path = "fuzz_targets/forms_scan.rs"
 test = false
 doc = false
 bench = false

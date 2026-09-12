@@ -261,6 +261,13 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation("textedit: let print use the original bytes", "src/edits.rs", "pub fn is_identity(&self) -> bool {", "pub fn is_identity(&self) -> bool {\n        if !self.text_edits.is_empty() { return true; }", "textedit_reaches_save_copy_print_and_forbids_append"),
+    Mutation("textedit: allow mixed edits to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() {", "textedit_reaches_save_copy_print_and_forbids_append"),
+    Mutation("textedit: accept a partially parsed content stream", "src/textedit.rs", "Content::decode_strict(&bytes)", "Content::decode(&bytes)", "textedit_rejects_partial_or_undecodable_content"),
+    Mutation("textedit: omit the writer call", "src/save.rs", "    crate::textedit::write(&mut doc, &plan.text_edits)?;", "    // text replacement omitted", "textedit_reaches_save_copy_print_and_forbids_append"),
+    Mutation("textedit: keep unreachable old content", "src/save.rs", "        || !plan.text_edits.is_empty()", "        || false", "textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans"),
+    Mutation("textedit: accept a stale content revision", "src/textedit.rs", "change.revision != runs.revision || change.original != run.text", "change.original != run.text", "textedit_rejects_invalid_batches_without_mutating_the_document"),
+
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
     Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),
     Mutation("choices: ignore the selected radio sibling", "src/forms.rs", "                            selected == index || (*unison && states[*selected] == states[*index])", "                            selected == index || (!*unison && states[*selected] != states[*index])", "choices_and_radio_round_trip_exports_indices_and_appearances"),
@@ -6918,8 +6925,8 @@ MUTATIONS += [
         # the defect `redact-apply-probe` found by grepping pixels.
         "image: leave the unlinked picture for the writer to emit",
         "src/save.rs",
-        "        || redacted.images > 0\n        || discarded > 0\n    {\n        crate::sweep::collect(&mut doc)?;",
-        "        || discarded > 0\n    {\n        crate::sweep::collect(&mut doc)?;",
+        "        || redacted.images > 0\n        || discarded > 0\n        || !plan.text_edits.is_empty()\n    {\n        crate::sweep::collect(&mut doc)?;",
+        "        || discarded > 0\n        || !plan.text_edits.is_empty()\n    {\n        crate::sweep::collect(&mut doc)?;",
         "a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file",
     ),
     Mutation(

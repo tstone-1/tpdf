@@ -242,6 +242,14 @@ fn samples() -> BTreeMap<&'static str, String> {
         },
     );
 
+    put(
+        "Image",
+        &crate::signature::Image {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 20, 30, 255],
+        },
+    );
     put("Form", &{
         let text = crate::forms::Widget {
             object: (12, 0),

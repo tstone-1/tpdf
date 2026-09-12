@@ -199,7 +199,7 @@ export class Edits {
    * The day a session carries edits, this stops being true for one frame and
    * `refresh` corrects it. That is why it is a seed rather than a rule.
    */
-  constructor(doc: number, pages = 0) {
+  constructor(doc: number, pages = 0, private readonly beforeWrite: (merging?: boolean) => Promise<void> = async () => {}) {
     this.doc = doc;
     this.current =
       pages > 0
@@ -703,6 +703,7 @@ export class Edits {
    * closed whatever became of the file. See `lib.rs`'s `SaveFailure`.
    */
   async save(source: string): Promise<void> {
+    await this.beforeWrite();
     await call("save_document", { doc: this.doc, source });
   }
 
@@ -715,6 +716,7 @@ export class Edits {
    * on disk, which it does not.
    */
   async saveCopy(source: string, path: string): Promise<Copied> {
+    await this.beforeWrite();
     return await call("save_copy", { doc: this.doc, source, path });
   }
 
@@ -731,6 +733,7 @@ export class Edits {
    * `verified` cannot be false without a reason beside it.
    */
   async redactCopy(source: string, path: string): Promise<Applied> {
+    await this.beforeWrite();
     return await call("redact_copy", { doc: this.doc, source, path });
   }
 
@@ -742,6 +745,7 @@ export class Edits {
    * interactive document objects: each output page is made only from pixels.
    */
   async redactRasterCopy(source: string, path: string): Promise<Applied> {
+    await this.beforeWrite();
     return await call("redact_raster_copy", { doc: this.doc, source, path });
   }
 
@@ -763,6 +767,7 @@ export class Edits {
    * The answer is never a bare success, for {@link redactCopy}'s reason.
    */
   async redactDocument(source: string): Promise<Applied> {
+    await this.beforeWrite();
     return await call("redact_document", { doc: this.doc, source });
   }
 
@@ -783,6 +788,7 @@ export class Edits {
     path: string,
     slots: number[],
   ): Promise<Copied> {
+    await this.beforeWrite();
     return await call("extract_pages", {
       doc: this.doc,
       source,
@@ -813,6 +819,7 @@ export class Edits {
     path: string,
     groups: number[][],
   ): Promise<Split> {
+    await this.beforeWrite();
     return await call("split_document", {
       doc: this.doc,
       source,
@@ -838,6 +845,7 @@ export class Edits {
     path: string,
     others: string[],
   ): Promise<Merged> {
+    await this.beforeWrite(true);
     return await call("merge_documents", {
       doc: this.doc,
       source,

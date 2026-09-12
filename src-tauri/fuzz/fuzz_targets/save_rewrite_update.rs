@@ -73,6 +73,7 @@ struct RawPlan {
     notes: Vec<RawNote>,
     discards: Vec<RawDiscard>,
     redactions: Vec<RawRedaction>,
+    forms: Vec<RawForm>,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -112,6 +113,7 @@ fn turns_of(raw: u8) -> u8 {
 #[derive(Arbitrary, Debug)]
 struct RawMark {
     kind: u8,
+    image: Option<RawImage>,
     at: u8,
     quads: Vec<[f32; 4]>,
     strokes: Vec<Vec<(f32, f32)>>,
@@ -122,6 +124,49 @@ struct RawMark {
     author: String,
     note: String,
     made: String,
+}
+
+#[derive(Arbitrary, Debug)]
+struct RawForm {
+    object: u16,
+    value: RawValue,
+}
+
+#[derive(Arbitrary, Debug)]
+enum RawValue {
+    Text(String),
+    Checked(bool),
+    Selection(Vec<u8>),
+}
+
+#[derive(Arbitrary, Debug)]
+struct RawImage {
+    width: u16,
+    height: u16,
+    complete: bool,
+    rgba: Vec<u8>,
+}
+
+fn image_of(raw: RawImage) -> tpdf_lib::signature::Image {
+    // Half the inputs make small complete rasters, so valid signature writing
+    // is reachable as well as the dimension/length refusal paths.
+    let (width, height) = if raw.complete {
+        (
+            u32::from(raw.width % 32 + 1),
+            u32::from(raw.height % 32 + 1),
+        )
+    } else {
+        (u32::from(raw.width), u32::from(raw.height))
+    };
+    let mut rgba: Vec<u8> = raw.rgba.into_iter().take(32 * 32 * 4).collect();
+    if raw.complete {
+        rgba.resize((width * height * 4) as usize, 255);
+    }
+    tpdf_lib::signature::Image {
+        width,
+        height,
+        rgba,
+    }
 }
 
 #[derive(Arbitrary, Debug)]
@@ -149,11 +194,11 @@ struct RawRedaction {
     form_text_objects: Vec<(u16, u16)>,
 }
 
-/// The ten kinds, in declaration order. A `u8` chooses one by remainder, so
+/// All mark kinds, in declaration order. A `u8` chooses one by remainder, so
 /// every value of the byte selects a kind and none is wasted on a refusal that
 /// would never reach the writer.
 fn kind_of(raw: u8) -> MarkKind {
-    match raw % 10 {
+    match raw % 11 {
         0 => MarkKind::Highlight,
         1 => MarkKind::Underline,
         2 => MarkKind::StrikeOut,
@@ -163,7 +208,8 @@ fn kind_of(raw: u8) -> MarkKind {
         6 => MarkKind::Ellipse,
         7 => MarkKind::TextBox,
         8 => MarkKind::Ink,
-        _ => MarkKind::Stamp,
+        9 => MarkKind::Stamp,
+        _ => MarkKind::Signature,
     }
 }
 
@@ -193,6 +239,22 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
         }
     };
     let plan = Plan {
+        text_edits: Vec::new(),
+        forms: raw
+            .forms
+            .into_iter()
+            .take(128)
+            .map(|form| tpdf_lib::forms::Change {
+                object: (u32::from(form.object), 0),
+                value: match form.value {
+                    RawValue::Text(text) => tpdf_lib::forms::Value::Text(text),
+                    RawValue::Checked(checked) => tpdf_lib::forms::Value::Checked(checked),
+                    RawValue::Selection(indices) => tpdf_lib::forms::Value::Selection(
+                        indices.into_iter().take(64).map(usize::from).collect(),
+                    ),
+                },
+            })
+            .collect(),
         baseline: u32::from(raw.baseline),
         // Never anything else, and that is a property rather than a
         // simplification: `Plan::opened_as` is `#[serde(skip)]` precisely so a
@@ -217,6 +279,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
             .into_iter()
             .map(|mark| PlannedMark {
                 kind: kind_of(mark.kind),
+                image: mark.image.map(|image| std::sync::Arc::new(image_of(image))),
                 at: u32::from(mark.at),
                 quads: mark
                     .quads

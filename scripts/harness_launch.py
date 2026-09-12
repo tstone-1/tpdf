@@ -169,6 +169,9 @@ def report(out: str, code: int, phase: "str | None" = None,
         return False
 
     passed, total = int(summary.group(1)), int(summary.group(2))
+    if total == 0:
+        print(f"[FAIL] {label}no checks ran")
+        return False
     green = passed == total
     if green != (code == 0):
         print(f"[FAIL] {label}summary says {passed}/{total} but exit was {code}")
