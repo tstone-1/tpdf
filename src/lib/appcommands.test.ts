@@ -37,7 +37,7 @@ import { PAGE_SIZE_NAMES } from "./pagesizes";
  */
 function harness(
   hasDocument = true,
-  update: { available?: boolean; ready?: boolean } = {},
+  update: { available?: boolean; ready?: boolean; automatic?: boolean } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
   markOpen = false,
@@ -65,6 +65,7 @@ function harness(
   busyDocument = false,
 ) {
   const fired: string[] = [];
+  let automatic = update.automatic ?? true;
   const actions: AppActions = {
     editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); },
     fillForm: () => { fired.push("fillForm"); },
@@ -101,6 +102,8 @@ function harness(
     toggleInvert: () => fired.push("toggleInvert"),
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
+    automaticUpdates: () => automatic,
+    setAutomaticUpdates: (enabled) => { automatic = enabled; fired.push(`setAutomaticUpdates:${enabled}`); },
     applyUpdate: () => fired.push("applyUpdate"),
     // Default false, so a test that says nothing about updates exercises the
     // state a launch actually starts in rather than the convenient one.
@@ -308,6 +311,22 @@ describe("Reload from disk", () => {
  * they encode a distinction a single "is there an update" flag would lose.
  */
 describe("the update commands", () => {
+  it("offers only the applicable preference change and keeps manual checking available", () => {
+    for (const automatic of [true, false]) {
+      const { registry, fired } = harness(false, { automatic });
+      const available = automatic ? "app.disableAutomaticUpdates" : "app.enableAutomaticUpdates";
+      const unavailable = automatic ? "app.enableAutomaticUpdates" : "app.disableAutomaticUpdates";
+      expect(registry.run(unavailable)).toBe(false);
+      expect(fired).toEqual([]);
+      expect(registry.run(available)).toBe(true);
+      expect(fired).toEqual([`setAutomaticUpdates:${!automatic}`]);
+      expect(registry.run(available)).toBe(false);
+      expect(registry.run(unavailable)).toBe(true);
+      expect(registry.run("app.checkForUpdates")).toBe(true);
+      expect(fired.at(-1)).toBe("checkForUpdates");
+    }
+  });
+
   it("checks for updates, reaching that action and no other", () => {
     const { registry, fired } = harness();
     expect(registry.run("app.checkForUpdates")).toBe(true);
@@ -382,7 +401,7 @@ describe("the commands a document is needed for", () => {
     // the one looking at an empty window because a document would not open.
     const { registry } = harness(false);
     const offered = registry.search("").map((ranked) => ranked.command.id);
-    expect(offered).toEqual(["file.open", "app.about", "app.checkForUpdates"]);
+    expect(offered).toEqual(["file.open", "app.about", "app.checkForUpdates", "app.disableAutomaticUpdates"]);
   });
 
   it("offers the rest once one is open", () => {
@@ -1123,6 +1142,8 @@ describe("the window shortcuts for editing", () => {
       toggleInvert: () => fired.push("toggleInvert"),
       about: () => fired.push("about"),
       checkForUpdates: () => fired.push("checkForUpdates"),
+      automaticUpdates: () => true,
+      setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
       applyUpdate: () => fired.push("applyUpdate"),
       updateAvailable: () => false,
       updateReady: () => false,

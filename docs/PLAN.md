@@ -24,6 +24,10 @@ image dimensions are bounded before decoding, and normal builds exclude the nati
 check harness. Windows confidentiality containment, macOS kernel memory limits and
 independent user validation remain open; none is closed by these safeguards.
 
+Unreleased: automatic update checks can be disabled from the tpdf menu on macOS or the command
+palette. The choice persists on this device; manual checking remains available.
+Unreadable preferences skip the launch check.
+
 The assurance changes are implemented. Verification on 2026-09-12 includes
 both frontend build profiles, the regular Rust/frontend gates (with the initial
 IPC sample/order and event-handler findings corrected), 15 targeted frontend
@@ -4374,9 +4378,12 @@ not claims about editing arbitrary documents.
 
 ### Worker text replacement — started 2026-09-12
 
-`textedit.rs` discovers and rewrites a conservative first grammar: pages made of
-isolated `BT Tf (Tm|Td) Tj ET` blocks, with standard Helvetica, explicit
-WinAnsiEncoding and printable ASCII. It reports the original operator address,
+`textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
+explicit WinAnsiEncoding and printable ASCII. It accepts font/leading setup across
+text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
+page transform and single-Flate filter array. Each `Tj` must have positioning
+independent of the previous show's advance; adjacent implicit-advance shows and
+other graphics/text operators remain refused. It reports the original operator address,
 text, font resource, size, text matrix and advance. Discovery uses the worker's
 shared document graph through `Request::TextRuns`. Unsupported content returns
 a reason. The toolbar and command palette expose **Edit existing text** on the current

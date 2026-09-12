@@ -122,6 +122,8 @@ export interface AppActions {
   about(): void;
   /** Ask the update endpoint whether there is a newer tpdf. */
   checkForUpdates(): void;
+  automaticUpdates(): boolean;
+  setAutomaticUpdates(enabled: boolean): void;
   /** Download and apply the update the last check found. */
   applyUpdate(): void;
   /**
@@ -541,6 +543,18 @@ export function registerAppCommands(
       id: "app.checkForUpdates",
       title: "Check for updates",
       run: () => actions.checkForUpdates(),
+    },
+    {
+      id: "app.disableAutomaticUpdates",
+      title: "Disable automatic update checks",
+      enabled: () => actions.automaticUpdates(),
+      run: () => actions.setAutomaticUpdates(false),
+    },
+    {
+      id: "app.enableAutomaticUpdates",
+      title: "Enable automatic update checks",
+      enabled: () => !actions.automaticUpdates(),
+      run: () => actions.setAutomaticUpdates(true),
     },
     {
       // Two guards rather than one, because "there is an update" and "it is

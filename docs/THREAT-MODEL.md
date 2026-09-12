@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- nine of which write files on its behalf (§T6.1), drives the updater's one request per launch (§T9), can ask for a document web link to be opened (§T8), and reads signature images explicitly selected through its file input (§T6.17) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands --- nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), and reads signature images explicitly selected through its file input (§T6.17) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** --- on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -1828,7 +1828,7 @@ second network authority — the distinction is worth stating rather than blurri
 opens no socket for them: `opener.rs` hands the address to `NSWorkspace openURL:` or
 `ShellExecuteW`, and the request is made by the reader's browser, in the browser's own
 process, with the browser's own sandbox and cookie jar. So this section's inventory of what
-*this application* speaks to is unchanged — one endpoint, one request per launch — and
+*this application* speaks to is unchanged — one endpoint, at most one automatic check per launch — and
 what changed is that tpdf can now cause a request somewhere else. The three things bounding
 that are in §T8: the scheme allowlist, the per-link confirmation, and the token that keeps a
 caller to addresses the document already held.
@@ -1850,9 +1850,13 @@ caller to addresses the document already held.
   *published* release. Draft releases are invisible to it, so the human act of publishing is
   what offers an update to anybody, and a failed release run offers nothing.
 - **Nothing is fetched unasked beyond the check itself, and nothing is applied unasked.**
-  One `check()` per launch, issued after every spike and check entry point has returned, so
-  every harness in this repository still runs entirely offline. Downloading and applying
-  require the reader to click. `update.ts` carries why this is not silent.
+  By default, `checkOnLaunch()` checks once. The tpdf menu on macOS and command palette can
+  disable it across launches; manual checking remains available. A missing preference
+  keeps the default, while an unreadable or malformed preference skips the check.
+  Changing this setting starts no request and cannot cancel one already running.
+  The preference is one non-sensitive boolean in WebView localStorage, independent
+  of the reading-session file. Downloading and applying require the reader to click.
+  `update.ts` carries why this is not silent.
 - **A failed check is reported and forgotten.** Nothing retries, so an endpoint that is
   hostile, slow or absent cannot turn into a loop that keeps dialling out.
 

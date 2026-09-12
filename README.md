@@ -49,8 +49,10 @@ including the connection's IP address and request metadata, to GitHub. Downloadi
 and installing an update requires a click. GitHub's handling of those requests is
 covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
 Links in PDFs open in the browser only after confirmation, where the destination's
-privacy policy applies. The current app has no setting to disable the automatic
-update check; it remains usable offline.
+privacy policy applies. **Unreleased:** use **Disable automatic update checks** in
+the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
+**Check for updates** remains available. A check already started may finish.
+<!-- built: app.disableAutomaticUpdates app.enableAutomaticUpdates -->
 
 ## What the viewer does today
 
@@ -367,8 +369,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Apply previews the actual PDF rendering;
-save writes it. Unsupported pages are refused. Text edits support undo and redo
-and must be saved before marking redactions.
+save writes it. The unreleased editor supports simple Helvetica/ASCII text,
+including separate lines and multiline text blocks produced by ReportLab with
+Flate compression. Replacements must fit the original width. Unsupported pages
+are refused. Text edits support undo and redo and must be saved before marking
+redactions.
 <!-- built: edit.editText -->
 
 ## Not built yet

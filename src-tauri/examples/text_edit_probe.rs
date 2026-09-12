@@ -1,4 +1,5 @@
-//! Run `cargo run --example text-edit-probe -- <scratch-directory>`.
+//! Run `cargo run --example text-edit-probe -- <scratch-directory> [fixture.pdf]`.
+//! The optional fixture must contain the same two synthetic lines and page geometry.
 //! Creates synthetic PDFs only. The example re-execs as its contained worker.
 
 use std::{fs::File, path::PathBuf};
@@ -54,7 +55,11 @@ fn run() -> Result<(), String> {
     let target = dir.join("synthetic-after.pdf");
     // A failed run must not leave a previous run's success for PDFKit to read.
     let mut out = File::create(&target).map_err(|e| e.to_string())?;
-    fixture().save(&source).map_err(|e| e.to_string())?;
+    if let Some(input) = std::env::args().nth(2) {
+        std::fs::copy(input, &source).map_err(|e| e.to_string())?;
+    } else {
+        fixture().save(&source).map_err(|e| e.to_string())?;
+    }
     let library = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../vendor/pdfium")
         .join(tpdf_lib::PDFIUM_SUBDIR);
@@ -62,7 +67,7 @@ fn run() -> Result<(), String> {
     let mapped = runs(&mut worker)?;
     if mapped.runs.len() != 2
         || mapped.runs[0].text != "SYNTHETIC FIRST"
-        || mapped.runs[0].operator != 3
+        || mapped.runs[1].text != "SYNTHETIC SECOND"
     {
         return Err("worker discovered incorrect text runs".into());
     }
@@ -83,7 +88,7 @@ fn run() -> Result<(), String> {
         text_edits: vec![textedit::Change {
             page: 0,
             revision: mapped.revision,
-            operator: 3,
+            operator: mapped.runs[0].operator,
             original: mapped.runs[0].text.clone(),
             replacement: "EDITED FIRST".into(),
         }],
