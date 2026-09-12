@@ -14,7 +14,7 @@ comment on it, move what you put there, erase any of it, rewrite, answer or dele
 somebody else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and
-general text editing is the one that matters. A first editor supports simple Helvetica
+general text editing is the one that matters. An unreleased first editor supports simple Helvetica
 text runs with printable English characters and replacements within the original width.
 Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page.

@@ -4887,7 +4887,7 @@ The manual `SignPath onboarding samples` workflow builds the normal executable,
 MSI and NSIS on `windows-2025`, checks the production frontend excludes the harness,
 and records the source commit, executable metadata and SHA-256 digests. It uploads
 separate executable and installer artifacts without release or signing credentials.
-After committing the workflow to the default branch, run:
+Run the workflow manually from the default branch:
 
 ```sh
 gh workflow run signpath-onboarding.yml --ref main
@@ -4895,7 +4895,11 @@ gh run list --workflow signpath-onboarding.yml --limit 5
 ```
 
 Use a commit whose regular CI is green. These are onboarding samples, not a
-release verification. The workflow has not yet been run on GitHub.
+release verification. The first hosted run at `20d2e7a` passed on 2026-09-12:
+[SignPath onboarding samples](https://github.com/tstone-1/tpdf/actions/runs/34704069850).
+Both artifacts were downloaded and all three binaries matched the recorded SHA-256
+digests, source commit and product version. Artifacts are retained for 14 days;
+rerun the workflow if SignPath needs a fresh sample. No signing request was made.
 `.signpath/tpdf-exe-v1.xml` proposes a narrowly scoped executable configuration
 for the first signing test: only `tpdf.exe`, product `tpdf`, with a required
 version parameter. Validate it in SignPath and register it as `tpdf-exe-v1`.
