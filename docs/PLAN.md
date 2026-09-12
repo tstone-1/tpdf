@@ -17,7 +17,7 @@ appearances; drawn or imported signature images can be placed, moved and resized
 choose a supported text run, apply a replacement, preview it through PDFium, undo/redo
 and save. The supported grammar and remaining work live in §7.
 
-**Current priority: verify the first text editor on Windows, then broaden supported text.** The immediate
+**Current priority: validate text-editing coverage on independent documents before broadening supported text.** The immediate
 assurance changes shipped in 26.9.6: CI builds every fuzz target, signed-document
 writes require consent, signature images have explicit limits and protected storage,
 image dimensions are bounded before decoding, and normal builds exclude the native
@@ -4345,11 +4345,11 @@ On Windows the example binary ends in `.exe`; the generated HTML can be opened
 for the browser check, but the WebKit/PDFKit result above is macOS-only. The Python
 probe accepts no arbitrary input PDF and is not imported by the application.
 
-**Next implementation:** connect the worker's supported runs and the edit journal
-to the application command, selection overlay and worker-rendered preview before
-exposing text editing in the UI. A browser cmap alone cannot supply PDF character
-codes. The earlier spike's ordinal correspondence is a fixture shortcut; the
-worker implementation below addresses content operators directly.
+The application command, selection overlay and worker-rendered preview are now
+connected for the strict grammar below. Future embedded-font support still needs
+PDF character codes; a browser cmap alone cannot supply them. The earlier spike's
+ordinal correspondence is a fixture shortcut, while the worker implementation
+addresses content operators directly.
 
 The edit journal now retains immutable replacement versions, supports undo/redo
 across snapshots, and drops abandoned redo bodies. It keeps original page identities
@@ -4358,7 +4358,6 @@ Restoring the original text clears the pending replacement. History is limited t
 512 retained bodies and 128 active operands; text edits and redactions refuse each
 other before entering the journal. Eight focused tests include a real rewrite after
 page movement and extraction; five targeted mutations prove the principal guards.
-The application command, selection overlay and worker-rendered preview remain next.
 
 System-font matching, font repair, subset extension, complex shaping and reflow
 remain unimplemented. The raster-preview fallback is a design decision, not a
@@ -4426,8 +4425,13 @@ commit across tabs, displayed pixels, selected text, search, undo/redo, refusal
 and save/reopen. PDFKit independently read the UI-saved result and found 2,394
 changed pixels inside the edited line and zero outside. Three targeted frontend
 mutations were caught. A short instrumented `textedit_scan` run executed 34,074
-inputs without a finding. Windows all-target cross-clippy passes; Windows runtime
-verification of this new workflow remains open.
+inputs without a finding. Windows all-target cross-clippy passes.
+
+Windows x64 verification on 2026-09-12 at `20d2e7a` passed the focused Rust tests,
+worker preview/save probe and all 15 native application checks. The external
+worker-exit observer passed and no test process remained. PDFKit independently
+read the Windows UI-saved PDF: the replacement and untouched second block matched,
+with 2,394 changed pixels inside the edited line and zero outside.
 
 ---
 
