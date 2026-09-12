@@ -117,7 +117,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1 + a changelog commit)
         with:
-          workspaces: src-tauri
+          # The fuzz package has its own workspace and build directory.
+          workspaces: |
+            src-tauri
+            src-tauri/fuzz
 
       - name: Install JS deps
         run: npm ci
@@ -416,14 +419,16 @@ jobs:
           the network either — with search, selection, an outline, thumbnails,
           session restore and printing.
 
-          **New in this release.** Fill PDF text fields, checkboxes, radio groups,
-          dropdowns and lists. Answers support undo/redo, stay with their document
-          tab, and are saved with explicit appearances for other PDF readers.
-          Draw a visual signature or import a PNG/JPEG, then place, move or resize
-          it on the page. Optionally remember it on this device for reuse, or
-          forget it from the signature dialog. Visual signatures do not provide
-          certificate-based signing. Document properties are now available from
-          the toolbar menu. Compatible dependencies are updated.
+          **New in this release.** An assurance update for forms, signature
+          images and worker cleanup. Saving signed or certified PDFs now asks
+          for confirmation before a rewrite can invalidate their signatures.
+          Signature placement is explicitly labelled as an image, remembered
+          pixels use macOS Keychain or Windows DPAPI, and PNG/JPEG dimensions
+          are bounded before decoding. Normal builds exclude the native-check
+          harness. CI builds every fuzz target, including coverage for forms
+          and signature images. Windows workers join their cleanup job during
+          process creation, closing a race that could leave suspended workers
+          behind after application exit.
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag

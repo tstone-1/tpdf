@@ -62,6 +62,10 @@ import sys
 import time
 from pathlib import Path
 
+from mac_check_app import MacCheckApp
+
+APP: MacCheckApp
+
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "src-tauri/target/release/bundle/macos/tpdf.app"
 MENUBAR_TS = ROOT / "src/lib/menubar.ts"
@@ -94,12 +98,12 @@ AFTER_FIX = [
 #: Apple menu is `menu bar item 1` and is the platform's alone, so the scan
 #: starts at 2.
 SCRIPT = """
-tell application "System Events" to tell process "tpdf"
+tell application "System Events" to tell {process}
     set out to ""
     set n to count of menu bar items of menu bar 1
     repeat with i from 2 to n
-        set mbi to menu bar item i of menu bar 1
-        set out to out & (name of mbi)
+        set menuName to name of menu bar item i of menu bar 1
+        set out to out & menuName
         try
             -- The list is materialised before it is walked. `repeat with x in
             -- (name of every menu item of ...)` iterates a REFERENCE into the
@@ -109,7 +113,7 @@ tell application "System Events" to tell process "tpdf"
             -- every menu in the bar as having no items. An instrument failure
             -- wearing the shape of a finding, and the reason the empty-menu
             -- check above is a failure rather than a skip.
-            set nms to name of every menu item of menu 1 of mbi
+            set nms to name of every menu item of menu 1 of menu bar item i of menu bar 1
             repeat with k from 1 to count of nms
                 set v to item k of nms
                 -- A separator's name is `missing value`, and coercing that to
@@ -154,7 +158,7 @@ def declared_menus() -> list[str]:
 def read_menus() -> list[list[str]]:
     """The live bar, or an exit with the reason it could not be read."""
     done = subprocess.run(
-        ["osascript", "-e", SCRIPT], capture_output=True, text=True, timeout=60
+        ["osascript", "-e", SCRIPT.replace("{process}", APP.process)], capture_output=True, text=True, timeout=60
     )
     if done.returncode != 0:
         why = done.stderr.strip()
@@ -198,6 +202,8 @@ def check(menus: list[list[str]]) -> int:
     if not declared:
         print("[FAIL] no menu titles could be read out of menubar.ts")
         return 2
+    # macOS names the application menu after the bundle, including test bundles.
+    declared[0] = APP.name
     # Window is not `menubar.ts`'s and never appears there: `menu.rs` appends it
     # last and predefined throughout, because every item in it belongs to the
     # window manager rather than to the application. It is named here rather
@@ -256,7 +262,9 @@ def main() -> int:
         print(f"[FAIL] no bundle at {app} --- npm run tauri build -- --bundles app")
         return 2
 
-    subprocess.run(["open", str(app.resolve())], check=True)
+    global APP
+    APP = MacCheckApp(app)
+    APP.start()
     # The menu is set by the frontend once it has loaded, so the wait is for the
     # webview rather than for the process. Polled rather than slept through, so
     # a slow machine costs nothing and a broken launch fails on the last try
@@ -264,7 +272,7 @@ def main() -> int:
     for _ in range(20):
         time.sleep(1)
         done = subprocess.run(
-            ["osascript", "-e", 'tell application "System Events" to tell process "tpdf" '
+            ["osascript", "-e", f'tell application "System Events" to tell {APP.process} '
              'to count of menu bar items of menu bar 1'],
             capture_output=True, text=True,
         )
@@ -274,8 +282,7 @@ def main() -> int:
     try:
         return check(read_menus())
     finally:
-        subprocess.run(["osascript", "-e", 'tell application "tpdf" to quit'],
-                       capture_output=True, text=True)
+        APP.quit()
 
 
 if __name__ == "__main__":

@@ -54,8 +54,26 @@ tests with three ignored. Five consecutive form runs, plus tabs,
 signatures and both signed-save choices, passed with no surviving test workers
 across nine application exits. The external worker-exit observer runs after each
 native tab/form/signature/save-consent check; its live/dead/path controls also run
-in Windows CI and release validation. Hosted CI and installed-artifact smoke testing
-remain before release.
+in Windows CI and release validation. Hosted CI passed on macOS and Windows at
+`0dbe66c`. Normal MSI and NSIS packages with an isolated test identity also passed
+installation, payload-digest checks, PDF rendering, worker exit and uninstallation.
+The development PDFium was hidden during those runs; hiding the packaged engine
+as well produced the expected refusal. The existing installation and its three
+registry exports were unchanged afterwards.
+
+The 26.9.6 production NSIS upgrade was then tested over the installed 26.9.5.
+The installed version changed, the executable matched the new build, and all six
+observed worker parser mappings used the current packaged PDFium with the development
+engine hidden. The PDF rendered and no worker survived exit. Reinstalling the official
+26.9.5 package restored the original executable and all three registry exports byte
+for byte. An older root-level PDFium DLL remained from a previous installation;
+the upgraded application loaded the current DLL in its `pdfium` subdirectory.
+Local release checks passed all 24 gates, the Windows cross-check, 15 frontend
+and six Rust mutations, and the macOS normal-bundle menu/save checks. The separate
+checks bundle passed 313 text-heavy and 218 vector-heavy viewer checks. Windows
+printing passed all 10 checks; the current OCR corpus results are recorded in BUILD.md.
+The next step is to publish the assurance release after its release checks,
+then resume the text-editing UI work in §7.
 
 
 

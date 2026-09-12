@@ -5434,9 +5434,12 @@ starts at 0 and increments within the month.
    regex required. One mutation of 322 reported `no summary line -- the run did not finish`
    for a mutation its test had caught. Fixed, and proved on five summary shapes.
 
-8. `npm run tauri build` and smoke-test the bundle, then `scripts/viewer_check.py` against
-   it on both `testdata/text-heavy.pdf` and `testdata/vector-heavy.pdf`. On Windows also run
-   `print-probe` (§8), which is the only check that reaches a real spooler.
+8. `npm run tauri build` and smoke-test the normal bundle externally, including opening
+   and rendering a PDF with the development engine hidden. Normal bundles exclude the
+   in-app harness, so `scripts/viewer_check.py` must instead use a separate checks build
+   (commands at the top of this file), against both `testdata/text-heavy.pdf` and
+   `testdata/vector-heavy.pdf`. Keep the normal-bundle and checks-build results separate.
+   On Windows also run `print-probe` (§8), which is the only check that reaches a real spooler.
 
    **One more on Windows, and it blocks the tag rather than decorating it.** This step is
    where a Windows-only mechanism gets exercised, and it lives here rather than in a step of
@@ -5480,6 +5483,12 @@ starts at 0 and increments within the month.
    No arithmetic warnings were reported. This is the current local corpus, not a
    controlled comparison with the earlier run.
 
+   **Windows x64, 26.9.6 release check, 2026-09-12:** 133 documents opened, none
+   refused; 11,728 regions sampled, 8,062 taken whole (68.7%). The gate read back
+   7,556 regions on 260 pages: zero still read as text, 3,337 were shown unreadable,
+   and 4,219 remained unverified. The sweep took 29.2 seconds; no arithmetic
+   warnings were reported. The same build passed all 10 real-spooler print checks.
+
    **The state line stays, because the debt is now a different one.** The run separates
    nothing: the two corpora share no document, so a more permissive engine and a corpus of
    cleaner type explain the Windows figures equally well, and §6 records that as open.
@@ -5502,20 +5511,20 @@ starts at 0 and increments within the month.
    no runner can hold it, as with the sweep above.
 
    On macOS also `scripts/menu_check.py` and `scripts/save_check.py` against the bundle.
-   **They do not take the same arguments, and naming them in one breath is what made this
-   worth writing down.** `save_check.py` takes the **binary** and a document, like
-   `viewer_check.py`; `menu_check.py` takes the **`.app`** and no document at all --- the menu
-   is built before anything is opened, and it launches the app with `open` deliberately, so
-   that it reads a bar built by a process with no stdout rather than one a harness supplied.
-   Handed a binary and a PDF it fails with *"tpdf is not running, so there is no menu to
-   read"*, which reads as an application that would not start:
+   **Both take a `.app` bundle.** `save_check.py` also takes a document;
+   `menu_check.py` takes no document. Both launch through `open`, so the application
+   starts through LaunchServices without a stdout supplied by the harness. Pass the
+   bundle directory, not its executable:
 
    ```
    python3 scripts/menu_check.py --self-test    # the duplicate rule, both directions
    python3 scripts/menu_check.py                # the release bundle at the default path
-   python3 scripts/save_check.py src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf \
+   python3 scripts/save_check.py src-tauri/target/release/bundle/macos/tpdf.app \
        "$PWD/testdata/text-heavy.pdf"
    ```
+
+   Both probes refuse an already running bundle identifier and target only the PID they
+   launched. Use a separately identified test bundle when the installed app is open.
 
    Run the `--self-test` first. It replays the application menu as measured before and after
    the duplicate `About tpdf` was removed, so it shows the rule calling one a defect and the

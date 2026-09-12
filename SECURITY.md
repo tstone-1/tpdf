@@ -46,6 +46,8 @@ you do not need to have diagnosed it.
   answer, by design, and is not a vulnerability.
 - Document JavaScript or launch actions executing. Both are disabled by default.
 - Memory-safety defects in our own Rust reachable from document content.
+- Bypassing image-import bounds, protected signature-image storage, or the consent
+  required before writes that can invalidate a document's digital signatures.
 
 **Out of scope**
 
