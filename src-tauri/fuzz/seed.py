@@ -256,7 +256,7 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
     return pdf_objects(objects)
 
 
-def editable_symbolic(clipped: bool = False) -> bytes:
+def editable_symbolic(clipped: bool = False, tagged: bool = False) -> bytes:
     """Remap two synthetic glyphs through PDF bytes 1/2 and a ToUnicode map."""
     font = bytearray((ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes())
     font[:4] = b"true"
@@ -274,10 +274,12 @@ def editable_symbolic(clipped: bool = False) -> bytes:
     content = b"BT /F1 12 Tf 40 180 Td [<01> 10 <02>] TJ ET"
     if clipped:
         content = b"0.1 w q 0 0 300 240 re W* n " + content + b" Q"
+    if tagged:
+        content = b"/P << /MCID 0 >> BDC " + content + b" EMC"
     mapping = b"/CIDInit/ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <01> <0041> <02> <0042> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"
     def stream(data):
         return b"<< /Length " + str(len(data)).encode() + b" >>\nstream\n" + bytes(data) + b"\nendstream"
-    return pdf_objects({
+    objects = {
         1: b"<< /Type /Catalog /Pages 2 0 R >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
@@ -285,7 +287,17 @@ def editable_symbolic(clipped: bool = False) -> bytes:
         5: stream(content),
         6: b"<< /Type /FontDescriptor /FontName /TPDFSynthetic /Flags 4 /FontBBox [0 0 400 700] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 100 /FontFile2 7 0 R >>",
         7: stream(font), 8: stream(mapping),
-    })
+    }
+    if tagged:
+        objects[1] = b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 9 0 R >>"
+        objects[3] = objects[3][:-2] + b" /StructParents 0 >>"
+        objects.update({
+            9: b"<< /Type /StructTreeRoot /K [10 0 R] /ParentTree 12 0 R >>",
+            10: b"<< /Type /StructElem /S /Document /P 9 0 R /Pg 3 0 R /K [11 0 R] >>",
+            11: b"<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K [0] >>",
+            12: b"<< /Nums [0 [11 0 R]] >>",
+        })
+    return pdf_objects(objects)
 
 
 def corpora() -> dict[str, list[tuple[str, bytes]]]:
@@ -301,7 +313,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),
