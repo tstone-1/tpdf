@@ -1,8 +1,8 @@
-//! A bounded single-page Document/P tree, preserved rather than regenerated.
+//! A bounded multi-page Document/P tree, preserved rather than regenerated.
 //! Reject semantic overrides and layout attributes that a shorter edit could stale.
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(test)]
 mod tests;
@@ -49,12 +49,17 @@ fn integer(value: &Object) -> Result<i64, String> {
     value.as_i64().map_err(|_| INVALID.into())
 }
 
-fn element(dict: &Dictionary, parent: ObjectId, page: ObjectId) -> Result<(), String> {
+fn element(
+    dict: &Dictionary,
+    parent: ObjectId,
+    pages: &BTreeSet<ObjectId>,
+) -> Result<ObjectId, String> {
     // In particular: no ActualText, Alt, E, title, class, or attribute revision.
     keys(dict, &[b"Type", b"S", b"P", b"Pg", b"K", b"A"])?;
+    let page = reference(get(dict, b"Pg")?)?;
     if name(get(dict, b"Type")?)? != b"StructElem"
         || reference(get(dict, b"P")?)? != parent
-        || reference(get(dict, b"Pg")?)? != page
+        || !pages.contains(&page)
     {
         return Err(INVALID.into());
     }
@@ -67,7 +72,7 @@ fn element(dict: &Dictionary, parent: ObjectId, page: ObjectId) -> Result<(), St
             return Err(INVALID.into());
         }
     }
-    Ok(())
+    Ok(page)
 }
 
 #[derive(Default)]
@@ -80,7 +85,7 @@ pub(super) struct Tags {
 }
 
 impl Tags {
-    pub(super) fn read(doc: &Document, page: ObjectId, pages: usize) -> Result<Self, String> {
+    pub(super) fn read(doc: &Document, page: ObjectId, pages: &[ObjectId]) -> Result<Self, String> {
         let catalog = doc.catalog().map_err(|_| INVALID)?;
         let page_dict = node(doc, page)?;
         let Ok(root) = catalog.get(b"StructTreeRoot") else {
@@ -90,7 +95,11 @@ impl Tags {
             return Ok(Self::default());
         };
         // No recursive graph walk: this first grammar has exactly two levels.
-        if pages != 1 || page_dict.has(b"StructParent") {
+        if pages.is_empty() || pages.len() > MAX_PARAGRAPHS {
+            return Err(INVALID.into());
+        }
+        let page_ids: BTreeSet<_> = pages.iter().copied().collect();
+        if page_ids.len() != pages.len() || !page_ids.contains(&page) {
             return Err(INVALID.into());
         }
         let root_id = reference(root)?;
@@ -122,38 +131,63 @@ impl Tags {
         };
         let document_id = reference(document)?;
         let document = node(doc, document_id)?;
-        element(document, root_id, page)?;
+        element(document, root_id, &page_ids)?;
         if name(get(document, b"S")?)? != b"Document" {
             return Err(INVALID.into());
         }
         let children = array(get(document, b"K")?)?;
-        if children.is_empty() || children.len() > MAX_PARAGRAPHS {
+        if children.is_empty() {
             return Err(INVALID.into());
         }
         // ISO 32000-1 14.7.4.4: StructParents indexes the number tree; the MCID
         // indexes its array. Require both directions to agree, not just /K.
         let parent = node(doc, reference(get(root, b"ParentTree")?)?)?;
         keys(parent, &[b"Nums"])?;
-        let [key, entries] = array(get(parent, b"Nums")?)? else {
-            return Err(INVALID.into());
-        };
-        let key = integer(key)?;
-        if !(0..=1_000_000).contains(&key) || integer(get(page_dict, b"StructParents")?)? != key {
+        let nums = array(get(parent, b"Nums")?)?;
+        if nums.len() != pages.len() * 2 {
             return Err(INVALID.into());
         }
-        let entries = array(entries)?;
-        if entries.len() != children.len() {
+        let mut page_keys = BTreeMap::new();
+        for &id in pages {
+            let dict = node(doc, id)?;
+            let key = integer(get(dict, b"StructParents")?)?;
+            if dict.has(b"StructParent")
+                || !(0..=1_000_000).contains(&key)
+                || page_keys.insert(key, id).is_some()
+            {
+                return Err(INVALID.into());
+            }
+        }
+        let mut by_page = BTreeMap::new();
+        let mut previous = -1;
+        let mut total = 0;
+        for pair in nums.chunks_exact(2) {
+            let key = integer(&pair[0])?;
+            if key <= previous {
+                return Err(INVALID.into());
+            }
+            previous = key;
+            let owner = page_keys.remove(&key).ok_or(INVALID)?;
+            let entries = array(&pair[1])?;
+            total += entries.len();
+            if entries.is_empty() || total > MAX_PARAGRAPHS {
+                return Err(INVALID.into());
+            }
+            by_page.insert(owner, (entries, vec![Vec::new(); entries.len()]));
+        }
+        if total != children.len() || !page_keys.is_empty() {
             return Err(INVALID.into());
         }
-        let mut names = vec![Vec::new(); children.len()];
-        let mut ids = BTreeSet::from([root_id, document_id, page]);
+        let mut ids = page_ids.clone();
+        ids.extend([root_id, document_id]);
         for child in children {
             let id = reference(child)?;
             if !ids.insert(id) {
                 return Err(INVALID.into());
             }
             let child = node(doc, id)?;
-            element(child, document_id, page)?;
+            let owner = element(child, document_id, &page_ids)?;
+            let (entries, names) = by_page.get_mut(&owner).ok_or(INVALID)?;
             let tag = name(get(child, b"S")?)?;
             if tag != b"P"
                 && roles
@@ -172,6 +206,7 @@ impl Tags {
             }
             names[mcid] = tag.to_vec();
         }
+        let (_, names) = by_page.remove(&page).ok_or(INVALID)?;
         Ok(Self {
             names,
             ..Self::default()

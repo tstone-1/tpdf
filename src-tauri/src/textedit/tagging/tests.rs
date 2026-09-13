@@ -3,6 +3,212 @@ use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 const CONTENT: &[u8] = b"/Artifact BMC q EMC /Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC Q";
 
+fn multipage() -> (Document, [ObjectId; 9]) {
+    let (mut doc, ids) = fixture(CONTENT);
+    let page = doc.add_object(doc.objects[&ids[0]].clone());
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("StructParents", 7);
+    let mut extra = Vec::new();
+    for old in [ids[3], ids[4]] {
+        let id = doc.add_object(doc.objects[&old].clone());
+        doc.get_dictionary_mut(id).unwrap().set("Pg", page);
+        extra.push(id);
+    }
+    let pages = doc
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    doc.get_dictionary_mut(pages).unwrap().set(
+        "Kids",
+        vec![Object::Reference(ids[0]), Object::Reference(page)],
+    );
+    doc.get_dictionary_mut(pages).unwrap().set("Count", 2);
+    // Deliberately interleaved reading order, nonconsecutive page keys, reused
+    // MCIDs, and a shared content stream. None of these may retarget an edit.
+    doc.get_dictionary_mut(ids[2]).unwrap().set(
+        "K",
+        vec![
+            Object::Reference(ids[3]),
+            Object::Reference(extra[0]),
+            Object::Reference(ids[4]),
+            Object::Reference(extra[1]),
+        ],
+    );
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            Object::Integer(0),
+            Object::Array(vec![ids[3].into(), ids[4].into()]),
+            Object::Integer(7),
+            Object::Array(extra.iter().copied().map(Object::Reference).collect()),
+        ],
+    );
+    (
+        doc,
+        [
+            ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], page, extra[0], extra[1],
+        ],
+    )
+}
+
+#[test]
+fn textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated() {
+    for page in [0, 1] {
+        let (mut doc, ids) = multipage();
+        let before = textedit::scan(&doc, page).unwrap();
+        let other = textedit::scan(&doc, 1 - page).unwrap();
+        let objects = doc.objects.clone();
+        let edit = Change {
+            page,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        textedit::write(&mut doc, &[edit]).unwrap();
+        assert_eq!(textedit::scan(&doc, page).unwrap().runs[0].text, "IN");
+        assert_eq!(textedit::scan(&doc, 1 - page).unwrap().runs, other.runs);
+        let changed_page = if page == 0 { ids[0] } else { ids[6] };
+        for (id, object) in objects {
+            if id != changed_page {
+                assert_eq!(doc.objects[&id], object);
+            }
+        }
+    }
+    // Identical names and MCIDs alone cannot detect returning the first page's
+    // map for every request. Give page two a different valid paragraph tag.
+    let (mut doc, ids) = multipage();
+    for id in [ids[7], ids[8]] {
+        doc.get_dictionary_mut(id).unwrap().set("S", "P");
+    }
+    let content = std::str::from_utf8(CONTENT)
+        .unwrap()
+        .replace("/Standard", "/P");
+    let stream = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+    doc.get_dictionary_mut(ids[6])
+        .unwrap()
+        .set("Contents", stream);
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs.len(), 2);
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
+}
+
+#[test]
+fn textedit_tagged_multi_page_batches_validate_before_writing() {
+    let (mut doc, ids) = multipage();
+    let edits = [0, 1].map(|page| {
+        let before = textedit::scan(&doc, page).unwrap();
+        Change {
+            page,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: if page == 0 { "IN".into() } else { "IS".into() },
+        }
+    });
+    let original = doc.objects.clone();
+    let mut bad = edits.clone();
+    bad[1].replacement = "S".repeat(80);
+    assert!(textedit::write(&mut doc, &bad).is_err());
+    assert_eq!(doc.objects, original);
+    textedit::write(&mut doc, &edits).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs[0].text, "IS");
+    for id in [ids[1], ids[2], ids[3], ids[4], ids[5], ids[7], ids[8]] {
+        assert_eq!(doc.objects[&id], original[&id]);
+    }
+}
+
+#[test]
+fn textedit_tagged_multi_page_parent_keys_and_owners_must_agree() {
+    for mode in 0..11 {
+        let (mut doc, ids) = multipage();
+        match mode {
+            0 => doc
+                .get_dictionary_mut(ids[6])
+                .unwrap()
+                .set("StructParents", 0),
+            1 => doc
+                .get_dictionary_mut(ids[6])
+                .unwrap()
+                .set("StructParents", 9),
+            2 => doc.get_dictionary_mut(ids[7]).unwrap().set("Pg", ids[0]),
+            3 => doc
+                .get_dictionary_mut(ids[7])
+                .unwrap()
+                .set("ActualText", Object::string_literal("STALE")),
+            4 => doc.get_dictionary_mut(ids[5]).unwrap().set(
+                "Nums",
+                vec![
+                    Object::Integer(7),
+                    Object::Array(vec![ids[7].into(), ids[8].into()]),
+                    Object::Integer(0),
+                    Object::Array(vec![ids[3].into(), ids[4].into()]),
+                ],
+            ),
+            5 => doc.get_dictionary_mut(ids[5]).unwrap().set(
+                "Nums",
+                vec![
+                    Object::Integer(0),
+                    Object::Array(vec![ids[3].into(), ids[4].into()]),
+                ],
+            ),
+            6 => doc.get_dictionary_mut(ids[5]).unwrap().set(
+                "Nums",
+                vec![
+                    Object::Integer(0),
+                    Object::Array(vec![ids[3].into(), ids[4].into()]),
+                    Object::Integer(7),
+                    Object::Array(vec![ids[3].into(), ids[4].into()]),
+                ],
+            ),
+            7 => doc
+                .get_dictionary_mut(ids[6])
+                .unwrap()
+                .set("StructParent", 7),
+            8 => doc
+                .get_dictionary_mut(ids[7])
+                .unwrap()
+                .set("K", vec![Object::Integer(2)]),
+            9 => {
+                doc.get_dictionary_mut(ids[5])
+                    .unwrap()
+                    .get_mut(b"Nums")
+                    .unwrap()
+                    .as_array_mut()
+                    .unwrap()
+                    .push(Object::Integer(99));
+            }
+            10 => {
+                let nums = doc
+                    .get_dictionary_mut(ids[5])
+                    .unwrap()
+                    .get_mut(b"Nums")
+                    .unwrap()
+                    .as_array_mut()
+                    .unwrap();
+                nums[3]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(Object::Reference(ids[7]));
+            }
+            _ => unreachable!(),
+        }
+        for page in [0, 1] {
+            assert!(
+                textedit::scan(&doc, page).is_err(),
+                "accepted mode {mode}, page {page}"
+            );
+        }
+    }
+    let (mut doc, ids) = multipage();
+    doc.get_dictionary_mut(ids[2]).unwrap().set("Pg", ids[6]);
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
+}
+
 fn fixture(content: &[u8]) -> (Document, [ObjectId; 6]) {
     let (mut doc, _, _, _) = textedit::fonts::tests::fixture();
     let page = crate::pagetree::ordered_pages(&doc)[0];

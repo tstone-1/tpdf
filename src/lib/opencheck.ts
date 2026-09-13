@@ -133,13 +133,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       break;
     }
     case "textedit":
+    case "textedit-multipage":
     case "textedit-latin1": {
+      const page = phase === "textedit-multipage" ? 1 : 0;
       const original = phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
       const replacement = phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
       await host.open(first); await host.idle();
+      host.viewer()!.goToPage(page); await host.idle();
       const originalTab = host.tabs().find((tab) => tab.path === first)!;
       const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
       const start = async () => {
@@ -148,7 +151,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         document.querySelector<HTMLButtonElement>(".text-edit-run")!.click();
         if (!await settle(() => !!field() && document.activeElement === field(), 3000)) throw new Error("text input did not receive focus");
       };
-      const read = async () => String.fromCodePoint(...(await call("page_text", { doc: host.edits()!.doc, page: filePage(0), crop: null })).codes);
+      const read = async (index = page) => String.fromCodePoint(...(await call("page_text", { doc: host.edits()!.doc, page: filePage(index), crop: null })).codes);
+      if (page === 1) check("both source pages have their original text", (await read(0)).includes(original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original);
       const hit = document.querySelector<HTMLElement>(".text-edit-run")!.getBoundingClientRect();
@@ -166,7 +170,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
         if (!canvas || !context) throw new Error("text check needs a readable composited surface");
-        const a = viewer.screenPoint(0, 35, 40), b = viewer.screenPoint(0, 250, 70), dpr = devicePixelRatio;
+        const a = viewer.screenPoint(page, 35, 40), b = viewer.screenPoint(page, 250, 70), dpr = devicePixelRatio;
         const left = Math.round(a.x*dpr), top = Math.round(a.y*dpr);
         const width = Math.round((b.x-a.x)*dpr), height = Math.round((b.y-a.y)*dpr);
         if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error("text pixel sample is off screen");
@@ -174,13 +178,17 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         if (!data.some((value, index) => index % 4 === 0 && value < 100)) throw new Error("text pixel sample contains no ink");
         return data;
       };
+      if (page === 1) {
+        check("the edit belongs to the second page", host.edits()!.state.text_edits?.[0]?.page === 1);
+        check("editing page two preserves page one before saving", (await read(0)).includes(original) && !(await read(0)).includes(replacement));
+      }
       const editedPixels = await pixels();
       host.viewer()!.selectPage();
       if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
       check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
       const edited = await read();
       check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes("SYNTHETIC SECOND"));
-      const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(0), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
+      const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(page), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
       check("unsaved search finds the replacement", matches.matches.length === 1);
       host.run("edit.undo"); await host.idle();
       check("undo restores source text", (await read()).includes(original) && !host.edits()!.state.dirty);
@@ -203,6 +211,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       host.run("file.save"); await host.idle();
       if (!await settle(() => !host.edits()?.state.dirty, SETTLE_MS)) throw new Error("text save did not finish");
       check("saved and reopened text matches the unsaved revision", (await read()).includes(replacement));
+      if (page === 1) check("saving page two preserves page one", (await read(0)).includes(original) && !(await read(0)).includes(replacement));
       await host.activate(otherTab.id); await host.idle();
       check("saving did not change the other document", (await read()).includes(original) && !host.edits()!.state.dirty);
       break;

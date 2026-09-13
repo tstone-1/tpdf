@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after):
+def check(before, after, page_index=0):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject
@@ -31,9 +31,14 @@ def check(before, after):
         return obj
 
     readers = [PdfReader(path) for path in (before, after)]
-    assert all(len(reader.pages) == 1 for reader in readers), "wrong page count"
-    pages = [reader.pages[0] for reader in readers]
-    assert value(pages[0]["/Resources"]) == value(pages[1]["/Resources"]), "page resources changed"
+    count = len(readers[0].pages)
+    assert 0 <= page_index < count <= 128 and len(readers[1].pages) == count, "wrong page count"
+    for index, (old_page, new_page) in enumerate(zip(readers[0].pages, readers[1].pages)):
+        assert value(old_page["/Resources"]) == value(new_page["/Resources"]), "page resources changed"
+        if index != page_index:
+            assert old_page.get_contents().get_data() == new_page.get_contents().get_data(), "untouched page content changed"
+            assert old_page.extract_text() == new_page.extract_text(), "untouched page text changed"
+    pages = [reader.pages[page_index] for reader in readers]
     if "/StructTreeRoot" in readers[0].trailer["/Root"]:
         # Structure is cyclic through /P and references the page. Compare its
         # entire graph, independent of object renumbering, with the page as an
@@ -42,13 +47,13 @@ def check(before, after):
 
         def structure(reader):
             identities, nodes = {}, []
-            page_ref = reader.pages[0].indirect_reference
+            page_refs = {(p.indirect_reference.idnum, p.indirect_reference.generation): index for index, p in enumerate(reader.pages)}
 
             def visit(obj):
                 if isinstance(obj, IndirectObject):
-                    if obj == page_ref:
-                        return ("page", 0)
                     identity = (obj.idnum, obj.generation)
+                    if identity in page_refs:
+                        return ("page", page_refs[identity])
                     if identity in identities:
                         return ("ref", identities[identity])
                     index = identities[identity] = len(nodes)
@@ -66,7 +71,7 @@ def check(before, after):
             assert "/StructTreeRoot" in root, "tagged structure disappeared"
             top = visit(root.raw_get("/StructTreeRoot"))
             mark_info = value(root["/MarkInfo"]) if "/MarkInfo" in root else None
-            return (top, nodes, reader.pages[0].get("/StructParents"), mark_info)
+            return (top, nodes, [p.get("/StructParents") for p in reader.pages], mark_info)
 
         assert structure(readers[0]) == structure(readers[1]), "tagged structure or parent references changed"
         print("[PASS] independent parser: complete tagged structure graph and page parent key preserved")
@@ -107,17 +112,20 @@ def check(before, after):
     print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
 
 
-def tagged_controls(before, after):
+def tagged_controls(before, after, page_index=0):
     """Prove nonvisual structure corruption fails the independent readback."""
     import contextlib
     import io
     import tempfile
     from pypdf import PdfWriter
-    from pypdf.generic import NameObject, NumberObject, TextStringObject
+    from pypdf.generic import DecodedStreamObject, NameObject, NumberObject, TextStringObject
 
-    check(before, after)
+    check(before, after, page_index)
     with tempfile.TemporaryDirectory(prefix="tpdf-tagged-controls-") as room:
-        for mode in ("root", "parent", "mcid", "alternate", "page_key"):
+        modes = ["root", "parent", "mcid", "alternate", "page_key"]
+        if len(PdfWriter(clone_from=after).pages) > 1:
+            modes += ["page_owner", "other_page"]
+        for mode in modes:
             writer = PdfWriter(clone_from=after)
             root = writer.root_object["/StructTreeRoot"]
             paragraph = root["/K"][0].get_object()["/K"][0].get_object()
@@ -129,26 +137,40 @@ def tagged_controls(before, after):
                 paragraph["/K"][0] = NumberObject(1)
             elif mode == "alternate":
                 paragraph[NameObject("/ActualText")] = TextStringObject("STALE SYNTHETIC TEXT")
-            else:
+            elif mode == "page_key":
                 writer.pages[0][NameObject("/StructParents")] = NumberObject(1)
+            elif mode == "page_owner":
+                owner = writer.pages[1].indirect_reference
+                paragraph = next(p.get_object() for p in root["/K"][0].get_object()["/K"]
+                                 if p.get_object().raw_get("/Pg") == owner)
+                paragraph[NameObject("/Pg")] = writer.pages[0].indirect_reference
+            else:
+                other = writer.pages[1 - page_index]
+                stream = DecodedStreamObject()
+                stream.set_data(other.get_contents().get_data() + b"\n% changed untouched page\n")
+                other[NameObject("/Contents")] = writer._add_object(stream)
             target = Path(room) / (mode + ".pdf")
             writer.write(target)
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    check(before, target)
+                    check(before, target, page_index)
             except AssertionError as error:
-                assert "tagged structure" in str(error), str(error)
+                expected = "untouched page content" if mode == "other_page" else "tagged structure"
+                assert expected in str(error), str(error)
             else:
                 raise AssertionError("structure control survived: " + mode)
             print("[PASS] independent structure control:", mode)
 
 
 def main():
-    if len(sys.argv) == 4 and sys.argv[1] == "--check":
-        check(*sys.argv[2:])
-        return
-    if len(sys.argv) == 4 and sys.argv[1] == "--tagged-controls":
-        tagged_controls(*sys.argv[2:])
+    if len(sys.argv) in (4, 5) and sys.argv[1] in ("--check", "--tagged-controls"):
+        page = 0
+        if len(sys.argv) == 5:
+            if not sys.argv[4].startswith("--page="):
+                raise SystemExit("expected --page=N (zero based)")
+            page = int(sys.argv[4].split("=", 1)[1])
+        action = check if sys.argv[1] == "--check" else tagged_controls
+        action(*sys.argv[2:4], page)
         return
     if len(sys.argv) != 1:
         raise SystemExit("expected no arguments, --check or --tagged-controls before.pdf after.pdf")

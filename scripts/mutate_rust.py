@@ -261,14 +261,20 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
-    Mutation('tagged: omit paragraph count limit', 'src/textedit/tagging.rs', 'children.len() > MAX_PARAGRAPHS', 'children.len() > MAX_PARAGRAPHS + 1', 'textedit_tagged_limits_have_valid_boundary_controls'),
+    Mutation('tagged pages: select the first page map', 'src/textedit/tagging.rs', 'by_page.remove(&page).ok_or(INVALID)?', 'by_page.remove(&pages[0]).ok_or(INVALID)?', 'textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated'),
+    Mutation('tagged pages: bind paragraphs to the requested page', 'src/textedit/tagging.rs', 'by_page.get_mut(&owner).ok_or(INVALID)?', 'by_page.get_mut(&page).ok_or(INVALID)?', 'textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated'),
+    Mutation('tagged pages: accept unsorted number tree', 'src/textedit/tagging.rs', 'if key <= previous {', 'if false {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
+    Mutation('tagged pages: ignore trailing number tree key', 'src/textedit/tagging.rs', 'if nums.len() != pages.len() * 2 {', 'if false {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
+    Mutation('tagged pages: ignore unclaimed parent entries', 'src/textedit/tagging.rs', 'if total != children.len() || !page_keys.is_empty() {', 'if !page_keys.is_empty() {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
+
+    Mutation('tagged: omit paragraph count limit', 'src/textedit/tagging.rs', 'total > MAX_PARAGRAPHS', 'total > MAX_PARAGRAPHS + 1', 'textedit_tagged_limits_have_valid_boundary_controls'),
     Mutation('tagged: ignore semantic dictionary fields', 'src/textedit/tagging.rs', 'if dict\n        .iter()\n        .any(|(key, _)| !allowed.contains(&key.as_slice()))\n    {', 'if false {', 'textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes'),
     Mutation('tagged: ignore parent element reference', 'src/textedit/tagging.rs', '|| reference(get(dict, b"P")?)? != parent', '|| false', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
     Mutation('tagged: ignore reverse parent tree reference', 'src/textedit/tagging.rs', '|| reference(&entries[mcid])? != id', '|| false', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
     Mutation('tagged: allow text in artifacts', 'src/textedit/tagging.rs', 'if !self.names.is_empty() && !matches!(self.active, Some(Some(_))) {', 'if false {', 'textedit_tagged_requires_balanced_unique_markers_and_paragraph_text'),
     Mutation('tagged: omit marker completeness call', 'src/textedit.rs', 'tags.finish()?;', '// finish omitted', 'textedit_tagged_requires_balanced_unique_markers_and_paragraph_text'),
     Mutation('tagged: allow repeated marked content id', 'src/textedit/tagging.rs', '|| !self.seen.insert(mcid)', '|| { self.seen.insert(mcid); false }', 'textedit_tagged_requires_balanced_unique_markers_and_paragraph_text'),
-    Mutation('tagged: ignore page parent key', 'src/textedit/tagging.rs', '|| integer(get(page_dict, b"StructParents")?)? != key', '|| false', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
+    Mutation('tagged: ignore page parent key', 'src/textedit/tagging.rs', 'integer(get(dict, b"StructParents")?)?', '0', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
 
     Mutation('clip: omit text containment call', 'src/textedit.rs', 'clipping::contains(clip, bounds)?;', '// containment omitted', 'textedit_clip_intersections_contain_every_side_of_text'),
     Mutation('clip: discard saved clip', 'src/textedit.rs', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                ));', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    None,\n                ));', 'textedit_clip_transform_is_fixed_at_creation_and_restored_by_q'),
