@@ -253,7 +253,7 @@ fn array_text(
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
             }
-            let fragment = decode_text(bytes)?;
+            let fragment = metrics.decode(bytes)?;
             advance += metrics.advance(&fragment, size)?;
             if advance < furthest {
                 return Err("backtracking kerning text is not editable yet".into());
@@ -419,7 +419,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 size,
             )?
         } else {
-            let text = decode_text(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
+            let text = metrics.decode(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
             let advance = metrics.advance(&text, size)?;
             (text, advance)
         };
@@ -487,7 +487,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if !seen.insert((change.page, change.operator)) {
             return Err("duplicate text replacement".into());
         }
-        let replacement = encode_text(&change.replacement)?;
+        encode_text(&change.replacement)?;
         if change.original == change.replacement {
             return Err("text replacement is unchanged".into());
         }
@@ -520,6 +520,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if metrics.advance(&change.replacement, run.size)? > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
+        let replacement = metrics.encode(&change.replacement)?;
         let show = &mut content.operations[change.operator as usize];
         let replacement = Object::string_literal(replacement);
         show.operands[0] = if show.operator == "TJ" {

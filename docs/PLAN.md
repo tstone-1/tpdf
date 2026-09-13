@@ -4388,10 +4388,11 @@ fixtures, not every PDF from the producer. Reproduction and verification records
 are in `BUILD.md`, *Quartz/CoreText text-edit round trip*.
 
 **Next compatibility milestone: the untagged LibreOffice export.** Its measured
-remaining exclusions are clipping and custom character codes/ToUnicode; tagged
-exports additionally carry structure metadata. Start by validating the custom
-mapping against the embedded font, then handle the measured page clip without
-accepting arbitrary clipping. Retain explicit positioning between shows and require
+remaining exclusions are its page clip and unused line-width setting; tagged
+exports additionally carry structure metadata. Its symbolic character mapping now
+passes a worker round trip in an explicitly modified control with those graphics
+operators removed. The original export remains refused. Next handle the measured
+page clip without accepting arbitrary clipping. Retain explicit positioning between shows and require
 the unchanged producer output to pass end to end with zero changed pixels outside
 the edited line. The baseline exports and read-only inspection mode are in
 `BUILD.md`, *Independent text producer survey*.
@@ -4406,11 +4407,20 @@ font program remains byte-identical. Programs are bounded to 1 MiB decoded and
 2 MiB encoded, with at most 32 fonts per page and eight cmap subtables per font.
 WinAnsi requires a Windows Unicode map; MacRoman requires a Macintosh Roman map,
 with all accepted maps agreeing on offered ASCII glyphs. Format-6 glyph zero is
-treated as missing. Apple `true` programs with MacRoman may omit the optional
+treated as missing. A symbolic font with no `/Encoding` may instead use one
+Macintosh cmap and a strict single-byte `ToUnicode` map. This path separates glyph
+codes from Unicode text and re-encodes replacements into the existing font codes.
+It accepts the measured standard CMap wrapper, one full-byte code space, and
+`bfchar` blocks of up to 100 entries, with a 16 KiB decoded stream limit. Mappings
+must be one-to-one printable ASCII: duplicate codes/Unicode values, inheritance,
+ranges, multibyte codes, ligatures and extra CMap operators are refused. The map
+states text semantics; the embedded cmap selects glyphs, whose widths and outlines
+must still validate. No font program or mapping is rewritten.
+Apple `true` programs on the MacRoman or symbolic path may omit the optional
 `OS/2` table; present permissions flags are still enforced, and OpenType-style
-programs still require that table. Missing glyphs, custom ToUnicode/encoding,
-other legacy mappings, overhanging
-outlines, variable/colour fonts and non-editable embedding permissions are refused.
+programs still require that table. Missing glyphs, other custom mappings,
+overhanging outlines, variable/colour fonts and non-editable embedding permissions
+are refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array).

@@ -39,15 +39,34 @@ def check(before, after):
     changes = [(old, new) for old, new in zip(*operations) if old != new]
     assert len(changes) == 1, "expected exactly one changed operand"
     old, new = changes[0]
+    assert old[1] == new[1] and old[1] in (b"Tj", b"TJ"), "text-show operator changed"
+    assert len(old[0]) == len(new[0]) == 1, "wrong text-show operand count"
     if old[1] == b"TJ":
-        assert len(old[0]) == 1 and isinstance(old[0][0], list), "wrong source array"
-        parts = old[0][0]
-        assert all(isinstance(part, (str, int, float)) for part in parts), "invalid array item"
-        assert "".join(part for part in parts if isinstance(part, str)) == "SYNTHETIC FIRST", "wrong source text"
-        assert new == ([["EDITED FIRST"]], b"TJ"), "wrong replacement array"
+        assert isinstance(old[0][0], list), "wrong source array"
+        assert isinstance(new[0][0], list) and len(new[0][0]) == 1, "wrong replacement array"
+        assert isinstance(new[0][0][0], (str, bytes)), "replacement array contains an adjustment"
     else:
-        assert old == (["SYNTHETIC FIRST"], b"Tj"), "wrong source operand"
-        assert new == (["EDITED FIRST"], b"Tj"), "wrong replacement operand"
+        assert isinstance(new[0][0], (str, bytes)), "wrong replacement operand"
+    fonts = list(pages[0]["/Resources"]["/Font"].values())
+    symbolic = [font.get_object() for font in fonts
+                if "/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object()]
+    if symbolic:
+        assert len(fonts) == len(symbolic) == 1, "symbolic readback requires a single fixture font"
+        # extract_text() deliberately falls back to identity for unmapped codes.
+        # Read pypdf's parsed map explicitly so fallback cannot pass this check.
+        from pypdf._cmap import get_encoding
+        _, mapping = get_encoding(symbolic[0])
+        assert mapping and all(isinstance(k, str) and len(k) == len(v) == 1 for k, v in mapping.items()), "unexpected fixture map"
+        for operation, expected in [(old, "SYNTHETIC FIRST"), (new, "EDITED FIRST")]:
+            parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
+            raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
+                           for part in parts if isinstance(part, (str, bytes)))
+            assert all(chr(code) in mapping for code in raw), "unmapped symbolic code"
+            assert "".join(mapping[chr(code)] for code in raw) == expected, "wrong mapped operand"
+    # Let the independent parser apply the font's encoding and ToUnicode map.
+    # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
+    for page, first in zip(pages, ("SYNTHETIC FIRST", "EDITED FIRST")):
+        assert " ".join(page.extract_text().split()) == first + " SYNTHETIC SECOND", "wrong decoded text"
     print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
 
 

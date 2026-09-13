@@ -261,6 +261,16 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('mapped: write Unicode instead of font codes', 'src/textedit.rs', 'let replacement = metrics.encode(&change.replacement)?;', 'let replacement = encode_text(&change.replacement)?;', 'textedit_symbolic_codes_round_trip_without_changing_font_resources'),
+    Mutation('mapped: decode bytes without font mapping', 'src/textedit/fonts.rs', 'codes[code as usize]', 'Some(code)', 'textedit_symbolic_codes_round_trip_without_changing_font_resources'),
+    Mutation('mapped: permit competing font cmaps', 'src/textedit/fonts.rs', 'if custom && cmap.subtables.len() != 1 {', 'if false {', 'textedit_symbolic_codes_require_unambiguous_glyph_selection_and_widths'),
+    Mutation('mapped: omit text length bound', 'src/textedit/fonts.rs', 'if bytes.len() > super::MAX_TEXT {', 'if false {', 'textedit_symbolic_codes_refuse_unmapped_and_oversized_runs'),
+    Mutation('mapped: permit duplicate Unicode values', 'src/textedit/fonts/mapping.rs', '|| unicode[*ch as usize]', '|| false', 'textedit_mapping_refuses_ambiguous_partial_and_extended_data'),
+    Mutation('mapped: permit duplicate source codes', 'src/textedit/fonts/mapping.rs', '|| result[*code as usize].is_some()', '|| false', 'textedit_mapping_refuses_ambiguous_partial_and_extended_data'),
+    Mutation('mapped: ignore declared entry count', 'src/textedit/fonts/mapping.rs', '|| block[1].operands.len() != *count as usize * 2', '|| false', 'textedit_mapping_refuses_ambiguous_partial_and_extended_data'),
+    Mutation('mapped: ignore wrapper operands', 'src/textedit/fonts/mapping.rs', '|| actual.operands != expected.operands', '|| false', 'textedit_mapping_refuses_ambiguous_partial_and_extended_data'),
+    Mutation('mapped: raise decoding bound', 'src/textedit/fonts/mapping.rs', 'super::filters::decode(stream, MAX_MAP)?', 'super::filters::decode(stream, MAX_MAP * 2)?', 'textedit_mapping_bounds_plain_and_compressed_streams'),
+
     Mutation("textedit: offer notdef as a MacRoman glyph", "src/textedit/fonts.rs", "if glyph.0 == 0 {", "if false {", "textedit_macroman_format6_preserves_font_and_refuses_notdef"),
     Mutation("textedit: omit required OpenType permissions table", "src/textedit/fonts.rs", "} else if !apple_true {", "} else if false {", "textedit_macroman_requires_matching_encoding_and_honours_present_rights"),
     Mutation("textedit: ignore present font permissions", "src/textedit/fonts.rs", "if rights & !0x108 != 0 {", "if false {", "textedit_macroman_requires_matching_encoding_and_honours_present_rights"),

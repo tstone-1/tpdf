@@ -430,3 +430,205 @@ fn textedit_embedded_requires_unicode_cmaps_to_agree() {
         .unwrap_err()
         .contains("character mapping"));
 }
+
+fn custom_fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
+    let (mut doc, font, program) = mac_fixture(true);
+    let face = Face::parse(SYNTHETIC, 0).unwrap();
+    let alphabet = b"SYNTHEIC FR ODAB";
+    let mut alphabet = alphabet.to_vec();
+    // Unique byte -> glyph mapping, deliberately different from Unicode.
+    let mut seen = std::collections::BTreeSet::new();
+    alphabet.retain(|byte| seen.insert(*byte));
+    let mut cmap = vec![0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 12, 0, 0, 1, 6, 0, 0];
+    cmap.extend([0; 256]);
+    let mut mappings = String::new();
+    for (i, byte) in alphabet.iter().enumerate() {
+        cmap[18 + i + 1] = face.glyph_index(char::from(*byte)).unwrap().0 as u8;
+        mappings.push_str(&format!("<{:02X}> <{:04X}>\n", i + 1, byte));
+    }
+    let bytes = &mut doc
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content;
+    let offset = bytes.len() as u32;
+    let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
+    for record in bytes[12..12 + 16 * count].chunks_exact_mut(16) {
+        if &record[..4] == b"cmap" {
+            record[8..12].copy_from_slice(&offset.to_be_bytes());
+            record[12..16].copy_from_slice(&(cmap.len() as u32).to_be_bytes());
+        }
+    }
+    bytes.extend(cmap);
+    let map = format!("/CIDInit/ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange {} beginbfchar\n{mappings}endbfchar endcmap CMapName currentdict /CMap defineresource pop end end", alphabet.len());
+    let map = doc.add_object(Stream::new(Dictionary::new(), map.into_bytes()));
+    let descriptor = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"FontDescriptor")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    doc.get_dictionary_mut(descriptor).unwrap().set("Flags", 4);
+    let f = doc.get_dictionary_mut(font).unwrap();
+    f.remove(b"Encoding");
+    f.set("ToUnicode", map);
+    f.set("FirstChar", 0);
+    f.set("LastChar", alphabet.len() as i64);
+    let mut widths = vec![Object::Integer(600); alphabet.len() + 1];
+    widths[0] = Object::Integer(0);
+    f.set("Widths", widths);
+    for page in crate::pagetree::ordered_pages(&doc) {
+        let mut content =
+            lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+        for op in &mut content.operations {
+            if op.operator == "Tj" {
+                let bytes = op.operands[0]
+                    .as_str()
+                    .unwrap()
+                    .iter()
+                    .map(|b| (alphabet.iter().position(|v| v == b).unwrap() + 1) as u8)
+                    .collect::<Vec<_>>();
+                op.operands[0] = Object::string_literal(bytes);
+            }
+        }
+        let id = doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+        doc.get_dictionary_mut(page).unwrap().set("Contents", id);
+    }
+    (doc, font, program)
+}
+
+#[test]
+fn textedit_symbolic_codes_round_trip_without_changing_font_resources() {
+    let (mut doc, font, program) = custom_fixture();
+    let before = doc.objects.clone();
+    let runs = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(runs.runs[0].text, "SYNTHETIC FIRST");
+    let update = change(&doc, "EDITED FIRST");
+    textedit::write(&mut doc, &[update]).unwrap();
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap().runs[0].text,
+        "EDITED FIRST"
+    );
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[1], runs.runs[1]);
+    assert_eq!(doc.objects[&font], before[&font]);
+    assert_eq!(doc.objects[&program], before[&program]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let ops = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    // Not ASCII: the first three codes are E, D, I in this synthetic mapping.
+    let show = &ops.operations[runs.runs[0].operator as usize];
+    assert_eq!(&show.operands[0].as_str().unwrap()[..3], &[6, 13, 7]);
+    for absent in ["Z", "ä", "!"] {
+        let state = doc.objects.clone();
+        let edit = change(&doc, absent);
+        assert!(textedit::write(&mut doc, &[edit])
+            .unwrap_err()
+            .contains("no validated glyph"));
+        assert_eq!(doc.objects, state);
+    }
+}
+
+#[test]
+fn textedit_symbolic_codes_require_unambiguous_glyph_selection_and_widths() {
+    for kind in 0..6 {
+        let (mut doc, font, program) = custom_fixture();
+        match kind {
+            0 => {
+                doc.get_dictionary_mut(font)
+                    .unwrap()
+                    .set("Encoding", "MacRomanEncoding");
+            }
+            1 => {
+                let d = doc
+                    .get_dictionary(font)
+                    .unwrap()
+                    .get(b"FontDescriptor")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap();
+                doc.get_dictionary_mut(d).unwrap().set("Flags", 32);
+            }
+            2 => {
+                doc.get_dictionary_mut(font)
+                    .unwrap()
+                    .get_mut(b"Widths")
+                    .unwrap()
+                    .as_array_mut()
+                    .unwrap()[1] = Object::Integer(10);
+            }
+            3 => {
+                doc.get_dictionary_mut(font).unwrap().remove(b"ToUnicode");
+            }
+            5 => {
+                let bytes = &mut doc
+                    .get_object_mut(program)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content;
+                let old = Face::parse(bytes, 0)
+                    .unwrap()
+                    .raw_face()
+                    .table(Tag::from_bytes(b"cmap"))
+                    .unwrap()
+                    .to_vec();
+                let mut duplicate =
+                    vec![0, 0, 0, 2, 0, 1, 0, 0, 0, 0, 0, 20, 0, 1, 0, 0, 0, 0, 0, 20];
+                duplicate.extend(&old[12..]);
+                let offset = bytes.len() as u32;
+                let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
+                for record in bytes[12..12 + 16 * count].chunks_exact_mut(16) {
+                    if &record[..4] == b"cmap" {
+                        record[8..12].copy_from_slice(&offset.to_be_bytes());
+                        record[12..16].copy_from_slice(&(duplicate.len() as u32).to_be_bytes());
+                    }
+                }
+                bytes.extend(duplicate);
+            }
+            _ => {
+                doc.get_object_mut(program)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content[..4]
+                    .copy_from_slice(&[0, 1, 0, 0]);
+            }
+        }
+        assert!(textedit::scan(&doc, 0).is_err(), "accepted case {kind}");
+    }
+    let (mut doc, _, _) = custom_fixture();
+    let before = doc.objects.clone();
+    let edit = change(&doc, &"S".repeat(80));
+    assert!(textedit::write(&mut doc, &[edit])
+        .unwrap_err()
+        .contains("original text advance"));
+    assert_eq!(doc.objects, before);
+}
+
+#[test]
+fn textedit_symbolic_codes_refuse_unmapped_and_oversized_runs() {
+    for (bytes, reason) in [
+        (vec![255], "unmapped font code"),
+        (
+            vec![1; textedit::MAX_TEXT + 1],
+            "mapped text exceeds its limit",
+        ),
+    ] {
+        let (mut doc, _, _) = custom_fixture();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let mut content =
+            lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+        let show = content
+            .operations
+            .iter_mut()
+            .find(|op| op.operator == "Tj")
+            .unwrap();
+        show.operands[0] = Object::string_literal(bytes);
+        let stream = doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        assert!(textedit::scan(&doc, 0).unwrap_err().contains(reason));
+    }
+}
