@@ -261,6 +261,14 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation("textedit: reverse kerning adjustment", "src/textedit.rs", "advance -= number(value)? * size / 1000.0;", "advance += number(value)? * size / 1000.0;", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
+    Mutation("textedit: omit kerning text size", "src/textedit.rs", "advance -= number(value)? * size / 1000.0;", "advance -= number(value)? / 1000.0;", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
+    Mutation("textedit: omit kerning character bound", "src/textedit.rs", "if characters > MAX_TEXT {", "if false {", "textedit_kerning_bounds_total_characters_and_array_items"),
+    Mutation("textedit: omit kerning item bound", "src/textedit.rs", "|| values.len() > MAX_TEXT", "|| false", "textedit_kerning_bounds_total_characters_and_array_items"),
+    Mutation("textedit: allow retreating kerning ends", "src/textedit.rs", "if advance < furthest {", "if false {", "textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays"),
+    Mutation("textedit: omit accumulated kerning bound", "src/textedit.rs", "if !advance.is_finite() || !(0.0..=1_000_000.0).contains(&advance) {", "if false {", "textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays"),
+    Mutation("textedit: write string instead of kerning array", "src/textedit.rs", "show.operands[0] = if show.operator == \"TJ\" {", "show.operands[0] = if false {", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
+
     Mutation("textedit journal: retain a restored operand", "src/docmodel.rs", "self.text_edits.remove(&(page, operator));", "let _ = (page, operator);", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
     Mutation("textedit journal: retain discarded redo bodies", "src/docmodel.rs", "self.text_versions.remove(&version);", "let _ = version;", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
     Mutation("textedit journal: remove the history bound", "src/docmodel.rs", "self.text_versions.len() - discarded >= MAX_TEXT_VERSIONS", "self.text_versions.len() - discarded >= usize::MAX", "textedit_journal_bounds_history_but_reclaims_the_redo_tail"),

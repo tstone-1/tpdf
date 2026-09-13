@@ -41,6 +41,42 @@ fn change(doc: &Document, replacement: &str) -> Change {
 }
 
 #[test]
+fn textedit_embedded_kerning_uses_validated_glyphs_and_own_widths() {
+    let (mut doc, font, descriptor, program) = fixture();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let stream = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td [(A) 100 (B)] TJ ET".to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    assert!((textedit::scan(&doc, 0).unwrap().runs[0].advance - 13.2).abs() < 1e-8);
+    let before = doc.objects.clone();
+    let invalid = change(&doc, "Z");
+    assert!(textedit::write(&mut doc, &[invalid])
+        .unwrap_err()
+        .contains("no validated glyph"));
+    assert_eq!(doc.objects, before);
+    let valid = change(&doc, "A");
+    textedit::write(&mut doc, &[valid]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "A");
+    for id in [font, descriptor, program] {
+        assert_eq!(doc.objects[&id], before[&id]);
+    }
+    let missing = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td [(A) 10 (Z)] TJ ET".to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", missing);
+    assert!(textedit::scan(&doc, 0)
+        .unwrap_err()
+        .contains("no validated glyph"));
+}
+
+#[test]
 fn textedit_embedded_subset_uses_own_widths_and_preserves_every_font_byte() {
     let (mut doc, font, descriptor, program) = fixture();
     let before = doc.objects.clone();

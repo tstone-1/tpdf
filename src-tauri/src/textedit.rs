@@ -226,6 +226,49 @@ struct Inspection {
     font_operators: BTreeMap<u32, usize>,
 }
 
+// TJ offsets are subtracted in thousandths of text space, before the text/page
+// matrices. Keep a single left-to-right envelope: no negative cursor, retreating
+// fragment ends, or leading/trailing adjustments. A replacement drops kerning
+// within this run and must fit the resulting original advance.
+fn array_text(
+    values: &[Object],
+    metrics: &fonts::Metrics,
+    size: f64,
+) -> Result<(String, f64), String> {
+    if values.is_empty()
+        || values.len() > MAX_TEXT
+        || !matches!(values.first(), Some(Object::String(..)))
+        || !matches!(values.last(), Some(Object::String(..)))
+    {
+        return Err("unsupported kerning array shape or size".into());
+    }
+    let mut text = String::new();
+    let mut characters = 0;
+    let mut advance = 0.0;
+    let mut furthest = 0.0;
+    for value in values {
+        if let Object::String(bytes, _) = value {
+            characters += bytes.len();
+            if characters > MAX_TEXT {
+                return Err("kerning array text exceeds its limit".into());
+            }
+            let fragment = decode_text(bytes)?;
+            advance += metrics.advance(&fragment, size)?;
+            if advance < furthest {
+                return Err("backtracking kerning text is not editable yet".into());
+            }
+            furthest = advance;
+            text.push_str(&fragment);
+        } else {
+            advance -= number(value)? * size / 1000.0;
+        }
+        if !advance.is_finite() || !(0.0..=1_000_000.0).contains(&advance) {
+            return Err("kerning position exceeds its limit".into());
+        }
+    }
+    Ok((text, advance))
+}
+
 fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     if doc
         .catalog()
@@ -338,20 +381,27 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 move_line(&mut matrix, 0.0, -leading)?;
                 positioned = true;
             }
-            ("Tj", [_]) if inside && positioned => {}
+            ("Tj", [_]) | ("TJ", [Object::Array(_)]) if inside && positioned => {}
             _ => return Err("unsupported text state or positioning between shows".into()),
         }
-        if op.operator != "Tj" {
+        if !matches!(op.operator.as_str(), "Tj" | "TJ") {
             continue;
         }
         let (name, size, font_operator) = selected_font.ok_or("text has no explicit font")?;
-        let text = decode_text(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
         positioned = false;
         let geometry = crate::pagetree::displayed_page(doc, id);
-        let advance = font_metrics
-            .get(name)
-            .ok_or("missing text font")?
-            .advance(&text, size)?;
+        let metrics = font_metrics.get(name).ok_or("missing text font")?;
+        let (text, advance) = if op.operator == "TJ" {
+            array_text(
+                op.operands[0].as_array().map_err(|e| e.to_string())?,
+                metrics,
+                size,
+            )?
+        } else {
+            let text = decode_text(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
+            let advance = metrics.advance(&text, size)?;
+            (text, advance)
+        };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
         let x = page_matrix[4] - f64::from(geometry.origin.0);
         let y = page_matrix[5] - f64::from(geometry.origin.1);
@@ -449,8 +499,13 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if metrics.advance(&change.replacement, run.size)? > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
-        content.operations[change.operator as usize].operands[0] =
-            Object::string_literal(replacement);
+        let show = &mut content.operations[change.operator as usize];
+        let replacement = Object::string_literal(replacement);
+        show.operands[0] = if show.operator == "TJ" {
+            Object::Array(vec![replacement])
+        } else {
+            replacement
+        };
     }
     let ready = prepared
         .into_values()
@@ -475,6 +530,143 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
 pub(crate) mod tests {
     use super::*;
     use lopdf::dictionary;
+
+    #[test]
+    fn textedit_kerning_geometry_and_rewrite_preserve_other_shows() {
+        let mut doc = with_content(b"q 2 0 0 3 0 0 cm BT /F1 20 Tf 40 TL 10 50 Td [(A) 120 (W) -50 (AY)] TJ T* [(SECOND) -20 ( LINE)] TJ ET Q");
+        let before = scan(&doc, 0).unwrap();
+        let run = &before.runs[0];
+        let expected = crate::textbox::advance("AWAY", 20.) - 1.4;
+        assert_eq!(run.text, "AWAY");
+        assert!((run.advance - expected).abs() < 1e-6);
+        assert!(
+            (f64::from(run.display_rect[2] - run.display_rect[0]) - expected * 2.).abs() < 1e-4
+        );
+        assert_eq!(run.matrix, [2., 0., 0., 3., 20., 150.]);
+        let operations = inspect(&doc, 0).unwrap().content.operations;
+        let update = Change {
+            replacement: "A".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, std::slice::from_ref(&update)).unwrap();
+        let after = inspect(&doc, 0).unwrap();
+        assert_eq!(after.runs.runs[0].text, "A");
+        assert_eq!(after.runs.runs[1], before.runs[1]);
+        for (index, (actual, original)) in
+            after.content.operations.iter().zip(&operations).enumerate()
+        {
+            assert_eq!(actual.operator, original.operator);
+            if index == update.operator as usize {
+                assert_eq!(
+                    actual.operands,
+                    vec![Object::Array(vec![Object::string_literal("A")])]
+                );
+            } else {
+                assert_eq!(actual.operands, original.operands);
+            }
+        }
+        let empty = Change {
+            replacement: String::new(),
+            ..change(&doc)
+        };
+        write(&mut doc, &[empty]).unwrap();
+        assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "");
+    }
+
+    #[test]
+    fn textedit_kerning_overflow_is_checked_against_adjusted_width() {
+        let mut doc = with_content(b"BT /F1 12 Tf 40 180 Td [(W) 500 (W)] TJ ET");
+        // WA fits the unkerned WW, but exceeds WW with its authored adjustment.
+        let update = Change {
+            replacement: "WA".into(),
+            ..change(&doc)
+        };
+        let before = doc.objects.clone();
+        assert!(write(&mut doc, &[update])
+            .unwrap_err()
+            .contains("exceed the original"));
+        assert_eq!(doc.objects, before);
+    }
+
+    #[test]
+    fn textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays() {
+        for array in [
+            "[]",
+            "[1 (TEXT)]",
+            "[(TEXT) 1]",
+            "[(A) [0] (B)]",
+            "[(A) /Name (B)]",
+            "[(A) null (B)]",
+            "[(A) true (B)]",
+            "[(A) 1000001 (B)]",
+            "[(A) -1000001 (B)]",
+            "[(A) 9999 (B)]",
+            "[(WWW) 2000 (i)]",
+            "[(A) -600000 -600000 (B)]",
+        ] {
+            let content = format!("BT /F1 1000 Tf 40 180 Td {array} TJ ET");
+            assert!(
+                scan(&with_content(content.as_bytes()), 0).is_err(),
+                "accepted {array}"
+            );
+        }
+        for content in [
+            "BT /F1 12 Tf 40 180 Td [(TEXT)] Tj ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) TJ ET",
+            "BT /F1 12 Tf 40 180 Td [(TEXT)] [(MORE)] TJ ET",
+            "BT /F1 12 Tf [(TEXT)] TJ ET",
+            "BT /F1 12 Tf 40 180 Td [(TEXT)] TJ (MORE) Tj ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj [(MORE)] TJ ET",
+            "BT /F1 12 Tf 40 180 Td [(TEXT)] TJ [(MORE)] TJ ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET [(MORE)] TJ",
+        ] {
+            assert!(
+                scan(&with_content(content.as_bytes()), 0).is_err(),
+                "accepted {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn textedit_kerning_bounds_total_characters_and_array_items() {
+        for (body, accepted) in [
+            (
+                format!(
+                    "({}) ({})",
+                    "A".repeat(MAX_TEXT / 2),
+                    "A".repeat(MAX_TEXT / 2)
+                ),
+                true,
+            ),
+            (format!("({}) (B)", "A".repeat(MAX_TEXT)), false),
+            ("() ".repeat(MAX_TEXT), true),
+            ("() ".repeat(MAX_TEXT + 1), false),
+        ] {
+            let content = format!("BT /F1 12 Tf 40 180 Td [{body}] TJ ET");
+            assert_eq!(scan(&with_content(content.as_bytes()), 0).is_ok(), accepted);
+        }
+        let mut content = b"BT /F1 12 Tf 40 180 Td [(".to_vec();
+        content.extend(vec![0xe4; MAX_TEXT / 2]);
+        content.extend(b") (".to_vec());
+        content.extend(vec![0xdf; MAX_TEXT / 2]);
+        content.extend(b")] TJ ET");
+        assert_eq!(
+            scan(&with_content(&content), 0).unwrap().runs[0]
+                .text
+                .chars()
+                .count(),
+            MAX_TEXT
+        );
+        for byte in [0, 31, 127, 159] {
+            let content = [
+                b"BT /F1 12 Tf 40 180 Td [(A) (".as_slice(),
+                &[byte],
+                b")] TJ ET",
+            ]
+            .concat();
+            assert!(scan(&with_content(&content), 0).is_err());
+        }
+    }
 
     #[test]
     fn textedit_latin1_uses_single_pdf_bytes_and_bounds_characters() {
@@ -1066,7 +1258,6 @@ pub(crate) mod tests {
     #[test]
     fn textedit_refuses_unsupported_state_and_font_semantics() {
         for bytes in [
-            "BT /F1 12 Tf 40 180 Td [(SYNTHETIC)] TJ ET",
             "BT /F1 12 Tf 40 180 Td (ONE) Tj (TWO) Tj ET",
             "3 Tr BT /F1 12 Tf 40 180 Td (HIDDEN) Tj ET",
             "-2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (REFLECTED) Tj ET",

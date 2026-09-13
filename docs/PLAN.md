@@ -4381,13 +4381,13 @@ not claims about editing arbitrary documents.
 
 **Next compatibility milestone: an unchanged Quartz/CoreText export through
 preview, shorter replacement, save and independent readback.** The 2026-09-13
-producer survey found that both Quartz and LibreOffice emit `TJ` kerning arrays,
-which the current `Tj`-only writer refuses. Quartz additionally needs its authored
+producer survey found that both Quartz and LibreOffice emit `TJ` kerning arrays.
+Bounded array handling is now implemented; Quartz additionally needs its authored
 colour space and MacRoman embedded-font mapping handled; LibreOffice adds clipping,
 custom character codes/ToUnicode and, in tagged exports, structure metadata. These
 are measured on synthetic exports, not a claim about every PDF from those producers.
-Implement bounded `TJ` handling first, preserving explicit positioning between
-shows, but count the milestone complete only when the original Quartz fixture
+Preserve explicit positioning between shows and count the milestone complete
+only when the original Quartz fixture
 passes end to end with no changed pixels outside the edited line. Keep the
 LibreOffice exports as the next compatibility cases; accepting one operator alone
 does not establish producer support. Reproduction commands and the worker's
@@ -4421,9 +4421,16 @@ subsequent translation; the text matrix does not scale the page offset. Authored
 accumulated and composed positions and scale factors are bounded to one million
 per coordinate or axis, and a scale that collapses to zero is refused. Saves inside
 text blocks and page reflection, rotation or skew remain unsupported. Each
-`Tj` must have positioning
+`Tj` or `TJ` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
-other graphics/text operators remain refused. It reports the original operator address,
+other graphics/text operators remain refused. A `TJ` array becomes one run with
+concatenated text and its adjusted advance. Arrays start and end with strings,
+contain at most 4,096 items and 4,096 total characters, and permit only strings
+and finite numeric offsets. Offsets are subtracted in thousandths of text space;
+each cursor stays between zero and one million and fragment ends cannot retreat.
+Replacement keeps `TJ` with one string, using normal font spacing within the
+original adjusted width; surrounding operators and arrays remain intact.
+It reports the original operator address,
 text, font resource, size, text matrix and advance. Discovery uses the worker's
 shared document graph through `Request::TextRuns`. Unsupported content returns
 a reason. The toolbar and command palette expose **Edit existing text** on the current

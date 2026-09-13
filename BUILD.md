@@ -6387,3 +6387,40 @@ the editor's accepted grammar was not expanded by this survey.
 All 24 local gates passed (283.5 seconds summed gate time). The existing editing
 probe also passed its ReportLab round trip; independent parser/PDFKit readback
 found only the target operand changed and zero pixel changes outside its line.
+
+### Bounded kerning-array editing
+
+The synthetic `TJ` fixture isolates kerning-array support from the remaining
+Quartz colour-space/font-mapping work. It uses fractional offsets of both signs
+and a second, independently positioned array. Reproduce worker and independent
+readback checks with:
+
+```bash
+uv run --with pypdf testdata/make_textedit_kerning.py scratch/textedit-kerning/fixture.pdf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-kerning/worker scratch/textedit-kerning/fixture.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-kerning/worker/synthetic-before.pdf scratch/textedit-kerning/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-kerning/worker
+```
+
+The same fixture works with `tabs_check.py --phase textedit --saved-copy`, using
+the separate checks build. Arrays are replaced as a whole with normal font spacing;
+the replacement must fit their original adjusted advance. `docs/PLAN.md` records
+the accepted shapes and bounds. The independent parser requires exactly one
+changed operand and rejects an unchanged input supplied as the supposed output.
+
+On 2026-09-13 the preceding worker refused this fixture. The new implementation
+passed 52 focused tests per platform, including embedded glyph validation,
+adjustment sign/scale, array/character limits, retreating bounds and overflow.
+Seven targeted mutations were caught. Fuzzing with the new `editable-kerning`
+seed completed 27,573 inputs in 21 seconds without a finding (84 MiB peak RSS).
+Windows passed 15 native checks on isolated source archive SHA-256
+`0c0ee3352b50ac3efa9f116af5be28ea0a5a69566ca92c1dafd258c037e88bda`;
+both worker and UI saves passed independent parser/PDFKit readback, with 2,387
+changed pixels inside the edited line and zero outside. Transfer digests matched,
+the implementation matched the snapshot and the temporary task was removed.
+
+The Mac passed the same worker round trip and 15 native checks; both saves passed
+the independent readers with the same pixel counts. All 24 local gates passed
+in 378.4 seconds: 1,348 Rust tests (three ignored), 1,667 frontend tests, and the
+locked fuzz/example builds. The checks application's Rust build took 18.73 seconds.
+Normal frontend assets were restored with zero harness code.
