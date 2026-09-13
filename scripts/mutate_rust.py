@@ -261,6 +261,15 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('reflected: reject intermediate page reflection', 'src/textedit.rs', 'if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if next[0] <= 0.0 || next[3] <= 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators'),
+    Mutation('reflected: reject intermediate text reflection', 'src/textedit.rs', 'if matrix[0] == 0.0 || matrix[3] == 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {', 'if matrix[0] <= 0.0 || matrix[3] <= 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {', 'textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators'),
+    Mutation('reflected: accept mirrored horizontal text', 'src/textedit.rs', 'if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {', 'if page_matrix[3] <= 0.0 {', 'textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atomically'),
+    Mutation('reflected: accept mirrored vertical text', 'src/textedit.rs', 'if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {', 'if page_matrix[0] <= 0.0 {', 'textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atomically'),
+    Mutation('reflected: skip horizontal clip normalization', 'src/textedit/clipping.rs', 'next[0].min(next[2])', 'next[0]', 'textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators'),
+    Mutation('reflected: skip vertical clip normalization', 'src/textedit/clipping.rs', 'next[1].min(next[3])', 'next[1]', 'textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators'),
+    Mutation('reflected: remove horizontal underflow guard', 'src/textedit.rs', '|| result[0] == 0.0', '|| false', 'textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atomically'),
+    Mutation('reflected: remove vertical underflow guard', 'src/textedit.rs', '|| result[3] == 0.0', '|| false', 'textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atomically'),
+
     Mutation('cid: decode little endian', 'src/textedit/fonts.rs', 'u16::from_be_bytes([pair[0], pair[1]])', 'u16::from_le_bytes([pair[0], pair[1]])', 'textedit_composite_roundtrip_preserves_program_mapping_and_other_page'),
     Mutation('cid: encode little endian', 'src/textedit/fonts.rs', 'result.extend(code.to_be_bytes());', 'result.extend(code.to_le_bytes());', 'textedit_composite_roundtrip_preserves_program_mapping_and_other_page'),
     Mutation('cid: accept odd strings', 'src/textedit/fonts.rs', 'bytes.len() % 2 != 0 ||', 'false ||', 'textedit_composite_code_lengths_notdef_and_glyph_bounds'),
@@ -357,7 +366,7 @@ MUTATIONS = [
     Mutation("textedit: select last font instead of restored font", "src/textedit.rs", 'content.operations[*font_operator].operands[0]', 'content.operations[{ let _ = font_operator; content.operations[..change.operator as usize].iter().rposition(|op| op.operator == "Tf").unwrap() }].operands[0]', "textedit_graphics_restore_uses_the_active_font_for_replacement"),
     Mutation("textedit: omit translated text position", "src/textedit.rs", 'let page_matrix = compose_diagonal(page_transform, matrix)?;', 'let page_matrix = matrix;', "textedit_translated_hitboxes_match_absolute_positions_after_crop_and_rotation"),
     Mutation("textedit: forget saved page translation", "src/textedit.rs", 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                ));', 'states.push((selected_font, leading, [1., 0., 0., 1., 0., 0.], fill_components, clip));', "textedit_page_translations_compose_restore_and_preserve_following_runs"),
-    Mutation("textedit: accept arbitrary page transforms", "src/textedit.rs", 'if next[0] <= 0.0 || next[3] <= 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if false {', "textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices"),
+    Mutation("textedit: accept arbitrary page transforms", "src/textedit.rs", 'if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if false {', "textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices"),
 
     Mutation("textedit: compose page translations in reverse order", "src/textedit.rs", 'inner[4] * outer[0] + outer[4]', 'outer[4] * inner[0] + inner[4]', "textedit_page_scales_compose_restore_and_preserve_following_runs"),
     Mutation("textedit: omit page scale from hitbox width", "src/textedit.rs", 'page_matrix[4] + advance * page_matrix[0]', 'page_matrix[4] + advance * matrix[0]', "textedit_scaled_hitboxes_match_absolute_matrices_after_crop_and_rotation"),

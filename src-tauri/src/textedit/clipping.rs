@@ -46,6 +46,14 @@ pub(super) fn apply(
     if next.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.) {
         return Err("text clipping coordinates exceed their limit".into());
     }
+    // A reflected CTM reverses corners, not the rectangle's interior. Normalize
+    // in page space before intersecting with the already established clip.
+    next = [
+        next[0].min(next[2]),
+        next[1].min(next[3]),
+        next[0].max(next[2]),
+        next[1].max(next[3]),
+    ];
     if let Some(old) = previous {
         next = [
             old[0].max(next[0]),
