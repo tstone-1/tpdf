@@ -6699,3 +6699,79 @@ example builds. Frontend diagnostics reported no errors or warnings. Normal Mac
 frontend assets were restored and verified to contain zero harness code.
 Implementation sources match the Windows snapshot; subsequent changes only
 record verification and the completed plan milestone.
+
+### Line-broken and page-spanning paragraph editing
+
+A paragraph can now own several content items: integers on its own page, or
+inline MCR dictionaries with explicit Type, Pg and MCID on another page. Every
+item must agree with its reverse parent-tree entry. There are at most 128 items
+in total, rather than 128 items per paragraph. Empty paragraphs, duplicate item
+ownership, indirect MCRs, missing page references and external-stream references
+are refused. Alternate text and unsupported layout attributes remain refused.
+The page-reference interpretation follows ISO 32000-1 section 14.7.4.2; the
+[PDF Association clarification](https://pdf-issues.pdfa.org/32000-2-2020/clause14.html#14.7.5.2-marked-content-sequences-as-content-items)
+also describes the relationship between Pg and page content streams.
+
+Generate unchanged synthetic producer exports:
+
+```bash
+mkdir -p scratch/textedit-producers/flow
+/Applications/LibreOffice.app/Contents/MacOS/soffice -env:UserInstallation=file:///tmp/tpdf-producer-flow-lo --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir scratch/textedit-producers/flow testdata/textedit-producer-wrapped.rtf testdata/textedit-producer-flow.rtf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-flow/worker-page2 scratch/textedit-producers/flow/textedit-producer-flow.pdf --page=1
+uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls scratch/textedit-flow/worker-page2/synthetic-before.pdf scratch/textedit-flow/worker-page2/synthetic-after.pdf --page=1
+swift scripts/text_edit_pdfkit.swift scratch/textedit-flow/worker-page2 --page=1
+```
+
+On 2026-09-13 LibreOffice 26.2.3.2 exported a line-broken paragraph with K=[0,1].
+With a larger bottom margin, four lines overflow naturally into two pages while
+remaining one paragraph: two integer items followed by two MCR dictionaries for
+page two. An explicit page-break control instead produced separate paragraphs;
+it is not evidence for a paragraph spanning pages. No exported PDF was patched.
+The measured single-page input SHA-256 is
+`3ce717c92c3cc8a13fd84b03053407be9eb0c5164c35b2bf99a3e19b7f5147ec`;
+the page-spanning input is
+`a7e6c1e73501b589f075cd9eb93f6233e0139e2c0354a06fcd3a2e8fec0f0563`.
+
+The first page-two worker round trip passed complete structure/resource readback
+and PDFKit: page one is pixel-identical, and page two changes 2,403 pixels only
+inside the edited line. Eleven independent corruption controls reject changes
+to paragraph or MCR page ownership, item IDs, item order, missing items, stale
+alternate text, the parent tree, and untouched page bytes. The native phase
+remains `textedit-multipage`, since the visible two-page workflow is the same.
+
+A separate naturally word-wrapped sample with a right paragraph indent adds
+EndIndent and trailing spaces to the text-show operands. It remains outside this
+milestone; these examples use explicit line breaks within the paragraph and
+natural overflow between pages. Preserving tags does not make this a reflowing
+paragraph editor or establish PDF/UA conformance.
+
+The focused suite passes 83 editor tests, including atomic two-page batches,
+128/129-item boundary controls and malformed MCR refusals. All 20 targeted
+structure mutations were caught. A new failing control exposed empty role names
+colliding with the validator's unclaimed-slot marker; empty role names are now
+refused and the control passes. The bounded fuzz run completed 32,065 inputs in
+21 seconds without a finding, peaking at 85 MiB RSS.
+
+Mac and Windows native runs each pass all 19 checks on the unchanged page-spanning
+export. The initial Mac run caught a harness timing defect: its idle callback
+drains pending edits but does not wait for the viewer to publish the page number.
+The corrected harness waits for both the displayed target page and an idle viewer
+before invoking the edit command. Both platforms were rerun with that correction.
+Their native outputs pass all eleven corruption controls and independent PDFKit
+readback: page one is pixel-identical; page two changes 2,403 pixels only inside
+the target line. The single-page line-break export and a separate page-one edit
+also pass worker, parser and pixel checks.
+
+Windows additionally passes 83 editor tests and 10 shared layout tests. The final
+source archive SHA-256 is
+`bb13a1e456b04eb65af862dc92223f92597335ece5c8ef4016d10d9ad3eef842`.
+Retrieved PDF digests and source manifests match the snapshot. Both Windows
+worker and native outputs pass independent PDFKit readback. Normal Windows
+frontend assets contain zero harness code; the normal checkout remains clean.
+
+All 24 local gates passed in 394.6 seconds summed gate time: 1,379 Rust tests
+(three ignored), 1,667 frontend tests in 70 suites, and locked fuzz-target and
+example builds. Frontend diagnostics reported no errors or warnings, and normal
+Mac assets were restored with zero harness code. The final Windows task was
+removed. Implementation sources match the verified Windows snapshot; subsequent
+changes only record these results and the completed plan milestone.

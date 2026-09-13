@@ -143,6 +143,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!first || !second) throw new Error("two disposable text fixture paths required");
       await host.open(first); await host.idle();
       host.viewer()!.goToPage(page); await host.idle();
+      // idle() drains edits, not viewer frames. The edit command uses the page
+      // reported by the viewer, so wait for the same page the reader sees.
+      if (!await settle(() => host.viewer()?.idle === true &&
+        document.querySelector('.navigation button[title="Go to page"]')?.textContent?.trim().startsWith(`${page + 1} /`) === true, SETTLE_MS)) {
+        throw new Error("the requested text-edit page did not settle");
+      }
       const originalTab = host.tabs().find((tab) => tab.path === first)!;
       const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
       const start = async () => {

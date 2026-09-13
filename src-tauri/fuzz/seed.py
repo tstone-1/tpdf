@@ -256,8 +256,9 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
     return pdf_objects(objects)
 
 
-def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False) -> bytes:
+def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False, flowing: bool = False) -> bytes:
     """Remap two synthetic glyphs through PDF bytes 1/2 and a ToUnicode map."""
+    multipage = multipage or flowing
     tagged = tagged or multipage
     font = bytearray((ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes())
     font[:4] = b"true"
@@ -304,6 +305,10 @@ def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bo
         objects[10] = objects[10].replace(b"/K [11 0 R]", b"/K [11 0 R 14 0 R]")
         objects[14] = objects[11].replace(b"/Pg 3 0 R", b"/Pg 13 0 R")
         objects[12] = b"<< /Nums [0 [11 0 R] 7 [14 0 R]] >>"
+    if flowing:
+        objects[10] = objects[10].replace(b"/K [11 0 R 14 0 R]", b"/K [11 0 R]")
+        objects[11] = objects[11].replace(b"/K [0]", b"/K [0 << /Type /MCR /Pg 13 0 R /MCID 0 >>]")
+        objects[12] = b"<< /Nums [0 [11 0 R] 7 [11 0 R]] >>"
     return pdf_objects(objects)
 
 
@@ -320,7 +325,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),

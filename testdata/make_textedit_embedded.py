@@ -122,9 +122,15 @@ def tagged_controls(before, after, page_index=0):
 
     check(before, after, page_index)
     with tempfile.TemporaryDirectory(prefix="tpdf-tagged-controls-") as room:
+        sample = PdfWriter(clone_from=after)
+        paragraphs = sample.root_object["/StructTreeRoot"]["/K"][0].get_object()["/K"]
         modes = ["root", "parent", "mcid", "alternate", "page_key"]
-        if len(PdfWriter(clone_from=after).pages) > 1:
+        if len(sample.pages) > 1:
             modes += ["page_owner", "other_page"]
+        if any(len(p.get_object()["/K"]) > 1 for p in paragraphs):
+            modes += ["item_order", "item_missing"]
+        if any(isinstance(item, dict) for p in paragraphs for item in p.get_object()["/K"]):
+            modes += ["mcr_page", "mcr_id"]
         for mode in modes:
             writer = PdfWriter(clone_from=after)
             root = writer.root_object["/StructTreeRoot"]
@@ -140,12 +146,23 @@ def tagged_controls(before, after, page_index=0):
             elif mode == "page_key":
                 writer.pages[0][NameObject("/StructParents")] = NumberObject(1)
             elif mode == "page_owner":
-                owner = writer.pages[1].indirect_reference
-                paragraph = next(p.get_object() for p in root["/K"][0].get_object()["/K"]
-                                 if p.get_object().raw_get("/Pg") == owner)
-                paragraph[NameObject("/Pg")] = writer.pages[0].indirect_reference
+                old = paragraph.raw_get("/Pg")
+                paragraph[NameObject("/Pg")] = next(p.indirect_reference for p in writer.pages if p.indirect_reference != old)
+            elif mode in ("item_order", "item_missing"):
+                items = next(p.get_object()["/K"] for p in root["/K"][0].get_object()["/K"] if len(p.get_object()["/K"]) > 1)
+                if mode == "item_order":
+                    items.reverse()
+                else:
+                    items.pop()
+            elif mode in ("mcr_page", "mcr_id"):
+                mcr = next(item for p in root["/K"][0].get_object()["/K"] for item in p.get_object()["/K"] if isinstance(item, dict))
+                if mode == "mcr_page":
+                    old = mcr.raw_get("/Pg")
+                    mcr[NameObject("/Pg")] = next(p.indirect_reference for p in writer.pages if p.indirect_reference != old)
+                else:
+                    mcr[NameObject("/MCID")] = NumberObject(int(mcr["/MCID"]) + 1)
             else:
-                other = writer.pages[1 - page_index]
+                other = next(p for index, p in enumerate(writer.pages) if index != page_index)
                 stream = DecodedStreamObject()
                 stream.set_data(other.get_contents().get_data() + b"\n% changed untouched page\n")
                 other[NameObject("/Contents")] = writer._add_object(stream)
