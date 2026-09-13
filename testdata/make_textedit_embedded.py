@@ -15,19 +15,29 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False):
+def check(before, after, page_index=0, wrapped=False, float32=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
-    from pypdf.generic import ContentStream, DictionaryObject, StreamObject
+    from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
 
     def value(obj):
-        obj = obj.get_object()
+        if isinstance(obj, tuple):
+            return [value(v) for v in obj]
+        obj = obj.get_object() if hasattr(obj, "get_object") else obj
+        if isinstance(obj, list):
+            return [value(v) for v in obj]
         if isinstance(obj, StreamObject):
             return ({str(k): value(v) for k, v in obj.items() if k not in ("/Length", "/Filter")}, obj.get_data())
         if isinstance(obj, DictionaryObject):
             return {str(k): value(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [value(v) for v in obj]
+        if float32 and isinstance(obj, FloatObject):
+            # Explicit opt-in for lopdf's Real storage. Default checks retain
+            # exact numeric comparison. Streams and nonnumeric values stay exact.
+            import math
+            import struct
+            number = struct.unpack(">f", struct.pack(">f", float(obj)))[0]
+            assert math.isfinite(number), "nonfinite float32 value"
+            return number
         return obj
 
     readers = [PdfReader(path) for path in (before, after)]
@@ -109,7 +119,10 @@ def check(before, after, page_index=0, wrapped=False):
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
     for page, first in zip(pages, ("SYNTHETIC FIRST", "EDITED FIRST")):
         assert " ".join(page.extract_text().split()) == first + " SYNTHETIC SECOND", "wrong decoded text"
-    print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
+    if float32:
+        print("[PASS] independent parser: only target text operand changed; resources agree at float32 precision with exact stream bytes")
+    else:
+        print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
 
 
 def tagged_controls(before, after, page_index=0, wrapped=False):
@@ -186,16 +199,21 @@ def tagged_controls(before, after, page_index=0, wrapped=False):
 
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
-        page, wrapped = 0, False
+        page, wrapped, float32 = 0, False, False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
             elif option == "--wrapped":
                 wrapped = True
+            elif option == "--float32" and sys.argv[1] == "--check":
+                float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based) or --wrapped")
+                raise SystemExit("expected --page=N (zero based), --wrapped or --float32 (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        action(*sys.argv[2:4], page, wrapped)
+        if float32:
+            check(*sys.argv[2:4], page, wrapped, float32=True)
+        else:
+            action(*sys.argv[2:4], page, wrapped)
         return
     if len(sys.argv) != 1:
         raise SystemExit("expected no arguments, --check or --tagged-controls before.pdf after.pdf")

@@ -9,6 +9,8 @@ mod clipping;
 mod colors;
 mod filters;
 mod fonts;
+mod graphics;
+mod streams;
 mod tagging;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -228,6 +230,8 @@ fn compose_diagonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String
 struct Inspection {
     id: ObjectId,
     content: Content,
+    bytes: Vec<u8>,
+    patched: BTreeSet<usize>,
     runs: PageRuns,
     // The active Tf can precede a restored state, not just the last Tf in the
     // stream. Keep its address privately; display font names can be lossy UTF-8.
@@ -291,9 +295,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     if content.operations.len() > MAX_OPERATIONS {
         return Err("text operator count exceeds its limit".into());
     }
+    // Discovery promises that deletion can use the byte-preserving writer too.
+    streams::rewrite(&bytes, &content, &BTreeSet::new())?;
     let resources = resources(doc, id)?;
     let mut fill_components = colors::named(doc, resources, b"DeviceGray")?;
     let mut colour_spaces = BTreeMap::new();
+    let mut graphics_states = BTreeSet::new();
     let mut result = PageRuns {
         page,
         revision: Sha256::digest(&bytes).to_vec(),
@@ -381,6 +388,15 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
             ("Tr", [Object::Integer(0)]) => {}
+            ("gs", [Object::Name(name)]) => {
+                if !graphics_states.contains(name) {
+                    if graphics_states.len() >= 32 {
+                        return Err("too many external text graphics states".into());
+                    }
+                    graphics::normal(doc, resources, name)?;
+                    graphics_states.insert(name.clone());
+                }
+            }
             ("cs", [Object::Name(name)]) => {
                 if !colour_spaces.contains_key(name) {
                     if colour_spaces.len() >= 32 {
@@ -398,6 +414,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     _ => 4,
                 };
                 colors::values(values, fill_components)?;
+            }
+            ("G" | "RG" | "K", values) => {
+                // Filled text cannot use stroke colour; preserve the validated
+                // setter without changing the independently tracked fill space.
+                let components = match op.operator.as_str() {
+                    "G" => 1,
+                    "RG" => 3,
+                    _ => 4,
+                };
+                colors::values(values, components)?;
             }
             ("Tf", [name, size]) if inside => {
                 let name = name.as_name().map_err(|e| e.to_string())?;
@@ -510,6 +536,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     Ok(Inspection {
         id,
         content,
+        bytes,
+        patched: BTreeSet::new(),
         runs: result,
         font_operators,
     })
@@ -549,6 +577,8 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             content,
             runs,
             font_operators,
+            patched,
+            ..
         } = prepared.get_mut(&change.page).ok_or("missing text page")?;
         let run = runs
             .runs
@@ -571,6 +601,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             return Err("replacement would exceed the original text advance".into());
         }
         let replacement = metrics.encode(&change.replacement)?;
+        patched.insert(change.operator as usize);
         let show = &mut content.operations[change.operator as usize];
         let replacement = Object::string_literal(replacement);
         show.operands[0] = if show.operator == "TJ" {
@@ -581,12 +612,17 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     }
     let ready = prepared
         .into_values()
-        .map(|Inspection { id, content, .. }| {
-            content
-                .encode()
-                .map(|bytes| (id, bytes))
-                .map_err(|e| e.to_string())
-        })
+        .map(
+            |Inspection {
+                 id,
+                 content,
+                 bytes,
+                 patched,
+                 ..
+             }| {
+                streams::rewrite(&bytes, &content, &patched).map(|bytes| (id, bytes))
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
     for (page, bytes) in ready {
         let stream = doc.add_object(Stream::new(Dictionary::new(), bytes));
@@ -1006,12 +1042,8 @@ pub(crate) mod tests {
             actual.operator = expected.operator;
             assert_eq!(actual, expected);
         }
-        // The serializer normalizes real zero to integer zero. Compare the
-        // canonical original operators, preserving all non-target operands.
-        let operations =
-            Content::decode_strict(&inspect(&doc, 0).unwrap().content.encode().unwrap())
-                .unwrap()
-                .operations;
+        // Untouched operands retain their original spelling, including real zero.
+        let operations = inspect(&doc, 0).unwrap().content.operations;
         let update = Change {
             replacement: "IN".into(),
             ..change(&doc)

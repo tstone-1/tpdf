@@ -257,7 +257,7 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
 
 
 
-def editable_composite(reflected: bool = False, tight_clip: bool = False) -> bytes:
+def editable_composite(reflected: bool = False, tight_clip: bool = False, browser_state: bool = False) -> bytes:
     """Identity-H glyph IDs 2/3 are A/B in the original geometric test font."""
     font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
     content = b"BT /F1 12 Tf 40 180 Td <00020003> Tj ET"
@@ -265,6 +265,9 @@ def editable_composite(reflected: bool = False, tight_clip: bool = False) -> byt
         content = b".25 0 0 -.25 0 240 cm q 0 200 1200 760 re W* n 4 0 0 4 0 0 cm BT /F1 12 Tf 1 0 0 -1 40 60 Tm <00020003> Tj ET Q"
     elif reflected:
         content = b".25 0 0 -.25 0 240 cm q 0 0 1200 960 re W* n 4 0 0 4 0 0 cm BT /F1 12 Tf 1 0 0 -1 40 60 Tm <00020003> Tj ET Q"
+    if browser_state:
+        content = b"% retain decimal tokens\n.99999999 0 0 .99999999 0 0 cm 0 0 0 RG /G3 gs " + content
+    graphics = b" /ExtGState << /G3 << /ca 1 /BM /Normal >> >>" if browser_state else b""
     cmap = (b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
             b"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
             b"/CMapName /Adobe-Identity-UCS def /CMapType 2 def "
@@ -276,7 +279,7 @@ def editable_composite(reflected: bool = False, tight_clip: bool = False) -> byt
     return pdf_objects({
         1: b"<< /Type /Catalog /Pages 2 0 R >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >>" + graphics + b" >> /Contents 5 0 R >>",
         4: b"<< /Type /Font /Subtype /Type0 /BaseFont /TPDFSynthetic /Encoding /Identity-H /DescendantFonts [8 0 R] /ToUnicode 9 0 R >>",
         5: stream(content),
         6: b"<< /Type /FontDescriptor /FontName /TPDFSynthetic /Flags 4 /FontBBox [0 0 400 700] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 100 /FontFile2 7 0 R >>",
@@ -358,7 +361,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),

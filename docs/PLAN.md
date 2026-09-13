@@ -4480,20 +4480,25 @@ differences round to identical f32 values; the strict resource comparator report
 them, while the embedded program is byte-identical and PDFKit finds zero changed
 pixels outside the target. `BUILD.md` records the distinction.
 
-**Next compatibility milestone: the unchanged untagged browser export.** The
-font mapping layer is in place. Reflected diagonal page and text matrices now
-compose when their resulting text axes are upright; rectangular clips normalize
-their corners in page space before intersection. The same fixture still needs
-stroke-colour setters and a narrow explicit ExtGState subset. Clipping now uses
-the measured vertical union of every offered glyph, including glyphs absent from
-the source string, so width-fitting replacements retain the containment proof.
-Transformed outline points and curve controls retain fractional coordinates;
-integer bounding boxes could underestimate scaled composite glyphs. Editing hit
-boxes keep their existing full-em geometry. Keep the complete
-browser export refused until all those parts have independent round-trip evidence;
-accepting one layer is not compatibility. Nested tags follow the untagged case.
+**Untagged browser export: worker and native round trips verified on both platforms.** The unchanged Edge
+export now retains its embedded font, reflected transforms, tight rectangular
+clip, opaque normal-blend ExtGState and stroke-colour setters. Stroke painting,
+transparency, masks, font overrides and unknown graphics-state keys remain
+unsupported. Graphics-state names are bounded to 32 per page.
+
+Text edits preserve untouched content-stream bytes. Re-encoding the complete
+stream rounded a browser coordinate and changed 116 antialiased pixels in the
+untouched second line. Replacing only the selected text-show operation restores
+zero changes outside the target in independent PDFKit readback. A bounded token
+scanner locates operations, with each boundary checked against lopdf; discovery
+checks the same limits as writing. Font-resource numbers still undergo lopdf's
+float32 serialization, so independent readback compares their exact float32
+representations while retaining exact font stream bytes and exact content
+operands. `BUILD.md` records the commands and corruption controls.
+
+**Next compatibility milestone: nested tags in the original browser export.**
 Alternate-text overrides, alignment and paragraph reflow require separate
-semantics; a preserved indent is not evidence for them.
+semantics; preserving graphics and a paragraph indent is not evidence for them.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
