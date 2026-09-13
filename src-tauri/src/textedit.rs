@@ -178,8 +178,14 @@ fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
 // Only diagonal matrices reach here; reject accumulated positions outside the
 // same bound used for authored coordinates.
 fn move_line(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
-    matrix[4] += x * matrix[0];
-    matrix[5] += y * matrix[3];
+    shift_position(matrix, x * matrix[0], y * matrix[3])
+}
+
+// Page translations act after the text matrix, so their offset must not be
+// multiplied by the text scale. The same bound applies to composed positions.
+fn shift_position(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
+    matrix[4] += x;
+    matrix[5] += y;
     if matrix[4..]
         .iter()
         .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
@@ -235,29 +241,37 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
     let mut states = Vec::new();
+    let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         match (op.operator.as_str(), op.operands.as_slice()) {
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
-            // Only accept saves outside BT/ET; all other mutable graphics
+            // Only accept saves outside BT/ET; apart from translation, other graphics
             // state remains refused, and the next BT resets both matrices.
             ("q", []) if !inside => {
                 if states.len() >= 64 {
                     return Err("text graphics-state stack exceeds its limit".into());
                 }
-                states.push((selected_font, leading));
+                states.push((selected_font, leading, page_transform));
             }
             ("Q", []) if !inside => {
-                (selected_font, leading) =
+                (selected_font, leading, page_transform) =
                     states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("cm", values) if !inside && values.len() == 6 => {
-                for (value, expected) in values.iter().zip([1., 0., 0., 1., 0., 0.]) {
+                for (value, expected) in values[..4].iter().zip([1., 0., 0., 1.]) {
                     if number(value)? != expected {
-                        return Err("transformed page content is not editable yet".into());
+                        return Err(
+                            "scaled, rotated or skewed page content is not editable yet".into()
+                        );
                     }
                 }
+                shift_position(
+                    &mut page_transform,
+                    number(&values[4])?,
+                    number(&values[5])?,
+                )?;
             }
             ("BT", []) if !inside => {
                 inside = true;
@@ -311,8 +325,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             .get(name)
             .ok_or("missing text font")?
             .advance(&text, size)?;
-        let x = matrix[4] - f64::from(geometry.origin.0);
-        let y = matrix[5] - f64::from(geometry.origin.1);
+        let mut page_matrix = matrix;
+        shift_position(&mut page_matrix, page_transform[4], page_transform[5])?;
+        let x = page_matrix[4] - f64::from(geometry.origin.0);
+        let y = page_matrix[5] - f64::from(geometry.origin.1);
         let display_rect = crate::text::to_device(
             geometry.turns,
             geometry.width,
@@ -334,7 +350,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             text,
             font: String::from_utf8_lossy(name).into_owned(),
             size,
-            matrix,
+            matrix: page_matrix,
             advance,
         });
     }
@@ -641,6 +657,75 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn textedit_page_translations_compose_restore_and_preserve_following_runs() {
+        let mut doc = with_content(b"BT /F1 12 Tf 40 TL ET q 1 0 0 1 20 100 cm q 1 0 0 1 10 20 cm BT 2 0 0 3 10 60 Tm (FIRST) Tj T* (SECOND) Tj ET Q BT 1 0 0 1 20 40 Tm (THIRD) Tj ET Q BT 40 100 Td (FOURTH) Tj ET");
+        let before = scan(&doc, 0).unwrap();
+        assert_eq!(
+            before
+                .runs
+                .iter()
+                .map(|r| [r.matrix[4], r.matrix[5]])
+                .collect::<Vec<_>>(),
+            [[40., 180.], [40., 60.], [40., 140.], [40., 100.]]
+        );
+        assert_eq!(before.runs[0].matrix[..4], [2., 0., 0., 3.]);
+        let update = Change {
+            replacement: "IN".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, &[update]).unwrap();
+        let after = scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1..], before.runs[1..]);
+    }
+
+    #[test]
+    fn textedit_translated_hitboxes_match_absolute_positions_after_crop_and_rotation() {
+        let translated = b"q 1 0 0 1 30 150 cm BT /F1 12 Tf 2 0 0 3 10 30 Tm (TEXT) Tj ET Q";
+        let absolute = b"BT /F1 12 Tf 2 0 0 3 40 180 Tm (TEXT) Tj ET";
+        for rotation in [0, 90, 180, 270] {
+            let mut results = Vec::new();
+            for bytes in [translated.as_slice(), absolute.as_slice()] {
+                let mut doc = with_content(bytes);
+                let page = crate::pagetree::ordered_pages(&doc)[0];
+                let page = doc.get_dictionary_mut(page).unwrap();
+                page.set("Rotate", rotation);
+                page.set(
+                    "CropBox",
+                    vec![10.into(), 20.into(), 290.into(), 220.into()],
+                );
+                let run = scan(&doc, 0).unwrap().runs.remove(0);
+                results.push((run.matrix, run.display_rect));
+            }
+            assert_eq!(results[0], results[1], "rotation {rotation}");
+        }
+    }
+
+    #[test]
+    fn textedit_page_translations_refuse_unbounded_or_nontranslation_matrices() {
+        for prefix in [
+            "1 0 0 1 1000000 0 cm 1 0 0 1 1 0 cm",
+            "1 0 0 1 0 -1000000 cm 1 0 0 1 0 -1 cm",
+            "1 0 0 1 1000000 0 cm",
+            "1 0 0 1 (bad) 0 cm",
+            "1 0 0 1 0 cm",
+            "1 0 0 1 0 0 0 cm",
+            "1 0 0 1 20 30 cm 2 0 0 1 0 0 cm",
+            "1 0.1 0 1 0 0 cm",
+            "1 0 0.1 1 0 0 cm",
+            "1 0 0 -1 0 0 cm",
+        ] {
+            let bytes = format!("{prefix} BT /F1 12 Tf 40 180 Td (TEXT) Tj ET");
+            assert!(
+                scan(&with_content(bytes.as_bytes()), 0).is_err(),
+                "accepted {prefix}"
+            );
+        }
+        let doc = with_content(b"BT /F1 12 Tf 1 0 0 1 20 30 cm 40 180 Td (TEXT) Tj ET");
+        assert!(scan(&doc, 0).is_err());
+    }
+
+    #[test]
     fn textedit_accepts_single_flate_array_and_rejects_invalid_encodings() {
         let mut doc = fixture();
         let page = crate::pagetree::ordered_pages(&doc)[0];
@@ -803,7 +888,6 @@ pub(crate) mod tests {
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj /F1 10 Tf (MORE) Tj ET",
             "BT /F1 12 Tf (TEXT) Tj ET",
             "BT /F1 12 Tf 1000000 0 0 1 40 180 Tm 2 0 Td (TEXT) Tj ET",
-            "1 0 0 1 1 0 cm BT /F1 12 Tf 40 180 Td (TEXT) Tj ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj 1 T* ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET (OUTSIDE) Tj",
         ] {
