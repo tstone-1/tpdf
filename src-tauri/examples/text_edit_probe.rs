@@ -1,6 +1,9 @@
 //! Run `cargo run --example text-edit-probe -- <scratch-directory> [fixture.pdf]`.
 //! The optional fixture must contain the same two synthetic lines and page geometry.
 //! Add `--latin1` after the fixture to check the accented ReportLab variant.
+//! `--inspect <fixture.pdf>` only discovers first-page runs through the worker;
+//! it prints JSON without document text and never creates or saves a PDF.
+//! Exit 0 means inspection completed (read `status`); infrastructure errors exit 1.
 //! Creates synthetic PDFs only. The example re-execs as its contained worker.
 
 use std::{fs::File, path::PathBuf};
@@ -46,7 +49,39 @@ fn runs(worker: &mut Worker) -> Result<textedit::PageRuns, String> {
     }
 }
 
+fn inspect(source: &std::path::Path) -> Result<(), String> {
+    let library = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../vendor/pdfium")
+        .join(tpdf_lib::PDFIUM_SUBDIR);
+    let mut worker = Worker::spawn(source, &library)?;
+    let reply = worker.call(&Request::TextRuns {
+        page: 0,
+        changes: Vec::new(),
+    })?;
+    let report = if !reply.ok {
+        serde_json::json!({"page": 0, "status": "refused", "reason": reply.error})
+    } else if let Some(Reply::TextRuns(runs)) = reply.reply {
+        let status = if runs.runs.is_empty() {
+            "no_runs"
+        } else {
+            "editable"
+        };
+        serde_json::json!({"page": 0, "status": status, "runs": runs.runs.len()})
+    } else {
+        return Err("unexpected text inspection reply".into());
+    };
+    println!("{report}");
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--inspect") {
+        if args.len() != 2 {
+            return Err("usage: text-edit-probe --inspect <fixture.pdf>".into());
+        }
+        return inspect(std::path::Path::new(&args[1]));
+    }
     let dir = std::env::args()
         .nth(1)
         .map(PathBuf::from)

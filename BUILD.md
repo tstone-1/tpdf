@@ -6345,3 +6345,45 @@ at 84 MiB RSS. All 24 repository gates passed in 346.7 seconds: 1,343 Rust tests
 (three ignored), 1,667 frontend tests and locked fuzz/example builds. The Mac
 native run passed 15/15; its Rust checks build took 16.18 seconds and rebuilt no
 dependencies. Normal frontend assets were restored with zero harness code.
+
+### Independent text producer survey
+
+`text-edit-probe --inspect <fixture.pdf>` asks the contained worker about page zero
+without saving or printing document text. It emits JSON with `status` equal to
+`editable`, `no_runs` or `refused` (including the first refusal reason). Exit 0
+means inspection completed; inspect `status` to determine compatibility.
+Infrastructure failures and invalid arguments exit 1. This is discovery evidence,
+not a save/readback check or an inventory of every unsupported construct.
+
+Generate synthetic exports on macOS (LibreOffice is an external producer only,
+not an application dependency):
+
+```bash
+mkdir -p scratch/textedit-producers/tagged scratch/textedit-producers/untagged
+swift testdata/make_textedit_quartz.swift scratch/textedit-producers/quartz.pdf
+/Applications/LibreOffice.app/Contents/MacOS/soffice -env:UserInstallation=file:///tmp/tpdf-producer-lo --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir scratch/textedit-producers/tagged testdata/textedit-producer.rtf
+/Applications/LibreOffice.app/Contents/MacOS/soffice -env:UserInstallation=file:///tmp/tpdf-producer-lo --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"false"}}' --outdir scratch/textedit-producers/untagged testdata/textedit-producer.rtf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- --inspect scratch/textedit-producers/quartz.pdf
+```
+
+The isolated LibreOffice profile avoids reusing the reader's export preferences.
+Its explicit tagging parameter is documented in the
+[LibreOffice PDF CLI reference](https://help.libreoffice.org/latest/en-US/text/shared/guide/pdf_params.html).
+Repeat inspection with each exported PDF. `pypdf` independently confirmed one page
+and the two synthetic lines in all three outputs on 2026-09-13:
+
+| Producer measured | Worker result | Additional constructs observed in the original output |
+| --- | --- | --- |
+| macOS 26.6.2 Quartz/CoreText | Refused: unsupported state/positioning | `cs`/`sc`, MacRoman TrueType subset, `TJ` kerning arrays |
+| LibreOffice 26.2.3.2, tagged | Refused: tagged text | Clipping, custom character codes/ToUnicode, `TJ`, marked content |
+| LibreOffice 26.2.3.2, untagged | Refused: unsupported state/positioning | Clipping, custom character codes/ToUnicode, `TJ` |
+
+The ReportLab explicit-default fixture remained an editable two-run positive
+control. A blank page reported `no_runs`; missing files and invalid arguments
+failed. Every inspected source retained its SHA-256 digest. Disabling LibreOffice
+tags alone did not make its export editable. These are compatibility baselines;
+the editor's accepted grammar was not expanded by this survey.
+
+All 24 local gates passed (283.5 seconds summed gate time). The existing editing
+probe also passed its ReportLab round trip; independent parser/PDFKit readback
+found only the target operand changed and zero pixel changes outside its line.

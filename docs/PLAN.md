@@ -4379,6 +4379,20 @@ not claims about editing arbitrary documents.
 
 ### Worker text replacement — started 2026-09-12
 
+**Next compatibility milestone: an unchanged Quartz/CoreText export through
+preview, shorter replacement, save and independent readback.** The 2026-09-13
+producer survey found that both Quartz and LibreOffice emit `TJ` kerning arrays,
+which the current `Tj`-only writer refuses. Quartz additionally needs its authored
+colour space and MacRoman embedded-font mapping handled; LibreOffice adds clipping,
+custom character codes/ToUnicode and, in tagged exports, structure metadata. These
+are measured on synthetic exports, not a claim about every PDF from those producers.
+Implement bounded `TJ` handling first, preserving explicit positioning between
+shows, but count the milestone complete only when the original Quartz fixture
+passes end to end with no changed pixels outside the edited line. Keep the
+LibreOffice exports as the next compatibility cases; accepting one operator alone
+does not establish producer support. Reproduction commands and the worker's
+read-only inspection mode are in `BUILD.md`, *Independent text producer survey*.
+
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
 and encoded to single PDF bytes, with exact standard Helvetica advances; the
