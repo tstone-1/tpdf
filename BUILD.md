@@ -6775,3 +6775,69 @@ example builds. Frontend diagnostics reported no errors or warnings, and normal
 Mac assets were restored with zero harness code. The final Windows task was
 removed. Implementation sources match the verified Windows snapshot; subsequent
 changes only record these results and the completed plan milestone.
+
+### Naturally wrapped paragraphs and end indents
+
+The measured LibreOffice export uses an authored EndIndent on a block paragraph.
+It describes an allocation constraint, rather than the current text's ink bounds;
+see the [PDF Association structure-attribute reference](https://pdfa.org/download-area/cheat-sheets/StructureAttributes.pdf).
+The reader now accepts and preserves a finite numeric EndIndent on paragraphs,
+bounded to an absolute value of 1,000,000 like text coordinates. Document-level
+EndIndent, unknown attributes, ink bounds and alternate text remain refused.
+
+Literal trailing spaces were already supported by the editor. The worker and
+native probes previously assumed fixture lines had none; their wrapped variant
+now requires the exact source space and verifies it survives in the journal.
+The independent parser also checks the exact original operand through ToUnicode,
+so whitespace normalization in text extraction cannot hide a changed source.
+A deliberately trimmed original is refused as stale before any object changes.
+
+Reproduce the unchanged single-page and page-spanning synthetic exports:
+
+```bash
+mkdir -p scratch/textedit-producers/natural
+/Applications/LibreOffice.app/Contents/MacOS/soffice -env:UserInstallation=file:///tmp/tpdf-producer-natural-lo --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir scratch/textedit-producers/natural testdata/textedit-producer-natural.rtf testdata/textedit-producer-natural-flow.rtf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-natural/worker-page2 scratch/textedit-producers/natural/textedit-producer-natural-flow.pdf --page=1 --wrapped
+uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls scratch/textedit-natural/worker-page2/synthetic-before.pdf scratch/textedit-natural/worker-page2/synthetic-after.pdf --page=1 --wrapped
+swift scripts/text_edit_pdfkit.swift scratch/textedit-natural/worker-page2 --page=1
+```
+
+The source RTF has ordinary spaces, a right paragraph indent and no explicit line
+or page breaks. A larger bottom margin makes the longer paragraph flow across
+pages. On 2026-09-13 LibreOffice 26.2.3.2 produced the single-page input SHA-256
+`6ed82049345584fed015453bc7278cd04552c008908f32ca10911eeb2ed94ee0`
+and page-spanning input
+`311d3189bbdca04890c243111d122ce46a956f9e05fc88c52e8bf7ff2f2d85f6`.
+The native phase is `textedit-wrapped`; it edits page two and checks the journal's
+literal source space as well as the existing multi-page workflow. The independent
+corruption controls now also remove EndIndent and require that to fail, even
+though no rendered pixel changes.
+
+Worker edits to either page of the unchanged two-page export, and to its
+single-page counterpart, pass preview, undo, search and save checks. Independent
+parser readback compares the complete tagged graph and exact mapped operand;
+assuming a trimmed original deliberately fails. PDFKit reports 2,403 changed
+pixels inside the edited line and zero outside, including the entire other page.
+All twelve page-spanning corruption controls fail, including removal of EndIndent;
+the single-page output passes its eight applicable controls.
+
+Mac and Windows native runs each pass all 20 checks, including the exact source
+space retained in the journal. Their outputs pass all twelve independent
+corruption controls and the same pixel comparison. Windows also passes 85 editor
+tests and 10 shared layout tests. All 23 targeted structure mutations were caught,
+including skipped indent validation, document-level indent acceptance and trimmed
+stale-source comparison. The bounded fuzz run completed 31,940 inputs in
+21 seconds without a finding, peaking at 85 MiB RSS.
+
+The Windows source archive SHA-256 is
+`cacd9ed077c5deb6ed38704415754471883544a6b6027d1c032492149f028a48`.
+Retrieved PDF digests and source manifests matched. Both Windows worker and
+native outputs passed independent PDFKit readback; normal Windows frontend
+assets contain zero harness code and its normal checkout stayed clean.
+
+All 24 local gates passed in 602.9 seconds summed gate time: 1,381 Rust tests
+(three ignored), 1,667 frontend tests in 70 suites, and locked fuzz-target and
+example builds. Frontend diagnostics reported no errors or warnings; normal
+Mac assets were restored with zero harness code. The Windows task was removed.
+Implementation sources match the verified Windows snapshot; subsequent changes
+only record these results and the completed plan milestone.

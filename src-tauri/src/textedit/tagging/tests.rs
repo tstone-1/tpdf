@@ -82,6 +82,94 @@ fn flowing() -> (Document, [ObjectId; 9]) {
 }
 
 #[test]
+fn textedit_tagged_end_indent_and_source_spaces_survive_a_fitting_edit() {
+    for indent in [
+        Object::Integer(-1_000_000),
+        Object::Integer(0),
+        Object::Real(1.6),
+        Object::Real(1_000_000.0),
+    ] {
+        let content = std::str::from_utf8(CONTENT)
+            .unwrap()
+            .replace("(FIRST)", "(FIRST )");
+        let (mut doc, ids) = fixture(content.as_bytes());
+        doc.get_dictionary_mut(ids[3])
+            .unwrap()
+            .get_mut(b"A")
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("EndIndent", indent.clone());
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs[0].text, "FIRST ");
+        let original = doc.objects.clone();
+        let edit = Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST ".into(),
+            replacement: "IN".into(),
+        };
+        let mut stale = edit.clone();
+        stale.original.pop();
+        assert!(textedit::write(&mut doc, &[stale]).is_err());
+        assert_eq!(doc.objects, original);
+        textedit::write(&mut doc, &[edit]).unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        for (id, object) in original {
+            if id != ids[0] {
+                assert_eq!(doc.objects[&id], object);
+            }
+        }
+        assert_eq!(
+            doc.get_dictionary(ids[3])
+                .unwrap()
+                .get(b"A")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"EndIndent")
+                .unwrap(),
+            &indent
+        );
+    }
+}
+
+#[test]
+fn textedit_tagged_end_indent_rejects_invalid_values_and_document_scope() {
+    for indent in [
+        Object::Integer(1_000_001),
+        Object::Integer(-1_000_001),
+        Object::Real(f32::INFINITY),
+        Object::Real(f32::NEG_INFINITY),
+        Object::Real(f32::NAN),
+        Object::Null,
+        Object::Boolean(true),
+        Object::string_literal("1.6"),
+        Object::Array(vec![Object::Integer(1)]),
+        Object::Reference((999, 0)),
+    ] {
+        let (mut doc, ids) = fixture(CONTENT);
+        doc.get_dictionary_mut(ids[3])
+            .unwrap()
+            .get_mut(b"A")
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("EndIndent", indent);
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+    let (mut doc, ids) = fixture(CONTENT);
+    doc.get_dictionary_mut(ids[2]).unwrap().set(
+        "A",
+        dictionary! { "O" => "Layout", "Placement" => "Block", "EndIndent" => 1 },
+    );
+    assert!(textedit::scan(&doc, 0).is_err());
+}
+
+#[test]
 fn textedit_tagged_flowing_paragraph_preserves_every_item_and_page() {
     for page in [0, 1] {
         let (mut doc, ids) = flowing();

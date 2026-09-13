@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0):
+def check(before, after, page_index=0, wrapped=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject
@@ -99,7 +99,7 @@ def check(before, after, page_index=0):
         from pypdf._cmap import get_encoding
         _, mapping = get_encoding(symbolic[0])
         assert mapping and all(isinstance(k, str) and len(k) == len(v) == 1 for k, v in mapping.items()), "unexpected fixture map"
-        for operation, expected in [(old, "SYNTHETIC FIRST"), (new, "EDITED FIRST")]:
+        for operation, expected in [(old, "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "EDITED FIRST")]:
             parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
             raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
                            for part in parts if isinstance(part, (str, bytes)))
@@ -112,7 +112,7 @@ def check(before, after, page_index=0):
     print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
 
 
-def tagged_controls(before, after, page_index=0):
+def tagged_controls(before, after, page_index=0, wrapped=False):
     """Prove nonvisual structure corruption fails the independent readback."""
     import contextlib
     import io
@@ -120,11 +120,13 @@ def tagged_controls(before, after, page_index=0):
     from pypdf import PdfWriter
     from pypdf.generic import DecodedStreamObject, NameObject, NumberObject, TextStringObject
 
-    check(before, after, page_index)
+    check(before, after, page_index, wrapped)
     with tempfile.TemporaryDirectory(prefix="tpdf-tagged-controls-") as room:
         sample = PdfWriter(clone_from=after)
         paragraphs = sample.root_object["/StructTreeRoot"]["/K"][0].get_object()["/K"]
         modes = ["root", "parent", "mcid", "alternate", "page_key"]
+        if any("/EndIndent" in p.get_object().get("/A", {}) for p in paragraphs):
+            modes.append("end_indent")
         if len(sample.pages) > 1:
             modes += ["page_owner", "other_page"]
         if any(len(p.get_object()["/K"]) > 1 for p in paragraphs):
@@ -143,6 +145,9 @@ def tagged_controls(before, after, page_index=0):
                 paragraph["/K"][0] = NumberObject(1)
             elif mode == "alternate":
                 paragraph[NameObject("/ActualText")] = TextStringObject("STALE SYNTHETIC TEXT")
+            elif mode == "end_indent":
+                attrs = next(p.get_object()["/A"] for p in root["/K"][0].get_object()["/K"] if "/EndIndent" in p.get_object().get("/A", {}))
+                del attrs["/EndIndent"]
             elif mode == "page_key":
                 writer.pages[0][NameObject("/StructParents")] = NumberObject(1)
             elif mode == "page_owner":
@@ -170,7 +175,7 @@ def tagged_controls(before, after, page_index=0):
             writer.write(target)
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    check(before, target, page_index)
+                    check(before, target, page_index, wrapped)
             except AssertionError as error:
                 expected = "untouched page content" if mode == "other_page" else "tagged structure"
                 assert expected in str(error), str(error)
@@ -180,14 +185,17 @@ def tagged_controls(before, after, page_index=0):
 
 
 def main():
-    if len(sys.argv) in (4, 5) and sys.argv[1] in ("--check", "--tagged-controls"):
-        page = 0
-        if len(sys.argv) == 5:
-            if not sys.argv[4].startswith("--page="):
-                raise SystemExit("expected --page=N (zero based)")
-            page = int(sys.argv[4].split("=", 1)[1])
+    if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
+        page, wrapped = 0, False
+        for option in sys.argv[4:]:
+            if option.startswith("--page="):
+                page = int(option.split("=", 1)[1])
+            elif option == "--wrapped":
+                wrapped = True
+            else:
+                raise SystemExit("expected --page=N (zero based) or --wrapped")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        action(*sys.argv[2:4], page)
+        action(*sys.argv[2:4], page, wrapped)
         return
     if len(sys.argv) != 1:
         raise SystemExit("expected no arguments, --check or --tagged-controls before.pdf after.pdf")

@@ -66,11 +66,19 @@ fn element(
     }
     if let Ok(attributes) = dict.get(b"A") {
         let attributes = attributes.as_dict().map_err(|_| INVALID)?;
-        keys(attributes, &[b"O", b"Placement"])?;
+        keys(attributes, &[b"O", b"Placement", b"EndIndent"])?;
         if name(get(attributes, b"O")?)? != b"Layout"
             || name(get(attributes, b"Placement")?)? != b"Block"
         {
             return Err(INVALID.into());
+        }
+        if let Ok(indent) = attributes.get(b"EndIndent") {
+            // An authored paragraph allocation constraint, not an ink bound.
+            // Replacing a fitting line preserves its position and this indent.
+            if name(get(dict, b"S")?)? == b"Document" {
+                return Err(INVALID.into());
+            }
+            super::number(indent)?;
         }
     }
     Ok(page)

@@ -261,6 +261,9 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('tagged indent: skip numeric validation', 'src/textedit/tagging.rs', 'super::number(indent)?;', '// unchecked indent', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
+    Mutation('tagged indent: accept document scope', 'src/textedit/tagging.rs', 'if name(get(dict, b"S")?)? == b"Document" {', 'if false {', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
+    Mutation('tagged indent: trim stale source text', 'src/textedit.rs', 'change.original != run.text', 'change.original.trim_end() != run.text.trim_end()', 'textedit_tagged_end_indent_and_source_spaces_survive_a_fitting_edit'),
     Mutation('tagged flow: allow empty role names', 'src/textedit/tagging.rs', 'key.is_empty()', 'false', 'textedit_tagged_empty_role_name_cannot_hide_duplicate_items'),
     Mutation('tagged flow: ignore explicit item page', 'src/textedit/tagging.rs', '(reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)', '(paragraph_page, integer(get(mcr, b"MCID")?)?)', 'textedit_tagged_flowing_paragraph_preserves_every_item_and_page'),
     Mutation('tagged flow: ignore MCR type', 'src/textedit/tagging.rs', 'if name(get(mcr, b"Type")?)? != b"MCR" {', 'if false {', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),

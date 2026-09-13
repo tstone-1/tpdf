@@ -134,8 +134,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     }
     case "textedit":
     case "textedit-multipage":
+    case "textedit-wrapped":
     case "textedit-latin1": {
-      const page = phase === "textedit-multipage" ? 1 : 0;
+      const wrapped = phase === "textedit-wrapped";
+      const page = phase === "textedit-multipage" || wrapped ? 1 : 0;
       const original = phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
       const replacement = phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
@@ -160,7 +162,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const read = async (index = page) => String.fromCodePoint(...(await call("page_text", { doc: host.edits()!.doc, page: filePage(index), crop: null })).codes);
       if (page === 1) check("both source pages have their original text", (await read(0)).includes(original) && (await read(1)).includes(original));
       await start();
-      check("source text is offered for replacement", field()!.value === original);
+      check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
       const hit = document.querySelector<HTMLElement>(".text-edit-run")!.getBoundingClientRect();
       check("the text target is visible and has area", hit.width > 50 && hit.height > 5 && hit.top >= 0);
       field()!.value = replacement; field()!.dispatchEvent(new Event("input", { bubbles: true }));
@@ -184,6 +186,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         if (!data.some((value, index) => index % 4 === 0 && value < 100)) throw new Error("text pixel sample contains no ink");
         return data;
       };
+      if (wrapped) check("the journal retains the exact source space", host.edits()!.state.text_edits?.[0]?.original === original + " ");
       if (page === 1) {
         check("the edit belongs to the second page", host.edits()!.state.text_edits?.[0]?.page === 1);
         check("editing page two preserves page one before saving", (await read(0)).includes(original) && !(await read(0)).includes(replacement));
