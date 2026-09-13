@@ -276,6 +276,9 @@ MUTATIONS = [
     Mutation("textedit: accept a missing embedded glyph", "src/textedit/fonts.rs", '.ok_or("the embedded font has no validated glyph for this character")?', '.unwrap_or(600.)', "textedit_embedded_missing_glyph_and_own_width_overflow_leave_document_untouched"),
     Mutation("textedit: ignore conflicting Unicode cmaps", "src/textedit/fonts.rs", '.any(|table| table.glyph_index(code) != Some(glyph))', '.any(|table| { let _ = (table, code, glyph); false })', "textedit_embedded_requires_unicode_cmaps_to_agree"),
     Mutation("textedit: treat a malformed space as blank", "src/textedit/fonts.rs", "empty_glyph(&face, glyph) == Some(true)", "true", "textedit_embedded_does_not_treat_a_broken_space_as_blank"),
+    Mutation("textedit: discard restored text state", "src/textedit.rs", '(selected_font, leading) =', 'let _ =', "textedit_graphics_stack_restores_font_size_and_leading"),
+    Mutation("textedit: allow unclosed graphics state", "src/textedit.rs", 'if !states.is_empty() {', 'if false {', "textedit_graphics_stack_requires_balanced_bounded_outer_saves"),
+    Mutation("textedit: select last font instead of restored font", "src/textedit.rs", 'content.operations[*font_operator].operands[0]', 'content.operations[{ let _ = font_operator; content.operations[..change.operator as usize].iter().rposition(|op| op.operator == "Tf").unwrap() }].operands[0]', "textedit_graphics_restore_uses_the_active_font_for_replacement"),
 
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
     Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),

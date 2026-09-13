@@ -189,7 +189,16 @@ fn move_line(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
     Ok(())
 }
 
-fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), String> {
+struct Inspection {
+    id: ObjectId,
+    content: Content,
+    runs: PageRuns,
+    // The active Tf can precede a restored state, not just the last Tf in the
+    // stream. Keep its address privately; display font names can be lossy UTF-8.
+    font_operators: BTreeMap<u32, usize>,
+}
+
+fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     if doc
         .catalog()
         .map_err(|e| e.to_string())?
@@ -225,9 +234,24 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
+    let mut states = Vec::new();
+    let mut font_operators = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         match (op.operator.as_str(), op.operands.as_slice()) {
+            // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
+            // Only accept saves outside BT/ET; all other mutable graphics
+            // state remains refused, and the next BT resets both matrices.
+            ("q", []) if !inside => {
+                if states.len() >= 64 {
+                    return Err("text graphics-state stack exceeds its limit".into());
+                }
+                states.push((selected_font, leading));
+            }
+            ("Q", []) if !inside => {
+                (selected_font, leading) =
+                    states.pop().ok_or("unmatched graphics-state restore")?;
+            }
             ("cm", values) if !inside && values.len() == 6 => {
                 for (value, expected) in values.iter().zip([1., 0., 0., 1., 0., 0.]) {
                     if number(value)? != expected {
@@ -253,7 +277,7 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
                 if !(0.0..=1000.0).contains(&size) || size == 0.0 {
                     return Err("unsupported text size".into());
                 }
-                selected_font = Some((name, size));
+                selected_font = Some((name, size, index));
             }
             ("TL", [value]) if inside => leading = number(value)?,
             ("Tm", values) if inside && values.len() == 6 => {
@@ -279,7 +303,7 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
         if op.operator != "Tj" {
             continue;
         }
-        let (name, size) = selected_font.ok_or("text has no explicit font")?;
+        let (name, size, font_operator) = selected_font.ok_or("text has no explicit font")?;
         let text = decode_text(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
         positioned = false;
         let geometry = crate::pagetree::displayed_page(doc, id);
@@ -303,6 +327,7 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
         if display_rect.iter().any(|v| !v.is_finite()) {
             return Err("text bounds exceed the display range".into());
         }
+        font_operators.insert(index as u32, font_operator);
         result.runs.push(Run {
             display_rect,
             operator: index as u32,
@@ -316,7 +341,15 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
     if inside {
         return Err("unterminated text block".into());
     }
-    Ok((id, content, result))
+    if !states.is_empty() {
+        return Err("unterminated graphics-state save".into());
+    }
+    Ok(Inspection {
+        id,
+        content,
+        runs: result,
+        font_operators,
+    })
 }
 
 /// Discover a complete supported page, or explain why it cannot be edited yet.
@@ -324,7 +357,7 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
 /// # Errors
 /// Unsupported content, invalid resources, or exhausted parsing limits.
 pub fn scan(doc: &Document, page: u32) -> Result<PageRuns, String> {
-    inspect(doc, page).map(|(_, _, runs)| runs)
+    inspect(doc, page).map(|page| page.runs)
 }
 
 /// Validate the entire batch before changing any page. Shared streams are cloned.
@@ -348,7 +381,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if let std::collections::btree_map::Entry::Vacant(entry) = prepared.entry(change.page) {
             entry.insert(inspect(doc, change.page)?);
         }
-        let (id, content, runs) = prepared.get_mut(&change.page).ok_or("missing text page")?;
+        let Inspection {
+            id,
+            content,
+            runs,
+            font_operators,
+        } = prepared.get_mut(&change.page).ok_or("missing text page")?;
         let run = runs
             .runs
             .iter()
@@ -359,13 +397,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         }
         // Use the original operand bytes, not the lossy display name, to resolve
         // a resource. Font names are PDF names and need not be valid UTF-8.
-        let name = content.operations[..change.operator as usize]
-            .iter()
-            .rev()
-            .find(|op| op.operator == "Tf")
-            .and_then(|op| op.operands.first())
-            .and_then(|v| v.as_name().ok())
+        let font_operator = font_operators
+            .get(&change.operator)
             .ok_or("missing text font")?;
+        let name = content.operations[*font_operator].operands[0]
+            .as_name()
+            .map_err(|e| e.to_string())?;
         let metrics = font(doc, resources(doc, *id)?, name)?;
         if metrics.advance(&change.replacement, run.size)? > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
@@ -375,7 +412,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     }
     let ready = prepared
         .into_values()
-        .map(|(id, content, _)| {
+        .map(|Inspection { id, content, .. }| {
             content
                 .encode()
                 .map(|bytes| (id, bytes))
@@ -442,7 +479,7 @@ pub(crate) mod tests {
             ..change(&doc)
         };
         write(&mut doc, &[update]).unwrap();
-        let (_, content, runs) = inspect(&doc, 0).unwrap();
+        let Inspection { content, runs, .. } = inspect(&doc, 0).unwrap();
         assert_eq!(runs.runs[0].text, "GEPRÜFT ß");
         assert_eq!(
             content.operations[runs.runs[0].operator as usize].operands[0]
@@ -510,7 +547,11 @@ pub(crate) mod tests {
     fn textedit_reportlab_font_setup_and_multiline_positions_survive_shorter_edits() {
         // Produced independently by testdata/make_textedit_reportlab.py.
         let mut doc = with_content(b"1 0 0 1 0 0 cm BT /F1 12 Tf 14.4 TL ET\nBT 1 0 0 1 40 180 Tm 40 TL (SYNTHETIC FIRST) Tj T* (SYNTHETIC SECOND) Tj T* ET");
-        let (_, before, mapped) = inspect(&doc, 0).unwrap();
+        let Inspection {
+            content: before,
+            runs: mapped,
+            ..
+        } = inspect(&doc, 0).unwrap();
         assert_eq!(
             mapped.runs.iter().map(|r| r.operator).collect::<Vec<_>>(),
             [8, 10]
@@ -521,7 +562,11 @@ pub(crate) mod tests {
         let mut edit = change(&doc);
         edit.replacement = "X".into();
         write(&mut doc, &[edit]).unwrap();
-        let (_, after, saved) = inspect(&doc, 0).unwrap();
+        let Inspection {
+            content: after,
+            runs: saved,
+            ..
+        } = inspect(&doc, 0).unwrap();
         assert_eq!(saved.runs[0].text, "X");
         assert_eq!(saved.runs[1], mapped.runs[1]);
         assert_eq!(before.operations.len(), after.operations.len());
@@ -545,6 +590,54 @@ pub(crate) mod tests {
         );
         assert_eq!(runs[3].matrix[..4], [1., 0., 0., 1.]);
         assert!(runs.iter().all(|r| r.size == 12.));
+    }
+
+    #[test]
+    fn textedit_graphics_stack_restores_font_size_and_leading() {
+        let mut doc = with_content(b"BT /F1 12 Tf 40 TL ET q BT /F1 8 Tf 10 TL ET q BT /F1 6 Tf 5 TL ET Q BT 40 180 Td (INNER) Tj T* (LINE) Tj ET Q BT 40 140 Td (OUTER) Tj T* (LINE) Tj ET");
+        let before = scan(&doc, 0).unwrap();
+        assert_eq!(
+            before.runs.iter().map(|r| r.size).collect::<Vec<_>>(),
+            [8., 8., 12., 12.]
+        );
+        assert_eq!(
+            before.runs.iter().map(|r| r.matrix[5]).collect::<Vec<_>>(),
+            [180., 170., 140., 100.]
+        );
+        let update = Change {
+            replacement: "IN".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, &[update]).unwrap();
+        let after = scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1..], before.runs[1..]);
+    }
+
+    #[test]
+    fn textedit_graphics_stack_requires_balanced_bounded_outer_saves() {
+        for bytes in [
+            "Q BT /F1 12 Tf 40 180 Td (TEXT) Tj ET",
+            "q BT /F1 12 Tf 40 180 Td (TEXT) Tj ET",
+            "BT /F1 12 Tf q 40 180 Td (TEXT) Tj Q ET",
+            "q BT /F1 12 Tf Q 40 180 Td (TEXT) Tj ET",
+            "q BT /F1 12 Tf ET Q BT 40 180 Td (TEXT) Tj ET",
+            "1 q BT /F1 12 Tf 40 180 Td (TEXT) Tj ET Q",
+        ] {
+            let doc = with_content(bytes.as_bytes());
+            assert!(scan(&doc, 0).is_err(), "accepted {bytes}");
+        }
+        for depth in [64, 65] {
+            let bytes = format!(
+                "{}BT /F1 12 Tf 40 180 Td (TEXT) Tj ET {}",
+                "q ".repeat(depth),
+                "Q ".repeat(depth)
+            );
+            assert_eq!(
+                scan(&with_content(bytes.as_bytes()), 0).is_ok(),
+                depth == 64
+            );
+        }
     }
 
     #[test]
@@ -583,7 +676,11 @@ pub(crate) mod tests {
     #[test]
     fn textedit_maps_operators_and_clones_shared_streams() {
         let mut doc = fixture();
-        let (_, before, runs) = inspect(&doc, 0).unwrap();
+        let Inspection {
+            content: before,
+            runs,
+            ..
+        } = inspect(&doc, 0).unwrap();
         assert_eq!(
             runs.runs.iter().map(|r| r.operator).collect::<Vec<_>>(),
             [3, 8]
@@ -597,7 +694,11 @@ pub(crate) mod tests {
             ..first.clone()
         };
         write(&mut doc, &[first, second]).unwrap();
-        let (_, after, saved) = inspect(&doc, 0).unwrap();
+        let Inspection {
+            content: after,
+            runs: saved,
+            ..
+        } = inspect(&doc, 0).unwrap();
         assert_eq!(saved.runs[0].text, "EDITED FIRST");
         assert_eq!(saved.runs[1].text, "EDITED SECOND");
         assert_eq!(scan(&doc, 1).unwrap().runs[0].text, "SYNTHETIC FIRST");
