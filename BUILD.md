@@ -6841,3 +6841,90 @@ example builds. Frontend diagnostics reported no errors or warnings; normal
 Mac assets were restored with zero harness code. The Windows task was removed.
 Implementation sources match the verified Windows snapshot; subsequent changes
 only record these results and the completed plan milestone.
+
+### Word and browser text producer coverage
+
+On 2026-09-13, Word 16.112.3 on macOS exported the existing synthetic RTF
+without changing the resulting PDF. The export uses a simple embedded Helvetica
+subset with MacRomanEncoding and four text shows: the two lines, each followed
+by a separate single-space show. The application already supports this grammar.
+`text-edit-probe --spacers` checks that exact source sequence and compares every
+untargeted run after saving. Omitting the flag deliberately fails discovery.
+
+Export through Word's local PDF save command, retaining the source RTF:
+
+```bash
+mkdir -p scratch/textedit-word
+osascript - "$PWD/testdata/textedit-producer.rtf" "$PWD/scratch/textedit-word/word.pdf" <<'APPLESCRIPT'
+on run argv
+  tell application id "com.microsoft.Word"
+    open file name (item 1 of argv) read only true add to recent files false
+    set fixtureDocument to active document
+    save as fixtureDocument file name (item 2 of argv) file format format PDF add to recent files false
+    close fixtureDocument saving no
+  end tell
+end run
+APPLESCRIPT
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-word/worker scratch/textedit-word/word.pdf --spacers
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-word/worker/synthetic-before.pdf scratch/textedit-word/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-word/worker
+```
+
+The measured Word input SHA-256 was
+`dce5859a8857241c5e6df0092b8878f464b1ffe6ccfd3685323188d760411dba`.
+The worker passes preview, search, undo, save and refusal checks. All 15 Mac native
+`tabs_check.py --phase textedit` checks pass on the same unchanged input. Worker
+and native outputs pass independent parser readback; PDFKit measures 2,413 changed
+pixels inside the target line and zero outside. Four corruption controls fail
+for their intended reasons: deleting a spacer changes the operator count;
+emptying a spacer or moving the second line adds a changed operand; changing a
+font width changes resources. A first native attempt selected an old release
+build; the recorded passing run uses the current debug checks application.
+No Windows native run was performed for this Word sample.
+
+Generate tagged and untagged browser exports through an isolated browser profile:
+
+```bash
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' scratch/textedit-browser
+uv run --with pypdf scripts/text_edit_producers.py --probe src-tauri/target/debug/examples/text-edit-probe scratch/textedit-word/word.pdf scratch/textedit-browser/browser-tagged.pdf scratch/textedit-browser/browser-untagged.pdf
+```
+
+The exporter uses the browser's
+[Page.printToPDF API](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF)
+and independently checks both tag presence and extracted synthetic text. A
+command-line attempt with `--disable-features=PrintTaggedPDF` left tags present
+in Edge 153.0.4234.32; it is not an untagged control. The explicit API produced
+these unchanged inputs on that version:
+
+| Sample | SHA-256 | First worker refusal |
+| --- | --- | --- |
+| Tagged | `1318bcf26d788bf653f88863731527c77e53b5a2da1397e87b3e86a366647c95` | Unsupported or inconsistent tagged text structure |
+| Untagged | `9b0d3000b912919175d2b777347956c78435caea3ae79c7f6077b323f84dfae1` | Rotated, reflected or skewed page content |
+
+Independent inventory finds Type0/Identity-H with CIDFontType2 and an identity
+CIDToGIDMap in both. ToUnicode uses two-byte codes and bfchar/bfrange mappings.
+The page has a negative vertical scale and each text matrix reflects it back;
+ExtGState carries `/ca 1 /BM /Normal`. Tagged structure adds Document/P/NonStruct
+nesting. These are additional unsupported shapes read from the original PDF,
+not successful worker traversal past its first refusal. Start with the untagged
+case before broadening structure attributes further.
+
+The survey requires synthetic text, reports no document text or metadata, and
+checks each source digest before and after inspection. Word supplies its editable
+control and a blank fixture supplies `no_runs`; both browser variants supply real
+refusals. Seven injected instrument faults are rejected: empty output, an unknown
+status, a refusal without a reason, editable with zero runs, negative runs,
+boolean runs and a probe that changes its input. These measurements concern the
+local Mac exports; they are not a claim about every producer version or platform.
+
+The final browser exporter connects directly to the endpoint recorded in its
+isolated profile. An extra HTTP version lookup timed out on repeat runs; the
+direct connection succeeds and a fresh export reproduces the same inventory
+and worker refusals. A failed-browser control also proves both old output files
+are cleared before a rerun can fail.
+
+All 24 local gates passed in 267.6 seconds summed gate time: 1,381 Rust tests
+(three ignored), 1,667 frontend tests in 70 suites, locked fuzz-target and example
+builds, and normal frontend assets restored with zero harness code. Changes are
+confined to development probes, a synthetic HTML source and the plan/evidence
+record; the application grammar is unchanged.

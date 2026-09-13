@@ -4445,9 +4445,30 @@ PDFKit readback confirm preserved indentation and structure, with zero changed
 pixels outside the edited line. Replacements still fit the original line, with
 explicit positioning preserved and no paragraph reflow.
 
-**Next compatibility milestone: broaden unchanged producer coverage.** Survey
-synthetic Word and browser PDF exports, record the actual font and paragraph
-refusals, and prioritize the common cases before widening individual attributes.
+**Word and browser producer survey completed:** the unchanged macOS Word export
+already uses the supported embedded MacRoman font path. It adds a separate
+single-space show after each line; the worker probe now checks all four runs and
+preserves every untargeted run. Worker editing and all 15 Mac native checks pass,
+with independent parser and PDFKit readback showing zero changed pixels outside
+the target line. This is a local Word export measurement, not Windows Word or all
+Word documents. No application grammar change was required.
+
+Edge's independently verified tagged and untagged exports are both refused. The
+tagged variant has nested Document/P/NonStruct children; the untagged control
+first meets the reflected page-transform guard. Both also use Type0/Identity-H,
+CIDFontType2, a two-byte ToUnicode map with ranges, and an ExtGState carrying
+normal blending and full opacity. Those additional unsupported constructs are
+independent inventory findings, not later worker verdicts reached by bypassing
+the first refusal. `scripts/text_edit_producers.py` records these shapes and the
+actual worker verdict; `BUILD.md` records reproduction and controls.
+
+**Next compatibility milestone: the unchanged untagged browser export.** Start
+with a bounded Type0/Identity-H and CIDFontType2 mapping design for existing ASCII
+glyphs, including explicit CID-to-glyph and width validation. The same fixture
+also needs correct composition of reflected page and text matrices, rectangular
+clips in that space, and a narrow explicit ExtGState subset. Keep the complete
+browser export refused until all those parts have independent round-trip evidence;
+accepting one layer is not compatibility. Nested tags follow the untagged case.
 Alternate-text overrides, alignment and paragraph reflow require separate
 semantics; a preserved indent is not evidence for them.
 
