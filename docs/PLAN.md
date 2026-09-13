@@ -4413,9 +4413,11 @@ structure graph and the selected page's markers; untouched streams are preserved
 All content items on the selected page must appear exactly once in its stream, and
 text may occur only inside a paragraph. The writer
 preserves every marker and structure object. Unknown fields, alternate text
-(`ActualText`, `Alt`, `E`), inherited page references, class maps and geometry-based
-layout attributes remain refused. Only Layout/Placement=Block is accepted as a
-structure attribute. Artifact markers may contain the existing supported graphics
+(`ActualText`, `Alt`, `E`), inherited page references, class maps and ink bounds
+remain refused. Layout/Placement=Block may carry an authored EndIndent on a
+paragraph; its finite numeric value is preserved unchanged and bounded to an
+absolute value of 1,000,000, like text coordinates. Other layout attributes remain
+refused. Artifact markers may contain the existing supported graphics
 state operators but no text. This is bounded compatibility, not PDF/UA validation.
 
 **Multi-page tagged milestone completed:** a fresh two-page LibreOffice export
@@ -4433,12 +4435,21 @@ Independent corruption controls detect changed item order, missing items and
 wrong MCR ownership. Indirect MCRs, omitted
 MCR page references, external streams and nested children remain refused.
 
-**Next compatibility milestone: naturally wrapped text and paragraph layout.**
-The producer survey found trailing spaces in text-show operands and EndIndent on
-an indented paragraph. Measure these separately before widening the text or
-attribute grammar. Alternate-text overrides still need separate semantics.
-Retain explicit positioning between shows and require zero changed pixels outside
-the edited line.
+**Naturally wrapped paragraph milestone completed:** the measured
+LibreOffice export wraps ordinary spaces into lines and flows one paragraph
+across pages. Its authored EndIndent is now accepted; the editor already supports
+literal trailing spaces, and the probes now assert their exact source identity.
+A stale edit with a trimmed original remains refused. Worker edits to either
+page and all 20 native checks pass on macOS and Windows. Independent parser and
+PDFKit readback confirm preserved indentation and structure, with zero changed
+pixels outside the edited line. Replacements still fit the original line, with
+explicit positioning preserved and no paragraph reflow.
+
+**Next compatibility milestone: broaden unchanged producer coverage.** Survey
+synthetic Word and browser PDF exports, record the actual font and paragraph
+refusals, and prioritize the common cases before widening individual attributes.
+Alternate-text overrides, alignment and paragraph reflow require separate
+semantics; a preserved indent is not evidence for them.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from

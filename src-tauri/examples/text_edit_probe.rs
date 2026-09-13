@@ -1,6 +1,7 @@
 //! Run `cargo run --example text-edit-probe -- <scratch-directory> [fixture.pdf]`.
 //! The optional fixture must contain the same two synthetic lines and page geometry.
 //! Add `--latin1` for the accented variant or `--page=N` to edit another page.
+//! Add `--wrapped` for the naturally wrapped fixture with literal source spaces.
 //! Every other page must remain unchanged; page indices are zero based.
 //! `--inspect <fixture.pdf>` only discovers first-page runs through the worker;
 //! it prints JSON without document text and never creates or saves a PDF.
@@ -88,15 +89,23 @@ fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .ok_or("usage: text-edit-probe <scratch-directory>")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let option = std::env::args().nth(3).unwrap_or_default();
-    let latin1 = option == "--latin1";
-    let page = if let Some(index) = option.strip_prefix("--page=") {
-        index.parse::<u32>().map_err(|_| "invalid page index")?
-    } else if option.is_empty() || latin1 {
-        0
-    } else {
-        return Err("expected --latin1 or --page=N after the fixture path".into());
-    };
+    let mut latin1 = false;
+    let mut wrapped = false;
+    let mut page = 0;
+    for option in std::env::args().skip(3) {
+        if let Some(index) = option.strip_prefix("--page=") {
+            page = index.parse::<u32>().map_err(|_| "invalid page index")?;
+        } else if option == "--latin1" {
+            latin1 = true;
+        } else if option == "--wrapped" {
+            wrapped = true;
+        } else {
+            return Err("expected --latin1, --wrapped or --page=N after the fixture path".into());
+        }
+    }
+    if latin1 && wrapped {
+        return Err("choose one fixture text variant".into());
+    }
     let original = if latin1 {
         "SYNTHETIC ÄÖÜ ß"
     } else {
@@ -137,9 +146,18 @@ fn run() -> Result<(), String> {
         }
     }
     let mapped = runs(&mut worker, page)?;
+    let source_first = format!("{original}{}", if wrapped { " " } else { "" });
+    let source_second = format!(
+        "SYNTHETIC SECOND{}",
+        if wrapped && page + 1 < page_count {
+            " "
+        } else {
+            ""
+        }
+    );
     if mapped.runs.len() != 2
-        || mapped.runs[0].text != original
-        || mapped.runs[1].text != "SYNTHETIC SECOND"
+        || mapped.runs[0].text != source_first
+        || mapped.runs[1].text != source_second
     {
         return Err("worker discovered incorrect text runs".into());
     }
@@ -251,7 +269,7 @@ fn run() -> Result<(), String> {
     {
         return Err("invalid draft preflight succeeded".into());
     }
-    if runs(&mut worker, page)?.runs[0].text != original
+    if runs(&mut worker, page)?.runs[0].text != source_first
         || pixels(&mut worker, &tile)? != before
         || std::fs::read(&source).map_err(|e| e.to_string())? != original_bytes
     {
@@ -273,9 +291,7 @@ fn run() -> Result<(), String> {
     drop(out);
     let mut saved = Worker::spawn(&target, &library)?;
     let after = runs(&mut saved, page)?;
-    if after.runs.len() != 2
-        || after.runs[0].text != replacement
-        || after.runs[1].text != "SYNTHETIC SECOND"
+    if after.runs.len() != 2 || after.runs[0].text != replacement || after.runs[1] != mapped.runs[1]
     {
         return Err("worker rewrite changed the wrong text".into());
     }
