@@ -55,6 +55,236 @@ fn multipage() -> (Document, [ObjectId; 9]) {
     )
 }
 
+fn flowing() -> (Document, [ObjectId; 9]) {
+    let (mut doc, ids) = multipage();
+    doc.get_dictionary_mut(ids[2])
+        .unwrap()
+        .set("K", vec![Object::Reference(ids[3])]);
+    doc.get_dictionary_mut(ids[3]).unwrap().set(
+        "K",
+        vec![
+            Object::Integer(0),
+            Object::Integer(1),
+            dictionary! { "Type" => "MCR", "Pg" => ids[6], "MCID" => 0 }.into(),
+            dictionary! { "Type" => "MCR", "Pg" => ids[6], "MCID" => 1 }.into(),
+        ],
+    );
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            Object::Integer(0),
+            Object::Array(vec![ids[3].into(); 2]),
+            Object::Integer(7),
+            Object::Array(vec![ids[3].into(); 2]),
+        ],
+    );
+    (doc, ids)
+}
+
+#[test]
+fn textedit_tagged_flowing_paragraph_preserves_every_item_and_page() {
+    for page in [0, 1] {
+        let (mut doc, ids) = flowing();
+        let before = textedit::scan(&doc, page).unwrap();
+        let other = textedit::scan(&doc, 1 - page).unwrap();
+        let original = doc.objects.clone();
+        let edit = Change {
+            page,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        textedit::write(&mut doc, &[edit]).unwrap();
+        let after = textedit::scan(&doc, page).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        assert_eq!(textedit::scan(&doc, 1 - page).unwrap().runs, other.runs);
+        for (id, object) in original {
+            if id != ids[if page == 0 { 0 } else { 6 }] {
+                assert_eq!(doc.objects[&id], object);
+            }
+        }
+    }
+    // Item order is reading order, not paint order. The element's page can be
+    // either page; local integer IDs follow that page and MCRs name the other.
+    let (mut doc, ids) = flowing();
+    doc.get_dictionary_mut(ids[3]).unwrap().set("Pg", ids[6]);
+    let items = doc
+        .get_dictionary_mut(ids[3])
+        .unwrap()
+        .get_mut(b"K")
+        .unwrap()
+        .as_array_mut()
+        .unwrap();
+    for item in &mut items[2..] {
+        item.as_dict_mut().unwrap().set("Pg", ids[0]);
+    }
+    items.reverse();
+    for page in [0, 1] {
+        assert_eq!(textedit::scan(&doc, page).unwrap().runs.len(), 2);
+    }
+}
+
+#[test]
+fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
+    for mode in 0..15 {
+        let (mut doc, ids) = flowing();
+        let before = textedit::scan(&doc, 1).unwrap();
+        let edit = Change {
+            page: 1,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        let items = doc
+            .get_dictionary_mut(ids[3])
+            .unwrap()
+            .get_mut(b"K")
+            .unwrap()
+            .as_array_mut()
+            .unwrap();
+        match mode {
+            0 => items[2].as_dict_mut().unwrap().set("Stm", ids[0]),
+            1 => items[2].as_dict_mut().unwrap().set("StmOwn", ids[0]),
+            2 => items[2]
+                .as_dict_mut()
+                .unwrap()
+                .set("ActualText", Object::string_literal("STALE")),
+            3 => items[2].as_dict_mut().unwrap().set("Type", "OBJR"),
+            4 => {
+                items[2].as_dict_mut().unwrap().remove(b"Pg");
+            }
+            5 => items[2].as_dict_mut().unwrap().set("Pg", ids[1]),
+            6 => items[2].as_dict_mut().unwrap().set("MCID", -1),
+            7 => items[2]
+                .as_dict_mut()
+                .unwrap()
+                .set("MCID", Object::Real(0.0)),
+            8 => items[2].as_dict_mut().unwrap().set("Pg", ids[0]),
+            9 => {
+                items.pop();
+            }
+            10 => items.push(items[2].clone()),
+            11 => items.clear(),
+            12 => items[2] = Object::Reference(ids[3]),
+            13 => items[2].as_dict_mut().unwrap().set("MCID", 128),
+            14 => items[3] = items[2].clone(),
+            _ => unreachable!(),
+        }
+        let original = doc.objects.clone();
+        for page in [0, 1] {
+            assert!(
+                textedit::scan(&doc, page).is_err(),
+                "mode {mode}, page {page}"
+            );
+        }
+        assert!(textedit::write(&mut doc, &[edit]).is_err(), "mode {mode}");
+        assert_eq!(doc.objects, original);
+    }
+    // Empty paragraph alongside fully claimed content is a distinct failure.
+    let (mut doc, ids) = flowing();
+    doc.get_dictionary_mut(ids[4])
+        .unwrap()
+        .set("K", Vec::<Object>::new());
+    doc.get_dictionary_mut(ids[2])
+        .unwrap()
+        .set("K", vec![ids[3].into(), ids[4].into()]);
+    assert!(textedit::scan(&doc, 0).is_err());
+}
+
+#[test]
+fn textedit_tagged_one_paragraph_still_bounds_total_content_items() {
+    for count in [128, 129] {
+        let (mut doc, ids) = fixture(CONTENT);
+        doc.get_dictionary_mut(ids[2])
+            .unwrap()
+            .set("K", vec![Object::Reference(ids[3])]);
+        doc.get_dictionary_mut(ids[3])
+            .unwrap()
+            .set("K", (0..count).map(Object::Integer).collect::<Vec<_>>());
+        doc.get_dictionary_mut(ids[5]).unwrap().set(
+            "Nums",
+            vec![
+                Object::Integer(0),
+                Object::Array(vec![ids[3].into(); count as usize]),
+            ],
+        );
+        let content = (0..count)
+            .map(|mcid| {
+                format!(
+                    "/Standard << /MCID {mcid} >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC "
+                )
+            })
+            .collect::<String>();
+        let stream = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+        doc.get_dictionary_mut(ids[0])
+            .unwrap()
+            .set("Contents", stream);
+        let result = textedit::scan(&doc, 0);
+        if count == 128 {
+            assert_eq!(result.unwrap().runs.len(), 128);
+        } else {
+            assert!(result.is_err());
+        }
+    }
+}
+
+#[test]
+fn textedit_tagged_empty_role_name_cannot_hide_duplicate_items() {
+    let (mut doc, ids) = fixture(CONTENT);
+    let mut roles = Dictionary::new();
+    roles.set(Vec::<u8>::new(), Object::Name(b"P".to_vec()));
+    doc.get_dictionary_mut(ids[1])
+        .unwrap()
+        .set("RoleMap", roles);
+    for id in [ids[3], ids[4]] {
+        doc.get_dictionary_mut(id)
+            .unwrap()
+            .set("S", Object::Name(Vec::new()));
+        doc.get_dictionary_mut(id)
+            .unwrap()
+            .set("K", vec![Object::Integer(0)]);
+    }
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![Object::Integer(0), Object::Array(vec![ids[4].into(); 2])],
+    );
+    // Keep the first reverse pointer valid while combining two content items in
+    // one element. An empty tag must not double as an unclaimed-slot sentinel.
+    doc.get_dictionary_mut(ids[2])
+        .unwrap()
+        .set("K", vec![Object::Reference(ids[4])]);
+    doc.get_dictionary_mut(ids[4])
+        .unwrap()
+        .set("K", vec![Object::Integer(0); 2]);
+    assert!(super::Tags::read(&doc, ids[0], &[ids[0]]).is_err());
+}
+
+#[test]
+fn textedit_tagged_flowing_batch_is_atomic_across_pages() {
+    let (mut doc, _) = flowing();
+    let edits = [0, 1].map(|page| {
+        let before = textedit::scan(&doc, page).unwrap();
+        Change {
+            page,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: if page == 0 { "IN".into() } else { "IS".into() },
+        }
+    });
+    let original = doc.objects.clone();
+    let mut bad = edits.clone();
+    bad[1].replacement = "S".repeat(80);
+    assert!(textedit::write(&mut doc, &bad).is_err());
+    assert_eq!(doc.objects, original);
+    textedit::write(&mut doc, &edits).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs[0].text, "IS");
+}
+
 #[test]
 fn textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated() {
     for page in [0, 1] {

@@ -4402,12 +4402,15 @@ outside the edited line. Reproduction and negative controls are in `BUILD.md`,
 *Tagged paragraph text editing*.
 
 The tagged grammar supports a two-level Document/paragraph tree with at most 128
-paragraphs across the document. A flat parent number tree has one nonempty array
+marked-content items across the document, each owned by exactly one paragraph.
+A paragraph can own several items, including items on other pages. A flat parent
+number tree has one nonempty array
 per page, with unique, sorted keys matching each page's StructParents. Direct
-integer MCIDs are local to their owning page and may repeat on other pages; both
+integer MCIDs use the paragraph's page; direct MCR dictionaries explicitly name
+their page and MCID. IDs may repeat on other pages; both
 directions of each structure reference must agree. Discovery checks the complete
 structure graph and the selected page's markers; untouched streams are preserved.
-All paragraphs on the selected page must appear exactly once in its stream, and
+All content items on the selected page must appear exactly once in its stream, and
 text may occur only inside a paragraph. The writer
 preserves every marker and structure object. Unknown fields, alternate text
 (`ActualText`, `Alt`, `E`), inherited page references, class maps and geometry-based
@@ -4421,11 +4424,21 @@ Independent parser and PDFKit readback confirm the other page's content,
 resources, pixels and structure references are preserved. Reproduction is in
 `BUILD.md`, *Multi-page tagged text editing*.
 
-**Next compatibility milestone: wrapped and page-spanning paragraphs.** Measure
-producer output where one paragraph owns several marked-content items before
-expanding the child grammar. Preserve reading order and page-local ownership;
-alternate-text overrides still need separate semantics. Retain explicit
-positioning between shows and require zero changed pixels outside the edited line.
+**Line-broken and page-spanning paragraph milestone completed:** unchanged
+LibreOffice exports represent two lines as one paragraph with two integer IDs,
+and natural page overflow as the same paragraph with additional MCR dictionaries.
+Worker edits to either page and all 19 native checks on macOS and Windows pass,
+preserving every structure reference and the other page's bytes and pixels.
+Independent corruption controls detect changed item order, missing items and
+wrong MCR ownership. Indirect MCRs, omitted
+MCR page references, external streams and nested children remain refused.
+
+**Next compatibility milestone: naturally wrapped text and paragraph layout.**
+The producer survey found trailing spaces in text-show operands and EndIndent on
+an indented paragraph. Measure these separately before widening the text or
+attribute grammar. Alternate-text overrides still need separate semantics.
+Retain explicit positioning between shows and require zero changed pixels outside
+the edited line.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from

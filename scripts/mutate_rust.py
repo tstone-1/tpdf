@@ -261,13 +261,20 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('tagged flow: allow empty role names', 'src/textedit/tagging.rs', 'key.is_empty()', 'false', 'textedit_tagged_empty_role_name_cannot_hide_duplicate_items'),
+    Mutation('tagged flow: ignore explicit item page', 'src/textedit/tagging.rs', '(reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)', '(paragraph_page, integer(get(mcr, b"MCID")?)?)', 'textedit_tagged_flowing_paragraph_preserves_every_item_and_page'),
+    Mutation('tagged flow: ignore MCR type', 'src/textedit/tagging.rs', 'if name(get(mcr, b"Type")?)? != b"MCR" {', 'if false {', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
+    Mutation('tagged flow: ignore MCR field whitelist', 'src/textedit/tagging.rs', 'keys(mcr, &[b"Type", b"Pg", b"MCID"])?;', '// fields unchecked', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
+    Mutation('tagged flow: accept empty paragraph', 'src/textedit/tagging.rs', 'if items.is_empty() || assigned > total {', 'if assigned > total {', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
+    Mutation('tagged flow: allow repeated item ownership', 'src/textedit/tagging.rs', '|| !names[mcid].is_empty()', '|| false', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
+    Mutation('tagged flow: relax total item limit', 'src/textedit/tagging.rs', 'total > MAX_CONTENT_ITEMS', 'total > MAX_CONTENT_ITEMS + 1', 'textedit_tagged_one_paragraph_still_bounds_total_content_items'),
     Mutation('tagged pages: select the first page map', 'src/textedit/tagging.rs', 'by_page.remove(&page).ok_or(INVALID)?', 'by_page.remove(&pages[0]).ok_or(INVALID)?', 'textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated'),
     Mutation('tagged pages: bind paragraphs to the requested page', 'src/textedit/tagging.rs', 'by_page.get_mut(&owner).ok_or(INVALID)?', 'by_page.get_mut(&page).ok_or(INVALID)?', 'textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated'),
     Mutation('tagged pages: accept unsorted number tree', 'src/textedit/tagging.rs', 'if key <= previous {', 'if false {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
     Mutation('tagged pages: ignore trailing number tree key', 'src/textedit/tagging.rs', 'if nums.len() != pages.len() * 2 {', 'if false {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
-    Mutation('tagged pages: ignore unclaimed parent entries', 'src/textedit/tagging.rs', 'if total != children.len() || !page_keys.is_empty() {', 'if !page_keys.is_empty() {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
+    Mutation('tagged pages: ignore unclaimed parent entries', 'src/textedit/tagging.rs', 'if assigned != total {', 'if false {', 'textedit_tagged_multi_page_parent_keys_and_owners_must_agree'),
 
-    Mutation('tagged: omit paragraph count limit', 'src/textedit/tagging.rs', 'total > MAX_PARAGRAPHS', 'total > MAX_PARAGRAPHS + 1', 'textedit_tagged_limits_have_valid_boundary_controls'),
+    Mutation('tagged: omit paragraph count limit', 'src/textedit/tagging.rs', 'total > MAX_CONTENT_ITEMS', 'total > MAX_CONTENT_ITEMS + 1', 'textedit_tagged_limits_have_valid_boundary_controls'),
     Mutation('tagged: ignore semantic dictionary fields', 'src/textedit/tagging.rs', 'if dict\n        .iter()\n        .any(|(key, _)| !allowed.contains(&key.as_slice()))\n    {', 'if false {', 'textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes'),
     Mutation('tagged: ignore parent element reference', 'src/textedit/tagging.rs', '|| reference(get(dict, b"P")?)? != parent', '|| false', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
     Mutation('tagged: ignore reverse parent tree reference', 'src/textedit/tagging.rs', '|| reference(&entries[mcid])? != id', '|| false', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),

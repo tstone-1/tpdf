@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 mod tests;
 
-const MAX_PARAGRAPHS: usize = 128;
+// Every paragraph owns at least one item, so this also bounds pages and elements.
+const MAX_CONTENT_ITEMS: usize = 128;
 const INVALID: &str = "unsupported or inconsistent tagged text structure";
 
 fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
@@ -95,7 +96,7 @@ impl Tags {
             return Ok(Self::default());
         };
         // No recursive graph walk: this first grammar has exactly two levels.
-        if pages.is_empty() || pages.len() > MAX_PARAGRAPHS {
+        if pages.is_empty() || pages.len() > MAX_CONTENT_ITEMS {
             return Err(INVALID.into());
         }
         let page_ids: BTreeSet<_> = pages.iter().copied().collect();
@@ -117,7 +118,8 @@ impl Tags {
         if let Some(roles) = roles {
             if roles.len() > 16
                 || roles.iter().any(|(key, value)| {
-                    key.len() > 127
+                    key.is_empty()
+                        || key.len() > 127
                         || key == b"Document"
                         || key == b"P"
                         || value.as_name().ok() != Some(b"P")
@@ -170,14 +172,15 @@ impl Tags {
             let owner = page_keys.remove(&key).ok_or(INVALID)?;
             let entries = array(&pair[1])?;
             total += entries.len();
-            if entries.is_empty() || total > MAX_PARAGRAPHS {
+            if entries.is_empty() || total > MAX_CONTENT_ITEMS {
                 return Err(INVALID.into());
             }
             by_page.insert(owner, (entries, vec![Vec::new(); entries.len()]));
         }
-        if total != children.len() || !page_keys.is_empty() {
+        if children.len() > total || !page_keys.is_empty() {
             return Err(INVALID.into());
         }
+        let mut assigned = 0;
         let mut ids = page_ids.clone();
         ids.extend([root_id, document_id]);
         for child in children {
@@ -186,8 +189,7 @@ impl Tags {
                 return Err(INVALID.into());
             }
             let child = node(doc, id)?;
-            let owner = element(child, document_id, &page_ids)?;
-            let (entries, names) = by_page.get_mut(&owner).ok_or(INVALID)?;
+            let paragraph_page = element(child, document_id, &page_ids)?;
             let tag = name(get(child, b"S")?)?;
             if tag != b"P"
                 && roles
@@ -197,14 +199,38 @@ impl Tags {
             {
                 return Err(INVALID.into());
             }
-            let [mcid] = array(get(child, b"K")?)? else {
-                return Err(INVALID.into());
-            };
-            let mcid = usize::try_from(integer(mcid)?).map_err(|_| INVALID)?;
-            if mcid >= names.len() || !names[mcid].is_empty() || reference(&entries[mcid])? != id {
+            let items = array(get(child, b"K")?)?;
+            assigned += items.len();
+            if items.is_empty() || assigned > total {
                 return Err(INVALID.into());
             }
-            names[mcid] = tag.to_vec();
+            for item in items {
+                // ISO 32000-1 14.7.4.2: an integer uses the element's Pg;
+                // an MCR names a sequence on its own page. No external streams.
+                let (owner, mcid) = match item {
+                    Object::Integer(mcid) => (paragraph_page, *mcid),
+                    Object::Dictionary(mcr) => {
+                        keys(mcr, &[b"Type", b"Pg", b"MCID"])?;
+                        if name(get(mcr, b"Type")?)? != b"MCR" {
+                            return Err(INVALID.into());
+                        }
+                        (reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)
+                    }
+                    _ => return Err(INVALID.into()),
+                };
+                let (entries, names) = by_page.get_mut(&owner).ok_or(INVALID)?;
+                let mcid = usize::try_from(mcid).map_err(|_| INVALID)?;
+                if mcid >= names.len()
+                    || !names[mcid].is_empty()
+                    || reference(&entries[mcid])? != id
+                {
+                    return Err(INVALID.into());
+                }
+                names[mcid] = tag.to_vec();
+            }
+        }
+        if assigned != total {
+            return Err(INVALID.into());
         }
         let (_, names) = by_page.remove(&page).ok_or(INVALID)?;
         Ok(Self {
