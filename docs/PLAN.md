@@ -4387,15 +4387,23 @@ Quartz variant also passes the Mac worker round trip. This is evidence for these
 fixtures, not every PDF from the producer. Reproduction and verification records
 are in `BUILD.md`, *Quartz/CoreText text-edit round trip*.
 
-**Next compatibility milestone: the untagged LibreOffice export.** Its measured
-remaining exclusions are its page clip and unused line-width setting; tagged
-exports additionally carry structure metadata. Its symbolic character mapping now
-passes a worker round trip in an explicitly modified control with those graphics
-operators removed. The original export remains refused. Next handle the measured
-page clip without accepting arbitrary clipping. Retain explicit positioning between shows and require
-the unchanged producer output to pass end to end with zero changed pixels outside
-the edited line. The baseline exports and read-only inspection mode are in
-`BUILD.md`, *Independent text producer survey*.
+**Untagged LibreOffice milestone completed 2026-09-13:** the unchanged synthetic
+export now passes worker and native UI editing on macOS and Windows, including its
+rectangular page clip and unused line-width setting. Independent parser and PDFKit
+readback confirm unchanged resources and zero changed pixels outside the edited
+line. This establishes compatibility with the measured export, not all LibreOffice
+PDFs. Reproduction and verification records are in `BUILD.md`, *Unmodified
+LibreOffice export and rectangular clips*.
+
+**Next compatibility milestone: investigate tagged LibreOffice output.** The
+survey's tagged export remains refused. It adds marked-content IDs and structure
+tree references, so editing must preserve their relationships and keep any
+accessibility text consistent with the replacement. Inspect those semantics before
+widening the grammar; removing the tagged-document guard alone is insufficient.
+Retain explicit positioning between shows and require the unchanged producer
+output to pass end to end with zero changed pixels outside the edited line. The
+baseline exports and read-only inspection mode are in `BUILD.md`, *Independent
+text producer survey*.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
@@ -4440,6 +4448,15 @@ signatures, component counts and unit ranges. These are envelope checks, not
 validation of ICC transforms: the contained renderer interprets the unchanged
 profile. Pattern/spot/calibrated spaces and default-space substitutions remain
 refused.
+Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
+outside text blocks, with positive dimensions and coordinates bounded to one
+million after transformation. They intersect in original page space and restore
+through `q`/`Q`; later CTM changes do not move an existing clip. Every affected
+text run must have validated embedded glyph outlines and fit its full editing
+envelope inside the clip, before crop or rotation. Standard Helvetica has only
+advance metrics here and is refused under an explicit clip. Partial, compound,
+painted, empty and reversed paths remain unsupported. A bounded nonnegative `w`
+setter is preserved; filled text cannot use it and stroking stays refused.
 Positive page scaling and translations compose across `cm` operators and are
 restored by `Q`. The reported matrix and hit box combine the text matrix with
 the page transform before crop and rotation. An existing page scale acts on a

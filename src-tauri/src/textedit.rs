@@ -2,9 +2,10 @@
 //!
 //! Supported text uses Helvetica/WinAnsi or a validated embedded TrueType subset, with explicit
 //! positioning between shows. Font/leading setup may precede a text block.
-//! Graphics, custom text state and implicit advances between shows are refused.
+//! Painted graphics, custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
+mod clipping;
 mod colors;
 mod filters;
 mod fonts;
@@ -309,10 +310,15 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
     let mut states = Vec::new();
+    let mut clip = None;
+    let mut clip_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
+        if index < clip_until {
+            continue;
+        }
         match (op.operator.as_str(), op.operands.as_slice()) {
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
             // Only accept saves outside BT/ET. Preserve every accepted state
@@ -321,12 +327,32 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 if states.len() >= 64 {
                     return Err("text graphics-state stack exceeds its limit".into());
                 }
-                states.push((selected_font, leading, page_transform, fill_components));
+                states.push((
+                    selected_font,
+                    leading,
+                    page_transform,
+                    fill_components,
+                    clip,
+                ));
             }
             ("Q", []) if !inside => {
-                (selected_font, leading, page_transform, fill_components) =
-                    states.pop().ok_or("unmatched graphics-state restore")?;
+                (
+                    selected_font,
+                    leading,
+                    page_transform,
+                    fill_components,
+                    clip,
+                ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
+            ("re", _) if !inside => {
+                clip = Some(clipping::apply(
+                    clip,
+                    &content.operations[index..],
+                    page_transform,
+                )?);
+                clip_until = index + 3;
+            }
+            ("w", [value]) => clipping::line_width(value)?,
             ("cm", values) if !inside && values.len() == 6 => {
                 let mut next = [0.0; 6];
                 for (dest, value) in next.iter_mut().zip(values) {
@@ -424,18 +450,25 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             (text, advance)
         };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
-        let x = page_matrix[4] - f64::from(geometry.origin.0);
-        let y = page_matrix[5] - f64::from(geometry.origin.1);
+        let bounds = [
+            page_matrix[4],
+            page_matrix[5] - size * page_matrix[3] * 0.25,
+            page_matrix[4] + advance * page_matrix[0],
+            page_matrix[5] + size * page_matrix[3],
+        ];
+        // Standard-font widths alone do not prove where substituted glyph ink
+        // ends. Embedded glyph outlines are validated against this exact box.
+        if clip.is_some() && !metrics.bounded_outlines {
+            return Err("clipped text requires validated embedded glyph outlines".into());
+        }
+        clipping::contains(clip, bounds)?;
+        let [left, bottom, right, top] = bounds;
+        let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
         let display_rect = crate::text::to_device(
             geometry.turns,
             geometry.width,
             geometry.height,
-            [
-                x,
-                y - size * page_matrix[3] * 0.25,
-                x + advance * page_matrix[0],
-                y + size * page_matrix[3],
-            ],
+            [left - ox, bottom - oy, right - ox, top - oy],
         );
         if display_rect.iter().any(|v| !v.is_finite()) {
             return Err("text bounds exceed the display range".into());

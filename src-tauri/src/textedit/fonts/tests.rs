@@ -6,7 +6,7 @@ use lopdf::{dictionary, Stream};
 // outlines; MIT like this repository. Contains no installed font material.
 const SYNTHETIC: &[u8] = include_bytes!("../synthetic.ttf");
 
-fn fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::ObjectId) {
+pub(crate) fn fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::ObjectId) {
     let mut doc = textedit::tests::fixture();
     let program = doc.add_object(Stream::new(Dictionary::new(), SYNTHETIC.to_vec()));
     let descriptor = doc.add_object(dictionary! {

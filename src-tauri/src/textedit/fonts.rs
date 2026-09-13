@@ -6,11 +6,12 @@ use lopdf::{Dictionary, Document, Object};
 use ttf_parser::{Face, GlyphId, PlatformId, Tag};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 mod mapping;
 
 pub(super) struct Metrics {
+    pub(super) bounded_outlines: bool,
     widths: Box<[Option<f64>; 256]>,
     // Single-byte PDF codes to ASCII. None retains the standard encoding path.
     codes: Option<Box<[Option<u8>; 256]>>,
@@ -26,6 +27,7 @@ impl Metrics {
             ));
         }
         Self {
+            bounded_outlines: false,
             widths,
             codes: None,
         }
@@ -292,6 +294,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         result[byte as usize] = Some(width);
     }
     Ok(Metrics {
+        bounded_outlines: true,
         widths: result,
         codes,
     })
