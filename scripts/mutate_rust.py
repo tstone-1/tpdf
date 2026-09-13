@@ -261,6 +261,20 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('cid: decode little endian', 'src/textedit/fonts.rs', 'u16::from_be_bytes([pair[0], pair[1]])', 'u16::from_le_bytes([pair[0], pair[1]])', 'textedit_composite_roundtrip_preserves_program_mapping_and_other_page'),
+    Mutation('cid: encode little endian', 'src/textedit/fonts.rs', 'result.extend(code.to_be_bytes());', 'result.extend(code.to_le_bytes());', 'textedit_composite_roundtrip_preserves_program_mapping_and_other_page'),
+    Mutation('cid: accept odd strings', 'src/textedit/fonts.rs', 'bytes.len() % 2 != 0 ||', 'false ||', 'textedit_composite_code_lengths_notdef_and_glyph_bounds'),
+    Mutation('cid: omit string limit', 'src/textedit/fonts.rs', 'bytes.len() / 2 > super::MAX_TEXT', 'false', 'textedit_composite_code_lengths_notdef_and_glyph_bounds'),
+    Mutation('cid: infer glyph from Unicode', 'src/textedit/fonts/composite.rs', 'let glyph = GlyphId(code);', 'let glyph = GlyphId(u16::from(ch));', 'textedit_composite_roundtrip_preserves_program_mapping_and_other_page'),
+    Mutation('cid: ignore default width', 'src/textedit/fonts/composite.rs', '.copied().unwrap_or(default)', '.copied().unwrap_or(1000.)', 'textedit_composite_code_lengths_notdef_and_glyph_bounds'),
+    Mutation('cid: skip width agreement', 'src/textedit/fonts/composite.rs', '(width - advance).abs() > 1.', 'false', 'textedit_composite_refusals_leave_every_object_unchanged'),
+    Mutation('cid: skip glyph map identity', 'src/textedit/fonts/composite.rs', 'name(child, b"CIDToGIDMap", b"Identity")?;', '// unchecked glyph map', 'textedit_composite_refusals_leave_every_object_unchanged'),
+    Mutation('cid: skip font permissions', 'src/textedit/fonts/composite.rs', 'super::face(&bytes, false)?', 'ttf_parser::Face::parse(&bytes, 0).map_err(|_| INVALID)?', 'textedit_composite_checks_embedding_rights_and_program_format'),
+    Mutation('cid: raise width table bound', 'src/textedit/fonts/composite.rs', 'const MAX_WIDTHS: usize = 4096;', 'const MAX_WIDTHS: usize = 4097;', 'textedit_composite_width_table_bounds_and_defaults'),
+    Mutation('cid: accept duplicate codes', 'src/textedit/fonts/mapping.rs', 'result.insert(code, ch).is_some()', '{ result.insert(code, ch); false }', 'textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width'),
+    Mutation('cid: expand beyond ASCII', 'src/textedit/fonts/mapping.rs', 'u32::from(target) + u32::from(last - first) > 126', 'false', 'textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width'),
+    Mutation('cid: count kerning bytes as characters', 'src/textedit.rs', 'characters += fragment.chars().count();', 'characters += bytes.len();', 'textedit_composite_kerning_limit_counts_characters_across_strings'),
+
     Mutation('tagged indent: skip numeric validation', 'src/textedit/tagging.rs', 'super::number(indent)?;', '// unchecked indent', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
     Mutation('tagged indent: accept document scope', 'src/textedit/tagging.rs', 'if name(get(dict, b"S")?)? == b"Document" {', 'if false {', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
     Mutation('tagged indent: trim stale source text', 'src/textedit.rs', 'change.original != run.text', 'change.original.trim_end() != run.text.trim_end()', 'textedit_tagged_end_indent_and_source_spaces_survive_a_fitting_edit'),

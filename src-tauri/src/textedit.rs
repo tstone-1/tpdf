@@ -78,6 +78,9 @@ fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
 fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Metrics, String> {
     let fonts = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
     let font = dictionary(doc, fonts.get(name).map_err(|e| e.to_string())?)?;
+    if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type0") {
+        return fonts::composite(doc, font);
+    }
     if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"TrueType") {
         return fonts::embedded(doc, font);
     }
@@ -251,11 +254,11 @@ fn array_text(
     let mut furthest = 0.0;
     for value in values {
         if let Object::String(bytes, _) = value {
-            characters += bytes.len();
+            let fragment = metrics.decode(bytes)?;
+            characters += fragment.chars().count();
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
             }
-            let fragment = metrics.decode(bytes)?;
             advance += metrics.advance(&fragment, size)?;
             if advance < furthest {
                 return Err("backtracking kerning text is not editable yet".into());

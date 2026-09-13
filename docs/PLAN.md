@@ -4462,11 +4462,28 @@ independent inventory findings, not later worker verdicts reached by bypassing
 the first refusal. `scripts/text_edit_producers.py` records these shapes and the
 actual worker verdict; `BUILD.md` records reproduction and controls.
 
-**Next compatibility milestone: the unchanged untagged browser export.** Start
-with a bounded Type0/Identity-H and CIDFontType2 mapping design for existing ASCII
-glyphs, including explicit CID-to-glyph and width validation. The same fixture
-also needs correct composition of reflected page and text matrices, rectangular
-clips in that space, and a narrow explicit ExtGState subset. Keep the complete
+**Composite-font milestone completed:** Type0/Identity-H with one embedded
+CIDFontType2 descendant and an explicit identity CIDToGIDMap supports existing
+ASCII glyphs. Two-byte ToUnicode bfchar and scalar bfrange entries must be
+one-to-one; the bounded standard wrapper admits no inheritance or extra code.
+The reader validates default and explicit PDF widths against TrueType advances,
+checks glyph bounds and embedding permissions, and preserves the font program.
+The original geometric-font fixture passes worker save and all 15 native checks
+on macOS and Windows. Independent parser and PDFKit readback confirm unchanged
+resources and zero changed pixels outside the edited line. Kerning-array limits
+count decoded characters, including across separate two-byte strings.
+
+The browser's actual font also passes in a deliberately normalized diagnostic
+page. That diagnostic is not the original browser export: its page transforms,
+graphics state and tags were removed before editing. Its six decimal resource
+differences round to identical f32 values; the strict resource comparator reports
+them, while the embedded program is byte-identical and PDFKit finds zero changed
+pixels outside the target. `BUILD.md` records the distinction.
+
+**Next compatibility milestone: the unchanged untagged browser export.** The
+font mapping layer is in place. The same fixture still needs correct composition
+of reflected page and text matrices, rectangular clips in that space, and a
+narrow explicit ExtGState subset. Keep the complete
 browser export refused until all those parts have independent round-trip evidence;
 accepting one layer is not compatibility. Nested tags follow the untagged case.
 Alternate-text overrides, alignment and paragraph reflow require separate
@@ -4496,6 +4513,13 @@ Apple `true` programs on the MacRoman or symbolic path may omit the optional
 programs still require that table. Missing glyphs, other custom mappings,
 overhanging outlines, variable/colour fonts and non-editable embedding permissions
 are refused.
+The composite path additionally accepts only Adobe/Identity/0 CID collections,
+symbolic descriptor flags and OpenType-style TrueType programs. Its map is at
+most 16 KiB decoded and 95 unique printable ASCII characters; width tables are
+sorted, non-overlapping and limited to 4,096 explicit CIDs. Each mapped CID must
+name a nonzero, in-range glyph; outlines and positive widths retain the simple
+font path's bounds. Vertical writing, nonidentity glyph maps, CFF descendants,
+Unicode beyond ASCII and font-subset extension remain refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array).
