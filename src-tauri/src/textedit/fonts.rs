@@ -8,13 +8,20 @@ use ttf_parser::{Face, GlyphId, PlatformId, Tag};
 #[cfg(test)]
 pub(crate) mod tests;
 
+mod composite;
 mod mapping;
+pub(super) use composite::embedded as composite;
+
+enum Codes {
+    Single(Box<[Option<u8>; 256]>),
+    Double(std::collections::BTreeMap<u16, u8>),
+}
 
 pub(super) struct Metrics {
     pub(super) bounded_outlines: bool,
     widths: Box<[Option<f64>; 256]>,
-    // Single-byte PDF codes to ASCII. None retains the standard encoding path.
-    codes: Option<Box<[Option<u8>; 256]>>,
+    // PDF codes to ASCII. None retains the standard encoding path.
+    codes: Option<Codes>,
 }
 
 impl Metrics {
@@ -37,6 +44,24 @@ impl Metrics {
         let Some(codes) = &self.codes else {
             return super::decode_text(bytes);
         };
+        if let Codes::Double(codes) = codes {
+            if bytes.len() % 2 != 0 || bytes.len() / 2 > super::MAX_TEXT {
+                return Err("invalid or oversized two-byte text".into());
+            }
+            return bytes
+                .chunks_exact(2)
+                .map(|pair| {
+                    codes
+                        .get(&u16::from_be_bytes([pair[0], pair[1]]))
+                        .copied()
+                        .map(char::from)
+                        .ok_or_else(|| "text contains an unmapped font code".to_string())
+                })
+                .collect();
+        }
+        let Codes::Single(codes) = codes else {
+            unreachable!()
+        };
         if bytes.len() > super::MAX_TEXT {
             return Err("mapped text exceeds its limit".into());
         }
@@ -54,6 +79,24 @@ impl Metrics {
         let bytes = super::encode_text(text)?;
         let Some(codes) = &self.codes else {
             return Ok(bytes);
+        };
+        if let Codes::Double(codes) = codes {
+            let mut result = Vec::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                let (&code, _) =
+                    codes
+                        .iter()
+                        .find(|(_, value)| **value == byte)
+                        .ok_or_else(|| {
+                            "the embedded font has no validated glyph for this character"
+                                .to_string()
+                        })?;
+                result.extend(code.to_be_bytes());
+            }
+            return Ok(result);
+        }
+        let Codes::Single(codes) = codes else {
+            unreachable!()
         };
         bytes
             .iter()
@@ -143,44 +186,8 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     {
         return Err(invalid());
     }
-    let stream =
-        crate::encoding::resolve(doc, descriptor.get(b"FontFile2").map_err(|_| invalid())?)
-            .as_stream()
-            .map_err(|_| invalid())?;
-    // Same strict decoder as page content: 2 MiB encoded, 1 MiB decoded.
-    let bytes = filters::decode(stream, super::MAX_CONTENT)?;
-    if stream.dict.has(b"Length1")
-        && stream.dict.get(b"Length1").and_then(Object::as_i64).ok() != Some(bytes.len() as i64)
-    {
-        return Err(invalid());
-    }
-    let apple_true = (mac_roman || custom) && bytes.get(..4) == Some(b"true");
-    if !apple_true && bytes.get(..4) != Some(&[0, 1, 0, 0]) {
-        return Err(invalid()); // No collections, CFF or alternate sfnt flavours.
-    }
-    let face = Face::parse(&bytes, 0).map_err(|_| invalid())?;
-    if face.tables().glyf.is_none()
-        || [b"fvar", b"COLR", b"CBDT", b"sbix", b"SVG "]
-            .iter()
-            .any(|tag| face.raw_face().table(Tag::from_bytes(tag)).is_some())
-    {
-        return Err(invalid());
-    }
-    // Match the preview spike's conservative embedding policy. No subsetting
-    // takes place, so the no-subsetting bit is compatible with this writer.
-    // Apple's TrueType format makes OS/2 optional. Preserve an already embedded
-    // legacy program without manufacturing a permissions table. If present, its
-    // restrictions still apply; OpenType-style programs still require the table.
-    // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
-    if let Some(os2) = face.raw_face().table(Tag::from_bytes(b"OS/2")) {
-        let rights = os2.get(8..10).ok_or_else(invalid)?;
-        let rights = u16::from_be_bytes([rights[0], rights[1]]);
-        if rights & !0x108 != 0 {
-            return Err("embedded font does not permit this editable use".into());
-        }
-    } else if !apple_true {
-        return Err(invalid());
-    }
+    let bytes = program(doc, descriptor)?;
+    let face = face(&bytes, mac_roman || custom)?;
     let cmap = face.tables().cmap.ok_or_else(invalid)?;
     if cmap.subtables.len() > 8
         || cmap.subtables.into_iter().count() != usize::from(cmap.subtables.len())
@@ -296,6 +303,57 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     Ok(Metrics {
         bounded_outlines: true,
         widths: result,
-        codes,
+        codes: codes.map(Codes::Single),
     })
+}
+
+fn program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
+    let invalid = || "unsupported embedded TrueType program".to_string();
+    if descriptor.has(b"FontFile") || descriptor.has(b"FontFile3") {
+        return Err(invalid());
+    }
+    let stream =
+        crate::encoding::resolve(doc, descriptor.get(b"FontFile2").map_err(|_| invalid())?)
+            .as_stream()
+            .map_err(|_| invalid())?;
+    // Same strict decoder as page content: 2 MiB encoded, 1 MiB decoded.
+    let bytes = filters::decode(stream, super::MAX_CONTENT)?;
+    if stream.dict.has(b"Length1")
+        && stream.dict.get(b"Length1").and_then(Object::as_i64).ok() != Some(bytes.len() as i64)
+    {
+        return Err(invalid());
+    }
+    Ok(bytes)
+}
+
+fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
+    let invalid = || "unsupported embedded TrueType program".to_string();
+    let apple_true = allow_apple && bytes.get(..4) == Some(b"true");
+    if !apple_true && bytes.get(..4) != Some(&[0, 1, 0, 0]) {
+        return Err(invalid()); // No collections, CFF or alternate sfnt flavours.
+    }
+    let face = Face::parse(bytes, 0).map_err(|_| invalid())?;
+    if face.tables().glyf.is_none()
+        || [b"fvar", b"COLR", b"CBDT", b"sbix", b"SVG "]
+            .iter()
+            .any(|tag| face.raw_face().table(Tag::from_bytes(tag)).is_some())
+    {
+        return Err(invalid());
+    }
+    // Match the preview spike's conservative embedding policy. No subsetting
+    // takes place, so the no-subsetting bit is compatible with this writer.
+    // Apple's TrueType format makes OS/2 optional. Preserve an already embedded
+    // legacy program without manufacturing a permissions table. If present, its
+    // restrictions still apply; OpenType-style programs still require the table.
+    // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
+    if let Some(os2) = face.raw_face().table(Tag::from_bytes(b"OS/2")) {
+        let rights = os2.get(8..10).ok_or_else(invalid)?;
+        let rights = u16::from_be_bytes([rights[0], rights[1]]);
+        if rights & !0x108 != 0 {
+            return Err("embedded font does not permit this editable use".into());
+        }
+    } else if !apple_true {
+        return Err(invalid());
+    }
+    Ok(face)
 }

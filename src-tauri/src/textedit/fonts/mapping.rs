@@ -1,7 +1,10 @@
 //! Strict single-byte ToUnicode subset for symbolic TrueType text. This is a
 //! data grammar, never a PostScript interpreter. Reject every extra operation.
 
-use lopdf::{content::Content, Object, Stream};
+use lopdf::{
+    content::{Content, Operation},
+    Object, Stream,
+};
 
 #[cfg(test)]
 mod tests;
@@ -17,14 +20,21 @@ const PREFIX: &[u8] = br"/CIDInit /ProcSet findresource begin
 const SUFFIX: &[u8] = b"endcmap CMapName currentdict /CMap defineresource pop end end";
 const MAX_MAP: usize = 16 * 1024;
 
-pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
+fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
     if stream.dict.has(b"UseCMap") {
         return Err("inherited character maps are not editable yet".into());
     }
-    let invalid = || "unsupported or ambiguous single-byte character map".to_string();
+    let invalid = || "unsupported or ambiguous character map".to_string();
     let bytes = super::filters::decode(stream, MAX_MAP)?;
     let content = Content::decode_strict(&bytes).map_err(|_| invalid())?;
-    let prefix = Content::decode_strict(PREFIX).map_err(|_| invalid())?;
+    let prefix_bytes = if wide {
+        String::from_utf8_lossy(PREFIX)
+            .replace("<00> <FF>", "<0000> <FFFF>")
+            .into_bytes()
+    } else {
+        PREFIX.to_vec()
+    };
+    let prefix = Content::decode_strict(&prefix_bytes).map_err(|_| invalid())?;
     let suffix = Content::decode_strict(SUFFIX).map_err(|_| invalid())?;
     let ops = &content.operations;
     let start = prefix.operations.len();
@@ -44,9 +54,15 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
             return Err(invalid());
         }
     }
+    Ok(ops[start..end].to_vec())
+}
+
+pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
+    let ops = blocks(stream, false)?;
+    let invalid = || "unsupported or ambiguous single-byte character map".to_string();
     let mut result = Box::new([None; 256]);
     let mut unicode = [false; 128];
-    for block in ops[start..end].chunks_exact(2) {
+    for block in ops.chunks_exact(2) {
         let [Object::Integer(count)] = block[0].operands.as_slice() else {
             return Err(invalid());
         };
@@ -70,6 +86,54 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
             }
             result[*code as usize] = Some(*ch);
             unicode[*ch as usize] = true;
+        }
+    }
+    Ok(result)
+}
+
+// Identity-H codes and UTF-16BE targets are exactly two bytes. A range expands
+// only into unique printable ASCII, so at most 95 entries can be retained.
+pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u16, u8>, String> {
+    let invalid = || "unsupported or ambiguous two-byte character map".to_string();
+    let word = |object: &Object| -> Result<u16, String> {
+        let Object::String(bytes, _) = object else {
+            return Err(invalid());
+        };
+        let [a, b] = bytes.as_slice() else {
+            return Err(invalid());
+        };
+        Ok(u16::from_be_bytes([*a, *b]))
+    };
+    let mut result = std::collections::BTreeMap::new();
+    let mut unicode = std::collections::BTreeSet::new();
+    for block in blocks(stream, true)?.chunks_exact(2) {
+        let [Object::Integer(count)] = block[0].operands.as_slice() else {
+            return Err(invalid());
+        };
+        let stride = match (block[0].operator.as_str(), block[1].operator.as_str()) {
+            ("beginbfchar", "endbfchar") => 2,
+            ("beginbfrange", "endbfrange") => 3,
+            _ => return Err(invalid()),
+        };
+        if !(1..=100).contains(count) || block[1].operands.len() != *count as usize * stride {
+            return Err(invalid());
+        }
+        for entry in block[1].operands.chunks_exact(stride) {
+            let first = word(&entry[0])?;
+            let last = if stride == 3 { word(&entry[1])? } else { first };
+            let target = word(&entry[stride - 1])?;
+            if last < first
+                || !(32..=126).contains(&target)
+                || u32::from(target) + u32::from(last - first) > 126
+            {
+                return Err(invalid());
+            }
+            for code in first..=last {
+                let ch = (target + (code - first)) as u8;
+                if result.insert(code, ch).is_some() || !unicode.insert(ch) {
+                    return Err(invalid());
+                }
+            }
         }
     }
     Ok(result)

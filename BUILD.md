@@ -6928,3 +6928,64 @@ All 24 local gates passed in 267.6 seconds summed gate time: 1,381 Rust tests
 builds, and normal frontend assets restored with zero harness code. Changes are
 confined to development probes, a synthetic HTML source and the plan/evidence
 record; the application grammar is unchanged.
+
+### Existing-glyph composite TrueType editing
+
+The worker now reads and writes two-byte Identity-H codes for a single
+CIDFontType2 descendant with an explicit identity CIDToGIDMap. It validates the
+existing font program, embedding rights, glyph indices, widths and outline
+bounds. ToUnicode supports the measured standard wrapper with bfchar and scalar
+bfrange data, bounded to 16 KiB and unique printable ASCII. Both W array forms
+and DW are checked; explicit width entries are sorted, non-overlapping and
+limited to 4,096 CIDs. No font or mapping stream is rewritten. These semantics
+follow [ISO 32000-1, sections 9.7 and 9.10](https://developer.adobe.com/document-services/docs/assets/35e4369068f86065372c18787171a17e/PDF_ISO_32000-1.pdf).
+
+Generate a fixture using only the repository's original geometric font:
+
+```bash
+uv run --with fonttools --with pypdf testdata/make_textedit_composite.py scratch/textedit-cid/source.pdf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-cid/worker scratch/textedit-cid/source.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-cid/worker/synthetic-before.pdf scratch/textedit-cid/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-cid/worker
+```
+
+On 2026-09-13 the generated input SHA-256 was
+`7c3144f57da025f08aba1f1635042c240cd87c9729b551098c3824e6b596e956`.
+Worker preview, extraction, search, undo, rewrite and refusal checks pass. All
+15 native `textedit` checks pass on both Mac and Windows. Independent parser
+readback confirms the one changed operand and unchanged resources. PDFKit reads
+both platforms' worker and native saves: 898 changed pixels inside the target
+line and zero outside. Five independent corruption controls reject glyph zero,
+reversed code byte order, an altered glyph map, a changed width and changed font
+bytes for their intended reasons.
+
+All 93 focused editor tests pass on both platforms; Windows also passes 10
+shared layout tests. All 22 targeted `cid:` and `mapped:` mutations are caught.
+The width-limit mutation was rerun after fixing its positive control to compare
+against the fixture's literal count, independently of the implementation limit.
+The composite fuzz seed is independently recognized as editable; the bounded
+fuzz run completed 24,959 inputs in 21 seconds without a finding, at 85 MiB peak
+RSS. It uses this platform's existing sanitizer-free fuzz configuration.
+
+A separate diagnostic page reuses the original Edge export's complete font
+resource and text-show bytes, with upright positioning and no tags or graphics
+state. Its worker round trip and PDFKit readback pass: 2,361 changed pixels in
+the target line, zero outside, and byte-identical embedded font data. The strict
+resource comparator deliberately remains red on six decimal spellings normalized
+by lopdf: CapHeight, two FontBBox values and three W values. Every pair has the
+same f32 representation; none is a font-stream change. This diagnostic proves
+the font case only. The unchanged untagged browser export is still refused at
+its reflected page transform, and the tagged export still requires broader
+structure support.
+
+The Windows source archive SHA-256 is
+`2d51737ebb9d9898b361b4f645941742c466bcd8bb3740a117d47fadca1e5447`.
+Retrieved output digests and the source manifest match. The normal Windows
+checkout stayed clean and its frontend was restored with zero harness code.
+
+All 24 local gates passed in 552.1 seconds summed gate time: 1,389 Rust tests
+(three ignored), 1,667 frontend tests in 70 suites, all locked fuzz targets and
+examples, and both frontend build profiles. Normal Mac assets contain zero
+harness code. The Windows task was removed. Every implementation file matches
+the verified Windows snapshot; only this evidence record and the plan changed
+afterward.

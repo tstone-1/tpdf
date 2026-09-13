@@ -256,6 +256,32 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
     return pdf_objects(objects)
 
 
+
+def editable_composite() -> bytes:
+    """Identity-H glyph IDs 2/3 are A/B in the original geometric test font."""
+    font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
+    content = b"BT /F1 12 Tf 40 180 Td <00020003> Tj ET"
+    cmap = (b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
+            b"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
+            b"/CMapName /Adobe-Identity-UCS def /CMapType 2 def "
+            b"1 begincodespacerange <0000> <FFFF> endcodespacerange "
+            b"1 beginbfrange <0002> <0003> <0041> endbfrange "
+            b"endcmap CMapName currentdict /CMap defineresource pop end end")
+    def stream(data):
+        return b"<< /Length " + str(len(data)).encode() + b" >>\nstream\n" + data + b"\nendstream"
+    return pdf_objects({
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        4: b"<< /Type /Font /Subtype /Type0 /BaseFont /TPDFSynthetic /Encoding /Identity-H /DescendantFonts [8 0 R] /ToUnicode 9 0 R >>",
+        5: stream(content),
+        6: b"<< /Type /FontDescriptor /FontName /TPDFSynthetic /Flags 4 /FontBBox [0 0 400 700] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 100 /FontFile2 7 0 R >>",
+        7: stream(font),
+        8: b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TPDFSynthetic /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 6 0 R /CIDToGIDMap /Identity /DW 600 /W [2 3 600] >>",
+        9: stream(cmap),
+    })
+
+
 def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False, flowing: bool = False, indented: bool = False) -> bytes:
     """Remap two synthetic glyphs through PDF bytes 1/2 and a ToUnicode map."""
     flowing = flowing or indented
@@ -328,7 +354,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),
