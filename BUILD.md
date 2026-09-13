@@ -6536,3 +6536,59 @@ passed in 380.3 seconds summed gate time: 1,360 Rust tests (three ignored),
 Rust build took 20.06 seconds. Normal frontend assets were restored with zero
 harness code. Implementation files match the Windows snapshot; only this later
 verification record differs.
+
+### Unmodified LibreOffice export and rectangular clips
+
+The clipping path accepts only complete `re W n` or `re W* n` sequences outside
+text blocks. Positive rectangles are transformed into original page coordinates,
+intersected with existing clips and restored with `q`/`Q`. Every affected run must
+fit its entire editing envelope inside the clip. This requires validated embedded
+glyph outlines; standard Helvetica's advance-only metrics are insufficient here.
+The writer preserves the path and its position among the other operators. A
+bounded nonnegative line-width setter is also accepted because all text remains
+filled and every stroking operator is refused. Detailed limits are in `docs/PLAN.md`.
+
+Run the unchanged untagged LibreOffice fixture from the producer survey:
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-libreoffice/worker scratch/textedit-producers/untagged/textedit-producer.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-libreoffice/worker/synthetic-before.pdf scratch/textedit-libreoffice/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-libreoffice/worker
+```
+
+On 2026-09-13 the original export, SHA-256
+`3c531a18f460179e9daa000435e9962af30b464b1f816f6facad77e549e0dbd0`, passed the
+worker round trip without removing or modifying its clipping operators first.
+The input and the probe's before-copy have the same digest. Independent parser
+and PDFKit readback found one changed text operand, unchanged resources, 2,403
+changed pixels inside the edited line and zero outside. The tagged survey export
+remains refused for its structure metadata.
+
+Eight targeted clipping mutations were caught. Coverage includes every edge of
+the text envelope, intersections, saved clip state, transforms fixed at path
+creation, crop/rotation, malformed and painted paths, coordinate limits and the
+embedded-outline requirement. The new `editable-clipped` seed reports `editable`
+through worker inspection. Fuzzing completed 24,711 inputs in 21 seconds without
+a finding, peaking at 84 MiB RSS.
+
+Windows passed 70 focused editor tests, 10 shared layout tests and all 15 native
+editing checks using the unchanged producer PDF. Source archive SHA-256:
+`57f18316d78a53b9e20d1663faef3f218c95e10a651a2c388273632f1ff0c78c`.
+Both worker and native UI output passed independent parser and PDFKit readback,
+with 2,403 changed pixels inside the line and zero outside. Transfer digests and
+source manifests matched, the temporary task was removed, and the normal checkout
+remained clean. Normal Windows frontend assets contain zero harness code.
+
+The Mac native UI passed the same 15 checks against the unchanged export. Its
+saved PDF also passed independent parser and PDFKit readback: 2,403 changed pixels
+inside the edited line and zero outside. All 24 local gates passed in 487.5 seconds
+summed gate time, including 1,366 Rust tests (three ignored), 1,667 frontend tests
+in 70 suites, and locked fuzz-target and example builds. The checks application
+built in 21.71 seconds of Rust build time; normal frontend assets were then
+restored and verified to contain zero harness code.
+
+Final diff review corrected an overly broad anchor in the existing graphics-state
+restoration mutation. All five existing mutations whose anchors changed with this
+implementation were then run and caught by their named tests; compilation errors
+were not counted as catches. Application sources still match the Windows snapshot.
+Only the verification notes, plan and mutation script changed after that snapshot.

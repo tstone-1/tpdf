@@ -256,7 +256,7 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
     return pdf_objects(objects)
 
 
-def editable_symbolic() -> bytes:
+def editable_symbolic(clipped: bool = False) -> bytes:
     """Remap two synthetic glyphs through PDF bytes 1/2 and a ToUnicode map."""
     font = bytearray((ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes())
     font[:4] = b"true"
@@ -272,6 +272,8 @@ def editable_symbolic() -> bytes:
             font[start + 12:start + 16] = len(cmap).to_bytes(4, "big")
     font.extend(cmap)
     content = b"BT /F1 12 Tf 40 180 Td [<01> 10 <02>] TJ ET"
+    if clipped:
+        content = b"0.1 w q 0 0 300 240 re W* n " + content + b" Q"
     mapping = b"/CIDInit/ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <01> <0041> <02> <0042> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"
     def stream(data):
         return b"<< /Length " + str(len(data)).encode() + b" >>\nstream\n" + bytes(data) + b"\nendstream"
@@ -299,7 +301,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),
