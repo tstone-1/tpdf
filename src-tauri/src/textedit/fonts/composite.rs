@@ -162,6 +162,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let (default, widths) = widths(child)?;
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
+    let mut vertical_bounds = [0_f64; 2];
     for (&code, &ch) in &codes {
         // Identity-H and an explicit Identity CIDToGIDMap make cmap irrelevant.
         let glyph = GlyphId(code);
@@ -173,19 +174,23 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         if width <= 0. || (width - advance).abs() > 1. {
             return Err("composite font widths disagree with its glyph metrics".into());
         }
-        match face.glyph_bounding_box(glyph) {
-            Some(rect)
-                if f64::from(rect.x_min) * unit >= 0.
-                    && f64::from(rect.x_max) * unit <= width
-                    && f64::from(rect.y_min) * unit >= -250.
-                    && f64::from(rect.y_max) * unit <= 1000. => {}
+        match super::outlines::bounds(&face, glyph) {
+            Some([left, bottom, right, top])
+                if left * unit >= 0.
+                    && right * unit <= width
+                    && bottom * unit >= -250.
+                    && top * unit <= 1000. =>
+            {
+                vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);
+                vertical_bounds[1] = vertical_bounds[1].max(top * unit);
+            }
             None if ch == b' ' && super::empty_glyph(&face, glyph) == Some(true) => {}
             _ => continue,
         }
         result[ch as usize] = Some(width);
     }
     Ok(Metrics {
-        bounded_outlines: true,
+        vertical_bounds: Some(vertical_bounds),
         widths: result,
         codes: Some(Codes::Double(codes)),
     })

@@ -42,12 +42,12 @@ fn textedit_rectangular_clips_preserve_operators_and_following_text() {
 
 #[test]
 fn textedit_clip_intersections_contain_every_side_of_text() {
-    // FIRST occupies x=40..76, y=177..192 in the conservative hit envelope.
+    // FIRST occupies x=40..76, y=180..188.4 in the validated glyph envelope.
     for rect in [
         "41 100 200 100",
-        "0 178 300 50",
+        "0 181 300 50",
         "0 100 50 100",
-        "0 100 300 91",
+        "0 100 300 88",
     ] {
         let doc = page(format!("{rect} re W n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
         assert!(

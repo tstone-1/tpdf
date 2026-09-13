@@ -105,9 +105,9 @@ fn textedit_reflections_restore_page_transform_and_keep_fixed_clip_intersections
     // A normalized reflected clip still excludes each partly hidden side.
     for rect in [
         "41 40 200 100",
-        "0 40 300 22",
+        "0 40 300 19",
         "0 40 50 100",
-        "0 49 300 100",
+        "0 52 300 100",
     ] {
         let bytes = format!("0 0 300 240 re W n 1 0 0 -1 0 240 cm {rect} re W* n BT /F1 12 Tf 1 0 0 -1 40 60 Tm (FIRST) Tj ET");
         assert!(

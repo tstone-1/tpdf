@@ -8,8 +8,12 @@ use ttf_parser::{Face, GlyphId, PlatformId, Tag};
 #[cfg(test)]
 pub(crate) mod tests;
 
+#[cfg(test)]
+pub(super) mod ink_tests;
+
 mod composite;
 mod mapping;
+mod outlines;
 pub(super) use composite::embedded as composite;
 
 enum Codes {
@@ -18,7 +22,9 @@ enum Codes {
 }
 
 pub(super) struct Metrics {
-    pub(super) bounded_outlines: bool,
+    // Union of all offered glyphs, in thousandths of an em, including baseline.
+    // Any width-fitting replacement is therefore covered by the same envelope.
+    pub(super) vertical_bounds: Option<[f64; 2]>,
     widths: Box<[Option<f64>; 256]>,
     // PDF codes to ASCII. None retains the standard encoding path.
     codes: Option<Codes>,
@@ -34,7 +40,7 @@ impl Metrics {
             ));
         }
         Self {
-            bounded_outlines: false,
+            vertical_bounds: None,
             widths,
             codes: None,
         }
@@ -248,6 +254,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     }
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
+    let mut vertical_bounds = [0_f64; 2];
     // Standard maps share ASCII codes; symbolic maps select the PDF code and
     // its Unicode value separately. WinAnsi's nonbreaking-space/soft-hyphen aliases,
     // extended glyph names and custom ToUnicode maps require separate proof.
@@ -289,19 +296,23 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         }
         // Keep every offered outline within the editor's existing hit box and
         // advance. Overhanging/italic glyphs need explicit ink bounds first.
-        match face.glyph_bounding_box(glyph) {
-            Some(rect)
-                if f64::from(rect.x_min) * unit >= 0.
-                    && f64::from(rect.x_max) * unit <= width
-                    && f64::from(rect.y_min) * unit >= -250.
-                    && f64::from(rect.y_max) * unit <= 1000. => {}
+        match outlines::bounds(&face, glyph) {
+            Some([left, bottom, right, top])
+                if left * unit >= 0.
+                    && right * unit <= width
+                    && bottom * unit >= -250.
+                    && top * unit <= 1000. =>
+            {
+                vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);
+                vertical_bounds[1] = vertical_bounds[1].max(top * unit);
+            }
             None if byte == b' ' && empty_glyph(&face, glyph) == Some(true) => {}
             _ => continue,
         }
         result[byte as usize] = Some(width);
     }
     Ok(Metrics {
-        bounded_outlines: true,
+        vertical_bounds: Some(vertical_bounds),
         widths: result,
         codes: codes.map(Codes::Single),
     })

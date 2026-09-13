@@ -62,6 +62,19 @@ fn update(doc: &Document, replacement: &str) -> Change {
 }
 
 #[test]
+fn textedit_composite_glyph_envelope_covers_fractional_and_unused_replacements() {
+    let (doc, [font, _, descriptor, _]) = fixture();
+    let program = doc
+        .get_dictionary(descriptor)
+        .unwrap()
+        .get(b"FontFile2")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    super::super::ink_tests::exercise(doc, font, program);
+}
+
+#[test]
 fn textedit_composite_roundtrip_preserves_program_mapping_and_other_page() {
     for kerning in [false, true] {
         let (mut doc, [font, child, _, _]) = fixture();

@@ -7057,3 +7057,68 @@ tests (three ignored), 1,667 frontend tests, locked fuzz targets and examples,
 and both frontend build profiles. Normal Mac assets contain zero harness code.
 Only this evidence record and the plan differ from the verified Windows source
 snapshot; implementation and fixtures are unchanged.
+
+### Glyph-based vertical clipping envelopes
+
+Embedded simple and composite fonts now retain the vertical union of every
+validated, offered glyph. Clip checks use that union and the original text
+advance, while editing hit boxes keep their full-em geometry. This covers
+replacement glyphs absent from the source string; a clip that excludes any of
+them remains unsupported. Standard-font substitution still cannot supply this
+proof. Overhanging glyphs and unsupported font formats remain refused.
+
+`fonts/outlines.rs` measures transformed outline points, including curve controls.
+Their convex hull encloses the curves. It preserves fractional component
+coordinates that the font parser's public integer rectangle truncates: a test
+glyph reaches 800.189208984375 font units while the integer rectangle says 800.
+The test's false glyph-header boxes also demonstrate that the measurement comes
+from actual outlines. Font-wide bounds include the baseline for blank glyphs.
+
+The generator's `--tight-clip` variant adds a taller fractional B and a descending
+D to the original synthetic font. B is absent from the source lines; D appears
+in the edited first line. Its clip ends at 190 pt, below the old full-em estimate
+of 192 pt. The previous worker refuses this fixture as partly clipped.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_composite.py scratch/textedit-ink/source.pdf --reflected --tight-clip
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-ink/worker scratch/textedit-ink/source.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-ink/worker/synthetic-before.pdf scratch/textedit-ink/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-ink/worker
+```
+
+The input SHA-256 on 2026-09-13 is
+`46c320ec72459027eddec5cc7d52af81f33ab821758e5a1e59d868211aa938c9`.
+All 100 focused editor tests pass on Mac and Windows; Windows also passes 10
+shared layout tests. All 26 targeted glyph-envelope, clipping and reflection
+mutations are caught. The new cases include unused taller/descending glyphs,
+fractional component bounds, curve controls, page scaling, preserved hit boxes
+and refusals without document mutation.
+
+All 15 native checks pass on both platforms. Independent pypdf readback confirms
+one changed text operand and unchanged font/clip data. Corruption controls reject
+a shifted clip, removed clipping operators and an altered font width. PDFKit reads
+both platforms' worker and native saves with 1,081 changed pixels inside the target
+line and zero outside. The glyph-clip fuzz seed is editable; the bounded fuzz run
+executed 30,544 inputs in 21 seconds without a finding, at 86 MiB peak RSS, using
+the existing sanitizer-free macOS configuration.
+
+The unchanged untagged browser export remains refused at graphics state. Its
+diagnostic copy removing only `RG` and `gs` now yields two editable runs, retaining
+the original font, transforms and clips. This is discovery evidence, not an
+unchanged-browser round trip; the outstanding decimal resource normalization
+checks still apply before claiming that broader compatibility.
+
+The Windows archive SHA-256 is
+`b8665c349544f95dcdef8c478577235a509569fa3784c04c48372d72ea83e3ec`.
+Retrieved PDF digests and the source manifest match. The temporary task was removed,
+the normal checkout remains clean, and its frontend contains zero harness code.
+
+Discovery regression checks on the unchanged Word export (four runs), the
+naturally wrapped LibreOffice export (two runs on page zero) and its tagged
+single-page export (two runs) remain editable under the new outline measurement.
+These are discovery checks; their earlier round-trip evidence is recorded above.
+
+All 24 local gates passed in 327.6 seconds summed gate time: 1,396 Rust
+tests (three ignored), 1,667 frontend tests, locked fuzz targets and examples,
+and both frontend build profiles. Normal Mac assets contain zero harness code.
+Only this evidence record differs from the verified Windows source snapshot.
