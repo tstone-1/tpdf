@@ -273,6 +273,10 @@ MUTATIONS = [
     Mutation("textedit: keep unreachable old content", "src/save.rs", "        || !plan.text_edits.is_empty()", "        || false", "textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans"),
     Mutation("textedit: accept a stale content revision", "src/textedit.rs", "change.revision != runs.revision || change.original != run.text", "change.original != run.text", "textedit_rejects_invalid_batches_without_mutating_the_document"),
 
+    Mutation("textedit: accept a missing embedded glyph", "src/textedit/fonts.rs", '.ok_or("the embedded font has no validated glyph for this character")?', '.unwrap_or(600.)', "textedit_embedded_missing_glyph_and_own_width_overflow_leave_document_untouched"),
+    Mutation("textedit: ignore conflicting Unicode cmaps", "src/textedit/fonts.rs", '.any(|table| table.glyph_index(code) != Some(glyph))', '.any(|table| { let _ = (table, code, glyph); false })', "textedit_embedded_requires_unicode_cmaps_to_agree"),
+    Mutation("textedit: treat a malformed space as blank", "src/textedit/fonts.rs", "empty_glyph(&face, glyph) == Some(true)", "true", "textedit_embedded_does_not_treat_a_broken_space_as_blank"),
+
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
     Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),
     Mutation("choices: ignore the selected radio sibling", "src/forms.rs", "                            selected == index || (*unison && states[*selected] == states[*index])", "                            selected == index || (!*unison && states[*selected] != states[*index])", "choices_and_radio_round_trip_exports_indices_and_appearances"),

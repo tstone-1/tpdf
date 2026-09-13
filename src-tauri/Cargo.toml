@@ -138,6 +138,10 @@ x509-cert = { version = "0.2", default-features = false }
 # expands nothing without a resolver, which this never supplies.
 quick-xml = "0.42"
 
+# MIT OR Apache-2.0. Worker-only validation of embedded TrueType subsets.
+# Layout/shaping, variations and glyph-name fallback are intentionally excluded.
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
+
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
 # `objc2-foundation` and `objc2-app-kit` are already in the tree transitively via

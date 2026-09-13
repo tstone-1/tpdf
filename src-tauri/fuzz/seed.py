@@ -182,13 +182,15 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
-def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False) -> bytes:
+def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False) -> bytes:
     """A supported seed reaches the text writer instead of only refusal paths."""
     content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
     if multiline:
         content = b"1 0 0 1 0 0 cm BT /F1 12 Tf 40 TL ET BT 1 0 0 1 40 180 Tm (ACME SYNTHETIC TEXT) Tj T* (SECOND LINE) Tj T* ET"
     if latin1:
         content = content.replace(b"ACME SYNTHETIC TEXT", b"ACME \xC4\xD6\xDC \xDF")
+    if empty:
+        content = content.replace(b"ACME SYNTHETIC TEXT", b"")
     filters = b""
     if encoding != "plain":
         assert encoding in ("ascii85", "ascii85-flate")
@@ -205,6 +207,21 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
     })
 
 
+def editable_embedded() -> bytes:
+    """A built-in font seed: no fontTools install or generated corpus required."""
+    font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
+    content = b"BT /F1 12 Tf 40 180 Td (AB) Tj ET"
+    return pdf_objects({
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        4: b"<< /Type /Font /Subtype /TrueType /BaseFont /TPDFSynthetic /Encoding /WinAnsiEncoding /FirstChar 32 /LastChar 89 /Widths [" + b"600 " * 58 + b"] /FontDescriptor 6 0 R >>",
+        5: b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
+        6: b"<< /Type /FontDescriptor /FontName /TPDFSynthetic /Flags 32 /FontBBox [0 0 400 700] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 100 /FontFile2 7 0 R >>",
+        7: b"<< /Length " + str(len(font)).encode() + b" >>\nstream\n" + font + b"\nendstream",
+    })
+
+
 def corpora() -> dict[str, list[tuple[str, bytes]]]:
     """What each target is seeded with, and from where."""
     blobs = signature_blobs()
@@ -218,7 +235,8 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-text", editable_text()),
+        "textedit_scan": docs + [("editable-empty", editable_text(empty=True)),
+                                 ("editable-embedded", editable_embedded()),("editable-text", editable_text()),
                                  ("editable-multiline", editable_text(multiline=True)),
                                  ("editable-ascii85", editable_text(encoding="ascii85")),
                                  ("editable-latin1", editable_text(latin1=True, encoding="ascii85-flate")),
