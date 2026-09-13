@@ -8,7 +8,13 @@ use ttf_parser::{Face, GlyphId, PlatformId, Tag};
 #[cfg(test)]
 mod tests;
 
-pub(super) struct Metrics(Box<[Option<f64>; 256]>);
+mod mapping;
+
+pub(super) struct Metrics {
+    widths: Box<[Option<f64>; 256]>,
+    // Single-byte PDF codes to ASCII. None retains the standard encoding path.
+    codes: Option<Box<[Option<u8>; 256]>>,
+}
 
 impl Metrics {
     pub(super) fn helvetica() -> Self {
@@ -19,13 +25,52 @@ impl Metrics {
                 1000.,
             ));
         }
-        Self(widths)
+        Self {
+            widths,
+            codes: None,
+        }
+    }
+
+    pub(super) fn decode(&self, bytes: &[u8]) -> Result<String, String> {
+        let Some(codes) = &self.codes else {
+            return super::decode_text(bytes);
+        };
+        if bytes.len() > super::MAX_TEXT {
+            return Err("mapped text exceeds its limit".into());
+        }
+        bytes
+            .iter()
+            .map(|&code| {
+                codes[code as usize]
+                    .map(char::from)
+                    .ok_or_else(|| "text contains an unmapped font code".to_string())
+            })
+            .collect()
+    }
+
+    pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+        let bytes = super::encode_text(text)?;
+        let Some(codes) = &self.codes else {
+            return Ok(bytes);
+        };
+        bytes
+            .iter()
+            .map(|byte| {
+                codes
+                    .iter()
+                    .position(|value| value.as_ref() == Some(byte))
+                    .map(|code| code as u8)
+                    .ok_or_else(|| {
+                        "the embedded font has no validated glyph for this character".to_string()
+                    })
+            })
+            .collect()
     }
 
     pub(super) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
         let mut width = 0.;
         for byte in super::encode_text(text)? {
-            width += self.0[byte as usize]
+            width += self.widths[byte as usize]
                 .ok_or("the embedded font has no validated glyph for this character")?;
         }
         Ok(width * size / 1000.)
@@ -54,25 +99,28 @@ fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
 
 pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let invalid = || "unsupported embedded TrueType font or character mapping".to_string();
+    let custom = !font.has(b"Encoding") && font.has(b"ToUnicode");
     let mac_roman =
         font.get(b"Encoding").and_then(Object::as_name).ok() == Some(b"MacRomanEncoding");
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
         || (!mac_roman
+            && !custom
             && font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding"))
         || font.get(b"BaseFont").and_then(Object::as_name).is_err()
         || font.iter().any(|(key, _)| {
-            !matches!(
-                key.as_slice(),
-                b"Type"
-                    | b"Subtype"
-                    | b"BaseFont"
-                    | b"Encoding"
-                    | b"Name"
-                    | b"FirstChar"
-                    | b"LastChar"
-                    | b"Widths"
-                    | b"FontDescriptor"
-            )
+            !(custom && key == b"ToUnicode")
+                && !matches!(
+                    key.as_slice(),
+                    b"Type"
+                        | b"Subtype"
+                        | b"BaseFont"
+                        | b"Encoding"
+                        | b"Name"
+                        | b"FirstChar"
+                        | b"LastChar"
+                        | b"Widths"
+                        | b"FontDescriptor"
+                )
         })
     {
         return Err(invalid());
@@ -82,9 +130,10 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         .get(b"Flags")
         .and_then(Object::as_i64)
         .map_err(|_| invalid())?;
-    // ISO 32000-1, 9.6.6.4: require explicit encoding and a nonsymbolic font.
-    // Symbolic/name-based fallback is outside this subset.
-    if flags & (4 | 32 | 262144) != 32
+    // ISO 32000-1, 9.6.6.4: standard mappings require nonsymbolic flags.
+    // The custom path requires symbolic byte lookup through one Macintosh cmap.
+    // No name-based fallback or competing platform map is accepted.
+    if flags & (4 | 32 | 262144) != if custom { 4 } else { 32 }
         || descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
         || descriptor.has(b"FontFile")
@@ -103,7 +152,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     {
         return Err(invalid());
     }
-    let apple_true = mac_roman && bytes.get(..4) == Some(b"true");
+    let apple_true = (mac_roman || custom) && bytes.get(..4) == Some(b"true");
     if !apple_true && bytes.get(..4) != Some(&[0, 1, 0, 0]) {
         return Err(invalid()); // No collections, CFF or alternate sfnt flavours.
     }
@@ -140,7 +189,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         .subtables
         .into_iter()
         .find(|table| {
-            if mac_roman {
+            if mac_roman || custom {
                 table.platform_id == PlatformId::Macintosh && table.encoding_id == 0
             } else {
                 table.platform_id == PlatformId::Windows && table.encoding_id == 1
@@ -151,10 +200,26 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     // them. All accepted maps must agree on each offered ASCII glyph.
     if cmap.subtables.into_iter().any(|table| {
         !table.is_unicode()
-            && !(mac_roman && table.platform_id == PlatformId::Macintosh && table.encoding_id == 0)
+            && !((mac_roman || custom)
+                && table.platform_id == PlatformId::Macintosh
+                && table.encoding_id == 0)
     }) {
         return Err(invalid());
     }
+    // PDF 1.6 section 5.5.5: a symbolic font without a (3,0) map uses
+    // the string bytes directly in (1,0). ToUnicode supplies text semantics,
+    // not glyph selection. Never infer Unicode from a symbolic glyph number.
+    if custom && cmap.subtables.len() != 1 {
+        return Err(invalid());
+    }
+    let codes = if custom {
+        let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| invalid())?)
+            .as_stream()
+            .map_err(|_| invalid())?;
+        Some(mapping::parse(stream)?)
+    } else {
+        None
+    };
     let first = font
         .get(b"FirstChar")
         .and_then(Object::as_i64)
@@ -174,11 +239,21 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     }
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
-    // ASCII has the same character codes in WinAnsi, MacRoman and Unicode.
-    // WinAnsi's nonbreaking-space and soft-hyphen aliases,
+    // Standard maps share ASCII codes; symbolic maps select the PDF code and
+    // its Unicode value separately. WinAnsi's nonbreaking-space/soft-hyphen aliases,
     // extended glyph names and custom ToUnicode maps require separate proof.
-    for byte in 32_u8..=126 {
-        let code = u32::from(byte);
+    for code_byte in 0_u8..=255 {
+        let byte = if let Some(codes) = &codes {
+            let Some(byte) = codes[code_byte as usize] else {
+                continue;
+            };
+            byte
+        } else if (32..=126).contains(&code_byte) {
+            code_byte
+        } else {
+            continue;
+        };
+        let code = u32::from(code_byte);
         let Some(glyph) = primary.glyph_index(code) else {
             continue;
         };
@@ -195,10 +270,10 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         {
             return Err(invalid());
         }
-        if i64::from(byte) < first || i64::from(byte) > last {
+        if i64::from(code_byte) < first || i64::from(code_byte) > last {
             continue;
         }
-        let width = number(&widths[(i64::from(byte) - first) as usize])?;
+        let width = number(&widths[(i64::from(code_byte) - first) as usize])?;
         let advance = f64::from(face.glyph_hor_advance(glyph).ok_or_else(invalid)?) * unit;
         if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
             return Err("embedded font widths disagree with its glyph metrics".into());
@@ -216,5 +291,8 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         }
         result[byte as usize] = Some(width);
     }
-    Ok(Metrics(result))
+    Ok(Metrics {
+        widths: result,
+        codes,
+    })
 }

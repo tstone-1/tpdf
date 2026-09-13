@@ -6471,3 +6471,68 @@ frontend tests and locked fuzz/example builds. The checks application's Rust bui
 took 21.07 seconds. Normal frontend assets were restored with zero harness code.
 Implementation files still match the corrected Windows snapshot; the subsequent
 plan and verification-record updates do not change that tested implementation.
+
+### Single-byte symbolic font editing
+
+The mapped-font path keeps PDF bytes separate from Unicode text. It accepts the
+measured LibreOffice-style symbolic TrueType arrangement: no `/Encoding`, one
+Macintosh cmap for glyph selection, and a strict one-to-one ASCII `ToUnicode`
+map. Existing glyph width, outline and embedding checks still apply. Both `Tj`
+and `TJ` decode through the map; replacements reuse the original font codes.
+The exact limits and exclusions are in `docs/PLAN.md`.
+
+Generate the original geometric-font control and run independent readback:
+
+```bash
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-symbolic/fixture.pdf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-symbolic/worker scratch/textedit-symbolic/fixture.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-symbolic/worker/synthetic-before.pdf scratch/textedit-symbolic/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-symbolic/worker
+```
+
+On 2026-09-13 this worker round trip changed 935 pixels inside the edited line
+and zero outside. Its font and mapping remained unchanged. A separate control
+removed only the initial `w`, `re`, `W*`, `n` operations from the untagged
+LibreOffice survey export, preserving its `q`/`Q` and all text/resource data.
+PDFKit found identical text and pixels before editing that control. Its worker
+save then passed both independent readers, with 2,403 changed pixels inside the
+line and zero outside. The original, unmodified export is still refused; the
+control isolates character mapping and does not establish clipping support.
+
+The parser readback now requires both exactly one changed text operand and the
+expected decoded text. For symbolic fixtures it also reads pypdf's parsed mapping
+explicitly and requires every operand byte to be mapped. `extract_text()` alone
+silently falls back to ASCII for unknown codes: a deliberately misencoded output
+passed it. The stricter check rejects that output, while the mapped-font,
+LibreOffice control, Quartz and kerning outputs pass. The unchanged-output control
+is also rejected.
+
+All 64 focused text-editor tests passed. Nine targeted mutations were caught,
+including duplicate source/Unicode entries, competing font maps, incorrect raw
+output codes, declared entry counts and decoding limits. The mapped-text length
+test now checks its specific refusal reason: a generic error assertion remained
+green when that early bound was removed because later width calculation applied
+the shared text-length limit again.
+
+Fuzzing with the new `editable-symbolic` seed completed 28,176 inputs in 21 seconds
+without a finding, peaking at 85 MiB RSS. The seed itself reports `editable` through
+the contained worker inspection command.
+
+Windows passed 64 focused editor tests, 10 shared layout tests and all 15 native
+editing checks on isolated source archive SHA-256
+`2f4b480d8bcb0b98f70dac49324496258fc7d848c5ca0efb698b6dcd7d62005d`.
+The transferred synthetic PDF had SHA-256
+`a3af5cf7a4c670732b2942b984c68338e4a0ca5a266a7dc80967e394f9c49574`.
+Both worker and native UI output passed independent parser and PDFKit readback:
+935 changed pixels inside the edited line, zero outside, and unchanged resources.
+Transfer digests and source manifests matched. The temporary task was removed,
+the normal checkout stayed clean and normal frontend assets contain zero harness
+code.
+
+The Mac passed the same 15 native editing checks and independent readers, again
+with 935 changed pixels inside the line and zero outside. All 24 local gates
+passed in 380.3 seconds summed gate time: 1,360 Rust tests (three ignored),
+1,667 frontend tests and locked fuzz/example builds. The checks application's
+Rust build took 20.06 seconds. Normal frontend assets were restored with zero
+harness code. Implementation files match the Windows snapshot; only this later
+verification record differs.
