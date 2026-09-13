@@ -6644,3 +6644,58 @@ checks app built in 1 minute 49 seconds of Rust build time. Normal frontend asse
 were restored and verified to contain zero harness code. Implementation sources
 match the Windows snapshot; subsequent changes only record verification and the
 completed plan milestone.
+
+### Multi-page tagged text editing
+
+This extends the bounded Document/paragraph grammar to a flat parent number tree
+with one array per page. MCIDs may repeat across pages. Page keys need not be
+consecutive, but must be unique and sorted in the number tree. The global limit
+remains 128 paragraphs, with no recursive number-tree or structure traversal.
+
+Generate the independent synthetic export and edit page two (zero-based index 1):
+
+```bash
+mkdir -p scratch/textedit-producers/multipage
+/Applications/LibreOffice.app/Contents/MacOS/soffice -env:UserInstallation=file:///tmp/tpdf-producer-lo --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir scratch/textedit-producers/multipage testdata/textedit-producer-multipage.rtf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-multipage/worker-page2 scratch/textedit-producers/multipage/textedit-producer-multipage.pdf --page=1
+uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls scratch/textedit-multipage/worker-page2/synthetic-before.pdf scratch/textedit-multipage/worker-page2/synthetic-after.pdf --page=1
+swift scripts/text_edit_pdfkit.swift scratch/textedit-multipage/worker-page2 --page=1
+```
+
+On 2026-09-13 the unchanged producer input, SHA-256
+`4e52fa7a70750a3f877a0adfde9e41060140a92094041926f3c2290447803341`, passed worker
+edits to each page separately. Every unedited page retains its original runs and
+decoded stream bytes. Independent parser readback preserves the full structure
+graph, distinguishing references to each page; PDFKit sees 2,403 changed pixels
+inside the target line and zero elsewhere, including the entire other page.
+Geometry is compared at the writer's f32 precision: the existing writer rounds
+299.990551 points to 299.99054, so exact decimal equality would reject a valid
+control. Pixel comparisons remain exact.
+
+All 13 targeted tagged-structure mutations were caught. The new tests include
+shared streams, reused MCIDs, interleaved reading order, nonconsecutive page keys,
+distinct tag names per page and atomic multi-page batches. Seven independent
+corruption controls fail, including a paragraph assigned to the wrong page and
+a byte change on the untouched page. The native phase is `textedit-multipage`;
+it edits page two and checks that page one stays unchanged before and after save.
+
+Mac and Windows native runs each passed all 19 checks on the unchanged export.
+Windows also passed 78 editor tests and 10 shared layout tests. Both Windows
+saved outputs (worker and native UI) passed independent parser readback and
+PDFKit: page one is pixel-identical, and page two has 2,403 changed pixels inside
+the target line and zero outside. All seven corruption controls also rejected
+the damaged native outputs on both platforms.
+
+The Windows source archive SHA-256 is
+`31f1b89d34d1217362ab9e58427fa27dbee29caa5f37b40283d27be5f828dd98`.
+Retrieved PDF digests and source manifests matched. The temporary task was
+removed, the normal checkout stayed clean, and normal Windows frontend assets
+were restored with zero harness code. The local bounded fuzz run completed
+23,247 inputs in 21 seconds without a finding, peaking at 83 MiB RSS.
+
+All 24 local gates passed in 431.6 seconds summed gate time: 1,374 Rust tests
+(three ignored), 1,667 frontend tests in 70 suites, and locked fuzz-target and
+example builds. Frontend diagnostics reported no errors or warnings. Normal Mac
+frontend assets were restored and verified to contain zero harness code.
+Implementation sources match the Windows snapshot; subsequent changes only
+record verification and the completed plan milestone.

@@ -280,7 +280,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     if pages.iter().filter(|&&other| other == id).count() != 1 {
         return Err("a repeated page object is not editable".into());
     }
-    let mut tags = tagging::Tags::read(doc, id, pages.len())?;
+    let mut tags = tagging::Tags::read(doc, id, &pages)?;
     let bytes = page_content(doc, id)?;
     let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;
     if content.operations.len() > MAX_OPERATIONS {

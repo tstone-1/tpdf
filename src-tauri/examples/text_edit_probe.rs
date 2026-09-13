@@ -1,6 +1,7 @@
 //! Run `cargo run --example text-edit-probe -- <scratch-directory> [fixture.pdf]`.
 //! The optional fixture must contain the same two synthetic lines and page geometry.
-//! Add `--latin1` after the fixture to check the accented ReportLab variant.
+//! Add `--latin1` for the accented variant or `--page=N` to edit another page.
+//! Every other page must remain unchanged; page indices are zero based.
 //! `--inspect <fixture.pdf>` only discovers first-page runs through the worker;
 //! it prints JSON without document text and never creates or saves a PDF.
 //! Exit 0 means inspection completed (read `status`); infrastructure errors exit 1.
@@ -38,9 +39,9 @@ fn fixture() -> Document {
     doc
 }
 
-fn runs(worker: &mut Worker) -> Result<textedit::PageRuns, String> {
+fn runs(worker: &mut Worker, page: u32) -> Result<textedit::PageRuns, String> {
     let reply = worker.call(&Request::TextRuns {
-        page: 0,
+        page,
         changes: Vec::new(),
     })?;
     match reply.reply {
@@ -87,10 +88,14 @@ fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .ok_or("usage: text-edit-probe <scratch-directory>")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let latin1 = match std::env::args().nth(3).as_deref() {
-        None => false,
-        Some("--latin1") => true,
-        _ => return Err("expected --latin1 after the fixture path".into()),
+    let option = std::env::args().nth(3).unwrap_or_default();
+    let latin1 = option == "--latin1";
+    let page = if let Some(index) = option.strip_prefix("--page=") {
+        index.parse::<u32>().map_err(|_| "invalid page index")?
+    } else if option.is_empty() || latin1 {
+        0
+    } else {
+        return Err("expected --latin1 or --page=N after the fixture path".into());
     };
     let original = if latin1 {
         "SYNTHETIC ÄÖÜ ß"
@@ -115,7 +120,23 @@ fn run() -> Result<(), String> {
         .join("../vendor/pdfium")
         .join(tpdf_lib::PDFIUM_SUBDIR);
     let mut worker = Worker::spawn(&source, &library)?;
-    let mapped = runs(&mut worker)?;
+    let opened = worker.call(&Request::Open {
+        lazy_geometry: false,
+    })?;
+    let Some(Reply::Open { page_count, .. }) = opened.reply.filter(|_| opened.ok) else {
+        return Err("could not read source page count".into());
+    };
+    let page_count = u32::try_from(page_count).map_err(|_| "page count exceeds u32")?;
+    if page_count == 0 || page_count > 128 || page >= page_count {
+        return Err("fixture page index or count exceeds bounds".into());
+    }
+    let mut untouched = Vec::new();
+    for index in 0..page_count {
+        if index != page {
+            untouched.push((index, runs(&mut worker, index)?.runs));
+        }
+    }
+    let mapped = runs(&mut worker, page)?;
     if mapped.runs.len() != 2
         || mapped.runs[0].text != original
         || mapped.runs[1].text != "SYNTHETIC SECOND"
@@ -123,21 +144,23 @@ fn run() -> Result<(), String> {
         return Err("worker discovered incorrect text runs".into());
     }
     let mut plan = Plan {
-        baseline: 1,
+        baseline: page_count,
         opened_as: Some(tpdf_lib::fingerprint::Fingerprint::of(&source)?),
-        pages: vec![PageView {
-            id: 1,
-            source: PageSource::Baseline(0),
-            turns: 0,
-            crop: None,
-        }],
+        pages: (0..page_count)
+            .map(|index| PageView {
+                id: u64::from(index) + 1,
+                source: PageSource::Baseline(index),
+                turns: 0,
+                crop: None,
+            })
+            .collect(),
         forms: vec![],
         marks: vec![],
         notes: vec![],
         discards: vec![],
         redactions: vec![],
         text_edits: vec![textedit::Change {
-            page: 0,
+            page,
             revision: mapped.revision,
             operator: mapped.runs[0].operator,
             original: mapped.runs[0].text.clone(),
@@ -147,7 +170,7 @@ fn run() -> Result<(), String> {
     let original_bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
     let tile = Request::Tile {
         rid: 91,
-        page: 0,
+        page,
         scale: 1.0,
         turns: 0,
         invert: false,
@@ -177,10 +200,7 @@ fn run() -> Result<(), String> {
     if before[110 * 300 * 4..] != preview[110 * 300 * 4..] {
         return Err("text preview changed the untouched second line".into());
     }
-    let text = worker.call(&view(Request::Text {
-        page: 0,
-        crop: None,
-    }))?;
+    let text = worker.call(&view(Request::Text { page, crop: None }))?;
     let Some(Reply::Text(text)) = text.reply.filter(|_| text.ok) else {
         return Err("preview extraction failed".into());
     };
@@ -197,7 +217,7 @@ fn run() -> Result<(), String> {
     }
     for (query, count) in [(replacement, 1), (original, 0)] {
         let response = worker.call(&view(Request::Search {
-            page: 0,
+            page,
             pages: vec![],
             query: query.into(),
             options: Default::default(),
@@ -214,10 +234,7 @@ fn run() -> Result<(), String> {
         Request::Open {
             lazy_geometry: false,
         },
-        view(Request::Text {
-            page: 0,
-            crop: None,
-        }),
+        view(Request::Text { page, crop: None }),
     ] {
         if worker.call(&view(request))?.ok {
             return Err("text view accepted metadata or a nested wrapper".into());
@@ -227,14 +244,14 @@ fn run() -> Result<(), String> {
     invalid[0].replacement = "S".repeat(80);
     if worker
         .call(&Request::TextRuns {
-            page: 0,
+            page,
             changes: invalid,
         })?
         .ok
     {
         return Err("invalid draft preflight succeeded".into());
     }
-    if runs(&mut worker)?.runs[0].text != original
+    if runs(&mut worker, page)?.runs[0].text != original
         || pixels(&mut worker, &tile)? != before
         || std::fs::read(&source).map_err(|e| e.to_string())? != original_bytes
     {
@@ -255,13 +272,19 @@ fn run() -> Result<(), String> {
     }
     drop(out);
     let mut saved = Worker::spawn(&target, &library)?;
-    let after = runs(&mut saved)?;
+    let after = runs(&mut saved, page)?;
     if after.runs.len() != 2
         || after.runs[0].text != replacement
         || after.runs[1].text != "SYNTHETIC SECOND"
     {
         return Err("worker rewrite changed the wrong text".into());
     }
+    for (index, original_runs) in untouched {
+        if runs(&mut saved, index)?.runs != original_runs {
+            return Err("editing changed runs on another page".into());
+        }
+    }
+    println!("[PASS] all other pages retain their original runs");
     println!("[PASS] contained discovery and replacement; second text block preserved");
     for (invalid_text, reason) in [
         ("S".repeat(80), "exceed the original"),

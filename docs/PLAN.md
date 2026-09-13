@@ -4401,21 +4401,31 @@ complete structure graph and resources are preserved, with zero changed pixels
 outside the edited line. Reproduction and negative controls are in `BUILD.md`,
 *Tagged paragraph text editing*.
 
-The first tagged grammar supports a single page and a two-level Document/paragraph
-tree, at most 128 paragraphs, direct integer MCIDs and one parent-tree array.
-Both directions of the structure references must agree, all paragraphs must appear
-exactly once in the stream, and text may occur only inside a paragraph. The writer
+The tagged grammar supports a two-level Document/paragraph tree with at most 128
+paragraphs across the document. A flat parent number tree has one nonempty array
+per page, with unique, sorted keys matching each page's StructParents. Direct
+integer MCIDs are local to their owning page and may repeat on other pages; both
+directions of each structure reference must agree. Discovery checks the complete
+structure graph and the selected page's markers; untouched streams are preserved.
+All paragraphs on the selected page must appear exactly once in its stream, and
+text may occur only inside a paragraph. The writer
 preserves every marker and structure object. Unknown fields, alternate text
 (`ActualText`, `Alt`, `E`), inherited page references, class maps and geometry-based
 layout attributes remain refused. Only Layout/Placement=Block is accepted as a
 structure attribute. Artifact markers may contain the existing supported graphics
 state operators but no text. This is bounded compatibility, not PDF/UA validation.
 
-**Next compatibility milestone: multi-page tagged paragraphs.** Measure a fresh
-producer export before expanding the parent-tree grammar, and prove page-local
-MCID ownership and unchanged reading order across edits. Alternate-text overrides
-need separate semantics and remain refused. Retain explicit positioning between
-shows and require zero changed pixels outside the edited line.
+**Multi-page tagged milestone completed:** a fresh two-page LibreOffice export
+passes worker edits to either page and all 19 native checks on macOS and Windows.
+Independent parser and PDFKit readback confirm the other page's content,
+resources, pixels and structure references are preserved. Reproduction is in
+`BUILD.md`, *Multi-page tagged text editing*.
+
+**Next compatibility milestone: wrapped and page-spanning paragraphs.** Measure
+producer output where one paragraph owns several marked-content items before
+expanding the child grammar. Preserve reading order and page-local ownership;
+alternate-text overrides still need separate semantics. Retain explicit
+positioning between shows and require zero changed pixels outside the edited line.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
