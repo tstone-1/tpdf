@@ -40,6 +40,111 @@ fn change(doc: &Document, replacement: &str) -> Change {
     }
 }
 
+fn mac_fixture(missing_os2: bool) -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
+    let (mut doc, font, _, program) = fixture();
+    let face = Face::parse(SYNTHETIC, 0).unwrap();
+    let mut cmap = vec![0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 12];
+    for value in [6_u16, 126, 0, 32, 58] {
+        cmap.extend(value.to_be_bytes());
+    }
+    for code in 32_u8..=89 {
+        cmap.extend(
+            face.glyph_index(char::from(code))
+                .map_or(0, |g| g.0)
+                .to_be_bytes(),
+        );
+    }
+    let mut bytes = SYNTHETIC.to_vec();
+    bytes[..4].copy_from_slice(b"true");
+    let offset = bytes.len() as u32;
+    let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
+    for record in bytes[12..12 + 16 * count].chunks_exact_mut(16) {
+        if &record[..4] == b"cmap" {
+            record[8..12].copy_from_slice(&offset.to_be_bytes());
+            record[12..16].copy_from_slice(&(cmap.len() as u32).to_be_bytes());
+        }
+        if missing_os2 && &record[..4] == b"OS/2" {
+            record[..4].copy_from_slice(b"NONE");
+        }
+    }
+    bytes.extend(cmap);
+    assert_eq!(
+        Face::parse(&bytes, 0)
+            .unwrap()
+            .raw_face()
+            .table(Tag::from_bytes(b"OS/2"))
+            .is_none(),
+        missing_os2
+    );
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content = bytes;
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .set("Encoding", "MacRomanEncoding");
+    (doc, font, program)
+}
+
+#[test]
+fn textedit_macroman_format6_preserves_font_and_refuses_notdef() {
+    for missing_os2 in [false, true] {
+        let (mut doc, font, program) = mac_fixture(missing_os2);
+        let before = doc.objects.clone();
+        assert!((textedit::scan(&doc, 0).unwrap().runs[0].advance - 108.).abs() < 1e-8);
+        for missing in ["!", "ä", "Z"] {
+            let update = change(&doc, missing);
+            assert!(textedit::write(&mut doc, &[update])
+                .unwrap_err()
+                .contains("no validated glyph"));
+            assert_eq!(doc.objects, before);
+        }
+        let update = change(&doc, "EDITED FIRST");
+        textedit::write(&mut doc, &[update]).unwrap();
+        assert_eq!(
+            textedit::scan(&doc, 0).unwrap().runs[0].text,
+            "EDITED FIRST"
+        );
+        for id in [font, program] {
+            assert_eq!(doc.objects[&id], before[&id]);
+        }
+    }
+}
+
+#[test]
+fn textedit_macroman_requires_matching_encoding_and_honours_present_rights() {
+    for rights in [2_u16, 4, 0x200] {
+        let (mut doc, _, program) = mac_fixture(false);
+        let bytes = &mut doc
+            .get_object_mut(program)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .content;
+        let offset = table_offset(b"OS/2") + 8;
+        bytes[offset..offset + 2].copy_from_slice(&rights.to_be_bytes());
+        assert!(textedit::scan(&doc, 0)
+            .unwrap_err()
+            .contains("editable use"));
+    }
+    let (mut doc, font, program) = mac_fixture(true);
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .set("Encoding", "WinAnsiEncoding");
+    assert!(textedit::scan(&doc, 0).is_err());
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .set("Encoding", "MacRomanEncoding");
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content[..4]
+        .copy_from_slice(&[0, 1, 0, 0]);
+    assert!(textedit::scan(&doc, 0).is_err());
+}
+
 #[test]
 fn textedit_embedded_kerning_uses_validated_glyphs_and_own_widths() {
     let (mut doc, font, descriptor, program) = fixture();

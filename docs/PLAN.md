@@ -4379,29 +4379,37 @@ not claims about editing arbitrary documents.
 
 ### Worker text replacement — started 2026-09-12
 
-**Next compatibility milestone: an unchanged Quartz/CoreText export through
-preview, shorter replacement, save and independent readback.** The 2026-09-13
-producer survey found that both Quartz and LibreOffice emit `TJ` kerning arrays.
-Bounded array handling is now implemented; Quartz additionally needs its authored
-colour space and MacRoman embedded-font mapping handled; LibreOffice adds clipping,
-custom character codes/ToUnicode and, in tagged exports, structure metadata. These
-are measured on synthetic exports, not a claim about every PDF from those producers.
-Preserve explicit positioning between shows and count the milestone complete
-only when the original Quartz fixture
-passes end to end with no changed pixels outside the edited line. Keep the
-LibreOffice exports as the next compatibility cases; accepting one operator alone
-does not establish producer support. Reproduction commands and the worker's
-read-only inspection mode are in `BUILD.md`, *Independent text producer survey*.
+**Quartz/CoreText milestone completed 2026-09-13:** the original synthetic export
+passes preview, shorter replacement and save through workers and the native UI on
+macOS and Windows. Independent parser and PDFKit readback confirm unchanged font
+and colour resources and zero changed pixels outside the edited line. The coloured
+Quartz variant also passes the Mac worker round trip. This is evidence for these
+fixtures, not every PDF from the producer. Reproduction and verification records
+are in `BUILD.md`, *Quartz/CoreText text-edit round trip*.
+
+**Next compatibility milestone: the untagged LibreOffice export.** Its measured
+remaining exclusions are clipping and custom character codes/ToUnicode; tagged
+exports additionally carry structure metadata. Start by validating the custom
+mapping against the embedded font, then handle the measured page clip without
+accepting arbitrary clipping. Retain explicit positioning between shows and require
+the unchanged producer output to pass end to end with zero changed pixels outside
+the edited line. The baseline exports and read-only inspection mode are in
+`BUILD.md`, *Independent text producer survey*.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
 and encoded to single PDF bytes, with exact standard Helvetica advances; the
 4,096-character bound counts characters rather than UTF-8 bytes. Simple embedded
-TrueType fonts additionally support existing ASCII glyphs when explicit WinAnsi,
-nonsymbolic flags, Unicode cmap agreement and PDF/program widths validate. The
+TrueType fonts additionally support existing ASCII glyphs when explicit WinAnsi
+or MacRoman, nonsymbolic flags, cmap agreement and PDF/program widths validate. The
 font program remains byte-identical. Programs are bounded to 1 MiB decoded and
 2 MiB encoded, with at most 32 fonts per page and eight cmap subtables per font.
-Missing glyphs, custom ToUnicode/encoding, alternate legacy mappings, overhanging
+WinAnsi requires a Windows Unicode map; MacRoman requires a Macintosh Roman map,
+with all accepted maps agreeing on offered ASCII glyphs. Format-6 glyph zero is
+treated as missing. Apple `true` programs with MacRoman may omit the optional
+`OS/2` table; present permissions flags are still enforced, and OpenType-style
+programs still require that table. Missing glyphs, custom ToUnicode/encoding,
+other legacy mappings, overhanging
 outlines, variable/colour fonts and non-editable embedding permissions are refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
@@ -4414,6 +4422,14 @@ is accepted inside or outside text blocks. These setters preserve geometry and
 do not provide the independent positioning required between shows. Nondefault
 spacing, horizontal text scaling, rise, stroke/hidden/clipping modes and malformed
 operands remain refused, including a nondefault setter followed by a reset.
+Nonstroking device Gray/RGB/CMYK and bounded ICCBased colour spaces are preserved
+through `cs`, `sc`/`scn`, `g`/`rg`/`k` and `q`/`Q`. Components must be in [0, 1]
+and match the active space. At most 32 named spaces are accepted; ICC streams use
+the existing 2 MiB encoded/1 MiB decoded bounds with consistent header lengths,
+signatures, component counts and unit ranges. These are envelope checks, not
+validation of ICC transforms: the contained renderer interprets the unchanged
+profile. Pattern/spot/calibrated spaces and default-space substitutions remain
+refused.
 Positive page scaling and translations compose across `cm` operators and are
 restored by `Q`. The reported matrix and hit box combine the text matrix with
 the page transform before crop and rotation. An existing page scale acts on a

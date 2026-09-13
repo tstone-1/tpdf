@@ -261,6 +261,16 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation("textedit: offer notdef as a MacRoman glyph", "src/textedit/fonts.rs", "if glyph.0 == 0 {", "if false {", "textedit_macroman_format6_preserves_font_and_refuses_notdef"),
+    Mutation("textedit: omit required OpenType permissions table", "src/textedit/fonts.rs", "} else if !apple_true {", "} else if false {", "textedit_macroman_requires_matching_encoding_and_honours_present_rights"),
+    Mutation("textedit: ignore present font permissions", "src/textedit/fonts.rs", "if rights & !0x108 != 0 {", "if false {", "textedit_macroman_requires_matching_encoding_and_honours_present_rights"),
+    Mutation("textedit: forget saved fill colour space", "src/textedit.rs", "states.push((selected_font, leading, page_transform, fill_components));", "states.push((selected_font, leading, page_transform, 1));", "textedit_colours_restore_state_and_preserve_operators"),
+    Mutation("textedit: omit colour component count", "src/textedit/colors.rs", "if values.len() != components {", "if false {", "textedit_colours_refuse_bad_components_and_unsupported_spaces"),
+    Mutation("textedit: omit colour component range", "src/textedit/colors.rs", "if !(0.0..=1.0).contains(&number(value)?) {", "if false {", "textedit_colours_refuse_bad_components_and_unsupported_spaces"),
+    Mutation("textedit: omit ICC header signature", "src/textedit/colors.rs", "|| &bytes[36..40] != b\"acsp\"", "|| false", "textedit_icc_checks_header_range_and_preserves_profile_bytes"),
+    Mutation("textedit: raise ICC decode limit", "src/textedit/colors.rs", "filters::decode(profile, super::MAX_CONTENT)?", "filters::decode(profile, super::MAX_CONTENT * 2)?", "textedit_icc_decoding_and_colour_space_count_are_bounded"),
+    Mutation("textedit: omit colour space count", "src/textedit.rs", "if colour_spaces.len() >= 32 {", "if false {", "textedit_icc_decoding_and_colour_space_count_are_bounded"),
+
     Mutation("textedit: reverse kerning adjustment", "src/textedit.rs", "advance -= number(value)? * size / 1000.0;", "advance += number(value)? * size / 1000.0;", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
     Mutation("textedit: omit kerning text size", "src/textedit.rs", "advance -= number(value)? * size / 1000.0;", "advance -= number(value)? / 1000.0;", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
     Mutation("textedit: omit kerning character bound", "src/textedit.rs", "if characters > MAX_TEXT {", "if false {", "textedit_kerning_bounds_total_characters_and_array_items"),
@@ -284,11 +294,11 @@ MUTATIONS = [
     Mutation("textedit: accept a missing embedded glyph", "src/textedit/fonts.rs", '.ok_or("the embedded font has no validated glyph for this character")?', '.unwrap_or(600.)', "textedit_embedded_missing_glyph_and_own_width_overflow_leave_document_untouched"),
     Mutation("textedit: ignore conflicting Unicode cmaps", "src/textedit/fonts.rs", '.any(|table| table.glyph_index(code) != Some(glyph))', '.any(|table| { let _ = (table, code, glyph); false })', "textedit_embedded_requires_unicode_cmaps_to_agree"),
     Mutation("textedit: treat a malformed space as blank", "src/textedit/fonts.rs", "empty_glyph(&face, glyph) == Some(true)", "true", "textedit_embedded_does_not_treat_a_broken_space_as_blank"),
-    Mutation("textedit: discard restored text state", "src/textedit.rs", '(selected_font, leading, page_transform) =', 'let _ =', "textedit_graphics_stack_restores_font_size_and_leading"),
+    Mutation("textedit: discard restored text state", "src/textedit.rs", '(selected_font, leading, page_transform, fill_components) =', 'let _ =', "textedit_graphics_stack_restores_font_size_and_leading"),
     Mutation("textedit: allow unclosed graphics state", "src/textedit.rs", 'if !states.is_empty() {', 'if false {', "textedit_graphics_stack_requires_balanced_bounded_outer_saves"),
     Mutation("textedit: select last font instead of restored font", "src/textedit.rs", 'content.operations[*font_operator].operands[0]', 'content.operations[{ let _ = font_operator; content.operations[..change.operator as usize].iter().rposition(|op| op.operator == "Tf").unwrap() }].operands[0]', "textedit_graphics_restore_uses_the_active_font_for_replacement"),
     Mutation("textedit: omit translated text position", "src/textedit.rs", 'let page_matrix = compose_diagonal(page_transform, matrix)?;', 'let page_matrix = matrix;', "textedit_translated_hitboxes_match_absolute_positions_after_crop_and_rotation"),
-    Mutation("textedit: forget saved page translation", "src/textedit.rs", 'states.push((selected_font, leading, page_transform));', 'states.push((selected_font, leading, [1., 0., 0., 1., 0., 0.]));', "textedit_page_translations_compose_restore_and_preserve_following_runs"),
+    Mutation("textedit: forget saved page translation", "src/textedit.rs", 'states.push((selected_font, leading, page_transform, fill_components));', 'states.push((selected_font, leading, [1., 0., 0., 1., 0., 0.], fill_components));', "textedit_page_translations_compose_restore_and_preserve_following_runs"),
     Mutation("textedit: accept arbitrary page transforms", "src/textedit.rs", 'if next[0] <= 0.0 || next[3] <= 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if false {', "textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices"),
 
     Mutation("textedit: compose page translations in reverse order", "src/textedit.rs", 'inner[4] * outer[0] + outer[4]', 'outer[4] * inner[0] + inner[4]', "textedit_page_scales_compose_restore_and_preserve_following_runs"),
