@@ -299,6 +299,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
             }
             ("ET", []) if inside => inside = false,
+            // Explicit defaults have the same semantics as an omitted setting.
+            // Text state can be set outside BT/ET and persists across blocks.
+            // Every nondefault setter is still refused, so q/Q cannot restore
+            // unsupported spacing, rise, scaling or a hidden/clipping mode.
+            ("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
+            ("Tz", [value]) if number(value)? == 100.0 => {}
+            ("Tr", [Object::Integer(0)]) => {}
             ("Tf", [name, size]) if inside => {
                 let name = name.as_name().map_err(|e| e.to_string())?;
                 if !font_metrics.contains_key(name) {
@@ -717,6 +724,91 @@ pub(crate) mod tests {
                 results.push((run.matrix, run.display_rect));
             }
             assert_eq!(results[0], results[1], "rotation {rotation}");
+        }
+    }
+
+    #[test]
+    fn textedit_explicit_defaults_preserve_geometry_and_saved_operators() {
+        let baseline = with_content(b"BT /F1 12 Tf 40 TL 40 180 Td (FIRST) Tj T* (SECOND) Tj ET");
+        let mut doc = with_content(b"0 Tc 0 Tw 100 Tz 0 Ts 0 Tr q BT /F1 12 Tf 40 TL 40 180 Td 0.0 Tc -0.0 Tw 100.0 Tz 0.0 Ts 0 Tr (FIRST) Tj 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr T* (SECOND) Tj ET Q");
+        let expected = scan(&baseline, 0).unwrap();
+        let before = scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), expected.runs.len());
+        for (actual, expected) in before.runs.iter().zip(expected.runs) {
+            let mut actual = actual.clone();
+            actual.operator = expected.operator;
+            assert_eq!(actual, expected);
+        }
+        // The serializer normalizes real zero to integer zero. Compare the
+        // canonical original operators, preserving all non-target operands.
+        let operations =
+            Content::decode_strict(&inspect(&doc, 0).unwrap().content.encode().unwrap())
+                .unwrap()
+                .operations;
+        let update = Change {
+            replacement: "IN".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, std::slice::from_ref(&update)).unwrap();
+        let after = inspect(&doc, 0).unwrap();
+        assert_eq!(after.runs.runs[0].text, "IN");
+        assert_eq!(after.runs.runs[1], before.runs[1]);
+        assert_eq!(after.content.operations.len(), operations.len());
+        for (index, (actual, expected)) in
+            after.content.operations.iter().zip(operations).enumerate()
+        {
+            if index != update.operator as usize {
+                assert_eq!(actual.operator, expected.operator);
+                assert_eq!(actual.operands, expected.operands);
+            }
+        }
+    }
+
+    #[test]
+    fn textedit_default_setters_refuse_nondefault_and_malformed_operands() {
+        for (operator, default) in [
+            ("Tc", "0"),
+            ("Tw", "0"),
+            ("Ts", "0"),
+            ("Tz", "100"),
+            ("Tr", "0"),
+        ] {
+            for operand in [
+                "", "0 0", "(0)", "/Zero", "[0]", "true", "null", "1", "-1", "0.01", "99.99",
+                "100.01", "1000001",
+            ] {
+                // A later default setter must not hide an earlier unsupported one.
+                let bytes = format!(
+                    "{operand} {operator} {default} {operator} BT /F1 12 Tf 40 180 Td (TEXT) Tj ET"
+                );
+                assert!(
+                    scan(&with_content(bytes.as_bytes()), 0).is_err(),
+                    "accepted {operand} {operator}"
+                );
+            }
+        }
+        // Rendering mode is an integer; modes 1..7 include stroke, hidden and clip.
+        for mode in ["0.0", "1", "2", "3", "4", "5", "6", "7"] {
+            let bytes = format!("BT /F1 12 Tf 40 180 Td {mode} Tr (TEXT) Tj ET");
+            assert!(
+                scan(&with_content(bytes.as_bytes()), 0).is_err(),
+                "accepted {mode} Tr"
+            );
+        }
+    }
+
+    #[test]
+    fn textedit_default_setters_do_not_position_a_following_show() {
+        for setting in ["0 Tc", "0 Tw", "100 Tz", "0 Ts", "0 Tr"] {
+            for content in [
+                format!("BT /F1 12 Tf {setting} (TEXT) Tj ET"),
+                format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj {setting} (SECOND) Tj ET"),
+            ] {
+                assert!(
+                    scan(&with_content(content.as_bytes()), 0).is_err(),
+                    "accepted {content}"
+                );
+            }
         }
     }
 
