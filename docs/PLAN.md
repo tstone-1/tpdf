@@ -4391,7 +4391,11 @@ Missing glyphs, custom ToUnicode/encoding, alternate legacy mappings, overhangin
 outlines, variable/colour fonts and non-editable embedding permissions are refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
-page transform and ASCII85/Flate content (including a single-filter array). Each
+page transform and ASCII85/Flate content (including a single-filter array).
+Balanced `q`/`Q` saves outside text blocks preserve font, size and leading, with
+a maximum nesting depth of 64. Replacement validation uses the active font's
+original operator address after restoration, including non-UTF-8 resource names.
+Saves inside text blocks and nonidentity page transforms remain unsupported. Each
 `Tj` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
 other graphics/text operators remain refused. It reports the original operator address,
@@ -4466,6 +4470,12 @@ The same uncommitted increment also passed Windows verification on 2026-09-13:
 PDFKit and parser readback of both Windows-saved outputs confirmed preserved
 fonts and zero pixel changes outside the edited line. `BUILD.md` records the
 source snapshot and measurements.
+
+The independent ReportLab saved-state fixture also passed on both platforms on
+2026-09-13: 38 text-edit tests, 15 native checks per platform, worker saves and
+independent readback. All four worker/UI outputs changed 2,394 pixels inside the
+edited line and zero outside, with only the target operand changed. Three targeted
+mutations proved state restoration, balanced saves and active-font lookup.
 
 ---
 

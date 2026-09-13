@@ -80,6 +80,34 @@ fn textedit_embedded_missing_glyph_and_own_width_overflow_leave_document_untouch
 }
 
 #[test]
+fn textedit_graphics_restore_uses_the_active_font_for_replacement() {
+    let (mut doc, font, _, _) = fixture();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    // The raw name is not UTF-8. Neither the last Tf nor the lossy UI name
+    // identifies the active embedded font after Q restores it.
+    let mut fonts = dictionary! { "F2" => dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding"
+    }};
+    fonts.set(b"F\xff".to_vec(), font);
+    let stream = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F#ff 12 Tf ET q BT /F2 12 Tf ET Q BT 40 180 Td (AB) Tj ET".to_vec(),
+    ));
+    let page = doc.get_dictionary_mut(page).unwrap();
+    page.set("Resources", dictionary! { "Font" => fonts });
+    page.set("Contents", stream);
+    let before = doc.objects.clone();
+    let missing = change(&doc, "i");
+    assert!(textedit::write(&mut doc, &[missing])
+        .unwrap_err()
+        .contains("no validated glyph"));
+    assert_eq!(doc.objects, before);
+    let valid = change(&doc, "BA");
+    textedit::write(&mut doc, &[valid]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "BA");
+}
+
+#[test]
 fn textedit_embedded_refuses_ambiguous_pdf_mappings_and_custom_metrics() {
     for (key, value) in [
         ("ToUnicode", Object::Null),

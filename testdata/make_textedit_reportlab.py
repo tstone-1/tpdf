@@ -29,13 +29,23 @@ print("[PASS] all 191 supported Helvetica advances match independent metrics")
 root = Path(sys.argv[1])
 root.mkdir(parents=True, exist_ok=True)
 for mode, wrapped in (("separate", False), ("multiline", False),
-                      ("separate-ascii85", True), ("multiline-ascii85", True), ("latin1", True)):
+                      ("separate-ascii85", True), ("multiline-ascii85", True),
+                      ("saved-state-ascii85", True), ("latin1", True)):
     # True is ReportLab's normal wrapper for compressed page content; keep the
     # Flate-only layouts as controls over the extra decoding stage.
     rl_config.useA85 = wrapped
     canvas = Canvas(str(root / f"{mode}.pdf"), pagesize=(300, 240),
                     pageCompression=1, invariant=1)
-    if mode.startswith("separate"):
+    if mode == "saved-state-ascii85":
+        canvas.saveState()
+        canvas.drawString(40, 180, "SYNTHETIC FIRST")
+        canvas.setFont("Helvetica", 8, leading=10)
+        canvas.saveState()
+        canvas.setFont("Helvetica", 6, leading=5)
+        canvas.restoreState()
+        canvas.restoreState()
+        canvas.drawString(40, 140, "SYNTHETIC SECOND")
+    elif mode.startswith("separate"):
         canvas.drawString(40, 180, "SYNTHETIC FIRST")
         canvas.drawString(40, 140, "SYNTHETIC SECOND")
     else:
