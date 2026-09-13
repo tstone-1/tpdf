@@ -13,6 +13,13 @@ gate requires zero harness code and deliberately refuses a checks build. The bui
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
 
+Plain Cargo and Tauri builds share the macOS deployment-target default in
+`.cargo/config.toml` and `src-tauri/tauri.conf.json`; the toolchain gate checks
+that they agree. Run Cargo from within this checkout so it finds the root
+configuration. A shell override still takes precedence and can invalidate the
+cache. The value preserves Tauri's existing `10.13` setting; it is not evidence
+that the application or bundled PDFium works on that OS version.
+
 Protected signature storage can be exercised with synthetic maximum-size pixels:
 `cargo test --manifest-path src-tauri/Cargo.toml --lib native_store_roundtrips_maximum_pixels_and_forgets -- --ignored --nocapture`.
 It creates and removes its own OS storage entry; it needs an unlocked desktop.
@@ -6262,5 +6269,26 @@ with zero changed pixels outside the edited line. All 24 repository gates passed
 in one 351.6-second sweep: 1,337 Rust tests (three ignored), 1,667 frontend tests,
 and the locked fuzz/example builds. Normal frontend assets were restored and
 contain zero harness code. The separate Mac checks application build took 7m11s
-and rebuilt dependencies just used by the plain Cargo gates; avoiding that repeated
-build work remains a workflow improvement to investigate.
+and rebuilt dependencies just used by the plain Cargo gates. The following
+investigation resolved that repeated build work.
+
+On 2026-09-13 Cargo's fingerprint log identified two direct environment
+invalidations: `ring` and `objc2-exception-helper` saw
+`MACOSX_DEPLOYMENT_TARGET` change from `Some("10.13")` to `None`. The ensuing
+plain `cargo build --locked --manifest-path src-tauri/Cargo.toml --lib` rebuilt
+37 dependencies and took 2m05s. The root Cargo configuration now supplies the
+same default as Tauri's explicitly recorded minimum system version. Two mutation
+controls prove that the toolchain gate rejects drift on either side.
+
+The first full sweep with that configuration passed all 24 gates in 584.0 seconds,
+including 1,337 Rust tests (three ignored), 1,667 frontend tests and the locked
+fuzz/example builds. This sweep includes refreshing the separate compiler/test
+caches. The subsequent checks application build took 37.51s, compiling four Tauri
+dependencies whose build variant had not yet been refreshed, and passed all 15
+native text-edit checks. Switching back to the same plain Cargo command took
+9.35s and rebuilt zero dependencies. A normal application build then took 17.54s,
+and another plain Cargo build took 8.39s, each with zero dependency rebuilds and
+no deployment-target invalidation. The application itself still rebuilds when
+its embedded assets or Tauri configuration change. Normal frontend assets contain
+zero harness code. These timings describe this debug-build sequence on macOS;
+the dependency invalidations establish the mechanism independently of timing.

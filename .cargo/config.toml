@@ -1,0 +1,7 @@
+[env]
+# Match bundle.macOS.minimumSystemVersion in src-tauri/tauri.conf.json. Tauri
+# sets this for application builds; leaving it unset in plain Cargo invalidates
+# ring/Objective-C build scripts and their dependants on every workflow switch.
+# Keep this at the repository root so both root and src-tauri invocations find it.
+# No force: an explicit environment override remains available to build probes.
+MACOSX_DEPLOYMENT_TARGET = "10.13"

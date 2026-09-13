@@ -34,6 +34,9 @@
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    },
     "targets": "all",
     "publisher": "Timo Stein",
     "copyright": "Copyright (c) 2026 Timo Stein. MIT licensed.",
