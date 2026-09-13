@@ -39,9 +39,16 @@ def check(before, after):
     changes = [(old, new) for old, new in zip(*operations) if old != new]
     assert len(changes) == 1, "expected exactly one changed operand"
     old, new = changes[0]
-    assert old == (["SYNTHETIC FIRST"], b"Tj"), "wrong source operand"
-    assert new == (["EDITED FIRST"], b"Tj"), "wrong replacement operand"
-    print("[PASS] independent parser: only target Tj changed; font dictionaries and program bytes preserved")
+    if old[1] == b"TJ":
+        assert len(old[0]) == 1 and isinstance(old[0][0], list), "wrong source array"
+        parts = old[0][0]
+        assert all(isinstance(part, (str, int, float)) for part in parts), "invalid array item"
+        assert "".join(part for part in parts if isinstance(part, str)) == "SYNTHETIC FIRST", "wrong source text"
+        assert new == ([["EDITED FIRST"]], b"TJ"), "wrong replacement array"
+    else:
+        assert old == (["SYNTHETIC FIRST"], b"Tj"), "wrong source operand"
+        assert new == (["EDITED FIRST"], b"Tj"), "wrong replacement operand"
+    print("[PASS] independent parser: only target text operand changed; font dictionaries and program bytes preserved")
 
 
 def main():

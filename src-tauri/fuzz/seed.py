@@ -182,9 +182,11 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
-def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False) -> bytes:
+def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False) -> bytes:
     """A supported seed reaches the text writer instead of only refusal paths."""
     content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
+    if kerning:
+        content = b"BT /F1 12 Tf 40 180 Td [(ACME) 20 ( SYNTHETIC) -10 ( TEXT)] TJ ET"
     if multiline:
         content = b"1 0 0 1 0 0 cm BT /F1 12 Tf 40 TL ET BT 1 0 0 1 40 180 Tm (ACME SYNTHETIC TEXT) Tj T* (SECOND LINE) Tj T* ET"
     if latin1:
@@ -244,7 +246,8 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-defaults", editable_text(defaults=True)),
+        "textedit_scan": docs + [("editable-kerning", editable_text(kerning=True)),
+                                 ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),
                                  ("editable-translated", editable_text(translated=True)),
                                  ("editable-saved-state", editable_text(saved_state=True)),
