@@ -218,11 +218,21 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
     })
 
 
-def editable_embedded() -> bytes:
+def editable_embedded(mac_roman: bool = False) -> bytes:
     """A built-in font seed: no fontTools install or generated corpus required."""
     font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
+    if mac_roman:
+        font = bytearray(font)
+        font[:4] = b"true"
+        for start in range(12, 12 + int.from_bytes(font[4:6], "big") * 16, 16):
+            if font[start:start + 4] == b"OS/2":
+                font[start:start + 4] = b"NONE"
+            if font[start:start + 4] == b"cmap":
+                offset = int.from_bytes(font[start + 8:start + 12], "big")
+                font[offset + 4:offset + 8] = b"\x00\x01\x00\x00"
+        font = bytes(font)
     content = b"BT /F1 12 Tf 40 180 Td (AB) Tj ET"
-    return pdf_objects({
+    objects = {
         1: b"<< /Type /Catalog /Pages 2 0 R >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
@@ -230,7 +240,20 @@ def editable_embedded() -> bytes:
         5: b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
         6: b"<< /Type /FontDescriptor /FontName /TPDFSynthetic /Flags 32 /FontBBox [0 0 400 700] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 100 /FontFile2 7 0 R >>",
         7: b"<< /Length " + str(len(font)).encode() + b" >>\nstream\n" + font + b"\nendstream",
-    })
+    }
+
+    if mac_roman:
+        objects[3] = objects[3].replace(b"/Resources <<", b"/Resources << /ColorSpace << /C [/ICCBased 8 0 R] >>")
+        objects[4] = objects[4].replace(b"WinAnsiEncoding", b"MacRomanEncoding")
+        content = b"/DeviceRGB cs q /C cs 0 sc Q 1 0 0 sc " + content
+        objects[5] = b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream"
+        profile = bytearray(132)
+        profile[:4] = len(profile).to_bytes(4, "big")
+        profile[16:20] = b"GRAY"
+        profile[36:40] = b"acsp"
+        # Header-only envelope for structural fuzzing, not a rendered ICC profile.
+        objects[8] = b"<< /N 1 /Length 132 >>\nstream\n" + bytes(profile) + b"\nendstream"
+    return pdf_objects(objects)
 
 
 def corpora() -> dict[str, list[tuple[str, bytes]]]:
@@ -246,7 +269,8 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-kerning", editable_text(kerning=True)),
+        "textedit_scan": docs + [("editable-macroman-colour", editable_embedded(mac_roman=True)),
+                                 ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),
                                  ("editable-translated", editable_text(translated=True)),

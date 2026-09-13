@@ -54,8 +54,11 @@ fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
 
 pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let invalid = || "unsupported embedded TrueType font or character mapping".to_string();
+    let mac_roman =
+        font.get(b"Encoding").and_then(Object::as_name).ok() == Some(b"MacRomanEncoding");
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
-        || font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding")
+        || (!mac_roman
+            && font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding"))
         || font.get(b"BaseFont").and_then(Object::as_name).is_err()
         || font.iter().any(|(key, _)| {
             !matches!(
@@ -79,8 +82,8 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         .get(b"Flags")
         .and_then(Object::as_i64)
         .map_err(|_| invalid())?;
-    // ISO 32000-1, 9.6.6.4: explicit WinAnsi plus a nonsymbolic font uses
-    // Unicode cmap (3,1). Symbolic/name-based fallback is outside this subset.
+    // ISO 32000-1, 9.6.6.4: require explicit encoding and a nonsymbolic font.
+    // Symbolic/name-based fallback is outside this subset.
     if flags & (4 | 32 | 262144) != 32
         || descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
@@ -100,7 +103,8 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     {
         return Err(invalid());
     }
-    if bytes.get(..4) != Some(&[0, 1, 0, 0]) {
+    let apple_true = mac_roman && bytes.get(..4) == Some(b"true");
+    if !apple_true && bytes.get(..4) != Some(&[0, 1, 0, 0]) {
         return Err(invalid()); // No collections, CFF or alternate sfnt flavours.
     }
     let face = Face::parse(&bytes, 0).map_err(|_| invalid())?;
@@ -113,14 +117,18 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     }
     // Match the preview spike's conservative embedding policy. No subsetting
     // takes place, so the no-subsetting bit is compatible with this writer.
-    let os2 = face
-        .raw_face()
-        .table(Tag::from_bytes(b"OS/2"))
-        .ok_or_else(invalid)?;
-    let rights = os2.get(8..10).ok_or_else(invalid)?;
-    let rights = u16::from_be_bytes([rights[0], rights[1]]);
-    if rights & !0x108 != 0 {
-        return Err("embedded font does not permit this editable use".into());
+    // Apple's TrueType format makes OS/2 optional. Preserve an already embedded
+    // legacy program without manufacturing a permissions table. If present, its
+    // restrictions still apply; OpenType-style programs still require the table.
+    // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
+    if let Some(os2) = face.raw_face().table(Tag::from_bytes(b"OS/2")) {
+        let rights = os2.get(8..10).ok_or_else(invalid)?;
+        let rights = u16::from_be_bytes([rights[0], rights[1]]);
+        if rights & !0x108 != 0 {
+            return Err("embedded font does not permit this editable use".into());
+        }
+    } else if !apple_true {
+        return Err(invalid());
     }
     let cmap = face.tables().cmap.ok_or_else(invalid)?;
     if cmap.subtables.len() > 8
@@ -131,11 +139,20 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     let primary = cmap
         .subtables
         .into_iter()
-        .find(|table| table.platform_id == PlatformId::Windows && table.encoding_id == 1)
+        .find(|table| {
+            if mac_roman {
+                table.platform_id == PlatformId::Macintosh && table.encoding_id == 0
+            } else {
+                table.platform_id == PlatformId::Windows && table.encoding_id == 1
+            }
+        })
         .ok_or_else(invalid)?;
-    // Refuse alternate legacy mappings rather than guessing which renderer
-    // selects them. All accepted Unicode maps must agree on each offered glyph.
-    if cmap.subtables.into_iter().any(|table| !table.is_unicode()) {
+    // Refuse other legacy mappings rather than guessing which renderer selects
+    // them. All accepted maps must agree on each offered ASCII glyph.
+    if cmap.subtables.into_iter().any(|table| {
+        !table.is_unicode()
+            && !(mac_roman && table.platform_id == PlatformId::Macintosh && table.encoding_id == 0)
+    }) {
         return Err(invalid());
     }
     let first = font
@@ -157,13 +174,19 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     }
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
-    // Start with ASCII: WinAnsi's nonbreaking-space and soft-hyphen aliases,
+    // ASCII has the same character codes in WinAnsi, MacRoman and Unicode.
+    // WinAnsi's nonbreaking-space and soft-hyphen aliases,
     // extended glyph names and custom ToUnicode maps require separate proof.
     for byte in 32_u8..=126 {
         let code = u32::from(byte);
         let Some(glyph) = primary.glyph_index(code) else {
             continue;
         };
+        // Format 6 returns glyph zero for holes; it is .notdef, not a usable
+        // character (unlike the None returned by other cmap formats).
+        if glyph.0 == 0 {
+            continue;
+        }
         if glyph.0 >= face.number_of_glyphs()
             || cmap
                 .subtables

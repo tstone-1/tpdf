@@ -5,6 +5,7 @@
 //! Graphics, custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
+mod colors;
 mod filters;
 mod fonts;
 
@@ -290,6 +291,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         return Err("text operator count exceeds its limit".into());
     }
     let resources = resources(doc, id)?;
+    let mut fill_components = colors::named(doc, resources, b"DeviceGray")?;
+    let mut colour_spaces = BTreeMap::new();
     let mut result = PageRuns {
         page,
         revision: Sha256::digest(&bytes).to_vec(),
@@ -312,16 +315,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     for (index, op) in content.operations.iter().enumerate() {
         match (op.operator.as_str(), op.operands.as_slice()) {
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
-            // Only accept saves outside BT/ET; apart from diagonal transforms, graphics
-            // state remains refused, and the next BT resets both matrices.
+            // Only accept saves outside BT/ET. Preserve every accepted state
+            // component; the next BT resets both text matrices.
             ("q", []) if !inside => {
                 if states.len() >= 64 {
                     return Err("text graphics-state stack exceeds its limit".into());
                 }
-                states.push((selected_font, leading, page_transform));
+                states.push((selected_font, leading, page_transform, fill_components));
             }
             ("Q", []) if !inside => {
-                (selected_font, leading, page_transform) =
+                (selected_font, leading, page_transform, fill_components) =
                     states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("cm", values) if !inside && values.len() == 6 => {
@@ -349,6 +352,24 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
             ("Tr", [Object::Integer(0)]) => {}
+            ("cs", [Object::Name(name)]) => {
+                if !colour_spaces.contains_key(name) {
+                    if colour_spaces.len() >= 32 {
+                        return Err("too many text colour spaces".into());
+                    }
+                    colour_spaces.insert(name.clone(), colors::named(doc, resources, name)?);
+                }
+                fill_components = colour_spaces[name];
+            }
+            ("sc" | "scn", values) => colors::values(values, fill_components)?,
+            ("g" | "rg" | "k", values) => {
+                fill_components = match op.operator.as_str() {
+                    "g" => 1,
+                    "rg" => 3,
+                    _ => 4,
+                };
+                colors::values(values, fill_components)?;
+            }
             ("Tf", [name, size]) if inside => {
                 let name = name.as_name().map_err(|e| e.to_string())?;
                 if !font_metrics.contains_key(name) {

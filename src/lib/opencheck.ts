@@ -193,7 +193,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();
       check("redo restores exactly the edited pixels", redoPixels.length === editedPixels.length && redoPixels.every((value, index) => value === editedPixels[index]));
-      await start(); field()!.value = "A".repeat(80);
+      // S occurs in the source line, including fonts subset by external producers.
+      await start(); field()!.value = "S".repeat(80);
       document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
       let refused = false; try { await host.idle(); } catch { refused = true; }
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);

@@ -6424,3 +6424,50 @@ the independent readers with the same pixel counts. All 24 local gates passed
 in 378.4 seconds: 1,348 Rust tests (three ignored), 1,667 frontend tests, and the
 locked fuzz/example builds. The checks application's Rust build took 18.73 seconds.
 Normal frontend assets were restored with zero harness code.
+
+### Quartz/CoreText text-edit round trip
+
+The original synthetic Quartz export from the producer survey now supports
+preview, shorter replacement and save without modifying its font or colour
+resources. This covers its Apple TrueType `true` program, explicit MacRoman map,
+ICCBased grey colour and kerning arrays. Only validated ASCII glyphs already in
+the subset are offered. The accepted grammar and remaining exclusions are in
+`docs/PLAN.md`; this is evidence for these exports, not arbitrary Quartz PDFs.
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-quartz/worker scratch/textedit-producers/quartz.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-quartz/worker/synthetic-before.pdf scratch/textedit-quartz/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-quartz/worker
+swift testdata/make_textedit_quartz.swift scratch/textedit-quartz/colour.pdf --colour
+```
+
+Repeat the worker and independent-reader commands with the coloured export.
+`--colour` asks CoreText for two different foreground colours; it does not patch
+PDF operators after export. The parser now compares all page resources, including
+decoded font and ICC streams, and rejects a deliberately changed ICC profile.
+On 2026-09-13 the grey and coloured worker saves changed respectively 2,394 and
+2,471 pixels inside the edited line, with zero outside.
+
+Both platforms passed 58 focused text-editor tests. Nine targeted mutations were
+caught; fuzzing with the additional MacRoman/colour seed completed 30,509 inputs
+in 21 seconds without a finding, peaking at 84 MiB RSS. The worker and native
+checks now repeat `S` for the overflowing draft: it exists in the original line,
+whereas `A` is absent from Quartz's subset and could make the overflow check pass
+for the wrong reason.
+
+Windows passed the corrected 15-case native workflow on isolated source archive
+SHA-256 `7aa79fe9c70e94365049dd014d2980d8e46470b569ee80128c5dab54902369ea`.
+The exact original Quartz input was transferred with SHA-256
+`754757537738043fa04e050187b1398422703e5d66a22984099ae3ea20de4638`.
+Both worker and UI output passed independent parser and PDFKit readback, with
+2,394 changed pixels inside the line and zero outside. Retrieved digests and
+source manifests matched; temporary tasks were removed and the normal checkout
+remained clean. Normal frontend assets were restored with zero harness code.
+
+The Mac passed the corrected 15 native checks and both independent readers, with
+2,394 changed pixels inside the edited line and zero outside. All 24 local gates
+passed in 487.4 seconds summed gate time: 1,354 Rust tests (three ignored), 1,667
+frontend tests and locked fuzz/example builds. The checks application's Rust build
+took 21.07 seconds. Normal frontend assets were restored with zero harness code.
+Implementation files still match the corrected Windows snapshot; the subsequent
+plan and verification-record updates do not change that tested implementation.

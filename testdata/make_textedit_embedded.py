@@ -15,7 +15,7 @@ from text_edit_fonts import make_font, pdf_round_trip
 
 
 def check(before, after):
-    """Independent parser: only one operand changed; the entire font survived."""
+    """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject
 
@@ -32,7 +32,7 @@ def check(before, after):
     readers = [PdfReader(path) for path in (before, after)]
     assert all(len(reader.pages) == 1 for reader in readers), "wrong page count"
     pages = [reader.pages[0] for reader in readers]
-    assert value(pages[0]["/Resources"]["/Font"]) == value(pages[1]["/Resources"]["/Font"]), "font changed"
+    assert value(pages[0]["/Resources"]) == value(pages[1]["/Resources"]), "page resources changed"
     operations = [ContentStream(page["/Contents"], reader).operations
                   for page, reader in zip(pages, readers)]
     assert len(operations[0]) == len(operations[1]), "operator count changed"
@@ -48,7 +48,7 @@ def check(before, after):
     else:
         assert old == (["SYNTHETIC FIRST"], b"Tj"), "wrong source operand"
         assert new == (["EDITED FIRST"], b"Tj"), "wrong replacement operand"
-    print("[PASS] independent parser: only target text operand changed; font dictionaries and program bytes preserved")
+    print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
 
 
 def main():
