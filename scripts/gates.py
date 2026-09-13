@@ -143,7 +143,7 @@ def gates() -> "list[tuple[str, list[str], str]]":
         (
             "toolchain",
             [sys.executable, str(ROOT / "scripts" / "check_toolchain.py")],
-            "the running rustc is not the one rust-toolchain.toml pins",
+            "the Rust toolchain disagrees with its pin, or macOS build targets differ",
         ),
         (
             "pdfium",

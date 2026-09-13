@@ -16,6 +16,7 @@ Usage:
     scripts/check_toolchain.py
 """
 
+import json
 import os
 import re
 import subprocess
@@ -93,6 +94,18 @@ def commit_hash(argv: "list[str]") -> "str | None":
 
 def main() -> int:
     """Compares the pin against what is actually running."""
+    # Tauri supplies this environment variable to Cargo. Plain Cargo must use
+    # the same default or cc build scripts invalidate native dependencies each
+    # time verification alternates with an application build. Check on both OSes
+    # so a Windows-only config edit cannot silently break the Mac workflow.
+    with (ROOT / ".cargo/config.toml").open("rb") as handle:
+        deployment = tomllib.load(handle).get("env", {}).get("MACOSX_DEPLOYMENT_TARGET")
+    config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+    minimum = config.get("bundle", {}).get("macOS", {}).get("minimumSystemVersion")
+    if not isinstance(deployment, str) or not deployment or deployment != minimum:
+        print("[FAIL] Cargo and Tauri macOS deployment targets must match.", file=sys.stderr)
+        return 1
+
     pin = pinned_channel()
     rustc = running_version(["rustc", "--version"])
     override = os.environ.get("RUSTUP_TOOLCHAIN")

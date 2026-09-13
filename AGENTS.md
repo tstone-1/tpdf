@@ -619,6 +619,14 @@ override. Concurrent example builds exhausted commit memory with OS error 1455
 and allocation aborts; use the same bound for local Cargo verification outside
 the runner. This limits compilation concurrency, not the Rust test threads.
 
+The root `.cargo/config.toml` supplies the same macOS deployment target as
+`bundle.macOS.minimumSystemVersion` in `src-tauri/tauri.conf.json`. Keep them
+together; the toolchain gate checks agreement. An unset value in plain Cargo
+versus Tauri's `10.13` invalidated `ring` and Objective-C dependency build scripts
+on every switch between gates and application builds. Cargo reads configuration
+from the invocation directory's ancestors, so run from this checkout, including
+when using `--manifest-path`. Explicit environment overrides remain possible.
+
 That is a deviation from the portfolio rule, which says a release checklist must state
 every gating command verbatim with its flags. The rule exists because a hand-copied
 command quietly loses a `--locked` or an `--all-targets` and then tests something weaker

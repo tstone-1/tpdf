@@ -257,6 +257,24 @@ MUTATIONS = [
         says="RUSTUP_TOOLCHAIN=nightly",
         env={"RUSTUP_TOOLCHAIN": "nightly"},
     ),
+    Mutation(
+        "toolchain: Cargo macOS deployment target drifts from Tauri",
+        "toolchain",
+        ".cargo/config.toml",
+        'MACOSX_DEPLOYMENT_TARGET = "10.13"',
+        'MACOSX_DEPLOYMENT_TARGET = "11.0"',
+        red=True,
+        says="Cargo and Tauri macOS deployment targets must match",
+    ),
+    Mutation(
+        "toolchain: Tauri macOS deployment target drifts from Cargo",
+        "toolchain",
+        "src-tauri/tauri.conf.json",
+        '"minimumSystemVersion": "10.13"',
+        '"minimumSystemVersion": null',
+        red=True,
+        says="Cargo and Tauri macOS deployment targets must match",
+    ),
     # --- the PDFium pin, and the second thing this harness found --------------
     #
     # `--check` printed `TAG` and never compared it against the tree. On
