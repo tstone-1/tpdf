@@ -4395,11 +4395,13 @@ page transform and ASCII85/Flate content (including a single-filter array).
 Balanced `q`/`Q` saves outside text blocks preserve font, size and leading, with
 a maximum nesting depth of 64. Replacement validation uses the active font's
 original operator address after restoration, including non-UTF-8 resource names.
-Pure page translations compose across `cm` operators and are restored by `Q`.
-The reported matrix and hit box include that translation before crop and rotation;
-the text matrix's scale does not scale the page offset. Authored, accumulated and
-composed positions are bounded to one million points per coordinate. Saves inside
-text blocks and page scaling, rotation or skew remain unsupported. Each
+Positive page scaling and translations compose across `cm` operators and are
+restored by `Q`. The reported matrix and hit box combine the text matrix with
+the page transform before crop and rotation. An existing page scale acts on a
+subsequent translation; the text matrix does not scale the page offset. Authored,
+accumulated and composed positions and scale factors are bounded to one million
+per coordinate or axis, and a scale that collapses to zero is refused. Saves inside
+text blocks and page reflection, rotation or skew remain unsupported. Each
 `Tj` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
 other graphics/text operators remain refused. It reports the original operator address,
@@ -4486,6 +4488,13 @@ The translated-origin ReportLab fixture passed on both platforms on 2026-09-13:
 saves passed independent readback with no pixel changes outside the edited line.
 Three targeted mutations were caught, and 37,682 fuzz inputs completed without
 a finding. `BUILD.md` records the source snapshot and the full 24-gate result.
+
+Positive page scaling passed on both platforms on 2026-09-13 using ReportLab's
+`scaled-ascii85.pdf`: 44 focused text-edit tests and 15 native checks per platform.
+All four worker/UI saves passed independent readback, changing only the target
+operand and no pixels outside the edited line. Seven targeted mutations were
+caught and 29,036 fuzz inputs completed without a finding. The full 24-gate run
+and source snapshot are recorded in `BUILD.md`.
 
 ---
 

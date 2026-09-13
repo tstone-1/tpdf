@@ -181,8 +181,7 @@ fn move_line(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
     shift_position(matrix, x * matrix[0], y * matrix[3])
 }
 
-// Page translations act after the text matrix, so their offset must not be
-// multiplied by the text scale. The same bound applies to composed positions.
+// The same position bound applies to authored and accumulated line positions.
 fn shift_position(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
     matrix[4] += x;
     matrix[5] += y;
@@ -193,6 +192,29 @@ fn shift_position(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
         return Err("text position exceeds its limit".into());
     }
     Ok(())
+}
+
+// ISO 32000-1, 8.3.4: a new matrix acts before the existing CTM. Both inputs
+// have already been restricted to positive diagonal scales and translations.
+// In particular, the existing scale acts on a new translation, not vice versa.
+fn compose_diagonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
+    let result = [
+        inner[0] * outer[0],
+        0.0,
+        0.0,
+        inner[3] * outer[3],
+        inner[4] * outer[0] + outer[4],
+        inner[5] * outer[3] + outer[5],
+    ];
+    if result
+        .iter()
+        .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
+        || result[0] <= 0.0
+        || result[3] <= 0.0
+    {
+        return Err("composed text transform exceeds its limit".into());
+    }
+    Ok(result)
 }
 
 struct Inspection {
@@ -247,7 +269,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     for (index, op) in content.operations.iter().enumerate() {
         match (op.operator.as_str(), op.operands.as_slice()) {
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
-            // Only accept saves outside BT/ET; apart from translation, other graphics
+            // Only accept saves outside BT/ET; apart from diagonal transforms, graphics
             // state remains refused, and the next BT resets both matrices.
             ("q", []) if !inside => {
                 if states.len() >= 64 {
@@ -260,18 +282,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("cm", values) if !inside && values.len() == 6 => {
-                for (value, expected) in values[..4].iter().zip([1., 0., 0., 1.]) {
-                    if number(value)? != expected {
-                        return Err(
-                            "scaled, rotated or skewed page content is not editable yet".into()
-                        );
-                    }
+                let mut next = [0.0; 6];
+                for (dest, value) in next.iter_mut().zip(values) {
+                    *dest = number(value)?;
                 }
-                shift_position(
-                    &mut page_transform,
-                    number(&values[4])?,
-                    number(&values[5])?,
-                )?;
+                if next[0] <= 0.0 || next[3] <= 0.0 || next[1] != 0.0 || next[2] != 0.0 {
+                    return Err(
+                        "rotated, reflected or skewed page content is not editable yet".into(),
+                    );
+                }
+                page_transform = compose_diagonal(page_transform, next)?;
             }
             ("BT", []) if !inside => {
                 inside = true;
@@ -325,8 +345,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             .get(name)
             .ok_or("missing text font")?
             .advance(&text, size)?;
-        let mut page_matrix = matrix;
-        shift_position(&mut page_matrix, page_transform[4], page_transform[5])?;
+        let page_matrix = compose_diagonal(page_transform, matrix)?;
         let x = page_matrix[4] - f64::from(geometry.origin.0);
         let y = page_matrix[5] - f64::from(geometry.origin.1);
         let display_rect = crate::text::to_device(
@@ -335,9 +354,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             geometry.height,
             [
                 x,
-                y - size * matrix[3] * 0.25,
-                x + advance * matrix[0],
-                y + size * matrix[3],
+                y - size * page_matrix[3] * 0.25,
+                x + advance * page_matrix[0],
+                y + size * page_matrix[3],
             ],
         );
         if display_rect.iter().any(|v| !v.is_finite()) {
@@ -702,7 +721,88 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn textedit_page_translations_refuse_unbounded_or_nontranslation_matrices() {
+    fn textedit_page_scales_compose_restore_and_preserve_following_runs() {
+        let mut doc = with_content(b"BT /F1 12 Tf 4 TL ET q 2 0 0 3 20 30 cm q .5 0 0 2 -5 10 cm BT 2 0 0 3 10 20 Tm (FIRST) Tj T* (SECOND) Tj ET Q BT 1 0 0 1 10 20 Tm (THIRD) Tj ET Q BT 40 140 Td (FOURTH) Tj ET");
+        let before = scan(&doc, 0).unwrap();
+        assert_eq!(
+            before.runs.iter().map(|r| r.matrix).collect::<Vec<_>>(),
+            [
+                [2., 0., 0., 18., 20., 180.],
+                [2., 0., 0., 18., 20., 108.],
+                [2., 0., 0., 3., 40., 90.],
+                [1., 0., 0., 1., 40., 140.],
+            ]
+        );
+        let update = Change {
+            replacement: "IN".into(),
+            ..change(&doc)
+        };
+        write(&mut doc, &[update]).unwrap();
+        let after = scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1..], before.runs[1..]);
+        let unchanged = doc.clone();
+        let overflow = Change {
+            replacement: "TOO LONG".into(),
+            ..change(&doc)
+        };
+        assert!(write(&mut doc, &[overflow]).is_err());
+        assert_eq!(doc.objects, unchanged.objects);
+    }
+
+    #[test]
+    fn textedit_scaled_hitboxes_match_absolute_matrices_after_crop_and_rotation() {
+        let scaled =
+            b"q 2 0 0 .5 20 150 cm 1 0 0 1 10 20 cm BT /F1 12 Tf 3 0 0 4 5 40 Tm (TEXT) Tj ET Q";
+        let absolute = b"BT /F1 12 Tf 6 0 0 2 50 180 Tm (TEXT) Tj ET";
+        for rotation in [0, 90, 180, 270] {
+            let mut results = Vec::new();
+            for bytes in [scaled.as_slice(), absolute.as_slice()] {
+                let mut doc = with_content(bytes);
+                let page = crate::pagetree::ordered_pages(&doc)[0];
+                let page = doc.get_dictionary_mut(page).unwrap();
+                page.set("Rotate", rotation);
+                page.set(
+                    "CropBox",
+                    vec![10.into(), 20.into(), 290.into(), 220.into()],
+                );
+                let run = scan(&doc, 0).unwrap().runs.remove(0);
+                results.push((run.matrix, run.display_rect, run.advance));
+            }
+            assert_eq!(results[0], results[1], "rotation {rotation}");
+        }
+    }
+
+    #[test]
+    fn textedit_page_scales_bound_composed_scales_and_positions() {
+        for prefix in [
+            "1000000 0 0 1 0 0 cm 2 0 0 1 0 0 cm",
+            "1 0 0 1000000 0 0 cm 1 0 0 2 0 0 cm",
+            "1000000 0 0 1 0 0 cm 1 0 0 1 2 0 cm",
+            "1 0 0 1000000 0 0 cm 1 0 0 1 0 -2 cm",
+        ] {
+            let bytes = format!("{prefix} BT /F1 12 Tf 0 0 Td (TEXT) Tj ET");
+            assert!(
+                scan(&with_content(bytes.as_bytes()), 0).is_err(),
+                "accepted {prefix}"
+            );
+        }
+        // Each authored value is bounded, but the composed text scale is not.
+        let doc = with_content(b"1000 0 0 1000 0 0 cm BT /F1 12 Tf 1001 0 0 1 0 0 Tm (TEXT) Tj ET");
+        assert!(scan(&doc, 0).is_err());
+        // Repeated positive scales must not underflow to a collapsed matrix.
+        let bytes = format!(
+            "{}BT /F1 12 Tf 0 0 Td (TEXT) Tj ET",
+            "0.000001 0 0 1 0 0 cm ".repeat(60)
+        );
+        assert!(scan(&with_content(bytes.as_bytes()), 0).is_err());
+        let at_limit =
+            with_content(b"1000 0 0 1000 0 0 cm BT /F1 12 Tf 1000 0 0 1000 0 0 Tm (TEXT) Tj ET");
+        assert_eq!(scan(&at_limit, 0).unwrap().runs[0].matrix[0], 1_000_000.);
+    }
+
+    #[test]
+    fn textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices() {
         for prefix in [
             "1 0 0 1 1000000 0 cm 1 0 0 1 1 0 cm",
             "1 0 0 1 0 -1000000 cm 1 0 0 1 0 -1 cm",
@@ -710,7 +810,7 @@ pub(crate) mod tests {
             "1 0 0 1 (bad) 0 cm",
             "1 0 0 1 0 cm",
             "1 0 0 1 0 0 0 cm",
-            "1 0 0 1 20 30 cm 2 0 0 1 0 0 cm",
+            "1 0 0 1 20 30 cm 0 0 0 1 0 0 cm",
             "1 0.1 0 1 0 0 cm",
             "1 0 0.1 1 0 0 cm",
             "1 0 0 -1 0 0 cm",
@@ -877,7 +977,7 @@ pub(crate) mod tests {
             "BT /F1 12 Tf 40 180 Td [(SYNTHETIC)] TJ ET",
             "BT /F1 12 Tf 40 180 Td (ONE) Tj (TWO) Tj ET",
             "3 Tr BT /F1 12 Tf 40 180 Td (HIDDEN) Tj ET",
-            "2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (SCALED) Tj ET",
+            "-2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (REFLECTED) Tj ET",
             "BT /F1 12 Tf 0 1 -1 0 40 180 Tm (ROTATED) Tj ET",
             "/Span << /ActualText (OTHER) >> BDC BT /F1 12 Tf 40 180 Td (TEXT) Tj ET EMC",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj",

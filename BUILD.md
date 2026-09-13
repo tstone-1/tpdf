@@ -6061,9 +6061,9 @@ Fuzzing includes `textedit_scan`, seeded with an editable synthetic document, pl
 pending text changes in `save_rewrite_update`; the regular fuzz gate builds both.
 
 The independent ReportLab producer exercises font setup outside the visible text
-block, line leading, saved graphics states, page translations, and compressed filter arrays. It writes
+block, line leading, saved graphics states, page translations/scaling, and compressed filter arrays. It writes
 both basic layouts with Flate alone and with ReportLab's usual ASCII85 wrapper,
-plus saved-state, translated-origin and accented variants.
+plus saved-state, translated-origin, scaled and accented variants.
 Generate them with:
 
 ```bash
@@ -6292,3 +6292,33 @@ no deployment-target invalidation. The application itself still rebuilds when
 its embedded assets or Tauri configuration change. Normal frontend assets contain
 zero harness code. These timings describe this debug-build sequence on macOS;
 the dependency invalidations establish the mechanism independently of timing.
+
+The positive page-scaling increment (2026-09-13, unreleased) accepts horizontal
+and vertical scaling outside text blocks, composed with translations and saved
+graphics states. ReportLab's `scaled-ascii85.pdf` independently produces a first
+line scaled by 1.25 horizontally and 0.75 vertically, with the second line outside
+the saved state. The preceding worker refused it. The updated worker passes
+preview, extraction, search, undo, refusal and save checks. All 44 focused
+text-edit tests pass, including transform order/restoration, equivalent hit boxes
+after crop and all four page rotations, bounded composed scales/positions and
+underflow refusal. Rotation, reflection, skew and transforms inside text blocks
+remain refused.
+
+Windows passed those 44 tests, 10 shared text-layout tests and all 15 native
+checks from an isolated snapshot over `efbec7b`, archive SHA-256
+`59404f4a4ab4a29b09f10f68a9b8578755c0473ed9fc5641391d2a5b459f85d1`.
+The current implementation matches that snapshot. Both Windows and both Mac
+worker/UI saves passed independent parser and PDFKit readback: exactly the target
+text operand changed, fonts/transforms stayed intact, 2,299 pixels changed inside
+the first line and zero outside. Transfer sizes/digests matched, the Windows
+worker-exit observer passed and the temporary task was removed.
+
+Seven targeted mutations were caught, covering transform order, saved state,
+hit-box width/height, unsupported matrices and composed bounds. The
+`editable-scaled` seed was added to the corpus; the fuzz run completed 29,036
+executions in 21 seconds, peaking at 86 MiB RSS without a finding. All 24
+repository gates passed in 360.1 seconds:
+1,340 Rust tests (three ignored), 1,667 frontend tests and locked fuzz/example
+builds. The Mac native run passed 15/15; its separate checks application compiled
+only `tpdf`, finishing the Rust build in 17.53 seconds. Normal frontend assets
+were restored and contain zero harness code.
