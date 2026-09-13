@@ -6054,9 +6054,9 @@ Fuzzing includes `textedit_scan`, seeded with an editable synthetic document, pl
 pending text changes in `save_rewrite_update`; the regular fuzz gate builds both.
 
 The independent ReportLab producer exercises font setup outside the visible text
-block, line leading, saved graphics states, and compressed filter arrays. It writes
+block, line leading, saved graphics states, page translations, and compressed filter arrays. It writes
 both basic layouts with Flate alone and with ReportLab's usual ASCII85 wrapper,
-plus saved-state and accented variants.
+plus saved-state, translated-origin and accented variants.
 Generate them with:
 
 ```bash
@@ -6232,3 +6232,35 @@ Final verification passed all 24 repository gates after removing redundant test-
 labels and applying rustfmt. The full sweep took 511.5 seconds; the focused
 Clippy rerun took 93.0 seconds. The final suite passed 1,334 Rust tests (three
 ignored) and 1,667 frontend tests. Normal frontend assets exclude all harness code.
+
+The translated-origin increment (2026-09-13, unreleased) accepts pure page
+translations outside text blocks. ReportLab's `translated-ascii85.pdf` places the
+first line through two nested translations, including a negative offset, then
+restores the original coordinates for the second line. The preceding editor
+refused this input; the updated worker passes preview, extraction, search,
+undo and save checks. All 41 focused text-edit tests pass. Tests also compare
+translated and absolute hit boxes under all four page rotations with a crop,
+and refuse accumulated or composed positions outside the coordinate bound.
+
+Windows passed those 41 tests, the 10 shared text-layout tests and all 15 native
+checks from an isolated snapshot over `efbec7b`, archive SHA-256
+`3670db8816ca7d4b911a2c0d27e5a140feed891c0448d7b61744bde57931548d`.
+Both Windows saves passed independent PDFKit and parser readback on macOS:
+2,394 changed pixels inside the edited line, zero outside, with only the target
+operand changed and fonts preserved. Source/output digests matched. The 51-second
+remote job left no test workers, restored normal frontend assets and removed its
+temporary scheduled task.
+
+Three targeted mutations were caught: omitting the page translation from the run,
+forgetting a saved translation and accepting a nontranslation matrix. The
+`editable-translated` fuzz seed is built in; the instrumented run completed 37,682
+inputs in 21 seconds, with 86 MiB peak RSS and no finding.
+
+The macOS native run also passed all 15 checks. Both Mac worker/UI saves passed
+the same independent readback, bringing this increment to four verified outputs
+with zero changed pixels outside the edited line. All 24 repository gates passed
+in one 351.6-second sweep: 1,337 Rust tests (three ignored), 1,667 frontend tests,
+and the locked fuzz/example builds. Normal frontend assets were restored and
+contain zero harness code. The separate Mac checks application build took 7m11s
+and rebuilt dependencies just used by the plain Cargo gates; avoiding that repeated
+build work remains a workflow improvement to investigate.

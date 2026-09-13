@@ -4395,7 +4395,11 @@ page transform and ASCII85/Flate content (including a single-filter array).
 Balanced `q`/`Q` saves outside text blocks preserve font, size and leading, with
 a maximum nesting depth of 64. Replacement validation uses the active font's
 original operator address after restoration, including non-UTF-8 resource names.
-Saves inside text blocks and nonidentity page transforms remain unsupported. Each
+Pure page translations compose across `cm` operators and are restored by `Q`.
+The reported matrix and hit box include that translation before crop and rotation;
+the text matrix's scale does not scale the page offset. Authored, accumulated and
+composed positions are bounded to one million points per coordinate. Saves inside
+text blocks and page scaling, rotation or skew remain unsupported. Each
 `Tj` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
 other graphics/text operators remain refused. It reports the original operator address,
@@ -4476,6 +4480,12 @@ The independent ReportLab saved-state fixture also passed on both platforms on
 independent readback. All four worker/UI outputs changed 2,394 pixels inside the
 edited line and zero outside, with only the target operand changed. Three targeted
 mutations proved state restoration, balanced saves and active-font lookup.
+
+The translated-origin ReportLab fixture passed on both platforms on 2026-09-13:
+41 focused text-edit tests and 15 native checks per platform. All four worker/UI
+saves passed independent readback with no pixel changes outside the edited line.
+Three targeted mutations were caught, and 37,682 fuzz inputs completed without
+a finding. `BUILD.md` records the source snapshot and the full 24-gate result.
 
 ---
 
