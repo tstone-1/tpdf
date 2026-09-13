@@ -4395,15 +4395,27 @@ line. This establishes compatibility with the measured export, not all LibreOffi
 PDFs. Reproduction and verification records are in `BUILD.md`, *Unmodified
 LibreOffice export and rectangular clips*.
 
-**Next compatibility milestone: investigate tagged LibreOffice output.** The
-survey's tagged export remains refused. It adds marked-content IDs and structure
-tree references, so editing must preserve their relationships and keep any
-accessibility text consistent with the replacement. Inspect those semantics before
-widening the grammar; removing the tagged-document guard alone is insufficient.
-Retain explicit positioning between shows and require the unchanged producer
-output to pass end to end with zero changed pixels outside the edited line. The
-baseline exports and read-only inspection mode are in `BUILD.md`, *Independent
-text producer survey*.
+**Tagged LibreOffice milestone completed 2026-09-13:** the unchanged single-page
+synthetic export passes worker and native UI editing on macOS and Windows. Its
+complete structure graph and resources are preserved, with zero changed pixels
+outside the edited line. Reproduction and negative controls are in `BUILD.md`,
+*Tagged paragraph text editing*.
+
+The first tagged grammar supports a single page and a two-level Document/paragraph
+tree, at most 128 paragraphs, direct integer MCIDs and one parent-tree array.
+Both directions of the structure references must agree, all paragraphs must appear
+exactly once in the stream, and text may occur only inside a paragraph. The writer
+preserves every marker and structure object. Unknown fields, alternate text
+(`ActualText`, `Alt`, `E`), inherited page references, class maps and geometry-based
+layout attributes remain refused. Only Layout/Placement=Block is accepted as a
+structure attribute. Artifact markers may contain the existing supported graphics
+state operators but no text. This is bounded compatibility, not PDF/UA validation.
+
+**Next compatibility milestone: multi-page tagged paragraphs.** Measure a fresh
+producer export before expanding the parent-tree grammar, and prove page-local
+MCID ownership and unchanged reading order across edits. Alternate-text overrides
+need separate semantics and remain refused. Retain explicit positioning between
+shows and require zero changed pixels outside the edited line.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from

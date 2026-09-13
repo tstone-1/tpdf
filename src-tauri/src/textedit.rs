@@ -9,6 +9,7 @@ mod clipping;
 mod colors;
 mod filters;
 mod fonts;
+mod tagging;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -272,13 +273,6 @@ fn array_text(
 }
 
 fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
-    if doc
-        .catalog()
-        .map_err(|e| e.to_string())?
-        .has(b"StructTreeRoot")
-    {
-        return Err("tagged text is not editable yet".into());
-    }
     let pages = crate::pagetree::ordered_pages(doc);
     let id = *pages
         .get(page as usize)
@@ -286,6 +280,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     if pages.iter().filter(|&&other| other == id).count() != 1 {
         return Err("a repeated page object is not editable".into());
     }
+    let mut tags = tagging::Tags::read(doc, id, pages.len())?;
     let bytes = page_content(doc, id)?;
     let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;
     if content.operations.len() > MAX_OPERATIONS {
@@ -320,6 +315,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             continue;
         }
         match (op.operator.as_str(), op.operands.as_slice()) {
+            ("BMC", [tag]) if !inside => tags.begin(tag, None)?,
+            ("BDC", [tag, properties]) if !inside => tags.begin(tag, Some(properties))?,
+            ("EMC", []) if !inside => tags.end()?,
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
             // Only accept saves outside BT/ET. Preserve every accepted state
             // component; the next BT resets both text matrices.
@@ -428,7 +426,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 move_line(&mut matrix, 0.0, -leading)?;
                 positioned = true;
             }
-            ("Tj", [_]) | ("TJ", [Object::Array(_)]) if inside && positioned => {}
+            ("Tj", [_]) | ("TJ", [Object::Array(_)]) if inside && positioned => tags.text()?,
             _ => return Err("unsupported text state or positioning between shows".into()),
         }
         if !matches!(op.operator.as_str(), "Tj" | "TJ") {
@@ -490,6 +488,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     if !states.is_empty() {
         return Err("unterminated graphics-state save".into());
     }
+    tags.finish()?;
     Ok(Inspection {
         id,
         content,

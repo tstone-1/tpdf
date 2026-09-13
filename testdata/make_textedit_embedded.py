@@ -3,6 +3,7 @@
 
 uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py
 uv run --with pypdf testdata/make_textedit_embedded.py --check before.pdf after.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls before.pdf after.pdf
 Writes a deterministic test font and an ignored PDF with the native UI fixture's
 geometry. No installed or third-party font is read.
 """
@@ -33,6 +34,42 @@ def check(before, after):
     assert all(len(reader.pages) == 1 for reader in readers), "wrong page count"
     pages = [reader.pages[0] for reader in readers]
     assert value(pages[0]["/Resources"]) == value(pages[1]["/Resources"]), "page resources changed"
+    if "/StructTreeRoot" in readers[0].trailer["/Root"]:
+        # Structure is cyclic through /P and references the page. Compare its
+        # entire graph, independent of object renumbering, with the page as an
+        # explicit leaf (its one changed content operand is checked below).
+        from pypdf.generic import IndirectObject
+
+        def structure(reader):
+            identities, nodes = {}, []
+            page_ref = reader.pages[0].indirect_reference
+
+            def visit(obj):
+                if isinstance(obj, IndirectObject):
+                    if obj == page_ref:
+                        return ("page", 0)
+                    identity = (obj.idnum, obj.generation)
+                    if identity in identities:
+                        return ("ref", identities[identity])
+                    index = identities[identity] = len(nodes)
+                    nodes.append(None)
+                    assert len(nodes) <= 256, "structure graph exceeds fixture limit"
+                    nodes[index] = visit(obj.get_object())
+                    return ("ref", index)
+                if isinstance(obj, DictionaryObject):
+                    return {str(k): visit(obj.raw_get(k)) for k in sorted(obj)}
+                if isinstance(obj, list):
+                    return [visit(v) for v in obj]
+                return obj
+
+            root = reader.trailer["/Root"]
+            assert "/StructTreeRoot" in root, "tagged structure disappeared"
+            top = visit(root.raw_get("/StructTreeRoot"))
+            mark_info = value(root["/MarkInfo"]) if "/MarkInfo" in root else None
+            return (top, nodes, reader.pages[0].get("/StructParents"), mark_info)
+
+        assert structure(readers[0]) == structure(readers[1]), "tagged structure or parent references changed"
+        print("[PASS] independent parser: complete tagged structure graph and page parent key preserved")
     operations = [ContentStream(page["/Contents"], reader).operations
                   for page, reader in zip(pages, readers)]
     assert len(operations[0]) == len(operations[1]), "operator count changed"
@@ -70,12 +107,51 @@ def check(before, after):
     print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
 
 
+def tagged_controls(before, after):
+    """Prove nonvisual structure corruption fails the independent readback."""
+    import contextlib
+    import io
+    import tempfile
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject, TextStringObject
+
+    check(before, after)
+    with tempfile.TemporaryDirectory(prefix="tpdf-tagged-controls-") as room:
+        for mode in ("root", "parent", "mcid", "alternate", "page_key"):
+            writer = PdfWriter(clone_from=after)
+            root = writer.root_object["/StructTreeRoot"]
+            paragraph = root["/K"][0].get_object()["/K"][0].get_object()
+            if mode == "root":
+                del writer.root_object["/StructTreeRoot"]
+            elif mode == "parent":
+                paragraph[NameObject("/P")] = root.indirect_reference
+            elif mode == "mcid":
+                paragraph["/K"][0] = NumberObject(1)
+            elif mode == "alternate":
+                paragraph[NameObject("/ActualText")] = TextStringObject("STALE SYNTHETIC TEXT")
+            else:
+                writer.pages[0][NameObject("/StructParents")] = NumberObject(1)
+            target = Path(room) / (mode + ".pdf")
+            writer.write(target)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    check(before, target)
+            except AssertionError as error:
+                assert "tagged structure" in str(error), str(error)
+            else:
+                raise AssertionError("structure control survived: " + mode)
+            print("[PASS] independent structure control:", mode)
+
+
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--check":
         check(*sys.argv[2:])
         return
+    if len(sys.argv) == 4 and sys.argv[1] == "--tagged-controls":
+        tagged_controls(*sys.argv[2:])
+        return
     if len(sys.argv) != 1:
-        raise SystemExit("expected no arguments or --check before.pdf after.pdf")
+        raise SystemExit("expected no arguments, --check or --tagged-controls before.pdf after.pdf")
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import ArrayObject, DecodedStreamObject, NameObject, NumberObject
 

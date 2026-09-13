@@ -6561,8 +6561,8 @@ On 2026-09-13 the original export, SHA-256
 worker round trip without removing or modifying its clipping operators first.
 The input and the probe's before-copy have the same digest. Independent parser
 and PDFKit readback found one changed text operand, unchanged resources, 2,403
-changed pixels inside the edited line and zero outside. The tagged survey export
-remains refused for its structure metadata.
+changed pixels inside the edited line and zero outside. At this stage the tagged
+survey export was still refused; the tagged paragraph increment below follows it.
 
 Eight targeted clipping mutations were caught. Coverage includes every edge of
 the text envelope, intersections, saved clip state, transforms fixed at path
@@ -6592,3 +6592,55 @@ restoration mutation. All five existing mutations whose anchors changed with thi
 implementation were then run and caught by their named tests; compilation errors
 were not counted as catches. Application sources still match the Windows snapshot.
 Only the verification notes, plan and mutation script changed after that snapshot.
+
+### Tagged paragraph text editing
+
+The first tagged grammar is a bounded single-page Document/paragraph tree; its
+limits and remaining refusals are in `docs/PLAN.md`. It preserves structure and
+marked-content operators while replacing only the target text operand. The
+parent-tree check follows ISO 32000-1 section 14.7.4.4; both forward and reverse
+references must agree. Alternate text and potentially stale layout attributes are
+refused before any document mutation.
+
+Use the unchanged tagged LibreOffice fixture from the producer survey:
+
+```bash
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-tagged/worker scratch/textedit-producers/tagged/textedit-producer.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls scratch/textedit-tagged/worker/synthetic-before.pdf scratch/textedit-tagged/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-tagged/worker
+```
+
+On 2026-09-13 the original input, SHA-256
+`166b15ccaf6526d6d4ef4994dad54ed17f5f62d77555d5681aeec5721b754a77`, passed the
+worker preview, undo and save round trip. Independent parser readback compares the
+complete cyclic structure graph independent of object numbering, with page
+references as explicit leaves. The source and output agree, and five deliberately
+corrupted copies fail: deleted structure root, wrong parent reference, changed
+MCID, stale ActualText and changed StructParents. PDFKit reports 2,403 changed
+pixels inside the edited line and zero outside.
+
+Eight targeted structure mutations were caught by their named tests, including
+the paragraph count limit, both parent-reference directions, page key, semantic
+field whitelist, artifact text, duplicate IDs and incomplete markers. A valid
+128-paragraph fixture passes while its 129-paragraph counterpart is refused.
+The `editable-tagged` fuzz seed also reports editable through worker inspection.
+
+Windows passed 75 editor tests, 10 shared layout tests and all 15 native editing
+checks on the unchanged tagged export. Its source archive SHA-256 is
+`58416c37d51dbaf2b6c74d54b9aee8dc6032135035dc8249696f83c78989ba7d`.
+Both worker and native UI output passed independent structure/resource readback
+and PDFKit: 2,403 changed pixels inside the edited line and zero outside. Retrieved
+PDF digests and source manifests matched. The normal Windows frontend contains
+zero harness code, the temporary task was removed, and the normal checkout stayed
+clean. The local bounded fuzz run completed 25,453 inputs in 21 seconds
+without a finding, peaking at 83 MiB RSS.
+
+The Mac native UI passed all 15 checks on the same unchanged export. Its output
+passed independent structure/resource readback, all five corruption controls and
+PDFKit (2,403 changed pixels inside the line, zero outside). All 24 local gates
+passed in 468.8 seconds summed gate time: 1,371 Rust tests (three ignored), 1,667
+frontend tests in 70 suites, and locked fuzz-target and example builds. The Mac
+checks app built in 1 minute 49 seconds of Rust build time. Normal frontend assets
+were restored and verified to contain zero harness code. Implementation sources
+match the Windows snapshot; subsequent changes only record verification and the
+completed plan milestone.
