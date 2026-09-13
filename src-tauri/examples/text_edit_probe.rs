@@ -189,7 +189,7 @@ fn run() -> Result<(), String> {
         }
     }
     let mut invalid = plan.text_edits.clone();
-    invalid[0].replacement = "Z".repeat(80);
+    invalid[0].replacement = "A".repeat(80);
     if worker
         .call(&Request::TextRuns {
             page: 0,
@@ -229,7 +229,7 @@ fn run() -> Result<(), String> {
     }
     println!("[PASS] contained discovery and replacement; second text block preserved");
     for (invalid_text, reason) in [
-        ("Z".repeat(80), "exceed the original"),
+        ("A".repeat(80), "exceed the original"),
         ("\u{03b1}".into(), "Latin-1 only"),
     ] {
         plan.text_edits[0].replacement = invalid_text;

@@ -1,11 +1,12 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
-//! Supported text uses Helvetica/WinAnsi and printable Latin-1, with explicit
+//! Supported text uses Helvetica/WinAnsi or a validated embedded TrueType subset, with explicit
 //! positioning between shows. Font/leading setup may precede a text block.
 //! Graphics, custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod filters;
+mod fonts;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -71,9 +72,12 @@ fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
     Err("text resource inheritance exceeds its limit".into())
 }
 
-fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
+fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Metrics, String> {
     let fonts = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
     let font = dictionary(doc, fonts.get(name).map_err(|e| e.to_string())?)?;
+    if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"TrueType") {
+        return fonts::embedded(doc, font);
+    }
     for (key, expected) in [
         (b"Type".as_slice(), b"Font".as_slice()),
         (b"Subtype", b"Type1"),
@@ -81,7 +85,10 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), Strin
         (b"Encoding", b"WinAnsiEncoding"),
     ] {
         if font.get(key).and_then(Object::as_name).ok() != Some(expected) {
-            return Err("text editing currently requires Helvetica with WinAnsiEncoding".into());
+            return Err(
+                "text editing requires standard Helvetica or a supported embedded TrueType font"
+                    .into(),
+            );
         }
     }
     if font.iter().any(|(key, _)| {
@@ -92,7 +99,7 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), Strin
     }) {
         return Err("custom font metrics or character mappings are not editable yet".into());
     }
-    Ok(())
+    Ok(fonts::Metrics::helvetica())
 }
 
 fn number(value: &Object) -> Result<f64, String> {
@@ -216,6 +223,7 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
     let mut inside = false;
     let mut positioned = false;
     let mut selected_font = None;
+    let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
@@ -235,7 +243,12 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
             ("ET", []) if inside => inside = false,
             ("Tf", [name, size]) if inside => {
                 let name = name.as_name().map_err(|e| e.to_string())?;
-                font(doc, resources, name)?;
+                if !font_metrics.contains_key(name) {
+                    if font_metrics.len() >= 32 {
+                        return Err("too many fonts on an editable page".into());
+                    }
+                    font_metrics.insert(name.to_vec(), font(doc, resources, name)?);
+                }
                 let size = number(size)?;
                 if !(0.0..=1000.0).contains(&size) || size == 0.0 {
                     return Err("unsupported text size".into());
@@ -270,7 +283,10 @@ fn inspect(doc: &Document, page: u32) -> Result<(ObjectId, Content, PageRuns), S
         let text = decode_text(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
         positioned = false;
         let geometry = crate::pagetree::displayed_page(doc, id);
-        let advance = crate::textbox::advance(&text, size);
+        let advance = font_metrics
+            .get(name)
+            .ok_or("missing text font")?
+            .advance(&text, size)?;
         let x = matrix[4] - f64::from(geometry.origin.0);
         let y = matrix[5] - f64::from(geometry.origin.1);
         let display_rect = crate::text::to_device(
@@ -332,7 +348,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if let std::collections::btree_map::Entry::Vacant(entry) = prepared.entry(change.page) {
             entry.insert(inspect(doc, change.page)?);
         }
-        let (_, content, runs) = prepared.get_mut(&change.page).ok_or("missing text page")?;
+        let (id, content, runs) = prepared.get_mut(&change.page).ok_or("missing text page")?;
         let run = runs
             .runs
             .iter()
@@ -341,7 +357,17 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if change.revision != runs.revision || change.original != run.text {
             return Err("text changed since this run was inspected".into());
         }
-        if crate::textbox::advance(&change.replacement, run.size) > run.advance + 0.000_001 {
+        // Use the original operand bytes, not the lossy display name, to resolve
+        // a resource. Font names are PDF names and need not be valid UTF-8.
+        let name = content.operations[..change.operator as usize]
+            .iter()
+            .rev()
+            .find(|op| op.operator == "Tf")
+            .and_then(|op| op.operands.first())
+            .and_then(|v| v.as_name().ok())
+            .ok_or("missing text font")?;
+        let metrics = font(doc, resources(doc, *id)?, name)?;
+        if metrics.advance(&change.replacement, run.size)? > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
         content.operations[change.operator as usize].operands[0] =

@@ -2231,7 +2231,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Rust crates
 
-402 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+403 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2562,6 +2562,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 | tracing-core | 0.1.36 | MIT |
 | tray-icon | 0.24.2 | MIT OR Apache-2.0 |
 | try-lock | 0.2.5 | MIT |
+| ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
 | typeid | 1.0.3 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | unic-char-property | 0.9.0 | MIT/Apache-2.0 |
@@ -2736,6 +2737,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2018 Matthew D. Steele
 - Copyright (c) 2018 Sam Rijs, Alex Crichton and contributors
 - Copyright (c) 2018 The Servo Project Developers
+- Copyright (c) 2018 Yevhenii Reizner
 - Copyright (c) 2018-2019 Sean McArthur
 - Copyright (c) 2018-2019 The RustCrypto Project Developers
 - Copyright (c) 2018-2019 dirs-rs contributors

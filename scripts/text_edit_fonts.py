@@ -23,22 +23,22 @@ import subprocess
 from pathlib import Path
 
 
-def make_font(*, cff: bool = False, fs_type: int = 0) -> bytes:
+def make_font(*, cff: bool = False, fs_type: int = 0, characters: str = "AB") -> bytes:
     """Build A as a solid rectangle and B as two separated vertical bars."""
     from fontTools.fontBuilder import FontBuilder
     from fontTools.pens.t2CharStringPen import T2CharStringPen
     from fontTools.pens.ttGlyphPen import TTGlyphPen
 
     builder = FontBuilder(1000, isTTF=not cff)
-    names = [".notdef", "space", "A", "B"]
+    names = [".notdef", "space", *sorted(set(characters) - {" "})]
     builder.setupGlyphOrder(names)
-    builder.setupCharacterMap({32: "space", 65: "A", 66: "B"})
+    builder.setupCharacterMap({32: "space", **{ord(ch): ch for ch in names[2:]}})
     glyphs = {}
     for name in names:
         pen = T2CharStringPen(600, None) if cff else TTGlyphPen(None)
         rectangles = {".notdef": [(0, 0, 100, 100)], "space": [],
                       "A": [(0, 0, 400, 700)],
-                      "B": [(0, 0, 100, 700), (300, 0, 400, 700)]}[name]
+                      "B": [(0, 0, 100, 700), (300, 0, 400, 700)]}.get(name, [(0, 0, 200 + ord(name[0]) % 200, 700)])
         for left, bottom, right, top in rectangles:
             pen.moveTo((left, bottom))
             pen.lineTo((left, top))

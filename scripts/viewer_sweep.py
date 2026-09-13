@@ -122,6 +122,7 @@ WINDOW_CORPORA: list[tuple[str, str]] = [
 # required to match something, so a family that goes away is reported instead
 # of quietly excusing nothing.
 NOT_WINDOW: list[tuple[str, str]] = [
+    ("textedit-embedded", "single-page synthetic subset for text-edit-probe and tabs_check.py --phase textedit"),
     (
         "links-rotated",
         "mixes page sizes, which reddens two rotation checks that derive what "

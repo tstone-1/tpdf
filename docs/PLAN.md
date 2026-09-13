@@ -4350,8 +4350,9 @@ for the browser check, but the WebKit/PDFKit result above is macOS-only. The Pyt
 probe accepts no arbitrary input PDF and is not imported by the application.
 
 The application command, selection overlay and worker-rendered preview are now
-connected for the strict grammar below. Future embedded-font support still needs
-PDF character codes; a browser cmap alone cannot supply them. The earlier spike's
+connected for the strict grammar below. General embedded-font support still needs
+PDF character codes; a browser cmap alone cannot supply them. The first embedded
+TrueType case now validates explicit WinAnsi codes against the font program in the worker. The earlier spike's
 ordinal correspondence is a fixture shortcut, while the worker implementation
 addresses content operators directly.
 
@@ -4381,7 +4382,14 @@ not claims about editing arbitrary documents.
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
 and encoded to single PDF bytes, with exact standard Helvetica advances; the
-4,096-character bound counts characters rather than UTF-8 bytes. It accepts
+4,096-character bound counts characters rather than UTF-8 bytes. Simple embedded
+TrueType fonts additionally support existing ASCII glyphs when explicit WinAnsi,
+nonsymbolic flags, Unicode cmap agreement and PDF/program widths validate. The
+font program remains byte-identical. Programs are bounded to 1 MiB decoded and
+2 MiB encoded, with at most 32 fonts per page and eight cmap subtables per font.
+Missing glyphs, custom ToUnicode/encoding, alternate legacy mappings, overhanging
+outlines, variable/colour fonts and non-editable embedding permissions are refused.
+This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array). Each
 `Tj` must have positioning
@@ -4429,8 +4437,8 @@ overflow and unsupported-character refusals. On macOS, PDFKit independently read
 the saved replacement and unchanged second block, and compares their renderings:
 2,394 changed pixels within the edited line, zero outside. Unit tests cover shared
 streams, batch atomicity, stale edits, malformed content, encryption and the save,
-copy and print paths. Embedded fonts, general text-state interpretation and reflow
-remain outside this first grammar.
+copy and print paths. General embedded-font support, text-state interpretation
+and reflow remain outside this first grammar.
 
 Application verification on macOS on 2026-09-12 passed 15 native checks: draft
 commit across tabs, displayed pixels, selected text, search, undo/redo, refusal
@@ -4444,6 +4452,20 @@ worker preview/save probe and all 15 native application checks. The external
 worker-exit observer passed and no test process remained. PDFKit independently
 read the Windows UI-saved PDF: the replacement and untouched second block matched,
 with 2,394 changed pixels inside the edited line and zero outside.
+
+The 2026-09-13 Windows follow-up at `efbec7b` also passed all 45 native checks
+across the two ASCII85 layouts and the Latin-1 fixture, plus 38 focused Rust tests.
+Independent PDFKit and parser checks passed for all six worker/UI outputs;
+`BUILD.md` records the measurements and remote execution requirements.
+
+The first embedded TrueType subset case passed the worker probe and all 15 native
+macOS checks on 2026-09-13. Independent PDFKit and parser checks on both saved
+outputs confirmed unchanged fonts and zero pixel changes outside the edited line.
+The same uncommitted increment also passed Windows verification on 2026-09-13:
+45 focused Rust tests, the worker probe and all 15 native checks. Independent
+PDFKit and parser readback of both Windows-saved outputs confirmed preserved
+fonts and zero pixel changes outside the edited line. `BUILD.md` records the
+source snapshot and measurements.
 
 ---
 
@@ -13322,9 +13344,10 @@ Explicitly **not** cryptographic signing. XFA out of scope.
 §7, scoped as described there. Depends on the Phase 0 text round-trip spike and the
 operator-rewriting machinery built in Phase 3.
 
-**First application editor implemented, unreleased.** See §7 for the strict Helvetica
-grammar, worker preview, journal and native workflow. General embedded fonts,
-non-ASCII text and paragraph reflow remain open.
+**First application editor implemented, unreleased.** See §7 for Helvetica/Latin-1
+and the bounded embedded TrueType/ASCII case, worker preview, journal and native
+workflow. Composite fonts, extended character mappings, subset extension and
+paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 

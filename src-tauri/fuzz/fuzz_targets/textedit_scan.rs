@@ -12,11 +12,12 @@ fuzz_target!(|data: &[u8]| {
         let Ok(runs) = tpdf_lib::textedit::scan(&document, page) else {
             continue;
         };
-        let Some(run) = runs.runs.first() else {
+        let Some(run) = runs.runs.iter().find(|run| !run.text.is_empty()) else {
             continue;
         };
         // Deletion is always within the original advance, so a supported seed
         // reaches the writer as well as all malformed-input refusal branches.
+        let operator = run.operator;
         let change = tpdf_lib::textedit::Change {
             page,
             revision: runs.revision,
@@ -28,6 +29,6 @@ fuzz_target!(|data: &[u8]| {
             .expect("a discovered run can be deleted");
         let after =
             tpdf_lib::textedit::scan(&document, page).expect("the edited stream remains supported");
-        assert!(after.runs[0].text.is_empty());
+        assert!(after.runs.iter().find(|run| run.operator == operator).unwrap().text.is_empty());
     }
 });
