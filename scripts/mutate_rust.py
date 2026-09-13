@@ -261,6 +261,22 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('stream patch: skip discovery boundary validation', 'src/textedit.rs', 'streams::rewrite(&bytes, &content, &BTreeSet::new())?;', '// discovery boundary unchecked', 'textedit_stream_discovery_refuses_unpatchable_nesting'),
+    Mutation('stream patch: reserialize untouched operations', 'src/textedit.rs', 'streams::rewrite(&bytes, &content, &patched).map(|bytes| (id, bytes))', 'content.encode().map(|bytes| (id, bytes)).map_err(|e| e.to_string())', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
+    Mutation('stream patch: ignore changed untouched operands', 'src/textedit/streams.rs', 'original.operations[0].operands != next.operands', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
+    Mutation('stream patch: raise container nesting limit', 'src/textedit/streams.rs', 'if depth > 32 {', 'if depth > 33 {', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
+    Mutation('stream patch: raise string nesting limit', 'src/textedit/streams.rs', 'if nesting > 32 {', 'if nesting > 33 {', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
+    Mutation('stream patch: ignore operator identity', 'src/textedit/streams.rs', 'original.operations[0].operator != next.operator', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
+    Mutation('stream patch: omit trailing source bytes', 'src/textedit/streams.rs', 'output.extend_from_slice(&bytes[copied..]);', '// trailing source omitted', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
+
+    Mutation('browser state: skip external state validation', 'src/textedit.rs', 'graphics::normal(doc, resources, name)?;', '// external state unchecked', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
+    Mutation('browser state: admit unknown effects', 'src/textedit/graphics.rs', '_ => return Err(invalid()),', '_ => {}', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
+    Mutation('browser state: admit arbitrary blend mode', 'src/textedit/graphics.rs', 'if name == b"Normal"', 'if !name.is_empty()', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
+    Mutation('browser state: admit nonopaque alpha', 'src/textedit/graphics.rs', 'if number(value)? == 1.', 'if number(value)? >= 0.', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
+    Mutation('browser state: raise named state bound', 'src/textedit.rs', 'if graphics_states.len() >= 32 {', 'if graphics_states.len() >= 33 {', 'textedit_graphics_state_limits_names_and_refuses_missing_or_malformed_resources'),
+    Mutation('browser state: skip stroke colour validation', 'src/textedit.rs', 'colors::values(values, components)?;', 'let _ = components;', 'textedit_stroke_setters_validate_values_without_enabling_stroke_painting'),
+    Mutation('browser state: overwrite active fill space', 'src/textedit.rs', 'colors::values(values, components)?;', 'fill_components = components; colors::values(values, components)?;', 'textedit_normal_graphics_state_preserves_fill_geometry_and_saved_operators'),
+
     Mutation('glyph clip: omit quadratic control point', 'src/textedit/fonts/outlines.rs', 'self.point(x1, y1);\n        self.point(x, y);', 'self.point(x, y);', 'textedit_outline_envelope_includes_curve_controls_and_rejects_nonfinite_points'),
     Mutation('glyph clip: omit cubic control points', 'src/textedit/fonts/outlines.rs', 'self.point(x1, y1);\n        self.point(x2, y2);', '// controls omitted', 'textedit_outline_envelope_includes_curve_controls_and_rejects_nonfinite_points'),
     Mutation('glyph clip: omit simple bottom union', 'src/textedit/fonts.rs', 'vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);', 'vertical_bounds[0] = 0.;', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
