@@ -288,6 +288,11 @@ MUTATIONS = [
     Mutation("textedit: omit page scale from hitbox height", "src/textedit.rs", 'y + size * page_matrix[3]', 'y + size * matrix[3]', "textedit_scaled_hitboxes_match_absolute_matrices_after_crop_and_rotation"),
     Mutation("textedit: allow unbounded composed scales", "src/textedit.rs", 'if result\n        .iter()\n        .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)', 'if false', "textedit_page_scales_bound_composed_scales_and_positions"),
 
+    Mutation("textedit: accept custom spacing or rise", "src/textedit.rs", '("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0', '("Tc" | "Tw" | "Ts", [_])', "textedit_default_setters_refuse_nondefault_and_malformed_operands"),
+    Mutation("textedit: accept custom horizontal text scale", "src/textedit.rs", '("Tz", [value]) if number(value)? == 100.0', '("Tz", [_])', "textedit_default_setters_refuse_nondefault_and_malformed_operands"),
+    Mutation("textedit: accept hidden or clipping text modes", "src/textedit.rs", '("Tr", [Object::Integer(0)])', '("Tr", [_])', "textedit_default_setters_refuse_nondefault_and_malformed_operands"),
+    Mutation("textedit: default setter positions a following show", "src/textedit.rs", '("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0 => {}', '("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0 => { positioned = true; }', "textedit_default_setters_do_not_position_a_following_show"),
+
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
     Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),
     Mutation("choices: ignore the selected radio sibling", "src/forms.rs", "                            selected == index || (*unison && states[*selected] == states[*index])", "                            selected == index || (!*unison && states[*selected] != states[*index])", "choices_and_radio_round_trip_exports_indices_and_appearances"),

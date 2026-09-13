@@ -31,7 +31,8 @@ root.mkdir(parents=True, exist_ok=True)
 for mode, wrapped in (("separate", False), ("multiline", False),
                       ("separate-ascii85", True), ("multiline-ascii85", True),
                       ("saved-state-ascii85", True), ("translated-ascii85", True),
-                      ("scaled-ascii85", True), ("latin1", True)):
+                      ("scaled-ascii85", True), ("defaults-ascii85", True),
+                      ("latin1", True)):
     # True is ReportLab's normal wrapper for compressed page content; keep the
     # Flate-only layouts as controls over the extra decoding stage.
     rl_config.useA85 = wrapped
@@ -71,6 +72,11 @@ for mode, wrapped in (("separate", False), ("multiline", False),
     else:
         text = canvas.beginText(40, 180)
         text.setLeading(40)
+        if mode == "defaults-ascii85":
+            text.setCharSpace(0)
+            text.setWordSpace(0)
+            text.setHorizScale(100)
+            text.setRise(0)
         text.textLine("SYNTHETIC ÄÖÜ ß" if mode == "latin1" else "SYNTHETIC FIRST")
         text.textLine("SYNTHETIC SECOND")
         canvas.drawText(text)

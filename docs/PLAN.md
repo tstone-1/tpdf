@@ -4395,6 +4395,11 @@ page transform and ASCII85/Flate content (including a single-filter array).
 Balanced `q`/`Q` saves outside text blocks preserve font, size and leading, with
 a maximum nesting depth of 64. Replacement validation uses the active font's
 original operator address after restoration, including non-UTF-8 resource names.
+Explicit default text state (`0 Tc`, `0 Tw`, `100 Tz`, `0 Ts`, integer `0 Tr`)
+is accepted inside or outside text blocks. These setters preserve geometry and
+do not provide the independent positioning required between shows. Nondefault
+spacing, horizontal text scaling, rise, stroke/hidden/clipping modes and malformed
+operands remain refused, including a nondefault setter followed by a reset.
 Positive page scaling and translations compose across `cm` operators and are
 restored by `Q`. The reported matrix and hit box combine the text matrix with
 the page transform before crop and rotation. An existing page scale acts on a
@@ -4495,6 +4500,12 @@ All four worker/UI saves passed independent readback, changing only the target
 operand and no pixels outside the edited line. Seven targeted mutations were
 caught and 29,036 fuzz inputs completed without a finding. The full 24-gate run
 and source snapshot are recorded in `BUILD.md`.
+
+Explicit default text settings passed on both platforms on 2026-09-13 using
+ReportLab's `defaults-ascii85.pdf`: 47 focused tests and 15 native checks per
+platform. All four saved outputs passed independent readback with zero pixel
+changes outside the edited line. Four mutations were caught, 30,061 fuzz inputs
+completed without a finding and all 24 gates passed; details are in `BUILD.md`.
 
 ---
 

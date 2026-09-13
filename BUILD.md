@@ -6063,7 +6063,7 @@ pending text changes in `save_rewrite_update`; the regular fuzz gate builds both
 The independent ReportLab producer exercises font setup outside the visible text
 block, line leading, saved graphics states, page translations/scaling, and compressed filter arrays. It writes
 both basic layouts with Flate alone and with ReportLab's usual ASCII85 wrapper,
-plus saved-state, translated-origin, scaled and accented variants.
+plus saved-state, translated-origin, scaled, explicit-default and accented variants.
 Generate them with:
 
 ```bash
@@ -6322,3 +6322,26 @@ repository gates passed in 360.1 seconds:
 builds. The Mac native run passed 15/15; its separate checks application compiled
 only `tpdf`, finishing the Rust build in 17.53 seconds. Normal frontend assets
 were restored and contain zero harness code.
+
+Explicit default text state (2026-09-13, unreleased) accepts `0 Tc`, `0 Tw`,
+`100 Tz`, `0 Ts` and integer `0 Tr`, inside or outside text blocks. Nondefault
+values, malformed operands and shows without independent positioning remain
+refused. ReportLab's `defaults-ascii85.pdf` emits the four spacing/scale/rise
+defaults through its public API; the preceding worker refused that fixture.
+All 47 focused tests pass, including unchanged geometry, preserved non-target
+operators and numeric serialization normalization (`0.0` becomes `0`).
+
+Windows passed those 47 tests, 10 shared layout tests and 15 native checks from
+an isolated snapshot over `efbec7b`, archive SHA-256
+`1aefd1991f60bc1d5298a32ebfe0ed2663ac737e3bb86b80579ccc4444a8ff8a`.
+The implementation matches that snapshot. All four Mac/Windows worker/UI saves
+passed independent parser and PDFKit readback: only the target text operand
+changed, with 2,394 changed pixels inside the line and zero outside. Transfer
+digests matched and the temporary Windows task was removed.
+
+Four targeted mutations were caught. With `editable-defaults` added to the
+corpus, fuzzing completed 30,061 inputs in 21 seconds without a finding, peaking
+at 84 MiB RSS. All 24 repository gates passed in 346.7 seconds: 1,343 Rust tests
+(three ignored), 1,667 frontend tests and locked fuzz/example builds. The Mac
+native run passed 15/15; its Rust checks build took 16.18 seconds and rebuilt no
+dependencies. Normal frontend assets were restored with zero harness code.
