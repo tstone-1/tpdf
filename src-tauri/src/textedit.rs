@@ -201,7 +201,9 @@ fn shift_position(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
 }
 
 // ISO 32000-1, 8.3.4: a new matrix acts before the existing CTM. Both inputs
-// have already been restricted to positive diagonal scales and translations.
+// have already been restricted to nonzero diagonal scales and translations.
+// Reflections may cancel between page and text matrices. Require upright axes
+// only at a text show, after composing both, before constructing its bounds.
 // In particular, the existing scale acts on a new translation, not vice versa.
 fn compose_diagonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
     let result = [
@@ -215,8 +217,8 @@ fn compose_diagonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String
     if result
         .iter()
         .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
-        || result[0] <= 0.0
-        || result[3] <= 0.0
+        || result[0] == 0.0
+        || result[3] == 0.0
     {
         return Err("composed text transform exceeds its limit".into());
     }
@@ -359,9 +361,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 for (dest, value) in next.iter_mut().zip(values) {
                     *dest = number(value)?;
                 }
-                if next[0] <= 0.0 || next[3] <= 0.0 || next[1] != 0.0 || next[2] != 0.0 {
+                if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {
                     return Err(
-                        "rotated, reflected or skewed page content is not editable yet".into(),
+                        "collapsed, rotated or skewed page content is not editable yet".into(),
                     );
                 }
                 page_transform = compose_diagonal(page_transform, next)?;
@@ -416,7 +418,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 for (dest, value) in matrix.iter_mut().zip(values) {
                     *dest = number(value)?;
                 }
-                if matrix[0] <= 0.0 || matrix[3] <= 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {
+                if matrix[0] == 0.0 || matrix[3] == 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {
                     return Err("rotated or skewed text is not editable yet".into());
                 }
                 positioned = true;
@@ -451,6 +453,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             (text, advance)
         };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
+        if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {
+            return Err("reflected text is not editable yet".into());
+        }
         let bounds = [
             page_matrix[4],
             page_matrix[5] - size * page_matrix[3] * 0.25,
@@ -582,6 +587,9 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod reflected_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

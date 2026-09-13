@@ -4481,9 +4481,15 @@ them, while the embedded program is byte-identical and PDFKit finds zero changed
 pixels outside the target. `BUILD.md` records the distinction.
 
 **Next compatibility milestone: the unchanged untagged browser export.** The
-font mapping layer is in place. The same fixture still needs correct composition
-of reflected page and text matrices, rectangular clips in that space, and a
-narrow explicit ExtGState subset. Keep the complete
+font mapping layer is in place. Reflected diagonal page and text matrices now
+compose when their resulting text axes are upright; rectangular clips normalize
+their corners in page space before intersection. The same fixture still needs
+stroke-colour setters, a narrow explicit ExtGState subset and tighter proven glyph
+bounds for its first line at the clip edge. A diagnostic retaining its font,
+transforms and clips but removing only `RG` and `gs` is refused as partly clipped:
+the current full-em envelope exceeds the top of the browser clip. Do not relax
+containment; derive ink bounds from the validated embedded glyphs and prove that
+replacement glyphs also fit. Keep the complete
 browser export refused until all those parts have independent round-trip evidence;
 accepting one layer is not compatibility. Nested tags follow the untagged case.
 Alternate-text overrides, alignment and paragraph reflow require separate
@@ -4548,13 +4554,16 @@ envelope inside the clip, before crop or rotation. Standard Helvetica has only
 advance metrics here and is refused under an explicit clip. Partial, compound,
 painted, empty and reversed paths remain unsupported. A bounded nonnegative `w`
 setter is preserved; filled text cannot use it and stroking stays refused.
-Positive page scaling and translations compose across `cm` operators and are
-restored by `Q`. The reported matrix and hit box combine the text matrix with
+Nonzero diagonal page scaling and translations compose across `cm` operators
+and are restored by `Q`. Reflections in page and text matrices are accepted only
+when both final text axes are positive. Clip corners normalize after transformation,
+before intersection; this does not admit reversed authored rectangle dimensions. The reported matrix and hit box combine the text matrix with
 the page transform before crop and rotation. An existing page scale acts on a
 subsequent translation; the text matrix does not scale the page offset. Authored,
 accumulated and composed positions and scale factors are bounded to one million
 per coordinate or axis, and a scale that collapses to zero is refused. Saves inside
-text blocks and page reflection, rotation or skew remain unsupported. Each
+text blocks, rotation, skew and text whose combined axes remain reflected are
+unsupported. Each
 `Tj` or `TJ` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
 other graphics/text operators remain refused. A `TJ` array becomes one run with

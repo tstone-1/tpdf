@@ -6989,3 +6989,71 @@ examples, and both frontend build profiles. Normal Mac assets contain zero
 harness code. The Windows task was removed. Every implementation file matches
 the verified Windows snapshot; only this evidence record and the plan changed
 afterward.
+
+### Paired reflected coordinates for text editing
+
+The editor accepts nonzero diagonal page/text reflections when both combined
+text axes remain positive. Rectangular clips normalize their transformed corners
+before intersection. Mirrored final text, rotations, skew, collapsed matrices,
+out-of-range coordinates and partly clipped glyphs remain refused. This covers
+the coordinate layer used by browser exports; their stroke-colour setters and
+external graphics state remain a separate compatibility step.
+
+The synthetic composite-font generator has a `--reflected` mode. It retains the
+existing two lines and their page positions through paired reflections and an
+explicit clip, using exactly representable scales. No installed font is included.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_composite.py scratch/textedit-reflected/source.pdf --reflected
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-reflected/worker scratch/textedit-reflected/source.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-reflected/worker/synthetic-before.pdf scratch/textedit-reflected/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-reflected/worker
+```
+
+The input SHA-256 on 2026-09-13 is
+`59b198514e0c4c6878781027f49a714a8c1b95546140fda51aef060b039c4ab6`.
+PDFKit renders it identically to the upright composite fixture: zero changed
+channels with 10,608 nonwhite source channels. Removing the first text reflection
+changes 11,838 channels and the same comparison rejects that control.
+
+All 96 focused editor tests pass on Mac and Windows; Windows additionally passes
+10 shared layout tests. All 17 targeted reflection, clipping and page-transform
+mutations are caught. The tests cover both reflected axes, nested page transforms,
+line moves, crop/rotation, clipping intersections, restoration, unchanged non-target
+operators/resources and refusals without document mutation.
+
+Worker and native saves pass independent pypdf readback on both platforms. All
+15 native checks pass on both platforms, including saved-output retention.
+PDFKit reads all four saved outputs with 898 changed pixels inside the target
+line and zero outside. The first Mac invocation passed its UI assertions but
+failed to retain the output because its destination directory did not exist;
+a rerun with the directory created supplies the independently checked artifact.
+
+The reflected fuzz seed is recognized as editable with one run. The bounded fuzz
+run executed 31,161 inputs in 21 seconds without a finding, with 86 MiB peak RSS,
+under the existing sanitizer-free macOS configuration.
+
+The Windows archive SHA-256 is
+`7773e4c5386ce2dd9f7085136a1359ddf4ad8f27209174dc8bec06dc814c1cd5`.
+Retrieved PDF digests and the source manifest match. The temporary scheduled task
+was removed; the normal checkout remains clean at its original commit, and its
+frontend contains zero harness code.
+
+The unchanged untagged Edge export now passes its page-transform/clip setup and
+is refused at unsupported graphics state. A diagnostic copy removing only `RG`
+and `gs` is still refused as partly clipped: the first line's conservative
+full-em envelope extends above the browser's clip. Further compatibility needs
+proven glyph-based bounds as well as graphics-state support. This diagnostic
+retains the original transforms and font and is not an unchanged browser export.
+
+Independent fontTools inspection of the first browser line finds a maximum glyph
+height of 0.72802734375 em. At nominal browser coordinates its ink top is
+198.486328125 pt, below the clip top at 200.25 pt; the full-em estimate reaches
+201.75 pt. This measures the original line only: a future tighter envelope must
+also prove containment for every accepted replacement.
+
+All 24 local gates passed in 572.2 seconds summed gate time: 1,392 Rust
+tests (three ignored), 1,667 frontend tests, locked fuzz targets and examples,
+and both frontend build profiles. Normal Mac assets contain zero harness code.
+Only this evidence record and the plan differ from the verified Windows source
+snapshot; implementation and fixtures are unchanged.

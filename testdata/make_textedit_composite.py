@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import pdf_round_trip
 
 
-def create(target):
+def create(target, reflected=False):
     from fontTools.ttLib import TTFont
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject,
@@ -56,7 +56,13 @@ def create(target):
     shows = []
     for text, y in [("SYNTHETIC FIRST", 180), ("SYNTHETIC SECOND", 140)]:
         raw = b"".join(codes[ch].to_bytes(2, "big") for ch in text).hex()
-        shows.append(f"BT /F1 12 Tf 40 {y} Td <{raw}> Tj ET")
+        position = f"1 0 0 -1 40 {240-y} Tm" if reflected else f"40 {y} Td"
+        shows.append(f"BT /F1 12 Tf {position} <{raw}> Tj ET")
+    if reflected:
+        # Browser-style page reflection and scale, with a rectangular clip.
+        # Exact binary scales keep this fixture focused on geometry, independent
+        # of decimal serialization. The resulting text is at the same positions.
+        shows = [".25 0 0 -.25 0 240 cm q 0 0 1200 960 re W* n q 4 0 0 4 0 0 cm", *shows, "Q Q"]
     content.set_data("\n".join(shows).encode("ascii"))
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(target)
@@ -69,4 +75,6 @@ def create(target):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    create(parser.parse_args().output)
+    parser.add_argument("--reflected", action="store_true", help="pair reflected page/text matrices with a clip")
+    args = parser.parse_args()
+    create(args.output, args.reflected)
