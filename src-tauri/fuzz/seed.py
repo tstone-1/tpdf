@@ -257,11 +257,13 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
 
 
 
-def editable_composite(reflected: bool = False) -> bytes:
+def editable_composite(reflected: bool = False, tight_clip: bool = False) -> bytes:
     """Identity-H glyph IDs 2/3 are A/B in the original geometric test font."""
     font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
     content = b"BT /F1 12 Tf 40 180 Td <00020003> Tj ET"
-    if reflected:
+    if tight_clip:
+        content = b".25 0 0 -.25 0 240 cm q 0 200 1200 760 re W* n 4 0 0 4 0 0 cm BT /F1 12 Tf 1 0 0 -1 40 60 Tm <00020003> Tj ET Q"
+    elif reflected:
         content = b".25 0 0 -.25 0 240 cm q 0 0 1200 960 re W* n 4 0 0 4 0 0 cm BT /F1 12 Tf 1 0 0 -1 40 60 Tm <00020003> Tj ET Q"
     cmap = (b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
             b"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
@@ -356,7 +358,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),

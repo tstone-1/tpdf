@@ -462,12 +462,22 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             page_matrix[4] + advance * page_matrix[0],
             page_matrix[5] + size * page_matrix[3],
         ];
-        // Standard-font widths alone do not prove where substituted glyph ink
-        // ends. Embedded glyph outlines are validated against this exact box.
-        if clip.is_some() && !metrics.bounded_outlines {
-            return Err("clipped text requires validated embedded glyph outlines".into());
+        // Keep the editing hit box stable. Clipping instead uses the measured
+        // vertical union of every offered glyph, so any width-fitting replacement
+        // remains contained, including glyphs not present in the source string.
+        // Standard-font widths cannot prove substituted glyph ink bounds.
+        if clip.is_some() {
+            let [bottom, top] = metrics
+                .vertical_bounds
+                .ok_or("clipped text requires validated embedded glyph outlines")?;
+            let ink_bounds = [
+                bounds[0],
+                page_matrix[5] + bottom * size / 1000. * page_matrix[3],
+                bounds[2],
+                page_matrix[5] + top * size / 1000. * page_matrix[3],
+            ];
+            clipping::contains(clip, ink_bounds)?;
         }
-        clipping::contains(clip, bounds)?;
         let [left, bottom, right, top] = bounds;
         let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
         let display_rect = crate::text::to_device(

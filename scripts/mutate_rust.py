@@ -261,6 +261,17 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('glyph clip: omit quadratic control point', 'src/textedit/fonts/outlines.rs', 'self.point(x1, y1);\n        self.point(x, y);', 'self.point(x, y);', 'textedit_outline_envelope_includes_curve_controls_and_rejects_nonfinite_points'),
+    Mutation('glyph clip: omit cubic control points', 'src/textedit/fonts/outlines.rs', 'self.point(x1, y1);\n        self.point(x2, y2);', '// controls omitted', 'textedit_outline_envelope_includes_curve_controls_and_rejects_nonfinite_points'),
+    Mutation('glyph clip: omit simple bottom union', 'src/textedit/fonts.rs', 'vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);', 'vertical_bounds[0] = 0.;', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: omit simple top union', 'src/textedit/fonts.rs', 'vertical_bounds[1] = vertical_bounds[1].max(top * unit);', 'vertical_bounds[1] = 700.;', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: omit composite bottom union', 'src/textedit/fonts/composite.rs', 'vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);', 'vertical_bounds[0] = 0.;', 'textedit_composite_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: omit composite top union', 'src/textedit/fonts/composite.rs', 'vertical_bounds[1] = vertical_bounds[1].max(top * unit);', 'vertical_bounds[1] = 700.;', 'textedit_composite_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: truncate fractional outline points', 'src/textedit/fonts/outlines.rs', 'let (x, y) = (f64::from(x), f64::from(y));', 'let (x, y) = (f64::from(x as i16), f64::from(y as i16));', 'textedit_outline_bounds_preserve_fractional_components_and_ignore_header_boxes'),
+    Mutation('glyph clip: reuse full em envelope', 'src/textedit.rs', 'clipping::contains(clip, ink_bounds)?;', 'let _ = ink_bounds; clipping::contains(clip, bounds)?;', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: omit vertical scale from lower edge', 'src/textedit.rs', 'page_matrix[5] + bottom * size / 1000. * page_matrix[3]', 'page_matrix[5] + bottom * size / 1000.', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: omit vertical scale from upper edge', 'src/textedit.rs', 'page_matrix[5] + top * size / 1000. * page_matrix[3]', 'page_matrix[5] + top * size / 1000.', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
+
     Mutation('reflected: reject intermediate page reflection', 'src/textedit.rs', 'if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if next[0] <= 0.0 || next[3] <= 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators'),
     Mutation('reflected: reject intermediate text reflection', 'src/textedit.rs', 'if matrix[0] == 0.0 || matrix[3] == 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {', 'if matrix[0] <= 0.0 || matrix[3] <= 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {', 'textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators'),
     Mutation('reflected: accept mirrored horizontal text', 'src/textedit.rs', 'if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {', 'if page_matrix[3] <= 0.0 {', 'textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atomically'),
@@ -309,9 +320,9 @@ MUTATIONS = [
     Mutation('tagged: allow repeated marked content id', 'src/textedit/tagging.rs', '|| !self.seen.insert(mcid)', '|| { self.seen.insert(mcid); false }', 'textedit_tagged_requires_balanced_unique_markers_and_paragraph_text'),
     Mutation('tagged: ignore page parent key', 'src/textedit/tagging.rs', 'integer(get(dict, b"StructParents")?)?', '0', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
 
-    Mutation('clip: omit text containment call', 'src/textedit.rs', 'clipping::contains(clip, bounds)?;', '// containment omitted', 'textedit_clip_intersections_contain_every_side_of_text'),
+    Mutation('clip: omit text containment call', 'src/textedit.rs', 'clipping::contains(clip, ink_bounds)?;', '// containment omitted', 'textedit_clip_intersections_contain_every_side_of_text'),
     Mutation('clip: discard saved clip', 'src/textedit.rs', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                ));', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    None,\n                ));', 'textedit_clip_transform_is_fixed_at_creation_and_restored_by_q'),
-    Mutation('clip: allow unproven glyph bounds', 'src/textedit.rs', 'if clip.is_some() && !metrics.bounded_outlines {', 'if false {', 'textedit_clips_require_proven_outline_bounds_not_only_advances'),
+    Mutation('clip: allow unproven glyph bounds', 'src/textedit.rs', '.vertical_bounds\n                .ok_or(', '.vertical_bounds.or(Some([0., 700.]))\n                .ok_or(', 'textedit_clips_require_proven_outline_bounds_not_only_advances'),
     Mutation('clip: replace intersection with union', 'src/textedit/clipping.rs', 'old[2].min(next[2])', 'old[2].max(next[2])', 'textedit_clip_intersections_contain_every_side_of_text'),
     Mutation('clip: omit rectangle horizontal scale', 'src/textedit/clipping.rs', '(x + width) * ctm[0] + ctm[4]', '(x + width) + ctm[4]', 'textedit_clip_transform_is_fixed_at_creation_and_restored_by_q'),
     Mutation('clip: accept painted path ending', 'src/textedit/clipping.rs', '|| end.operator != "n"', '|| false', 'textedit_clips_refuse_partial_compound_painted_and_unbounded_paths'),

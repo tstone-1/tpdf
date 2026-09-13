@@ -4484,12 +4484,12 @@ pixels outside the target. `BUILD.md` records the distinction.
 font mapping layer is in place. Reflected diagonal page and text matrices now
 compose when their resulting text axes are upright; rectangular clips normalize
 their corners in page space before intersection. The same fixture still needs
-stroke-colour setters, a narrow explicit ExtGState subset and tighter proven glyph
-bounds for its first line at the clip edge. A diagnostic retaining its font,
-transforms and clips but removing only `RG` and `gs` is refused as partly clipped:
-the current full-em envelope exceeds the top of the browser clip. Do not relax
-containment; derive ink bounds from the validated embedded glyphs and prove that
-replacement glyphs also fit. Keep the complete
+stroke-colour setters and a narrow explicit ExtGState subset. Clipping now uses
+the measured vertical union of every offered glyph, including glyphs absent from
+the source string, so width-fitting replacements retain the containment proof.
+Transformed outline points and curve controls retain fractional coordinates;
+integer bounding boxes could underestimate scaled composite glyphs. Editing hit
+boxes keep their existing full-em geometry. Keep the complete
 browser export refused until all those parts have independent round-trip evidence;
 accepting one layer is not compatibility. Nested tags follow the untagged case.
 Alternate-text overrides, alignment and paragraph reflow require separate
@@ -4549,8 +4549,11 @@ Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
 outside text blocks, with positive dimensions and coordinates bounded to one
 million after transformation. They intersect in original page space and restore
 through `q`/`Q`; later CTM changes do not move an existing clip. Every affected
-text run must have validated embedded glyph outlines and fit its full editing
-envelope inside the clip, before crop or rotation. Standard Helvetica has only
+text run must have validated embedded glyph outlines. Its original advance and
+the font's measured vertical envelope must fit inside the clip before crop or
+rotation. The envelope contains every offered glyph, including baseline and
+curve controls, so it also contains any replacement that fits the original
+advance. Editing hit boxes retain their full-em geometry. Standard Helvetica has only
 advance metrics here and is refused under an explicit clip. Partial, compound,
 painted, empty and reversed paths remain unsupported. A bounded nonnegative `w`
 setter is preserved; filled text cannot use it and stroking stays refused.
