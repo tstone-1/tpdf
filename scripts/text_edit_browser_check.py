@@ -138,6 +138,47 @@ def tagged_controls(before, after):
             print("[PASS] independent tagged browser corruption control:", mode)
 
 
+def flow_controls(before, after, page_index):
+    """Corrupt page flow, its reverse ownership, and the supposedly untouched page."""
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject
+
+    with tempfile.TemporaryDirectory(prefix="tpdf-browser-flow-") as directory:
+        for mode in ("mcr-page", "missing-item", "page-key", "reverse-parent", "other-page"):
+            writer = PdfWriter(clone_from=after)
+            root = writer.root_object["/StructTreeRoot"]
+            paragraph = root["/K"]["/K"]
+            leaf = paragraph["/K"]
+            items = leaf["/K"]
+            assert len(items) == 2 and items[1]["/Type"] == "/MCR", "unexpected flow fixture structure"
+            expected = "tagged structure or parent references changed"
+            if mode == "mcr-page":
+                items[1][NameObject("/Pg")] = writer.pages[0].indirect_reference
+            elif mode == "missing-item":
+                del items[1]
+            elif mode == "page-key":
+                writer.pages[1][NameObject("/StructParents")] = NumberObject(0)
+            elif mode == "reverse-parent":
+                root["/ParentTree"]["/Nums"][3].get_object()[0] = paragraph.indirect_reference
+            else:
+                from pypdf.generic import DecodedStreamObject
+                other = writer.pages[1 - page_index]
+                content = DecodedStreamObject()
+                content.set_data(other.get_contents().get_data() + b"\n% changed untouched page\n")
+                other[NameObject("/Contents")] = writer._add_object(content)
+                expected = "untouched page content changed"
+            target = Path(directory) / (mode + ".pdf")
+            writer.write(target)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    check(before, target, page_index=page_index, float32=True)
+            except AssertionError as error:
+                assert str(error) == expected, (mode, str(error))
+            else:
+                raise AssertionError("flow corruption control survived: " + mode)
+            print("[PASS] independent browser flow corruption control:", mode)
+
+
 def main():
     from pypdf import PdfReader
 
@@ -146,16 +187,23 @@ def main():
     parser.add_argument("after", type=Path)
     parser.add_argument("--controls", action="store_true")
     parser.add_argument("--tagged", action="store_true")
+    parser.add_argument("--flow", action="store_true", help="check the two-page naturally wrapped fixture")
+    parser.add_argument("--page", type=int, default=0, help="zero-based edited page")
     args = parser.parse_args()
+    assert args.flow or args.page == 0, "page selection requires the flow fixture"
+    assert not (args.flow and args.controls and not args.tagged), "flow controls require tagged input"
     for path in (args.before, args.after):
         reader = PdfReader(path)
-        assert len(reader.pages) == 1, "expected a single browser fixture page"
+        assert len(reader.pages) == (2 if args.flow else 1), "wrong browser fixture page count"
         assert ("/StructTreeRoot" in reader.trailer["/Root"]) == args.tagged, "browser fixture tagging differs"
-    check(args.before, args.after, float32=True)
+    check(args.before, args.after, page_index=args.page, float32=True)
     if args.controls:
-        controls(args.before, args.after)
-        if args.tagged:
-            tagged_controls(args.before, args.after)
+        if args.flow:
+            flow_controls(args.before, args.after, args.page)
+        else:
+            controls(args.before, args.after)
+            if args.tagged:
+                tagged_controls(args.before, args.after)
 
 
 if __name__ == "__main__":

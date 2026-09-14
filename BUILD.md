@@ -38,7 +38,18 @@ reviewing the owned-window capture. Original installations and sessions were
 preserved. Windows printing passed 10/10. Its OCR sweep sampled 11,728 regions
 across 133 PDFs: 7,556 were read back, with zero still-readable text, 3,337 verified
 unreadable and 4,219 unverified. Unverified regions are not clean verdicts.
-Application artifact signing, publication and actual updater checks remain pending.
+The [application release](https://github.com/tstone-1/tpdf/releases/tag/v26.9.7)
+is published. Both [CI jobs](https://github.com/tstone-1/tpdf/actions/runs/34824420628)
+and all five [release jobs](https://github.com/tstone-1/tpdf/actions/runs/34824435182)
+passed. All eight downloaded assets matched their published SHA-256 digests;
+all three updater signatures verified against the application's public key.
+The signed macOS app and disk image passed notarization, stapling and Gatekeeper
+checks. The packaged engine passed multilingual search (68/68, seven explicitly
+not applicable). Anonymous Latest, manifest and asset downloads were verified.
+The real macOS updater installed 26.9.7 from 26.9.6; every installed bundle file
+and symlink matched the verified release payload. Relaunch, bundled-engine PDF
+rendering and the explicit latest-version check passed, with the original session
+restored byte for byte. The Windows live updater check remains pending.
 
 The original failure was in the unmodified multilingual search baseline: PDFium
 8044 reversed Arabic word order and lost the mixed Arabic/Latin phrase. Upstream
@@ -7348,3 +7359,43 @@ For remote follow-up checks, transfer source files separately rather than
 embedding their base64 data in an EncodedCommand. Run Cargo through the same
 interactive scheduled-task environment as the main checks; the direct SSH/WSL
 invocation could not access this build directory.
+
+### Naturally wrapped browser text across pages
+
+Verified on macOS, 2026-09-14, with Edge `153.0.4234.32`. The new
+`testdata/textedit-producer-browser-flow.html` contains one paragraph and ordinary
+spaces, with no line breaks, explicit page breaks or PDF post-processing. Fixed
+page size, paragraph width and line height make it wrap naturally into two lines
+on each of two pages. The exporter verifies both pages' text and, for tagged
+output, one Document/P/NonStruct chain with an integer MCID on page one and an
+explicit MCR on page two. Both directions of page ownership must agree.
+
+No application grammar change was needed. Unchanged tagged and untagged exports
+pass worker preview and saving on either page. All 19 native multi-page checks
+pass on the tagged export, including undo/redo, tab isolation, overflow refusal
+and save/reopen. Independent parser and PDFKit readback pass on all four worker
+outputs and the native save: 2,421 changed pixels inside the edited line, zero
+outside it, and zero changes on the untouched page. The embedded font stream,
+content operands and complete tagged structure remain preserved; resource numbers
+use the existing explicit float32 comparison.
+
+```sh
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' scratch/textedit-browser-flow --flow
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-browser-flow/worker-page2 scratch/textedit-browser-flow/browser-tagged.pdf --page=1
+uv run --with pypdf scripts/text_edit_browser_check.py scratch/textedit-browser-flow/worker-page2/synthetic-before.pdf scratch/textedit-browser-flow/worker-page2/synthetic-after.pdf --flow --tagged --page=1 --controls
+swift scripts/text_edit_pdfkit.swift scratch/textedit-browser-flow/worker-page2 --browser-flow --page=1
+uv run scripts/tabs_check.py 'src-tauri/target/release/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf' scratch/textedit-browser-flow/browser-tagged.pdf --phase textedit-multipage --saved-copy scratch/textedit-browser-flow/ui-page2.pdf
+uv run --with pypdf scripts/text_edit_browser_check.py scratch/textedit-browser-flow/browser-tagged.pdf scratch/textedit-browser-flow/ui-page2.pdf --flow --tagged --page=1
+```
+
+Build the checks app using the explicit profile at the top of this file when
+needed. Use a separate output directory and omit `--page=1` to edit page one.
+For the untagged control, choose `browser-untagged.pdf` and omit `--tagged` and
+`--controls`. Five new negative controls change the continuation page, remove its
+content item, change a page parent key, break reverse ownership or change the
+untouched page's content bytes; each fails for its named reason on both edited
+page choices. All 17 existing single-page browser corruption controls still fail,
+and the original exporter and PDFKit browser mode remain green.
+
+This fixture's native workflow was measured on macOS only. The earlier browser
+milestone above retains its Windows evidence; no new Windows run is claimed.

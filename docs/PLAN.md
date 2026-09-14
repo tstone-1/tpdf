@@ -1,7 +1,7 @@
 # tpdf — Architecture and Roadmap
 
 Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress;
-Phase 4 shipped in 26.9.5; Phase 5 first application editor implemented, unreleased.** The viewer
+Phase 4 shipped in 26.9.5; Phase 5 first application editor shipped in 26.9.7.** The viewer
 runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
 session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
 change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,
@@ -13,7 +13,7 @@ instructions, and read the result back as *verified* or *not verified, and why*.
 **Form filling and visual signatures shipped in 26.9.5 (2026-09-11)**: text fields,
 checkboxes, radio groups, dropdowns and lists, with shared answers, undo and saved
 appearances; drawn or imported signature images can be placed, moved and resized.
-**In-place text editing has a first application implementation (Phase 5, unreleased)**:
+**In-place text editing first shipped in 26.9.7 (Phase 5, 2026-09-14)**:
 choose a supported text run, apply a replacement, preview it through PDFium, undo/redo
 and save. The supported grammar and remaining work live in §7.
 
@@ -24,7 +24,7 @@ image dimensions are bounded before decoding, and normal builds exclude the nati
 check harness. Windows confidentiality containment, macOS kernel memory limits and
 independent user validation remain open; none is closed by these safeguards.
 
-Unreleased: automatic update checks can be disabled from the tpdf menu on macOS or the command
+Since 26.9.7, automatic update checks can be disabled from the tpdf menu on macOS or the command
 palette. The choice persists on this device; manual checking remains available.
 Unreadable preferences skip the launch check.
 
@@ -4506,10 +4506,16 @@ indirect arrays are supported. Page references may be absent from containers;
 an integer MCID still requires Pg on its own element, not an ancestor. Semantic
 overrides, extra child levels and NonStruct layout attributes remain refused.
 
-**Next compatibility milestone: naturally wrapped, multi-page browser exports.**
-The present browser fixture contains two separately authored short paragraphs.
-Measure wrapping and page flow through the producer before widening the grammar
-again; a synthetic two-line round trip does not establish those cases.
+**Naturally wrapped, multi-page browser exports verified on macOS (2026-09-14).**
+A fresh Edge export of one ordinary HTML paragraph wraps across two pages without
+authored line or page breaks. Its NonStruct element owns the first page's integer
+MCID and an MCR for the second page. Existing application code already supports
+this shape: unchanged tagged and untagged exports pass worker editing on either
+page, and all 19 native multi-page checks pass. Independent parser and PDFKit
+readback preserve the structure and untouched page, with zero pixel changes
+outside the edited line. Five cross-page corruption controls are rejected.
+The fixture and reproduction commands are in BUILD.md. This new fixture has not
+been rerun on Windows; the earlier single-page browser evidence covers both platforms.
 Alternate-text overrides, alignment and paragraph reflow require separate
 semantics, and replacements still fit the original line's advance.
 
@@ -13569,10 +13575,11 @@ Explicitly **not** cryptographic signing. XFA out of scope.
 §7, scoped as described there. Depends on the Phase 0 text round-trip spike and the
 operator-rewriting machinery built in Phase 3.
 
-**First application editor implemented, unreleased.** See §7 for Helvetica/Latin-1
-and the bounded embedded TrueType/ASCII case, worker preview, journal and native
-workflow. Composite fonts, extended character mappings, subset extension and
-paragraph reflow remain open.
+**First application editor shipped in 26.9.7 (2026-09-14).** See §7 for
+Helvetica/Latin-1, bounded embedded TrueType/ASCII and Type0/Identity-H cases,
+worker preview, journal and native workflow. Naturally wrapped, multi-page browser
+exports are verified on macOS. Extended character mappings,
+subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 

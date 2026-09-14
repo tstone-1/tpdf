@@ -8,19 +8,24 @@ func fail(_ message: String) -> Never {
     print("[FAIL] \(message)")
     exit(1)
 }
-guard (2...3).contains(CommandLine.arguments.count) else { fail("expected probe output directory [--latin1|--page=N|--browser]") }
+guard (2...4).contains(CommandLine.arguments.count) else { fail("expected probe output directory [--latin1|--browser|--browser-flow] [--page=N]") }
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
-let option = CommandLine.arguments.count == 3 ? CommandLine.arguments[2] : ""
-let latin1 = option == "--latin1"
-let browser = option == "--browser"
-let selected: Int
-if option.hasPrefix("--page=") {
-    guard let index = Int(option.dropFirst(7)), index >= 0 else { fail("invalid page index") }
-    selected = index
-} else {
-    guard option.isEmpty || latin1 || browser else { fail("unknown option") }
-    selected = 0
+var selected = 0
+var variant = ""
+var hasPage = false
+for option in CommandLine.arguments.dropFirst(2) {
+    if option.hasPrefix("--page=") {
+        guard !hasPage, let index = Int(option.dropFirst(7)), index >= 0 else { fail("invalid or duplicate page index") }
+        selected = index
+        hasPage = true
+    } else {
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow"].contains(option) else { fail("unknown or conflicting option") }
+        variant = option
+    }
 }
+let latin1 = variant == "--latin1"
+let browser = variant == "--browser"
+let browserFlow = variant == "--browser-flow"
 let original = latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
 let replacement = latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
@@ -30,7 +35,9 @@ else { fail("invalid document or page count") }
 let width = 600, height = 480
 // Fixed fixture regions, independent of the editor's reported run/hit box.
 // Edge's first baseline is y=189.75 (row 100.5), second y=148.5 (row 183).
-let targetRows = browser ? (78..<110) : (85..<130)
+// The flow HTML has 40pt line height: its first baseline is 63.75pt from the top.
+let targetRows = browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
+if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
     // rather than rejecting an unchanged box for decimal serialization rounding.
