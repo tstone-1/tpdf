@@ -379,3 +379,162 @@ fn textedit_composite_kerning_limit_counts_characters_across_strings() {
         }
     }
 }
+
+// A is 400 units wide with a 600-unit advance. Shift B left and D right;
+// neither header bbox describes the component's actual horizontal excursion.
+fn overhang_fixture(left: i16, right: i16) -> (Document, ObjectId) {
+    let (mut doc, [font, _, descriptor, _]) = fixture();
+    let program = doc
+        .get_dictionary(descriptor)
+        .unwrap()
+        .get(b"FontFile2")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content =
+        super::super::ink_tests::component_program([('B', left, 0, 16384), ('D', right, 0, 16384)]);
+    (doc, font)
+}
+
+fn overhang_content(doc: &mut Document, font: ObjectId, text: &str, prefix: &str, kerning: bool) {
+    let metrics = embedded(doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let hex = |text: &str| {
+        metrics
+            .encode(text)
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let show = if kerning {
+        format!("[<{}> 100 <{}>] TJ", hex(&text[..1]), hex(&text[1..]))
+    } else {
+        format!("<{}> Tj", hex(text))
+    };
+    let body = format!("{prefix} BT /F1 10 Tf 40 180 Td {show} ET");
+    let page = crate::pagetree::ordered_pages(doc)[0];
+    let stream = doc.add_object(Stream::new(Dictionary::new(), body.into_bytes()));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+}
+
+#[test]
+fn textedit_composite_overhang_replacements_stay_inside_original_ink_atomically() {
+    for kerning in [false, true] {
+        let (mut source, font) = overhang_fixture(-10, 250);
+        overhang_content(&mut source, font, "AAA", "40 170 18 20 re W n", kerning);
+        for (replacement, accepted) in [
+            ("ABA", !kerning),
+            ("ADA", !kerning),
+            ("BA", false),
+            ("AAD", false),
+            ("AD", true),
+            ("", true),
+        ] {
+            let mut doc = source.clone();
+            let before = doc.objects.clone();
+            let scanned = textedit::scan(&doc, 0).unwrap();
+            let edit = Change {
+                page: 0,
+                revision: scanned.revision,
+                operator: scanned.runs[0].operator,
+                original: "AAA".into(),
+                replacement: replacement.into(),
+            };
+            let result = textedit::write(&mut doc, &[edit]);
+            // With TJ tightening, three unkerned letters exceed the advance first.
+            assert_eq!(
+                result.is_ok(),
+                accepted,
+                "{replacement} kerning={kerning}: {result:?}"
+            );
+            if accepted {
+                assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, replacement);
+                let page = crate::pagetree::ordered_pages(&doc)[0];
+                for (id, value) in before {
+                    if id != page {
+                        assert_eq!(doc.objects[&id], value);
+                    }
+                }
+            } else {
+                assert_eq!(doc.objects, before);
+                if !kerning {
+                    assert!(result.unwrap_err().contains("replacement ink"));
+                }
+            }
+        }
+    }
+    // Original overhang is legal without a clip and can be retained by an edit.
+    let (mut doc, font) = overhang_fixture(-10, 250);
+    overhang_content(&mut doc, font, "BAD", "", false);
+    let scan = textedit::scan(&doc, 0).unwrap();
+    assert!((scan.runs[0].display_rect[0] - 39.9).abs() < 0.00001);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            page: 0,
+            revision: scan.revision,
+            operator: scan.runs[0].operator,
+            original: "BAD".into(),
+            replacement: "BD".into(),
+        }],
+    )
+    .unwrap();
+}
+
+#[test]
+fn textedit_composite_overhang_source_clips_follow_kerning_and_page_scale() {
+    for (text, kerning, prefix, accepted) in [
+        ("BA", false, "40 170 30 20 re W n", false),
+        ("BA", false, "39 170 30 20 re W n", true),
+        ("AD", false, "40 170 12 20 re W n", false),
+        ("AD", false, "40 170 13 20 re W n", true),
+        ("AD", true, "40 170 11 20 re W n", false),
+        ("AD", true, "40 170 12 20 re W n", true),
+        ("AD", false, "80 170 24 20 re W n 2 0 0 1 0 0 cm", false),
+        ("AD", false, "80 170 25 20 re W n 2 0 0 1 0 0 cm", true),
+        (
+            "AD",
+            false,
+            "40 170 12 20 re W n -1 0 0 1 0 0 cm -1 0 0 1 0 0 cm",
+            false,
+        ),
+    ] {
+        let (mut doc, font) = overhang_fixture(-10, 250);
+        overhang_content(&mut doc, font, text, prefix, kerning);
+        let result = textedit::scan(&doc, 0);
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "{text} {prefix} {kerning}: {result:?}"
+        );
+        if !accepted {
+            assert!(result.unwrap_err().contains("partly clipped"));
+        }
+    }
+}
+
+#[test]
+fn textedit_composite_overhang_quarter_em_limits_have_boundary_controls() {
+    for (left, right, valid_b, valid_d) in [
+        (-250, 450, true, true),
+        (-251, 450, false, true),
+        (-250, 451, true, false),
+    ] {
+        let (doc, font) = overhang_fixture(left, right);
+        let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+        assert_eq!(metrics.advance("B", 10.).is_ok(), valid_b);
+        assert_eq!(metrics.advance("D", 10.).is_ok(), valid_d);
+        if valid_b {
+            assert_eq!(metrics.horizontal_bounds("B", 10.).unwrap(), [-2.5, 6.]);
+        }
+        if valid_d {
+            assert_eq!(metrics.horizontal_bounds("D", 10.).unwrap(), [0., 8.5]);
+        }
+    }
+}

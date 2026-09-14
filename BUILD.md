@@ -7408,8 +7408,9 @@ The reader now permits unique printable Latin-1 mappings, bounded to 191 values;
 the 16 KiB CMap limit, glyph/width checks and outline bounds are unchanged.
 Single-byte mapped and ordinary simple embedded fonts retain their ASCII scope.
 
-The Arial fixture still fails because Ä extends 1.465 font units past each side
-of its advance. That refusal is retained. Independently measured Verdana outlines
+At this mapping-only step, the Arial fixture still failed because Ä extends
+1.465 font units past each side of its advance. The overhang increment below
+separately proves placement. Independently measured Verdana outlines
 fit their advances; the unchanged browser export using that font passes the worker
 round trip and all 15 native editing checks. Independent parser and PDFKit readback
 of both worker and UI saves preserve the font, structure and surrounding content:
@@ -7426,10 +7427,45 @@ uv run scripts/tabs_check.py 'src-tauri/target/debug/bundle/macos/tpdf Checks.ap
 ```
 
 Build the debug checks app using the explicit profile at the top of this file.
-Generate the retained Arial refusal in a separate directory with `--latin1` alone.
+Generate the Arial counterpart in a separate directory with `--latin1` alone.
 All 104 editor-module tests pass, and all three targeted mapping mutations are
 caught. The new `editable-composite-latin1` fuzz seed reaches discovery with one
 run; the bounded fuzz campaign executed 30,272 inputs in 21 seconds without a
 finding, at 87 MiB peak RSS, using the existing sanitizer-free macOS setup.
 Type checking, Clippy and all 1,667 frontend tests passed. These are macOS
 measurements; no Windows runtime result is claimed here.
+
+
+### Bounded horizontal overhangs in composite fonts
+
+The unchanged Edge/Arial accented export now has a separate placement check.
+Ä extends 1.465 font units beyond both sides of its advance; the original line
+contains it internally and fits its clip. `--overhang` replaces that line with
+`ÖÄÜ äöü ß`, while also requiring a leading-Ä replacement to fail without output.
+Neither the source clip nor the embedded font is modified. Composite outlines
+may extend at most a quarter em per side; source hit boxes and clipping use the
+measured excursions, and replacement ink must stay inside the original unrounded
+horizontal envelope as well as its advance. Simple-font overhangs remain refused.
+
+```sh
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' scratch/textedit-browser-latin1 --latin1
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-browser-latin1/arial-overhang/worker scratch/textedit-browser-latin1/browser-tagged.pdf --overhang
+uv run --with pypdf scripts/text_edit_browser_check.py scratch/textedit-browser-latin1/arial-overhang/worker/synthetic-before.pdf scratch/textedit-browser-latin1/arial-overhang/worker/synthetic-after.pdf --tagged --overhang --controls
+swift scripts/text_edit_pdfkit.swift scratch/textedit-browser-latin1/arial-overhang/worker --browser-overhang
+uv run scripts/tabs_check.py 'src-tauri/target/debug/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf' scratch/textedit-browser-latin1/browser-tagged.pdf --phase textedit-overhang --saved-copy scratch/textedit-browser-latin1/arial-overhang/ui-after.pdf
+```
+
+Measured on macOS, 2026-09-14: tagged and untagged worker saves pass independent
+parser and PDFKit readback, with 2,900 changed pixels inside the target line and
+zero outside. All 17 parser corruption controls fail. All 107 editor-module tests
+pass, and all seven selected Rust mutations are caught (five new overhang checks
+and two existing checks affected by the geometry change). The mutation runner's
+full Rust control also passes. Type checking, Clippy, all 1,667 frontend tests and
+the production build pass; the normal bundle still contains no check harness.
+All 16 native editing checks pass, including rejection of a shorter draft whose
+ink crosses the left boundary. The UI-saved PDF passes the same independent
+parser/PDFKit checks with 2,900 changed pixels inside the line and zero outside.
+The native harness waits for newly created editor targets: the old targets can
+remain visible while discovery awaits the worker, so existence alone raced the
+replacement editor. The refusal check requires the specific ink-boundary error.
+No Windows runtime result is claimed for this increment.

@@ -163,6 +163,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
     let mut vertical_bounds = [0_f64; 2];
+    let mut horizontal_overhangs = Box::new([[0_f64; 2]; 256]);
     for (&code, &ch) in &codes {
         // Identity-H and an explicit Identity CIDToGIDMap make cmap irrelevant.
         let glyph = GlyphId(code);
@@ -176,13 +177,19 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         }
         match super::outlines::bounds(&face, glyph) {
             Some([left, bottom, right, top])
-                if left * unit >= 0.
-                    && right * unit <= width
+                // Bound admitted overhang to a quarter em on either side.
+                // Actual run/candidate placement is checked separately.
+                if left * unit >= -250.
+                    && right * unit <= width + 250.
                     && bottom * unit >= -250.
                     && top * unit <= 1000. =>
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);
                 vertical_bounds[1] = vertical_bounds[1].max(top * unit);
+                horizontal_overhangs[ch as usize] = [
+                    (left * unit).min(0.),
+                    (right * unit - width).max(0.),
+                ];
             }
             None if ch == b' ' && super::empty_glyph(&face, glyph) == Some(true) => {}
             _ => continue,
@@ -192,6 +199,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     Ok(Metrics {
         vertical_bounds: Some(vertical_bounds),
         widths: result,
+        horizontal_overhangs: Some(horizontal_overhangs),
         codes: Some(Codes::Double(codes)),
     })
 }

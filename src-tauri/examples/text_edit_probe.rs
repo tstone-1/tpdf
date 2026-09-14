@@ -93,6 +93,7 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut latin1 = false;
     let mut cid_latin1 = false;
+    let mut overhang = false;
     let mut wrapped = false;
     let mut spacers = false;
     let mut page = 0;
@@ -101,6 +102,8 @@ fn run() -> Result<(), String> {
             page = index.parse::<u32>().map_err(|_| "invalid page index")?;
         } else if option == "--latin1" {
             latin1 = true;
+        } else if option == "--overhang" {
+            overhang = true;
         } else if option == "--cid-latin1" {
             cid_latin1 = true;
         } else if option == "--wrapped" {
@@ -109,11 +112,11 @@ fn run() -> Result<(), String> {
             spacers = true;
         } else {
             return Err(
-                "expected --latin1, --cid-latin1, --wrapped, --spacers or --page=N after the fixture path".into(),
+                "expected --latin1, --cid-latin1, --overhang, --wrapped, --spacers or --page=N after the fixture path".into(),
             );
         }
     }
-    if [latin1, cid_latin1, wrapped, spacers]
+    if [latin1, cid_latin1, overhang, wrapped, spacers]
         .into_iter()
         .filter(|v| *v)
         .count()
@@ -121,14 +124,16 @@ fn run() -> Result<(), String> {
     {
         return Err("choose one fixture text variant".into());
     }
-    let original = if cid_latin1 {
+    let original = if cid_latin1 || overhang {
         "SYNTHETIC ÄÖÜ äöü ß"
     } else if latin1 {
         "SYNTHETIC ÄÖÜ ß"
     } else {
         "SYNTHETIC FIRST"
     };
-    let replacement = if cid_latin1 {
+    let replacement = if overhang {
+        "ÖÄÜ äöü ß"
+    } else if cid_latin1 {
         "ÄÖÜ äöü ß"
     } else if latin1 {
         "GEPRÜFT ß"
@@ -331,10 +336,14 @@ fn run() -> Result<(), String> {
     }
     println!("[PASS] all other pages retain their original runs");
     println!("[PASS] contained discovery and replacement; second text block preserved");
-    for (invalid_text, reason) in [
+    let mut invalid_replacements = vec![
         ("S".repeat(80), "exceed the original"),
         ("\u{03b1}".into(), "Latin-1 only"),
-    ] {
+    ];
+    if overhang {
+        invalid_replacements.push(("ÄÖÜ äöü ß".into(), "replacement ink"));
+    }
+    for (invalid_text, reason) in invalid_replacements {
         plan.text_edits[0].replacement = invalid_text;
         let mut rejected =
             File::create(dir.join("synthetic-refused.pdf")).map_err(|e| e.to_string())?;

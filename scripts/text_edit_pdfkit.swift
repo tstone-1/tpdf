@@ -8,7 +8,7 @@ func fail(_ message: String) -> Never {
     print("[FAIL] \(message)")
     exit(1)
 }
-guard (2...4).contains(CommandLine.arguments.count) else { fail("expected probe output directory [--latin1|--browser|--browser-flow|--browser-latin1] [--page=N]") }
+guard (2...4).contains(CommandLine.arguments.count) else { fail("expected probe output directory [--latin1|--browser|--browser-flow|--browser-latin1|--browser-overhang] [--page=N]") }
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
 var selected = 0
 var variant = ""
@@ -19,16 +19,17 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
 let latin1 = variant == "--latin1"
-let cidLatin1 = variant == "--browser-latin1"
+let overhang = variant == "--browser-overhang"
+let cidLatin1 = variant == "--browser-latin1" || overhang
 let browser = variant == "--browser" || cidLatin1
 let browserFlow = variant == "--browser-flow"
 let original = cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
-let replacement = cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
+let replacement = overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
       let after = PDFDocument(url: root.appendingPathComponent("synthetic-after.pdf")),
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount

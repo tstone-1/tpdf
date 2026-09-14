@@ -22,6 +22,9 @@ have the binary.)
 - Edit existing accented Latin-1 characters in supported composite TrueType fonts,
   including German umlauts and ß. Glyph availability, width, outline and clipping
   checks still apply; no font glyphs are added or substituted.
+- Allow bounded horizontal glyph overhangs in composite fonts, including Arial
+  accents, when the source fits its clip and replacement ink stays inside the
+  original line bounds.
 
 ## [26.9.7] - 2026-09-14
 

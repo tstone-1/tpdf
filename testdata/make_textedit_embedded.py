@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -117,7 +117,7 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             assert "".join(mapping[chr(code)] for code in raw) == expected, "wrong mapped operand"
     # Let the independent parser apply the font's encoding and ToUnicode map.
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
-    expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÄÖÜ äöü ß") if cid_latin1 else ("SYNTHETIC FIRST", "EDITED FIRST")
+    expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
     for page, first in zip(pages, expected_text):
         assert " ".join(page.extract_text().split()) == first + " SYNTHETIC SECOND", "wrong decoded text"
     if float32:

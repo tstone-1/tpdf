@@ -6,6 +6,10 @@ use lopdf::{content::Content, ObjectId, Stream};
 // original table allocations; the component ends before their padding. Zero
 // header bboxes deliberately disagree with the actual component outlines.
 pub(in crate::textedit) fn program() -> Vec<u8> {
+    component_program([('B', 0, 0, 18729), ('D', 0, -100, 16384)])
+}
+
+pub(in crate::textedit) fn component_program(components: [(char, i16, i16, i16); 2]) -> Vec<u8> {
     let mut bytes = include_bytes!("../synthetic.ttf").to_vec();
     let table = |tag: &[u8]| {
         let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
@@ -23,9 +27,9 @@ pub(in crate::textedit) fn program() -> Vec<u8> {
         ttf_parser::head::IndexToLocationFormat::Short
     );
     let a = face.glyph_index('A').unwrap().0;
-    let ids = [('B', 0_i16, 18729_i16), ('D', -100, 16384)]
-        .map(|(ch, y, scale)| (face.glyph_index(ch).unwrap().0 as usize, y, scale));
-    for (id, y, scale) in ids {
+    let ids =
+        components.map(|(ch, x, y, scale)| (face.glyph_index(ch).unwrap().0 as usize, x, y, scale));
+    for (id, x, y, scale) in ids {
         let start = glyf
             + usize::from(u16::from_be_bytes(
                 bytes[loca + id * 2..loca + id * 2 + 2].try_into().unwrap(),
@@ -37,7 +41,7 @@ pub(in crate::textedit) fn program() -> Vec<u8> {
                     .unwrap(),
             )) * 2;
         // Composite, false bbox, word XY arguments, independent X/Y scale.
-        let words = [-1_i16, 0, 0, 0, 0, 0x43, a as i16, 0, y, 16384, scale];
+        let words = [-1_i16, 0, 0, 0, 0, 0x43, a as i16, x, y, 16384, scale];
         let replacement: Vec<_> = words.iter().flat_map(|n| n.to_be_bytes()).collect();
         assert!(replacement.len() <= end - start);
         bytes[start..end].fill(0);
