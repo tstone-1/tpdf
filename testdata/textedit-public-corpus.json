@@ -60,5 +60,23 @@
       "bytes": 120207,
       "pages": 1
     }
+  ],
+  "external_test_files": [
+    {
+      "filename": "w3c-dummy.pdf",
+      "title": "W3C ER PDF test fixture",
+      "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "sha256": "3df79d34abbca99308e79cb94461c1893582604d68329a41fd4bec1885e6adb4",
+      "bytes": 13264,
+      "pages": 1
+    },
+    {
+      "filename": "w3c-headers.pdf",
+      "title": "W3C WCAG PDF headers and footers example",
+      "url": "https://www.w3.org/WAI/WCAG22/working-examples/pdf-headers-footers/headers-footers-oo.pdf",
+      "sha256": "7b1e220d5a3032a96f04bff6dba0b9460d7d1542f8248577ead90a9207a2832e",
+      "bytes": 83394,
+      "pages": 5
+    }
   ]
 }

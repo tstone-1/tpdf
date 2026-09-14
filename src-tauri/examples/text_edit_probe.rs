@@ -9,7 +9,12 @@
 //! Add `--all-pages` to inspect every page (at most 128), including refusals.
 //! It prints JSON without document text and never creates or saves a PDF.
 //! Exit 0 means inspection completed (read `status`); infrastructure errors exit 1.
-//! Creates synthetic PDFs only. The example re-execs as its contained worker.
+//! `--w3c-dummy <source.pdf> <new-output-directory>` edits the unchanged public
+//! W3C test fixture; every other writing mode uses synthetic fixtures.
+//! The example re-execs as its contained worker.
+
+#[path = "../src/probes/text_edit_public.rs"]
+mod public;
 
 use std::{fs::File, path::PathBuf};
 
@@ -110,6 +115,17 @@ fn inspect(source: &std::path::Path, all_pages: bool) -> Result<(), String> {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--w3c-dummy") {
+        if args.len() != 3 {
+            return Err(
+                "usage: text-edit-probe --w3c-dummy <source.pdf> <new-output-directory>".into(),
+            );
+        }
+        return public::run(
+            std::path::Path::new(&args[1]),
+            std::path::Path::new(&args[2]),
+        );
+    }
     if args.first().is_some_and(|arg| arg == "--inspect") {
         if args.len() != 2 && !(args.len() == 3 && args[2] == "--all-pages") {
             return Err("usage: text-edit-probe --inspect <fixture.pdf> [--all-pages]".into());

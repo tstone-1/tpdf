@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Allow bounded glyph overhangs in simple embedded TrueType fonts, including
+  symbolic and MacRoman mappings, while keeping replacement ink within the
+  original line and clip.
+
 - Edit existing printable ASCII glyphs in supported embedded CFF/Type1C fonts,
   validating encoding, widths, outlines and embedding permissions while preserving
   the original font program.

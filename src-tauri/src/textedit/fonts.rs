@@ -29,7 +29,7 @@ pub(super) struct Metrics {
     pub(super) vertical_bounds: Option<[f64; 2]>,
     widths: Box<[Option<f64>; 256]>,
     // Measured excursions beyond each advance, in thousandths of an em.
-    // Composite and CFF fonts admit them; other paths retain zero slack.
+    // Embedded fonts admit them; standard Helvetica retains zero slack.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
     // PDF codes to Latin-1. Embedded single-byte maps still admit ASCII only.
     // None retains the WinAnsi/Latin-1 path.
@@ -329,6 +329,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
     let mut vertical_bounds = [0_f64; 2];
+    let mut horizontal_overhangs = Box::new([[0_f64; 2]; 256]);
     // Standard maps share ASCII codes; symbolic maps select the PDF code and
     // its Unicode value separately. WinAnsi's nonbreaking-space/soft-hyphen aliases,
     // extended glyph names and custom ToUnicode maps require separate proof.
@@ -368,17 +369,19 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
             return Err("embedded font widths disagree with its glyph metrics".into());
         }
-        // Keep every offered outline within the editor's existing hit box and
-        // advance. Overhanging/italic glyphs need explicit ink bounds first.
+        // Match the other embedded-font paths: bounded excursions are allowed,
+        // then each source/replacement is checked against its actual ink bounds.
         match outlines::bounds(&face, glyph) {
             Some([left, bottom, right, top])
-                if left * unit >= 0.
-                    && right * unit <= width
+                if left * unit >= -250.
+                    && right * unit <= width + 250.
                     && bottom * unit >= -250.
                     && top * unit <= 1000. =>
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);
                 vertical_bounds[1] = vertical_bounds[1].max(top * unit);
+                horizontal_overhangs[byte as usize] =
+                    [(left * unit).min(0.), (right * unit - width).max(0.)];
             }
             None if byte == b' ' && empty_glyph(&face, glyph) == Some(true) => {}
             _ => continue,
@@ -388,7 +391,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     Ok(Metrics {
         vertical_bounds: Some(vertical_bounds),
         widths: result,
-        horizontal_overhangs: None,
+        horizontal_overhangs: Some(horizontal_overhangs),
         codes: codes.map(Codes::Single),
     })
 }

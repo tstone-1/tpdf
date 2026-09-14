@@ -7813,6 +7813,50 @@ are refused, and their digests remain unchanged.
   template does not make it a suitable whole-page acceptance control for the
   current font policy.
 
-The next acceptance target remains open. Choose a document by its complete
+The next practical-document acceptance target remains open. Choose a document by its complete
 resource and content requirements before adding more grammar support; a first
 refusal alone repeatedly understated the work and the font-policy constraints.
+
+### Simple TrueType overhangs and an unchanged W3C fixture
+
+W3C's public `dummy.pdf` provides a small external acceptance control. Its
+OpenOffice 2.1 output contains a simple symbolic Arial Bold subset; the existing
+legacy-font policy accepts its omitted OS/2 table. The only admission blocker
+was the `f` outline extending about 29.3 units past its PDF advance, measured in
+thousandths of an em. Simple TrueType now carries measured horizontal overhangs
+through the same source-clip and replacement-ink checks used by the composite
+and CFF paths, with the same quarter-em bounds. The metrics are indexed by
+decoded characters, not symbolic PDF byte values.
+
+The unchanged download now exposes its six text fragments. The worker and native
+application both replace the final `le` with `ll`, changing `Dummy PDF file` to
+`Dummy PDF fill`. No source repair, font substitution or normalization is used
+to gain admission. The five preceding fragments and every font byte are preserved.
+URLs and digests for this file and the still-refused five-page W3C headers/footers
+example are recorded under `external_test_files` in the public-corpus manifest.
+These are external test fixtures, separate from the seven practical documents
+whose 48 pages remain the outstanding compatibility sample.
+
+```sh
+cargo build --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe
+src-tauri/target/debug/examples/text-edit-probe --w3c-dummy scratch/textedit-target/w3c-dummy.pdf scratch/textedit-target/worker
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-target/worker/synthetic-before.pdf scratch/textedit-target/worker/synthetic-after.pdf --w3c-dummy
+swift scripts/text_edit_pdfkit.swift scratch/textedit-target/worker --w3c-dummy
+```
+
+Download the manifest's `external_test_files` with the earlier digest-checked
+recipe. The probe requires a new output directory and refuses to overwrite a
+previous result. Its `synthetic-before/after.pdf` output names follow the existing
+readback tools; in this mode the before file is a byte-for-byte downloaded copy.
+Use `tabs_check.py --phase textedit-w3c --saved-copy <path>` with the checks
+application and the original download for the native workflow.
+
+Verified on macOS: 138 focused Rust tests, all 15 native checks on the W3C file,
+and the existing 15-check synthetic workflow control pass. Independent pypdf
+readback accepts both saved outputs and refuses an unedited output or altered
+font resources. PDFKit confirms the expected text and 243 changed pixels within
+the final fragment, zero outside, for both saves. Four targeted `simple overhang:`
+mutations are caught by their named tests; the clean Rust control passes 1,437
+tests. The instrumented fuzz run executes 26,509 inputs in 21 seconds without a
+finding, at 87 MiB peak RSS (`--sanitizer=none` on macOS). Windows verification of
+this increment remains pending.

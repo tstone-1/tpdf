@@ -133,17 +133,19 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       break;
     }
     case "textedit":
+    case "textedit-w3c":
     case "textedit-multipage":
     case "textedit-wrapped":
     case "textedit-overhang":
     case "textedit-cid-latin1":
     case "textedit-latin1": {
       const overhang = phase === "textedit-overhang";
+      const w3c = phase === "textedit-w3c";
       const cidLatin1 = phase === "textedit-cid-latin1" || overhang;
       const wrapped = phase === "textedit-wrapped";
       const page = phase === "textedit-multipage" || wrapped ? 1 : 0;
-      const original = cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const original = w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
@@ -157,24 +159,25 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       }
       const originalTab = host.tabs().find((tab) => tab.path === first)!;
       const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
+      const target = () => document.querySelectorAll<HTMLButtonElement>(".text-edit-run")[w3c ? 5 : 0];
       const start = async () => {
-        const previous = document.querySelector(".text-edit-run");
+        const previous = target();
         host.run("edit.editText");
         // Discovery replaces the editor asynchronously. An old target can still
         // be visible while the command waits for the worker's fresh reply.
         if (!await settle(() => {
-          const target = document.querySelector<HTMLButtonElement>(".text-edit-run");
-          return !!target && target !== previous && !target.disabled;
+          const current = target();
+          return !!current && current !== previous && !current.disabled;
         }, SETTLE_MS)) throw new Error("fresh editable text targets did not appear");
-        document.querySelector<HTMLButtonElement>(".text-edit-run")!.click();
+        target()!.click();
         if (!await settle(() => !!field() && document.activeElement === field(), 3000)) throw new Error("text input did not receive focus");
       };
       const read = async (index = page) => String.fromCodePoint(...(await call("page_text", { doc: host.edits()!.doc, page: filePage(index), crop: null })).codes);
       if (page === 1) check("both source pages have their original text", (await read(0)).includes(original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
-      const hit = document.querySelector<HTMLElement>(".text-edit-run")!.getBoundingClientRect();
-      check("the text target is visible and has area", hit.width > 50 && hit.height > 5 && hit.top >= 0);
+      const hit = target()!.getBoundingClientRect();
+      check("the text target is visible and has area", hit.width > (w3c ? 5 : 50) && hit.height > 5 && hit.top >= 0);
       field()!.value = replacement; field()!.dispatchEvent(new Event("input", { bubbles: true }));
       // No Apply: switching tabs must drain the draft into its original document.
       await host.open(second); await host.idle();
@@ -188,7 +191,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
         if (!canvas || !context) throw new Error("text check needs a readable composited surface");
-        const a = viewer.screenPoint(page, 35, 40), b = viewer.screenPoint(page, 250, 70), dpr = devicePixelRatio;
+        const a = viewer.screenPoint(page, w3c ? 160 : 35, w3c ? 68 : 40), b = viewer.screenPoint(page, w3c ? 190 : 250, w3c ? 90 : 70), dpr = devicePixelRatio;
         const left = Math.round(a.x*dpr), top = Math.round(a.y*dpr);
         const width = Math.round((b.x-a.x)*dpr), height = Math.round((b.y-a.y)*dpr);
         if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error("text pixel sample is off screen");
@@ -206,7 +209,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
       check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
       const edited = await read();
-      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes("SYNTHETIC SECOND"));
+      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
       const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(page), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
       check("unsaved search finds the replacement", matches.matches.length === 1);
       host.run("edit.undo"); await host.idle();
@@ -220,8 +223,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();
       check("redo restores exactly the edited pixels", redoPixels.length === editedPixels.length && redoPixels.every((value, index) => value === editedPixels[index]));
-      // S occurs in the source line, including fonts subset by external producers.
-      await start(); field()!.value = "S".repeat(80);
+      // Use a source glyph: S in synthetic lines, l in the W3C subset.
+      await start(); field()!.value = (w3c ? "l" : "S").repeat(80);
       document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
       let refused = false; try { await host.idle(); } catch { refused = true; }
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
