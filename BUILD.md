@@ -8202,3 +8202,41 @@ position; there are no images or soft masks. Word spacing ranges from -0.125 to
 0.01. External graphics state, stroke-state operators and custom Myriad CFF
 mappings (including ligatures and curly quotes) still prevent admission. This
 increment does not increase the practical corpus's editable-page count.
+
+
+### Print graphics state during text editing
+
+The editor preserves boolean `OP`, `op` and `SA`, integer `OPM` 0/1,
+`SMask /None` and `AIS false` (ISO 32000-1, Table 58). It keeps the entire
+ExtGState dictionary and every `gs`/`q`/`Q` operand unchanged, including an omitted
+`op`: `OP` sets both overprint parameters when `op` is absent. These print settings
+are retained, not simulated. Nondefault alpha sources, active soft masks, malformed
+entries, transparency, transfer functions and unknown state remain refused.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py <source.pdf> --ranges --spacing -1 --word-spacing 1 --word-code space --print-state --intent Perceptual --image
+uv run scripts/tabs_check.py <checks-binary> <source.pdf> --phase textedit --saved-copy <saved.pdf>
+uv run --with pypdf testdata/make_textedit_embedded.py --check <source.pdf> <saved.pdf>
+swift scripts/text_edit_pdfkit.swift <readback-directory> --image
+```
+
+The generator places opposing overprint states around a graphics-state save;
+word/character spacing, an intent and an opaque image exercise preservation
+together. The readback directory uses `synthetic-before.pdf` and
+`synthetic-after.pdf`. On macOS, 2026-09-14: 166 focused tests, all 15 native
+workflow checks, and independent pypdf/PDFKit readback pass. Both worker and
+native saves change 1,115 pixels inside the target and zero outside, including
+18,816 unchanged painted image pixels. Controls changing `OP`, `op` or `SA` in
+a saved resource are each rejected by the independent reader. This measures
+saved settings and screen rendering, not a physical overprinting press.
+Five targeted mutations are caught; the clean Rust control passes 1,465 tests.
+The new `editable-print-state` seed reaches discovery; the seeded fuzz run
+completes 25,385 executions in 21 seconds with 89 MiB peak RSS and no finding
+(`--sanitizer=none` on macOS). Clippy, formatting, mutation anchors, notices and
+the normal-bundle check pass; normal assets are restored with zero harness code.
+
+The unchanged passport guide retains its manifest SHA-256 and all 16 pages now
+reach `unsupported embedded CFF font`, past the initial external-state refusal.
+This does not establish that later states are supported or make any page editable;
+page 16 remains the next practical target. Windows verification of this increment
+remains outstanding.

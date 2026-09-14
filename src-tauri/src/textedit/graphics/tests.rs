@@ -327,3 +327,131 @@ fn textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions(
         assert!(textedit::scan(&doc, 0).is_err(), "{setter}");
     }
 }
+
+#[test]
+fn textedit_print_graphics_state_preserves_flags_resources_and_scoped_operators() {
+    // Both overprint modes and stroke-adjustment values; OP alone also sets op.
+    for (overprint, stroke_adjust, mode) in [(false, false, 0), (true, true, 1)] {
+        for fill in [None, Some(false), Some(true)] {
+            let mut state = dictionary! {
+                "Type" => "ExtGState", "BM" => "Normal", "ca" => 1, "CA" => 1,
+                "OP" => overprint, "OPM" => mode, "SA" => stroke_adjust,
+                "SMask" => "None", "AIS" => false,
+            };
+            if let Some(fill) = fill {
+                state.set("op", fill);
+            }
+            let mut doc = fixture(state.into(), "/G3 gs q BT /F1 12 Tf /G3 gs 40 180 Td (FIRST) Tj ET Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+            let page = crate::pagetree::ordered_pages(&doc)[0];
+            let objects = doc.objects.clone();
+            let before = textedit::scan(&doc, 0).unwrap();
+            let old = Content::decode_strict(&doc.get_page_content(page)).unwrap();
+            let update = Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            };
+            textedit::write(&mut doc, std::slice::from_ref(&update)).unwrap();
+            let after = textedit::scan(&doc, 0).unwrap();
+            assert_eq!(after.runs[0].text, "IN");
+            assert_eq!(after.runs[0].matrix, before.runs[0].matrix);
+            assert_eq!(after.runs[1], before.runs[1]);
+            let new = Content::decode_strict(&doc.get_page_content(page)).unwrap();
+            assert_eq!(new.operations.len(), old.operations.len());
+            for (index, (old, new)) in old.operations.iter().zip(&new.operations).enumerate() {
+                assert_eq!(old.operator, new.operator);
+                if index != update.operator as usize {
+                    assert_eq!(old.operands, new.operands);
+                }
+            }
+            // The only original object changed by a rewrite is the page's
+            // Contents reference. In particular OP/op presence stays exact.
+            for (id, value) in objects {
+                if id != page {
+                    assert_eq!(doc.objects[&id], value);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically() {
+    let cases = [
+        (
+            "OP",
+            vec![
+                0.into(),
+                1.into(),
+                Object::string_literal("true"),
+                Object::Null,
+            ],
+        ),
+        (
+            "op",
+            vec![0.into(), "True".into(), Object::Reference((9999, 0))],
+        ),
+        (
+            "SA",
+            vec![0.into(), 1.into(), Object::Null, vec![true.into()].into()],
+        ),
+        (
+            "OPM",
+            vec![
+                (-1).into(),
+                2.into(),
+                0.0.into(),
+                1.0.into(),
+                true.into(),
+                "One".into(),
+            ],
+        ),
+        (
+            "AIS",
+            vec![true.into(), 0.into(), Object::Null, "False".into()],
+        ),
+        (
+            "SMask",
+            vec![
+                Object::Null,
+                "Alpha".into(),
+                Object::string_literal("None"),
+                dictionary! { "S" => "Alpha" }.into(),
+                Object::Reference((9999, 0)),
+            ],
+        ),
+    ];
+    for (key, values) in cases {
+        for value in values {
+            let mut state = dictionary! { "ca" => 1, "CA" => 1, "BM" => "Normal" };
+            state.set(key, value);
+            // A later Q restores the valid initial state but cannot excuse
+            // an unsupported entry earlier in the stream.
+            let mut doc = fixture(
+                state.into(),
+                "q /G3 gs Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET",
+            );
+            let objects = doc.objects.clone();
+            assert!(
+                textedit::scan(&doc, 0)
+                    .unwrap_err()
+                    .contains("unsupported external text graphics state"),
+                "{key}"
+            );
+            assert!(textedit::write(
+                &mut doc,
+                &[Change {
+                    page: 0,
+                    revision: vec![],
+                    operator: 5,
+                    original: "FIRST".into(),
+                    replacement: "IN".into()
+                }]
+            )
+            .is_err());
+            assert_eq!(doc.objects, objects, "{key}");
+        }
+    }
+}

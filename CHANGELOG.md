@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Preserve overprint and stroke-adjustment settings during in-place text editing;
+  accept explicit no-mask defaults while continuing to refuse active masks.
+
 - Support bounded word spacing during in-place text editing, preserving original
   font-code semantics and refusing replacements that exceed the source layout.
 
