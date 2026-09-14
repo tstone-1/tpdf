@@ -1,6 +1,7 @@
 //! Run `cargo run --example text-edit-probe -- <scratch-directory> [fixture.pdf]`.
 //! The optional fixture must contain the same two synthetic lines and page geometry.
 //! Add `--latin1` for the accented variant or `--page=N` to edit another page.
+//! `--cid-latin1` uses only the accented glyphs present in the browser fixture.
 //! Add `--wrapped` for the naturally wrapped fixture with literal source spaces.
 //! Add `--spacers` when each line is followed by a separate single-space show.
 //! Every other page must remain unchanged; page indices are zero based.
@@ -91,6 +92,7 @@ fn run() -> Result<(), String> {
         .ok_or("usage: text-edit-probe <scratch-directory>")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut latin1 = false;
+    let mut cid_latin1 = false;
     let mut wrapped = false;
     let mut spacers = false;
     let mut page = 0;
@@ -99,17 +101,19 @@ fn run() -> Result<(), String> {
             page = index.parse::<u32>().map_err(|_| "invalid page index")?;
         } else if option == "--latin1" {
             latin1 = true;
+        } else if option == "--cid-latin1" {
+            cid_latin1 = true;
         } else if option == "--wrapped" {
             wrapped = true;
         } else if option == "--spacers" {
             spacers = true;
         } else {
             return Err(
-                "expected --latin1, --wrapped, --spacers or --page=N after the fixture path".into(),
+                "expected --latin1, --cid-latin1, --wrapped, --spacers or --page=N after the fixture path".into(),
             );
         }
     }
-    if [latin1, wrapped, spacers]
+    if [latin1, cid_latin1, wrapped, spacers]
         .into_iter()
         .filter(|v| *v)
         .count()
@@ -117,12 +121,16 @@ fn run() -> Result<(), String> {
     {
         return Err("choose one fixture text variant".into());
     }
-    let original = if latin1 {
+    let original = if cid_latin1 {
+        "SYNTHETIC ÄÖÜ äöü ß"
+    } else if latin1 {
         "SYNTHETIC ÄÖÜ ß"
     } else {
         "SYNTHETIC FIRST"
     };
-    let replacement = if latin1 {
+    let replacement = if cid_latin1 {
+        "ÄÖÜ äöü ß"
+    } else if latin1 {
         "GEPRÜFT ß"
     } else {
         "EDITED FIRST"

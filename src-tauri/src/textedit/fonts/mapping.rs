@@ -92,7 +92,7 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
 }
 
 // Identity-H codes and UTF-16BE targets are exactly two bytes. A range expands
-// only into unique printable ASCII, so at most 95 entries can be retained.
+// only into unique printable Latin-1, so at most 191 entries can be retained.
 pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u16, u8>, String> {
     let invalid = || "unsupported or ambiguous two-byte character map".to_string();
     let word = |object: &Object| -> Result<u16, String> {
@@ -122,9 +122,10 @@ pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u1
             let first = word(&entry[0])?;
             let last = if stride == 3 { word(&entry[1])? } else { first };
             let target = word(&entry[stride - 1])?;
+            let last_target = u32::from(target) + u32::from(last.saturating_sub(first));
             if last < first
-                || !(32..=126).contains(&target)
-                || u32::from(target) + u32::from(last - first) > 126
+                || last_target > 255
+                || !(target..=last_target as u16).all(|ch| super::super::text_byte(ch as u8))
             {
                 return Err(invalid());
             }

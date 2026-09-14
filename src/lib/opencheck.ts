@@ -135,11 +135,13 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit":
     case "textedit-multipage":
     case "textedit-wrapped":
+    case "textedit-cid-latin1":
     case "textedit-latin1": {
+      const cidLatin1 = phase === "textedit-cid-latin1";
       const wrapped = phase === "textedit-wrapped";
       const page = phase === "textedit-multipage" || wrapped ? 1 : 0;
-      const original = phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const original = cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");

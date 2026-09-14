@@ -26,7 +26,8 @@ pub(super) struct Metrics {
     // Any width-fitting replacement is therefore covered by the same envelope.
     pub(super) vertical_bounds: Option<[f64; 2]>,
     widths: Box<[Option<f64>; 256]>,
-    // PDF codes to ASCII. None retains the standard encoding path.
+    // PDF codes to Latin-1 (single-byte mapped fonts still admit ASCII only).
+    // None retains the standard encoding path.
     codes: Option<Codes>,
 }
 
