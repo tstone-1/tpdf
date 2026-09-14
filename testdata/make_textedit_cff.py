@@ -24,12 +24,14 @@ from pypdf.generic import (
 
 def program(mode="normal"):
     names = [".notdef"] + [UV2AGL[code] for code in range(32, 127)]
+    if mode == "unicode":
+        names += ["minus", "uni00A0", "quoteleft", "quoteright", "endash", "sterling"]
     chars = {}
     for name in names:
         pen = T2CharStringPen(600, None)
-        if name != "space" or mode == "broken-space":
-            left = -20 if mode == "overhang" and name == "A" else 0
-            right = 333 if name == "space" else 400
+        if name not in ("space", "uni00A0") or mode == "broken-space":
+            left = -20 if (mode == "overhang" and name == "A") or name == "minus" else 0
+            right = 620 if name == "minus" else 333 if name == "space" else 400
             pen.moveTo((left, 0))
             pen.lineTo((left, 700))
             pen.lineTo((right, 700))
@@ -75,7 +77,7 @@ def program(mode="normal"):
     return data
 
 
-def pdf(data, path, *, remap=False, to_unicode=False):
+def pdf(data, path, *, remap=False, to_unicode=False, unicode=False):
     def d(**kwargs):
         return DictionaryObject({NameObject("/" + k): v for k, v in kwargs.items()})
 
@@ -116,20 +118,37 @@ def pdf(data, path, *, remap=False, to_unicode=False):
             Type=NameObject("/Encoding"), BaseEncoding=NameObject("/WinAnsiEncoding"),
             Differences=ArrayObject([NumberObject(32), NameObject("/S"), NumberObject(83), NameObject("/space")]),
         ))
+    original = "SYNTHETIC FIRST"
+    if unicode:
+        original = "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" if to_unicode else "SYNTHETIC\u2013FIRST"
+        codes.update({0x2212: 26, 0xa0: 27, 0x2018: 0x91, 0x2019: 0x92, 0x2013: 0x96, 0xa3: 0xa3})
+        descriptor[NameObject("/FontBBox")] = num([-20, 0, 620, 700])
+        font[NameObject("/FirstChar")] = NumberObject(26)
+        font[NameObject("/LastChar")] = NumberObject(163)
+        font[NameObject("/Widths")] = num([600] * 138)
+        font[NameObject("/Encoding")] = writer._add_object(d(
+            BaseEncoding=NameObject("/WinAnsiEncoding"),
+            Differences=ArrayObject([NumberObject(26), NameObject("/minus")] + ([NameObject("/uni00A0")] if to_unicode else [])),
+        ))
     if to_unicode:
         mapping = DecodedStreamObject()
-        entries = "".join(f"<{code:02X}> <{ch:04X}>\n" for ch, code in sorted(codes.items(), key=lambda item: item[1]))
+        items = sorted(codes.items(), key=lambda item: item[1])
+        blocks = []
+        for offset in range(0, len(items), 100):
+            batch = items[offset:offset + 100]
+            entries = "".join(f"<{code:02X}> <{ch:04X}>\n" for ch, code in batch)
+            blocks.append(f"{len(batch)} beginbfchar\n" + entries + "endbfchar ")
         mapping.set_data(("/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
             "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
             "/CMapName /Adobe-Identity-UCS def /CMapType 2 def "
             "1 begincodespacerange <00> <FF> endcodespacerange "
-            "95 beginbfchar\n" + entries + "endbfchar endcmap CMapName currentdict /CMap defineresource pop end end").encode())
+            + "".join(blocks) + "endcmap CMapName currentdict /CMap defineresource pop end end").encode())
         font[NameObject("/ToUnicode")] = writer._add_object(mapping)
     page[NameObject("/Resources")] = d(Font=d(F1=writer._add_object(font)))
     content = DecodedStreamObject()
-    if remap or to_unicode:
-        first, second = (bytes(codes[code] for code in text).hex() for text in
-                         [b"SYNTHETIC FIRST", b"SYNTHETIC SECOND"])
+    if remap or to_unicode or unicode:
+        first, second = (bytes(codes[ord(ch)] for ch in text).hex() for text in
+                         [original, "SYNTHETIC SECOND"])
         content.set_data(f"1 Tw BT /F1 12 Tf 40 180 Td <{first}> Tj ET BT /F1 12 Tf 40 140 Td <{second}> Tj ET".encode())
     else:
         content.set_data(
@@ -139,7 +158,7 @@ def pdf(data, path, *, remap=False, to_unicode=False):
     writer.write(path)
     assert (
         " ".join(PdfReader(path).pages[0].extract_text().split())
-        == "SYNTHETIC FIRST SYNTHETIC SECOND"
+        == " ".join((original + " SYNTHETIC SECOND").split())
     )
 
 
@@ -161,6 +180,7 @@ def main():
         "unknown-postscript",
         "expert-encoding",
         "overhang",
+        "unicode",
     ]
     for mode in modes:
         data = program(mode)
@@ -175,6 +195,8 @@ def main():
     pdf(program(), args.output / "synthetic.pdf")
     pdf(program(), args.output / "remapped.pdf", remap=True)
     pdf(program(), args.output / "remapped-unicode.pdf", remap=True, to_unicode=True)
+    pdf(program("unicode"), args.output / "unicode.pdf", unicode=True)
+    pdf(program("unicode"), args.output / "unicode-mapped.pdf", unicode=True, to_unicode=True)
     print("[PASS] generated original CFF programs and independently decoded the PDF")
 
 

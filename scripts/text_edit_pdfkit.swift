@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--dash", "--image"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--dash", "--cff-unicode", "--image"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -32,8 +32,8 @@ let defaultEncoding = variant == "--default-encoding"
 let w3c = variant == "--w3c-dummy"
 let agenda = variant == "--agenda"
 let dash = variant == "--dash"
-let original = dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
-let replacement = dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
+let original = variant == "--cff-unicode" ? "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£" : dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
+let replacement = variant == "--cff-unicode" ? "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}" : dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
       let after = PDFDocument(url: root.appendingPathComponent("synthetic-after.pdf")),
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount
@@ -68,7 +68,7 @@ for (name, document) in [("before", before), ("after", after)] {
         let expected = name == "after" && pageIndex == selected ? sourceText.replacingOccurrences(of: oldText, with: newText) : sourceText
         guard page.string == expected else { fail("agenda text or adjacent content changed") }
     } else {
-        guard page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == first + (w3c ? "" : " SYNTHETIC SECOND")
+        guard page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == first.replacingOccurrences(of: "\u{00a0}", with: " ") + (w3c ? "" : " SYNTHETIC SECOND")
         else { fail("PDFKit text readback disagrees for \(name)") }
     }
     guard let old = before.page(at: pageIndex),

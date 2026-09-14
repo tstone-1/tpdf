@@ -31,7 +31,7 @@ pub(super) struct Metrics {
     // Measured excursions beyond each advance, in thousandths of an em.
     // Embedded fonts admit them; standard Helvetica retains zero slack.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
-    // PDF codes to metric slots. Embedded single-byte maps admit ASCII and en dash.
+    // PDF codes to metric slots. Each font path validates its offered repertoire.
     // None retains the WinAnsi/Latin-1 path.
     codes: Option<Codes>,
 }

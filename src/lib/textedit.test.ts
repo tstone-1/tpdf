@@ -75,10 +75,10 @@ describe("existing text editing", () => {
   it("sends en dashes unchanged and keeps controls and other punctuation refused", async () => {
     const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
     const { editor, field } = mount(write);
-    field.value = "A\u2013B"; editor.commit(); await editor.settle();
-    expect(write).toHaveBeenCalledExactlyOnceWith({ ...change, replacement: "A\u2013B" });
+    field.value = "A\u2013\u2018\u2019\u2212B"; editor.commit(); await editor.settle();
+    expect(write).toHaveBeenCalledExactlyOnceWith({ ...change, replacement: "A\u2013\u2018\u2019\u2212B" });
     expect(replacementError("\u2013".repeat(4096))).toBeNull();
-    for (const value of ["\u2013".repeat(4097), "\u0096", "\u2012", "\u2014", "\u2019"])
+    for (const value of ["\u2013".repeat(4097), "\u0096", "\u2012", "\u2014", "\u201c", "\u0091", "\u0080"])
       expect(replacementError(value)).not.toBeNull();
   });
   it("keeps invalid and refused drafts from passing the save drain", async () => {

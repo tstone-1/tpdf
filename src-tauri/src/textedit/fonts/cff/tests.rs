@@ -359,3 +359,191 @@ fn textedit_cff_remapped_metrics_follow_glyphs_at_both_code_boundaries() {
             .contains("widths disagree"));
     }
 }
+
+fn unicode_fixture() -> (Document, lopdf::ObjectId) {
+    let (mut doc, font, _, _) = fixture(include_bytes!("fixtures/unicode.cff"));
+    let f = doc.get_dictionary_mut(font).unwrap();
+    f.set("FirstChar", 26);
+    f.set("LastChar", 163);
+    f.set("Widths", vec![Object::Integer(600); 138]);
+    f.set(
+        "Encoding",
+        dictionary! { "BaseEncoding" => "WinAnsiEncoding",
+        "Differences" => vec![26.into(), "minus".into(), "uni00A0".into()] },
+    );
+    let mapping = doc.add_object(unicode("<1a> <2212> <1b> <00a0> <91> <2018> <92> <2019> <96> <2013> <a3> <00a3> <20> <0020> <41> <0041> <42> <0042>", 9));
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .set("ToUnicode", mapping);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"1 Tw BT /F1 12 Tf 40 180 Td <1a1b919296a3> Tj ET BT /F1 12 Tf 40 140 Td (AB) Tj ET"
+            .to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    (doc, font)
+}
+
+#[test]
+fn textedit_cff_unicode_roundtrip_preserves_codes_ink_and_resources() {
+    let (mut doc, font) = unicode_fixture();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let original = "\u{2212}\u{a0}\u{2018}\u{2019}\u{2013}£";
+    assert_eq!(
+        metrics.decode(&[26, 27, 145, 146, 150, 163]).unwrap(),
+        original
+    );
+    assert_eq!(
+        metrics.encode(original).unwrap(),
+        [26, 27, 145, 146, 150, 163]
+    );
+    assert_eq!(
+        metrics.horizontal_bounds("\u{2212}", 1000.).unwrap(),
+        [-20., 620.]
+    );
+    assert_eq!(
+        metrics.horizontal_bounds("\u{a0}", 1000.).unwrap(),
+        [0., 600.]
+    );
+    assert_eq!(
+        metrics.spaced_layout(" \u{a0}", 1000., 1., 2.).unwrap().0,
+        1204.
+    );
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(before.runs[0].text, original);
+    assert!((before.runs[0].advance - 43.2).abs() < 0.00001); // NBSP is not byte 32.
+    let objects = doc.objects.clone();
+    let change = Change {
+        page: 0,
+        revision: before.revision,
+        operator: before.runs[0].operator,
+        original: original.into(),
+        replacement: "£\u{2013}\u{2019}\u{a0}\u{2212}".into(),
+    };
+    textedit::write(&mut doc, std::slice::from_ref(&change)).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, change.replacement);
+    assert_eq!(after.runs[1], before.runs[1]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let ops = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    assert_eq!(
+        ops.operations[change.operator as usize].operands[0]
+            .as_str()
+            .unwrap(),
+        [163, 150, 146, 27, 26]
+    );
+    for (id, object) in objects {
+        if id != page {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+}
+
+#[test]
+fn textedit_cff_unicode_requires_exact_glyph_names_widths_and_maps() {
+    let (mut doc, font) = unicode_fixture();
+    let descriptor = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"FontDescriptor")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let program = doc
+        .get_dictionary(descriptor)
+        .unwrap()
+        .get(b"FontFile3")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content = NORMAL.to_vec();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert!(metrics.encode("\u{a0}").is_err()); // Existing space is not a substitute.
+    for replacement in ["space", "uni00a0", "uni2212", "nonbreakingspace", "f_i"] {
+        let (mut doc, font) = unicode_fixture();
+        doc.get_dictionary_mut(font).unwrap().set("Encoding", dictionary! {
+            "BaseEncoding" => "WinAnsiEncoding",
+            "Differences" => vec![26.into(), "minus".into(), 27.into(), Object::Name(replacement.as_bytes().to_vec())]
+        });
+        assert!(
+            embedded(&doc, doc.get_dictionary(font).unwrap()).is_err(),
+            "{replacement}"
+        );
+    }
+    let (mut doc, font) = unicode_fixture();
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"Widths")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()[0] = 599.into();
+    // One font-unit tolerance is intentional; the next unit must be refused.
+    assert!(embedded(&doc, doc.get_dictionary(font).unwrap()).is_ok());
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"Widths")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()[0] = 598.into();
+    assert!(embedded(&doc, doc.get_dictionary(font).unwrap())
+        .err()
+        .unwrap()
+        .contains("widths disagree"));
+}
+
+#[test]
+fn textedit_cff_unicode_missing_maps_glyphs_and_unmapped_fonts_never_guess() {
+    let (mut doc, font) = unicode_fixture();
+    doc.get_dictionary_mut(font).unwrap().remove(b"ToUnicode");
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    for (text, code) in [
+        ("\u{2212}", 26),
+        ("\u{2018}", 145),
+        ("\u{2019}", 146),
+        ("\u{2013}", 150),
+        ("£", 163),
+    ] {
+        assert_eq!(metrics.encode(text).unwrap(), [code]);
+        assert_eq!(metrics.decode(&[code]).unwrap(), text);
+    }
+    assert!(metrics.encode("\u{a0}").is_err());
+    assert!(metrics.decode(&[27]).is_err());
+    let program = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"FontDescriptor")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let program = doc
+        .get_dictionary(program)
+        .unwrap()
+        .get(b"FontFile3")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content = NORMAL.to_vec();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    for text in [
+        "\u{2212}", "\u{a0}", "\u{2018}", "\u{2019}", "\u{2013}", "£",
+    ] {
+        assert!(metrics.encode(text).is_err());
+    }
+    for text in ["\u{2212}", "\u{2018}", "\u{2019}"] {
+        assert!(super::super::Metrics::helvetica().encode(text).is_err());
+        assert!(super::super::Metrics::helvetica_default()
+            .encode(text)
+            .is_err());
+    }
+}

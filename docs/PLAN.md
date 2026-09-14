@@ -13712,8 +13712,13 @@ and glyph aliases remain refused. The unchanged guide now reaches the narrower
 `unsupported CFF glyph name` refusal on all 16 pages; no practical page is newly
 editable.
 
-Next: non-ASCII CFF glyph names, including minus, nonbreaking space and curly
-quotes, followed by ligature mappings. Ligatures require mapping PDF glyphs to character sequences without
+Non-ASCII CFF glyphs now pass worker and native save/readback: minus, nonbreaking
+space, curly single quotes, en dash and sterling (2026-09-14; `BUILD.md`,
+*Non-ASCII CFF glyphs*). Exact glyph names and Unicode targets must agree;
+nonbreaking space requires ToUnicode. The guide remains refused at its ligature
+names, with the same first-refusal message and no additional editable pages.
+
+Next: CFF ligature mappings. These require mapping PDF glyphs to character sequences without
 applying character spacing once per expanded Unicode character. Stroke-state
 operators remain a later blocker. Do not bypass unsupported states or normalize
 the source to admit it.

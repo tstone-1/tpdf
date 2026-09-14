@@ -196,11 +196,11 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let mut codes = Box::new([None; 256]);
     let mut vertical_bounds = [0_f64; 2];
     let mut overhangs = Box::new([[0_f64; 2]; 256]);
-    for (code, slot) in encoding.iter().enumerate() {
+    for (code, slot) in encoding.slots.iter().enumerate() {
         let Some(slot) = slot.map(usize::from) else {
             continue;
         };
-        let name = &ASCII_NAMES[slot - 32];
+        let name = encoding.names[code];
         if (code as i64) < first || (code as i64) > last {
             continue;
         }
@@ -223,7 +223,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
                 vertical_bounds[1] = vertical_bounds[1].max(top);
                 overhangs[slot] = [left.min(0.), (right - width).max(0.)];
             }
-            Ok(None) if slot == 32 => {}
+            Ok(None) if matches!(slot, 32 | 160) => {}
             _ => continue,
         }
         if result[slot].is_some() {

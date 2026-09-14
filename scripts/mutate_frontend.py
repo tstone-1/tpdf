@@ -79,7 +79,8 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
-    Mutation('text editor: refuse mapped en dash', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013]/', '/[^\\x20-\\x7e\\xa0-\\xff]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
+    Mutation('text editor: refuse mapped en dash', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013\\u2018\\u2019\\u2212]/', '/[^\\x20-\\x7e\\xa0-\\xff\\u2018\\u2019\\u2212]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
+    Mutation('text editor: refuse mapped CFF punctuation', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013\\u2018\\u2019\\u2212]/', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
     Mutation("text editor: undo invalidates content", "src/lib/textedit.ts", "...old.keys(), ...next.keys()", "...next.keys()", "invalidates added, changed and undone pages without invalidating reordered changes"),
     Mutation("text editor: failed draft blocks save", "src/lib/textedit.ts", "if (this.failure) throw this.failure;", "if (false) throw this.failure;", "keeps invalid and refused drafts from passing the save drain"),
     Mutation("text editor: original source address", "src/lib/textedit.ts", "original: run.text, replacement", "original: this.accepted, replacement", "undo refreshes a clean input and restoration keeps the original source address"),

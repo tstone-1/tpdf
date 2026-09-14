@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -131,6 +131,9 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         # extract_text() deliberately falls back to identity for unmapped codes.
         # Read pypdf's parsed map explicitly so fallback cannot pass this check.
         from pypdf._cmap import get_encoding
+        if cff_unicode:
+            expected_operands = [(old, "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£"),
+                                 (new, "EDITED £\u2013\u2019\u2018\u00a0\u2212")]
         encoding, mapping = get_encoding(mapped_font)
         if mapped_font in cff_fonts and "/ToUnicode" not in mapped_font:
             assert isinstance(encoding, dict), "expected explicit CFF glyph encoding"
@@ -145,6 +148,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     # Let the independent parser apply the font's encoding and ToUnicode map.
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
     expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
+    if cff_unicode:
+        expected_text = ("SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£", "EDITED £\u2013\u2019\u2018\u00a0\u2212")
     if dash:
         expected_text = ("SYNTHETIC\u2013FIRST", "EDITED\u2013FIRST")
     if default_encoding:
@@ -164,7 +169,7 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         assert (actual.split() == expected.split() if page_index == 1 else actual == expected), "wrong agenda replacement or adjacent text"
     else:
         for page, first in zip(pages, expected_text):
-            assert " ".join(page.extract_text().split()) == first + ("" if w3c else " SYNTHETIC SECOND"), "wrong decoded text"
+            assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND")).split()), "wrong decoded text"
     if float32:
         print("[PASS] independent parser: only target text operand changed; resources agree at float32 precision with exact stream bytes")
     else:
@@ -246,7 +251,7 @@ def tagged_controls(before, after, page_index=0, wrapped=False):
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
         page, wrapped, float32, default_encoding = 0, False, False, False
-        w3c = dash = agenda = False
+        w3c = dash = agenda = cff_unicode = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -256,6 +261,8 @@ def main():
                 default_encoding = True
             elif option == "--agenda" and sys.argv[1] == "--check":
                 agenda = True
+            elif option == "--cff-unicode" and sys.argv[1] == "--check":
+                cff_unicode = True
             elif option == "--dash" and sys.argv[1] == "--check":
                 dash = True
             elif option == "--w3c-dummy" and sys.argv[1] == "--check":
@@ -263,10 +270,10 @@ def main():
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --dash, --agenda or --w3c-dummy (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --dash, --agenda or --w3c-dummy (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c or dash or agenda:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda)
+        if float32 or default_encoding or w3c or dash or agenda or cff_unicode:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return
