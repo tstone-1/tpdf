@@ -6461,6 +6461,25 @@ means inspection completed; inspect `status` to determine compatibility.
 Infrastructure failures and invalid arguments exit 1. This is discovery evidence,
 not a save/readback check or an inventory of every unsupported construct.
 
+Add `--all-pages` to inspect every page, with a 128-page bound. The reply includes
+`page_count` and one result per page; later refusals and pages with no runs remain
+visible. Worker failure emits no partial report. The original page-zero mode is
+unchanged. `scripts/textedit_survey.py` collects these reports for explicitly chosen
+inputs, verifies their SHA-256 digests before and after inspection, and refuses
+missing, repeated or reordered page results. Existing output paths are refused so
+a failed rerun cannot be confused with a freshly written report.
+
+```sh
+cargo build --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe
+uv run --with pypdf scripts/textedit_survey.py src-tauri/target/debug/examples/text-edit-probe --self-test
+python3 scripts/textedit_survey.py src-tauri/target/debug/examples/text-edit-probe testdata/comments.pdf testdata/inherited.pdf testdata/rotated.pdf --output scratch/textedit-survey.json
+```
+
+The self-test exercises the real contained worker on four pages: editable,
+unsupported font, no text, then editable again. It also checks the 128-page
+boundary, refuses 129 pages without a partial report, preserves source bytes,
+and checks missing files, invalid arguments and incomplete-report controls.
+
 Generate synthetic exports on macOS (LibreOffice is an external producer only,
 not an application dependency):
 
@@ -7646,3 +7665,74 @@ The worker-exit observer passes its live/dead control and reports no surviving
 test workers after enumerating 506 processes. The cached job takes 49 seconds,
 restores normal frontend assets with zero harness code, and leaves both source
 checkouts clean. The temporary task is removed; the isolated build cache is retained.
+
+
+### Public-document text editing baseline
+
+The broader check on 2026-09-14 changes the development priority. A local survey
+of 42 selected synthetic and producer-export PDFs found 72 editable pages out of
+88. All selected Word, LibreOffice, browser and Quartz exports passed discovery.
+The large `text-heavy.pdf` stress fixture exceeded the 128-page inspection bound
+and was explicitly excluded. Those controlled inputs do not establish practical
+compatibility: five unchanged public documents had **zero editable pages out of
+45**, with no worker crash or incomplete inspection. Independent pypdf page counts
+agree with all five worker reports; every source digest is unchanged.
+
+| Public source | Pages | First refusal reported |
+|---|---:|---|
+| HM Passport Office application guidance | 16 | External text graphics state |
+| European Commission consumer conditions factsheet, Lithuania | 6 | Tagged structure |
+| Logitech M185 quick-start guide | 2 | Tagged structure |
+| IRS Form W-9 and instructions | 6 | Tagged structure |
+| Attention Is All You Need, arXiv 1706.03762 | 15 | Unsupported fonts (12), text state/positioning (3) |
+
+The selected sources, URLs, byte counts and SHA-256 digests are recorded in
+`testdata/textedit-public-corpus.json`. PDFs are downloaded into scratch only;
+they are not rewritten to make the editor accept them. This is a small selected
+sample, not a population success rate. Refused means text editing is unavailable,
+not that viewing, annotations or form filling fail. The survey checks discovery;
+it does not claim that arbitrary replacements fit or that saving was verified.
+
+Reproduce the public sample (network access needed only for missing downloads):
+
+```sh
+python3 - <<'PYCODE'
+import hashlib, json, subprocess, urllib.request
+from pathlib import Path
+manifest = json.loads(Path('testdata/textedit-public-corpus.json').read_text())
+root = Path('scratch/textedit-public'); root.mkdir(parents=True, exist_ok=True)
+paths = []
+for entry in manifest['files']:
+    path = root / entry['filename']
+    if not path.exists():
+        with urllib.request.urlopen(entry['url'], timeout=30) as response:
+            data = response.read(16 * 1024 * 1024 + 1)
+        assert len(data) <= 16 * 1024 * 1024 and data.startswith(b'%PDF-')
+        path.write_bytes(data)
+    assert path.stat().st_size == entry['bytes']
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == entry['sha256']
+    paths.append(str(path))
+subprocess.run(['python3', 'scripts/textedit_survey.py',
+    'src-tauri/target/debug/examples/text-edit-probe', *paths,
+    '--output', str(root / 'report.json')], check=True)
+PYCODE
+```
+
+A newer publisher revision fails the digest comparison; record it as a new sample
+instead of treating different bytes as a regression. Two attempted NHS leaflet
+URLs returned HTTP 404 and 403 and were not counted as inspected documents.
+
+The first refusal is not the full blocker list. Independent resource inspection
+finds CFF font programs in the passport, mouse and W-9 documents, Type1 programs
+in the research paper, and unembedded Arial plus tables/figures in the factsheet.
+Relaxing graphics-state or tag checks alone would not demonstrate those documents
+are editable. The next increment should take one unchanged public page through
+discovery, replacement and independent saved-PDF readback, documenting every
+blocking construct first and reproducing it in small synthetic tests. The W-9
+instructions are the proposed bounded case: a conventional document with CFF fonts
+and tagged structure, separate from filling its form fields.
+
+Validation of the survey tool on macOS: its mixed-page/boundary controls pass,
+Clippy for `text-edit-probe` and formatting pass, and the public input page counts
+agree with the independent parser. Windows execution of the new all-pages mode
+remains pending. No production editing rules were relaxed by this increment.

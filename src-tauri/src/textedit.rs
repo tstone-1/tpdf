@@ -1,6 +1,6 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
-//! Supported text uses Helvetica/WinAnsi or a validated embedded TrueType subset, with explicit
+//! Supported text uses Helvetica with WinAnsi/default encoding or a validated TrueType subset, with explicit
 //! positioning between shows. Font/leading setup may precede a text block.
 //! Complete painted rectangles and straight-line strokes are preserved. Other graphics,
 //! custom text state and implicit advances between shows are refused.

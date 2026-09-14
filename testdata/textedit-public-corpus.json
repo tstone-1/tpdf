@@ -1,0 +1,46 @@
+{
+  "retrieved": "2026-09-14",
+  "purpose": "Read-only text-edit discovery on unchanged public PDFs. Copyright remains with the publishers; downloaded PDFs stay outside the tracked tree. This is a small selected sample, not a representative success rate.",
+  "files": [
+    {
+      "filename": "passport-guidance.pdf",
+      "title": "HM Passport Office application guidance",
+      "url": "https://www.gov.uk/government/uploads/system/uploads/attachment_data/file/674893/guidance_for_passport_applications.pdf",
+      "sha256": "0c70c5f7df62185cbd779ab506a4e61ae77abb8ffba1f1a134fdf3c7b56c4f21",
+      "bytes": 876105,
+      "pages": 16
+    },
+    {
+      "filename": "consumer-factsheet.pdf",
+      "title": "European Commission consumer conditions factsheet, Lithuania",
+      "url": "https://commission.europa.eu/document/download/ab9e32a1-bd19-42d6-941e-4ad1be069747_en?filename=ccs_factsheet_lithuania.pdf",
+      "sha256": "cbd18ff8b6fe949a27e11b73e87aa4faab589f66a08c0e727eefe697c877a53b",
+      "bytes": 408497,
+      "pages": 6
+    },
+    {
+      "filename": "mouse-guide.pdf",
+      "title": "Logitech M185 quick-start guide",
+      "url": "https://www.logitech.com/assets/42356/3/m185-quick-start-guide.pdf",
+      "sha256": "8af0f2045f13386aac3d759faa46480e1e3354201549f559d754c403202d56ee",
+      "bytes": 1266860,
+      "pages": 2
+    },
+    {
+      "filename": "w9.pdf",
+      "title": "IRS Form W-9 and instructions",
+      "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
+      "sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
+      "bytes": 140815,
+      "pages": 6
+    },
+    {
+      "filename": "research-paper.pdf",
+      "title": "Attention Is All You Need, arXiv 1706.03762",
+      "url": "https://arxiv.org/pdf/1706.03762",
+      "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+      "bytes": 2215244,
+      "pages": 15
+    }
+  ]
+}

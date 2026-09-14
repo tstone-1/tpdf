@@ -13619,8 +13619,14 @@ Checks are in `BUILD.md`, *Text editing around painted rectangles*. Straight-lin
 dividers and polylines are also verified on both platforms; see *Text editing around
 straight-line strokes*. Helvetica PDFs without an Encoding entry now use the
 validated default mapping, verified on macOS and Windows; see *Text editing with
-default Helvetica encoding*. Wider Unicode, subset extension and paragraph reflow
-remain open.
+default Helvetica encoding*. The broader public-document survey then found zero
+editable pages across five unchanged PDFs (45 pages), despite the selected
+producer exports passing discovery. See `BUILD.md`, *Public-document text editing
+baseline*, and `testdata/textedit-public-corpus.json`. Next: take one public W-9
+instruction page through unchanged-input discovery, replacement and independent
+readback, first inventorying its CFF font and tagged-structure blockers. Further
+synthetic-only grammar additions are a lower priority. Wider Unicode, subset
+extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 
