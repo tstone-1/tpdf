@@ -42,5 +42,23 @@
       "bytes": 2215244,
       "pages": 15
     }
+  ],
+  "followup_files": [
+    {
+      "filename": "wellington-agenda.pdf",
+      "title": "Wellington Parish Council draft agenda, 2 April 2026",
+      "url": "https://wellingtonparishcouncil.org.uk/wp-content/uploads/2026/03/Agenda-Apr-2026-Draft.pdf",
+      "sha256": "5aa6129722dd20b351cf99575142666ab2c26b84555a9cabe920dcb07a17dbcd",
+      "bytes": 89885,
+      "pages": 2
+    },
+    {
+      "filename": "adobe-letter.pdf",
+      "title": "Adobe Acrobat resignation letter template",
+      "url": "https://www.adobe.com/dc-shared/assets/pdf/acrobat/guides/adobe-acrobat-template-resignation-letter.pdf",
+      "sha256": "b0baf207b04a86a1f6f1b3655a6c4fd4e6ed0e98b26783f174b6b271545e182f",
+      "bytes": 120207,
+      "pages": 1
+    }
   ]
 }

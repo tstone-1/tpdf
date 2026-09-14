@@ -13623,14 +13623,17 @@ default Helvetica encoding*. The broader public-document survey then found zero
 editable pages across five unchanged PDFs (45 pages), despite the selected
 producer exports passing discovery. See `BUILD.md`, *Public-document text editing
 baseline*, and `testdata/textedit-public-corpus.json`. Bounded simple CFF/Type1C
-ASCII support is now implemented and verified on macOS with original geometric
-fonts; Windows verification remains pending. See `BUILD.md`, *Text editing with
+ASCII support is now implemented and verified on macOS and Windows with original
+geometric fonts. See `BUILD.md`, *Text editing with
 embedded CFF fonts*. The public sample remains 0/45 editable. The proposed W-9
 acceptance target was incorrect: its instruction-page fonts declare print/preview-only
 embedding permissions, so it must remain a refusal control under the existing
 policy. Next: find an unchanged public page whose font permissions permit editing,
 inventory all blockers, and take it through discovery, replacement and independent
-readback. Further synthetic-only grammar additions are a lower priority. Wider
+readback. Two further public candidates (a Quartz council agenda and Adobe letter
+template) also remain refused; the template has a restricted heading font. Their
+fuller blocker inventory is in `BUILD.md`, *Public target follow-up*. Further
+synthetic-only grammar additions are a lower priority. Wider
 Unicode, subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
