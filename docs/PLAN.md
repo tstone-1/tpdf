@@ -13702,10 +13702,18 @@ masks, and explicit positioning before every text show. Its nonzero word spacing
 is within the new bound. Explicit mask defaults, valid overprint flags/modes and
 stroke adjustment are now preserved and verified through native save/readback
 (2026-09-14; `BUILD.md`, *Print graphics state during text editing*). The unchanged
-source's first refusal now names its embedded CFF font on all 16 pages.
+source's first refusal initially named its embedded CFF font on all 16 pages.
 
-Next: custom CFF Encoding/ToUnicode mappings, including ligatures and curly
-quotes. Ligatures require mapping PDF glyphs to character sequences without
+Bounded ASCII CFF remapping now passes worker and native save/readback on
+original synthetic fonts (2026-09-14; `BUILD.md`, *Custom CFF glyph encodings*).
+Encoding Differences select verified glyph names; a present ToUnicode map must
+agree and only explicitly mapped codes are offered. Duplicate code assignments
+and glyph aliases remain refused. The unchanged guide now reaches the narrower
+`unsupported CFF glyph name` refusal on all 16 pages; no practical page is newly
+editable.
+
+Next: non-ASCII CFF glyph names, including minus, nonbreaking space and curly
+quotes, followed by ligature mappings. Ligatures require mapping PDF glyphs to character sequences without
 applying character spacing once per expanded Unicode character. Stroke-state
 operators remain a later blocker. Do not bypass unsupported states or normalize
 the source to admit it.

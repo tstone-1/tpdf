@@ -75,7 +75,7 @@ def program(mode="normal"):
     return data
 
 
-def pdf(data, path):
+def pdf(data, path, *, remap=False, to_unicode=False):
     def d(**kwargs):
         return DictionaryObject({NameObject("/" + k): v for k, v in kwargs.items()})
 
@@ -109,11 +109,32 @@ def pdf(data, path):
         Widths=num([600] * 95),
         FontDescriptor=writer._add_object(descriptor),
     )
+    codes = {code: code for code in range(32, 127)}
+    if remap:
+        codes[32], codes[83] = 83, 32
+        font[NameObject("/Encoding")] = writer._add_object(d(
+            Type=NameObject("/Encoding"), BaseEncoding=NameObject("/WinAnsiEncoding"),
+            Differences=ArrayObject([NumberObject(32), NameObject("/S"), NumberObject(83), NameObject("/space")]),
+        ))
+    if to_unicode:
+        mapping = DecodedStreamObject()
+        entries = "".join(f"<{code:02X}> <{ch:04X}>\n" for ch, code in sorted(codes.items(), key=lambda item: item[1]))
+        mapping.set_data(("/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
+            "/CMapName /Adobe-Identity-UCS def /CMapType 2 def "
+            "1 begincodespacerange <00> <FF> endcodespacerange "
+            "95 beginbfchar\n" + entries + "endbfchar endcmap CMapName currentdict /CMap defineresource pop end end").encode())
+        font[NameObject("/ToUnicode")] = writer._add_object(mapping)
     page[NameObject("/Resources")] = d(Font=d(F1=writer._add_object(font)))
     content = DecodedStreamObject()
-    content.set_data(
-        b"BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET BT /F1 12 Tf 40 140 Td (SYNTHETIC SECOND) Tj ET"
-    )
+    if remap or to_unicode:
+        first, second = (bytes(codes[code] for code in text).hex() for text in
+                         [b"SYNTHETIC FIRST", b"SYNTHETIC SECOND"])
+        content.set_data(f"1 Tw BT /F1 12 Tf 40 180 Td <{first}> Tj ET BT /F1 12 Tf 40 140 Td <{second}> Tj ET".encode())
+    else:
+        content.set_data(
+            b"BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET BT /F1 12 Tf 40 140 Td (SYNTHETIC SECOND) Tj ET"
+        )
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(path)
     assert (
@@ -152,6 +173,8 @@ def main():
             dest.mkdir(exist_ok=True)
             (dest / (mode + ".cff")).write_bytes(data)
     pdf(program(), args.output / "synthetic.pdf")
+    pdf(program(), args.output / "remapped.pdf", remap=True)
+    pdf(program(), args.output / "remapped-unicode.pdf", remap=True, to_unicode=True)
     print("[PASS] generated original CFF programs and independently decoded the PDF")
 
 

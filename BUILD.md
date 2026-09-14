@@ -7750,9 +7750,11 @@ The existing replacement clip and line-width checks apply. Fonts and adjacent
 text are preserved; no glyphs are added or substituted.
 
 The worker bounds decoded font data, glyph counts and CFF metadata. Only the
-standard font matrix and filled Type 2 outlines are supported. CID CFF, custom
-encodings, ToUnicode overrides, arbitrary embedded PostScript, nonstandard paint
-semantics and restricted embedding permissions remain refused. Literal FSType
+standard font matrix and filled Type 2 outlines are supported. The later
+*Custom CFF glyph encodings* increment adds bounded ASCII Differences and matching
+ToUnicode maps. CID CFF, other custom encodings, conflicting Unicode mappings,
+arbitrary embedded PostScript, nonstandard paint semantics and restricted
+embedding permissions remain refused. Literal FSType
 declarations follow the same permission mask as the TrueType path. The CFF
 metadata check covers fields that the outline library intentionally skips.
 
@@ -8240,3 +8242,52 @@ reach `unsupported embedded CFF font`, past the initial external-state refusal.
 This does not establish that later states are supported or make any page editable;
 page 16 remains the next practical target. Windows verification of this increment
 remains outstanding.
+
+
+### Custom CFF glyph encodings
+
+CFF fonts may use an explicit WinAnsi-based Encoding dictionary with bounded
+Differences: single-byte codes select existing standard ASCII glyph names, or
+`.notdef` removes an offer. No implicit base encoding, unknown dictionary keys,
+repeated code assignments, dangling range starts or out-of-range codes are accepted.
+Valid glyphs must have unique offered codes, matching PDF/program widths and
+validated outlines. Width and ink metrics follow glyph identity, not PDF byte
+position; word spacing still follows byte 32 even when it represents a letter.
+
+Optional ToUnicode maps use the existing bounded single-byte grammar: bfchar and
+scalar bfrange, a 16 KiB decoded limit and unique targets. Every declared target
+must agree with the glyph selected by Encoding. Missing entries are not inferred.
+Non-ASCII names and ligatures remain unsupported. Font programs and all mapping
+resources remain byte-identical when saving.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_cff.py <fixture-directory>
+uv run scripts/tabs_check.py <checks-binary> <fixture-directory>/remapped-unicode.pdf --phase textedit --saved-copy <saved.pdf>
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --check <fixture-directory>/remapped-unicode.pdf <saved.pdf>
+swift scripts/text_edit_pdfkit.swift <readback-directory>
+```
+
+The generator also writes `remapped.pdf` without ToUnicode. Both swap space and
+`S` codes and set nonzero word spacing; the original `synthetic.pdf` is unchanged.
+Readback uses `synthetic-before.pdf` and `synthetic-after.pdf` in one directory.
+CFF readback now requires fontTools: pypdf otherwise warns about incomplete CFF
+decoding and continues. A control independently lacking fontTools is refused.
+
+On macOS, 2026-09-14: the 1,469-test clean Rust control passes, including 170 focused
+text-editor tests. All seven targeted mapping mutations are caught. Both worker
+variants and all 15 native checks pass; independent pypdf and PDFKit readback
+confirm only the edited text operand changes, resources stay identical, and
+1,852 changed pixels lie inside the target with zero outside. A control adding a
+real remapped space is rejected by exact operand decoding, including without
+ToUnicode. All 12 pre-existing generator outputs remain byte-identical.
+The `editable-cff-mapping` seed reaches discovery; the seeded fuzz run completes
+23,584 executions in 21 seconds with 88 MiB peak RSS and no finding
+(`--sanitizer=none` on macOS). Clippy, formatting, mutation anchors, notices and
+the normal-bundle check pass; normal assets are restored with zero harness code.
+
+The unchanged passport guide reaches `unsupported CFF glyph name` on all 16 pages.
+It still contains unsupported non-ASCII names and multi-character ligature targets.
+Its ToUnicode declares a two-byte code space while bfchar sources have one byte;
+the current strict wrapper does not accept that shape. Further support needs
+independent reader comparisons, not a skipped mapping check. The practical-corpus
+editable-page count is unchanged; Windows verification remains outstanding.
