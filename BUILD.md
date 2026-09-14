@@ -7551,3 +7551,37 @@ that commit-graph files are missing, `git -c core.commitGraph=true commit-graph
 write --reachable --split=replace` rebuilds that cache; follow with `git commit-graph
 verify` and require no warning output. Setting `core.commitGraph=false` also disables
 writing: that command returned zero while doing no repair in this run.
+
+
+### Text editing around straight-line strokes
+
+The unchanged `columns.pdf` fixture previously refused all text because of its
+column divider. It now offers 20 text runs; `text-base14.pdf`, with backgrounds
+and a polyline, offers four. The fresh ReportLab `stroked-lines.pdf` export has a
+horizontal divider plus open and closed polylines around the two text blocks.
+Only complete, bounded straight-line subpaths are accepted; curves, compound
+paths, nonrectangular fills and line-based clips remain refused.
+
+```sh
+uv run --with reportlab testdata/make_textedit_reportlab.py scratch/textedit-strokes/reportlab
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-strokes/worker scratch/textedit-strokes/reportlab/stroked-lines.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-strokes/worker/synthetic-before.pdf scratch/textedit-strokes/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-strokes/worker
+uv run scripts/tabs_check.py 'src-tauri/target/debug/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf' scratch/textedit-strokes/reportlab/stroked-lines.pdf --phase textedit --saved-copy scratch/textedit-strokes/ui-after.pdf
+python3 scripts/mutate_rust.py --only 'stroked lines:'
+```
+
+Measured on macOS, 2026-09-14: all 126 text-editing tests pass. The ReportLab worker
+round trip passes preview, extraction, search, undo and refusal without output.
+Independent parsing confirms only the target text operand changed, preserving
+font/colour resources and every stroke operator. PDFKit measures 2,394 changed
+pixels inside the edited line and zero outside. Corrupting a line point, changing
+its paint operator or removing a segment each fails independent readback.
+All 15 native editing checks pass, and the UI-saved PDF passes the same independent
+parser and PDFKit checks with the same pixel totals. All seven targeted mutations
+are caught by their named tests; the full Rust control is green. Type checking,
+all-target Clippy, formatting, mutation anchors and the production build pass, with zero shipped
+harness code. The new stroke seed reaches editable discovery, and a 20-second
+`textedit_scan` campaign completes 23,577 inputs in 21 seconds without a finding,
+at 87 MiB peak RSS. This macOS run uses `--sanitizer=none`.
+Windows runtime verification of this increment is pending.

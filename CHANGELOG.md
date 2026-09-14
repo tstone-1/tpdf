@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Edit supported text alongside straight-line dividers and polylines, preserving
+  their strokes and the existing text clip.
+
 - Edit supported text on pages with rectangular backgrounds and borders,
   preserving their colours, strokes, clipping and supported tagged structure.
 

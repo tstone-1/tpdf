@@ -781,6 +781,10 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
         "0 0 20 20 re f",
         "0 0 20 20 re S",
         "0 0 20 20 re B*",
+        "0 0 m 20 20 l S",
+        "0 0 m 20 20 l h S",
+        "0 0 m 20 20 l n",
+        "0 0 m 20 20 l h n",
         "0 0 20 20 re n",
         "0 0 300 240 re W n",
         "n",
@@ -790,7 +794,11 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
     ] {
         let painted = matches!(
             path,
-            "0 0 20 20 re f" | "0 0 20 20 re S" | "0 0 20 20 re B*"
+            "0 0 20 20 re f"
+                | "0 0 20 20 re S"
+                | "0 0 20 20 re B*"
+                | "0 0 m 20 20 l S"
+                | "0 0 m 20 20 l h S"
         );
         // Paint outside the item must not make an empty marked item valid.
         let body = format!("0 0 20 20 re f /Standard << /MCID 0 >> BDC {path} EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC");

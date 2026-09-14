@@ -32,7 +32,7 @@ for mode, wrapped in (("separate", False), ("multiline", False),
                       ("separate-ascii85", True), ("multiline-ascii85", True),
                       ("saved-state-ascii85", True), ("translated-ascii85", True),
                       ("scaled-ascii85", True), ("defaults-ascii85", True),
-                      ("latin1", True), ("painted-rectangles", True)):
+                      ("latin1", True), ("painted-rectangles", True), ("stroked-lines", True)):
     # True is ReportLab's normal wrapper for compressed page content; keep the
     # Flate-only layouts as controls over the extra decoding stage.
     rl_config.useA85 = wrapped
@@ -42,6 +42,10 @@ for mode, wrapped in (("separate", False), ("multiline", False),
         canvas.setFillColorRGB(0.85, 0.93, 1)
         canvas.rect(35, 175, 220, 20, stroke=0, fill=1)
         canvas.setFillColorRGB(0, 0, 0)
+    if mode == "stroked-lines":
+        canvas.setStrokeColorRGB(0.1, 0.2, 0.6)
+        canvas.setLineWidth(2)
+        canvas.line(30, 160, 260, 160)
     if mode == "scaled-ascii85":
         canvas.saveState()
         canvas.translate(20, 120)
@@ -90,5 +94,14 @@ for mode, wrapped in (("separate", False), ("multiline", False),
         canvas.rect(30, 30, 200, 25, stroke=1, fill=0)
         canvas.setFillColorRGB(0.6, 0.8, 0.4)
         canvas.rect(30, 75, 200, 25, stroke=1, fill=1)
+    if mode == "stroked-lines":
+        for y, closed in [(30, False), (75, True)]:
+            path = canvas.beginPath()
+            path.moveTo(30, y)
+            path.lineTo(80, y + 20)
+            path.lineTo(130, y)
+            if closed:
+                path.close()
+            canvas.drawPath(path, stroke=1, fill=0)
     canvas.save()
     print(f"[OK] wrote {mode}.pdf")

@@ -1,4 +1,4 @@
-//! Consume complete rectangle paths while preserving their paint and clipping.
+//! Consume bounded paths while preserving their paint and rectangular clipping.
 //! Coordinates are in original page space, fixed when the path is constructed.
 
 use lopdf::{content::Operation, Object};
@@ -64,6 +64,49 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<bool, String> 
     Ok(true)
 }
 
+// Only one straight-line subpath, completed before any state/text operator.
+// S/s paint it; n discards it. No W/W* means it cannot alter the text clip.
+// The caller already bounds the whole stream to MAX_OPERATIONS; each consumed
+// operation is skipped afterwards, keeping discovery linear in stream size.
+pub(super) fn stroked(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
+    let invalid = || "only complete straight-line strokes are editable".to_string();
+    let mut count = 0;
+    for op in ops {
+        let expected = if count == 0 { "m" } else { "l" };
+        if op.operator != expected {
+            break;
+        }
+        if op.operands.len() != 2 {
+            return Err(invalid());
+        }
+        let x = super::number(&op.operands[0])?;
+        let y = super::number(&op.operands[1])?;
+        let point = [x * ctm[0] + ctm[4], y * ctm[3] + ctm[5]];
+        if point
+            .iter()
+            .any(|value| !value.is_finite() || value.abs() > 1_000_000.)
+        {
+            return Err("stroke coordinates exceed their limit".into());
+        }
+        count += 1;
+    }
+    // Require a move and at least one segment, not an empty current path.
+    if count < 2 {
+        return Err(invalid());
+    }
+    if ops
+        .get(count)
+        .is_some_and(|op| op.operator == "h" && op.operands.is_empty())
+    {
+        count += 1;
+    }
+    let end = ops.get(count).ok_or_else(invalid)?;
+    if !matches!(end.operator.as_str(), "S" | "s" | "n") || !end.operands.is_empty() {
+        return Err(invalid());
+    }
+    Ok(count + 1)
+}
+
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
     if rect.operator != "re" || rect.operands.len() != 4 {
         return Err("invalid rectangle operands".into());
@@ -106,7 +149,7 @@ pub(super) fn contains(clip: Option<Rect>, text: Rect) -> Result<(), String> {
 
 pub(super) fn line_width(value: &Object) -> Result<(), String> {
     // Tr is fixed at 0, so line width cannot affect the edited glyphs.
-    // Rectangle strokes retain this authored setting unchanged.
+    // Supported strokes retain this authored setting unchanged.
     if super::number(value)? < 0. {
         return Err("negative line width is not editable".into());
     }

@@ -4412,14 +4412,14 @@ directions of each structure reference must agree. Discovery checks the complete
 structure graph and the selected page's markers; untouched streams are preserved.
 All content items on the selected page must appear exactly once in its stream, and
 text may occur only inside a paragraph. Each item must contain text or a complete
-painted rectangle; path discards and graphics-state setters do not count. The writer
+painted rectangle or straight-line stroke; path discards and graphics-state setters do not count. The writer
 preserves every marker and structure object. Unknown fields, alternate text
 (`ActualText`, `Alt`, `E`), inherited page references, class maps and ink bounds
 remain refused. Layout/Placement=Block may carry an authored EndIndent on a
 paragraph; its finite numeric value is preserved unchanged and bounded to an
 absolute value of 1,000,000, like text coordinates. Other layout attributes remain
 refused. Artifact markers may contain the existing supported graphics
-state operators and painted rectangles but no text. This is bounded compatibility, not PDF/UA validation.
+state operators, painted rectangles and straight-line strokes but no text. This is bounded compatibility, not PDF/UA validation.
 
 **Multi-page tagged milestone completed:** a fresh two-page LibreOffice export
 passes worker edits to either page and all 19 native checks on macOS and Windows.
@@ -4603,9 +4603,14 @@ advance metrics here and is refused under an explicit clip. Complete `re` rectan
 followed immediately by `S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*` or `n` are
 preserved with the same coordinate bounds. Painting does not replace or discard
 an established clip. A standalone operand-free `n` outside text is a no-op because
-no accepted path remains pending. Compound paths, curves, zero/reversed rectangles
-and clipping combined with painting remain unsupported. A bounded nonnegative `w`
-setter is preserved; filled text cannot use it and rectangle strokes retain it.
+no accepted path remains pending. A single straight-line subpath (`m`, one or more
+`l`, optional `h`, then `S`, `s` or `n`) is also preserved. Every source and transformed
+point is bounded to one million per coordinate; the stream's 4,096-operator bound
+limits work, and completed paths are consumed once. No clip/state/text operator may
+interrupt a path. Compound paths, curves, nonrectangular fills, zero/reversed
+rectangles and clipping combined with painting remain unsupported. A bounded
+nonnegative `w` setter is preserved; filled text cannot use it and supported strokes
+retain it.
 Nonzero diagonal page scaling and translations compose across `cm` operators
 and are restored by `Q`. Reflections in page and text matrices are accepted only
 when both final text axes are positive. Clip corners normalize after transformation,
@@ -13607,7 +13612,9 @@ exports are verified on macOS and Windows. Existing Latin-1 composite glyphs and
 bounded horizontal overhangs are implemented and verified on both platforms,
 unreleased. Painted rectangular backgrounds and borders are now supported, including
 separately tagged background items in Edge exports, verified on macOS and Windows.
-Checks are in `BUILD.md`, *Text editing around painted rectangles*. Wider Unicode,
+Checks are in `BUILD.md`, *Text editing around painted rectangles*. Straight-line
+dividers and polylines are also implemented; see *Text editing around straight-line
+strokes*. Wider Unicode,
 subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
