@@ -17,6 +17,16 @@ fn device(name: &[u8]) -> Option<usize> {
     }
 }
 
+// ISO 32000-1, 8.6.5.8 / Table 70. These affect colour conversion, not
+// glyph geometry. The writer retains the authored ri/gs operators and state
+// dictionaries; PDFium applies the intent during preview and rendering.
+pub(super) fn intent(name: &[u8]) -> Result<(), String> {
+    match name {
+        b"AbsoluteColorimetric" | b"RelativeColorimetric" | b"Saturation" | b"Perceptual" => Ok(()),
+        _ => Err("unsupported text rendering intent".into()),
+    }
+}
+
 pub(super) fn named(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<usize, String> {
     let spaces = resources
         .get(b"ColorSpace")

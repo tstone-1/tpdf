@@ -19,6 +19,8 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Preserve standard colour-rendering intents during in-place text edits.
+
 - Preserve bounded character spacing while editing text, including kerning arrays
   and restored text state, with matching preview and save measurements.
 

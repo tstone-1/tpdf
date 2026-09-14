@@ -16,6 +16,7 @@ pub(super) fn normal(doc: &Document, resources: &Dictionary, name: &[u8]) -> Res
             (b"Type", Object::Name(name)) if name == b"ExtGState" => {}
             (b"BM", Object::Name(name)) if name == b"Normal" => {}
             (b"ca" | b"CA", value) if number(value)? == 1. => {}
+            (b"RI", Object::Name(name)) => super::colors::intent(name)?,
             _ => return Err(invalid()),
         }
     }
