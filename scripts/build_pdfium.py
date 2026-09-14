@@ -136,6 +136,16 @@ def check_upstream_report(path, expected):
         raise ValueError("Upstream text tests were skipped or not completed")
 
 
+def windows_bash(git):
+    # PATH can resolve bash.exe to the WSL launcher, even inside a Git Bash
+    # workflow step. Use the shell from this Git for Windows installation.
+    for parent in Path(git).resolve().parents[:3]:
+        shell = parent / "bin/bash.exe"
+        if shell.is_file():
+            return shell
+    raise ValueError("Git Bash is absent from the Git for Windows installation")
+
+
 def build(work, output, install_sdk):
     pins = json.loads(CONFIG.read_text(encoding="utf-8"))
     key = {("darwin", "arm64"): "mac-arm64", ("win32", "amd64"): "win-x64"}.get(
@@ -151,6 +161,14 @@ def build(work, output, install_sdk):
     target_os, target_cpu = key.split("-")
     env = dict(os.environ, DEPOT_TOOLS_UPDATE="0", DEPOT_TOOLS_WIN_TOOLCHAIN="0",
                VPYTHON_BYPASS="", GCLIENT_PY3="1")
+    git = shutil.which("git")
+    if not git:
+        raise ValueError("Git is absent")
+    shell = windows_bash(git) if windows else "bash"
+    preflight = "command -v sed sort cp mkdir"
+    if windows:
+        preflight = "case $(uname -s) in MINGW*|MSYS*) ;; *) exit 1 ;; esac; " + preflight
+    run([shell, "-eu", "-c", preflight], work, env)
     # No signing credentials or repository tokens are needed by any build step.
     builder, depot = work / "builder", work / "depot_tools"
     checkout("https://github.com/bblanchon/pdfium-binaries.git", pins["builder"], builder)
@@ -174,9 +192,6 @@ def build(work, output, install_sdk):
         # not supply outside a depot_tools-configured shell.
         shim = work / "shims"
         shim.mkdir()
-        git = shutil.which("git")
-        if not git:
-            raise ValueError("Git is absent")
         # git_common.py parses the final line, which must start with a quote,
         # not @. Keep echo suppression on its own line (Windows experiment).
         (shim / "git.bat").write_text('@echo off\n"' + git + '" %*\n', encoding="utf-8")
@@ -261,7 +276,8 @@ def build(work, output, install_sdk):
     shutil.copy2(builder / "LICENSE", stage / "LICENSE")
     shutil.copy2(build_dir / "args.gn", stage / "args.gn")
     license_env = dict(env, PDFium_SOURCE_DIR=source.as_posix(), PDFium_BUILD_DIR=build_dir.as_posix(), PDFium_ENABLE_V8="false")
-    license_log = run(["bash", "steps/08-licenses.sh"], builder, license_env, capture=True)
+    # Explicit flags: invoking bash does not apply the script's shebang -eu.
+    license_log = run([shell, "-eu", "steps/08-licenses.sh"], builder, license_env, capture=True)
     complete_licenses(source, stage, license_log)
     # The engine archive is also distributed independently of the application.
     # It must carry the licence for tpdf's patch as well as PDFium's notices.
