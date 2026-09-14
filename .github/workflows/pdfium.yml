@@ -1,0 +1,77 @@
+name: PDFium candidate
+
+# Explicit dependency build, independent of application releases. Untrusted
+# source builds receive a read-only token and no signing credentials. Artifacts
+# are candidates: producing one does not publish it or update the production pin.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pdfium.yml'
+      - 'scripts/build_pdfium.py'
+      - 'scripts/pdfium*'
+      - 'scripts/test_pdfium_build.py'
+      - 'testdata/make_rtl_pdf.py'
+      - 'testdata/make_multilingual_pdf.py'
+      - 'testdata/make_text_pdf.py'
+  pull_request:
+    paths:
+      - '.github/workflows/pdfium.yml'
+      - 'scripts/build_pdfium.py'
+      - 'scripts/pdfium*'
+      - 'scripts/test_pdfium_build.py'
+      - 'testdata/make_rtl_pdf.py'
+      - 'testdata/make_multilingual_pdf.py'
+      - 'testdata/make_text_pdf.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pdfium-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: mac-arm64
+            extra: ''
+          - runner: windows-2025
+            platform: win-x64
+            extra: '--install-windows-sdk'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - name: Verify build safeguards
+        run: python -m unittest discover -s scripts -p test_pdfium_build.py
+      - name: Select Xcode
+        if: runner.os == 'macOS'
+        run: echo "DEVELOPER_DIR=/Applications/Xcode_26.0.1.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Build control and candidate, verify, package
+        shell: bash
+        env:
+          PDFIUM_WORK: ${{ runner.temp }}/pdfium-build
+          PDFIUM_ARTIFACTS: ${{ runner.temp }}/pdfium-artifacts
+        run: |
+          set -euo pipefail
+          uv run --python 3.13 --with-requirements scripts/pdfium-fixture-tools.txt \
+            scripts/build_pdfium.py --work "$PDFIUM_WORK" --output "$PDFIUM_ARTIFACTS" ${{ matrix.extra }}
+      - name: Upload verified candidate and evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pdfium-${{ matrix.platform }}
+          path: ${{ runner.temp }}/pdfium-artifacts/
+          if-no-files-found: error
+          retention-days: 30
