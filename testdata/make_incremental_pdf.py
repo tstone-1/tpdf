@@ -615,7 +615,7 @@ def signature_blob(path: str) -> "bytes | None":
     return bytes.fromhex(found.group(1).decode("ascii"))
 
 
-def to_indefinite(der: bytes) -> bytes:
+def to_indefinite(der: bytes, *, padded: bool = False) -> bytes:
     """Rewrite every constructed value's length in BER's indefinite form.
 
     A signer that streams its output cannot know a value's length before it has
@@ -623,6 +623,9 @@ def to_indefinite(der: bytes) -> bytes:
     end-of-contents marker where the value stops. That is legal BER, it is not
     DER, and `der` refuses it -- which is why a real CAdES contract read as
     having no certificate at all until `ber.rs` was written.
+
+    With padded=True, only zero bytes beyond the outer value are ignored;
+    zeros inside its declared length remain part of the value.
 
     Converting rather than signing afresh is deliberate: the result differs from
     `incr-signed.pdf` in the *length encoding and nothing else*, so a check that
@@ -657,7 +660,9 @@ def to_indefinite(der: bytes) -> bytes:
         return identifier + b"\x80" + body + b"\x00\x00", end
 
     converted, consumed = convert(der, 0)
-    if consumed != len(der):
+    if consumed > len(der):
+        raise ValueError("truncated first value")
+    if consumed != len(der) and (not padded or any(der[consumed:])):
         raise ValueError("trailing bytes after the first value")
     return converted
 
@@ -682,10 +687,11 @@ def build_ber(source_path: str, out_path: str) -> bool:
         return False
     digits = found.group(1)
     blob = bytes.fromhex(digits.decode("ascii"))
-    last = max((index for index, byte in enumerate(blob) if byte), default=-1)
-    if last < 0:
+    if not any(blob):
         return False
-    rewritten = to_indefinite(blob[: last + 1])
+    # The value's last byte can itself be zero. Its encoded length, not the
+    # last nonzero byte, separates it from the signer's reserved padding.
+    rewritten = to_indefinite(blob, padded=True)
     if len(rewritten) > len(blob):
         return False
     padded = rewritten + b"\x00" * (len(blob) - len(rewritten))
