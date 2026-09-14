@@ -13613,9 +13613,10 @@ bounded horizontal overhangs are implemented and verified on both platforms,
 unreleased. Painted rectangular backgrounds and borders are now supported, including
 separately tagged background items in Edge exports, verified on macOS and Windows.
 Checks are in `BUILD.md`, *Text editing around painted rectangles*. Straight-line
-dividers and polylines are also implemented; see *Text editing around straight-line
-strokes*. Wider Unicode,
-subset extension and paragraph reflow remain open.
+dividers and polylines are also verified on both platforms; see *Text editing around
+straight-line strokes*. The next compatibility check is Helvetica PDFs without an
+explicit Encoding entry. Wider Unicode, subset extension and paragraph reflow
+remain open.
 
 ### Phase 6 — Cryptographic signing
 
