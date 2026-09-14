@@ -30,12 +30,17 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--ranges", action="store_true")
     parser.add_argument("--spacing", type=float, default=0.)
+    parser.add_argument("--word-spacing", type=float, default=0.)
+    parser.add_argument("--word-code", choices=["space", "letter"],
+                        help="map a space or S to PDF byte 32; default has no code 32")
     parser.add_argument("--intent", choices=["AbsoluteColorimetric", "RelativeColorimetric", "Saturation", "Perceptual"])
     parser.add_argument("--image", action="store_true")
     parser.add_argument("--dash", action="store_true")
     args = parser.parse_args()
     if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
         parser.error("spacing must be finite and within -3..3 for the 12pt fixture")
+    if not math.isfinite(args.word_spacing) or abs(args.word_spacing) > 3:
+        parser.error("word spacing must be finite and within -3..3")
     ranges, target = args.ranges, args.output
     target.parent.mkdir(parents=True, exist_ok=True)
     alphabet = "SYNTHEIC FRODAB" + ("\u2013" if args.dash else "")
@@ -45,6 +50,9 @@ def main():
     # Sorting the range variant makes the edited letters use expanded ranges,
     # rather than exercising only singleton entries in the end-to-end check.
     codes = {ch: index + 1 for index, ch in enumerate(sorted(alphabet) if ranges else alphabet)}
+    if args.word_code:
+        codes[" " if args.word_code == "space" else "S"] = 32
+        codes = dict(sorted(codes.items(), key=lambda item: item[1]))
     cmap = CmapSubtable.newSubtable(0)
     cmap.platformID, cmap.platEncID, cmap.language = 1, 0, 0
     cmap.cmap = {code: original[ord(ch)] for ch, code in codes.items()}
@@ -60,8 +68,8 @@ def main():
     font = page["/Resources"]["/Font"]["/F1"]
     del font["/Encoding"]
     font[NameObject("/FirstChar")] = NumberObject(0)
-    font[NameObject("/LastChar")] = NumberObject(len(codes))
-    font[NameObject("/Widths")] = ArrayObject([NumberObject(0)] + [NumberObject(600)] * len(codes))
+    font[NameObject("/LastChar")] = NumberObject(max(codes.values()))
+    font[NameObject("/Widths")] = ArrayObject([NumberObject(600 if code in codes.values() else 0) for code in range(max(codes.values()) + 1)])
     font["/FontDescriptor"][NameObject("/Flags")] = NumberObject(4)
     entries = [[code, code, ord(ch)] for ch, code in codes.items()]
     if ranges:
@@ -90,6 +98,8 @@ def main():
     # Mix Tj and TJ so both paths must decode and re-encode the symbolic codes.
     prefix = "SYNTHETIC" + ("\u2013" if args.dash else " ")
     first = f"BT /F1 12 Tf 40 180 Td [{encoded(prefix)} 20 {encoded('FIRST')}] TJ ET"
+    if args.word_spacing:
+        first = f"q {args.word_spacing:g} Tw {first} Q"
     if args.spacing:
         first = f"q {args.spacing:g} Tc {first} Q"
     if args.intent:

@@ -13691,9 +13691,19 @@ operators/resources and pixel-identical first page. See `BUILD.md`, *Text editin
 around curved paths*. Both pages are editable; the seven-document practical sample
 now has two editable pages out of 48, not a representative success rate.
 
-Next: verify curved-path editing on Windows at the committed revision. Then
-inventory the passport guide's external graphics-state refusal and subsequent
-blockers before selecting its unchanged page as the next compatibility target.
+Windows curved-path verification at `33998a1` passes both agenda native workflows
+and independent readback of the Windows saves, including pixel-identical untouched
+pages. Bounded word spacing now follows PDF byte-code semantics in discovery and
+replacement; see `BUILD.md`, *Word spacing and the next practical target*.
+
+Next acceptance target: page 16 of the unchanged passport guide. A read-only
+inventory of all 16 pages found this page has 415 operators, no images or soft
+masks, and explicit positioning before every text show. Its nonzero word spacing
+is within the new bound. Remaining work includes external graphics-state defaults
+and overprint settings, stroke-state operators, and custom CFF mappings with
+ligatures and curly quotes. Do not bypass unsupported states or normalize the
+source to admit it. First isolate the graphics-state semantics and verify their
+preservation; the CFF mapping work is a separate, larger step.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.

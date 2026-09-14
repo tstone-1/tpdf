@@ -1,4 +1,5 @@
-// Independent pixel-position check for the generated +/-1 Tc fixtures.
+// Independent pixel-position check for generated +/-1 Tc or Tw fixtures.
+// Append --word-char=space, --word-char=S or --word-char=none for Tw fixtures.
 // swift scripts/text_spacing_pdfkit.swift positive.pdf negative.pdf positive-after.pdf negative-after.pdf
 import Foundation
 import PDFKit
@@ -8,9 +9,20 @@ func fail(_ message: String) -> Never {
     print("[FAIL] \(message)")
     exit(1)
 }
-guard CommandLine.arguments.count == 5 else {
+guard [5, 6].contains(CommandLine.arguments.count) else {
     fail("expected positive/negative source and saved PDFs")
 }
+
+let wordMode = CommandLine.arguments.count == 6
+let wordCharacter: Character?
+if wordMode {
+    switch CommandLine.arguments[5] {
+    case "--word-char=space": wordCharacter = " "
+    case "--word-char=S": wordCharacter = "S"
+    case "--word-char=none": wordCharacter = nil
+    default: fail("unknown word-spacing fixture")
+    }
+} else { wordCharacter = nil }
 
 // Read painted columns: PDFKit's selection rectangles do not locate the
 // glyph's actual left edge.
@@ -54,8 +66,9 @@ for (positive, negative, text) in [
     else { fail("unexpected glyph populations: \(a.count), \(b.count)") }
     for (n, index) in indices.enumerated() {
         let delta = a[n] - b[n]
-        guard abs(delta - index * 20) <= 1
+        let steps = wordMode ? text.prefix(index).filter { $0 == wordCharacter }.count : index
+        guard abs(delta - steps * 20) <= 1
         else { fail("glyph \(n), character \(index): spacing delta \(delta)") }
     }
-    print("[PASS] rendered glyph positions differ by 2pt per character across all \(indices.count) painted glyphs")
+    print("[PASS] rendered glyph positions match the spacing rule across all \(indices.count) painted glyphs")
 }

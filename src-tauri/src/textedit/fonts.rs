@@ -212,8 +212,9 @@ impl Metrics {
         text: &str,
         size: f64,
         spacing: f64,
+        word_spacing: f64,
     ) -> Result<(f64, [f64; 2]), String> {
-        if spacing == 0. {
+        if spacing == 0. && word_spacing == 0. {
             return Ok((
                 self.advance(text, size)?,
                 self.horizontal_bounds(text, size)?,
@@ -222,6 +223,16 @@ impl Metrics {
         if !spacing.is_finite() || spacing.abs() > size * 0.25 {
             return Err("character spacing exceeds a quarter of the font size".into());
         }
+        if !word_spacing.is_finite() || word_spacing.abs() > size * 0.25 {
+            return Err("word spacing exceeds a quarter of the font size".into());
+        }
+        // ISO 32000-1, 9.3.3: Tw applies to single-byte PDF code 32,
+        // regardless of its Unicode mapping. Identity-H has no such code.
+        let word_slot = match &self.codes {
+            None => Some(32),
+            Some(Codes::Single(codes)) => codes[32],
+            Some(Codes::Double(_)) => None,
+        };
         let mut cursor = 0.;
         let mut bounds = [0_f64; 2];
         for byte in super::encode_text(text)? {
@@ -230,7 +241,13 @@ impl Metrics {
                 .horizontal_overhangs
                 .as_ref()
                 .map_or([0.; 2], |values| values[byte as usize]);
-            let step = width + spacing;
+            let step = width
+                + spacing
+                + if word_slot == Some(byte) {
+                    word_spacing
+                } else {
+                    0.
+                };
             if step <= 0. {
                 return Err("backtracking character spacing is not editable yet".into());
             }

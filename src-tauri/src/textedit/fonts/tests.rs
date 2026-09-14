@@ -903,3 +903,55 @@ fn textedit_symbolic_dash_roundtrip_keeps_original_font_codes_and_ink() {
     assert!(Metrics::helvetica().advance("\u{2013}", 10.).is_err());
     assert!(Metrics::helvetica().encode("\u{2013}").is_err());
 }
+
+#[test]
+fn textedit_word_spacing_uses_pdf_code_32_not_unicode_space() {
+    // Exercise the actual encoding round trip: the same Unicode string has
+    // different word spacing depending on which PDF bytes carry its glyphs.
+    for (codes, bytes, expected, right) in [
+        (None, vec![65, 32], 15.45, 11.45),
+        (
+            Some(Codes::Single({
+                let mut codes = Box::new([None; 256]);
+                codes[32] = Some(b'A');
+                codes[1] = Some(b' ');
+                codes
+            })),
+            vec![32, 1],
+            15.45,
+            13.45,
+        ),
+        (
+            Some(Codes::Single({
+                let mut codes = Box::new([None; 256]);
+                codes[2] = Some(b'A');
+                codes[1] = Some(b' ');
+                codes
+            })),
+            vec![2, 1],
+            13.45,
+            11.45,
+        ),
+        (
+            Some(Codes::Double([(32, b'A'), (256, b' ')].into())),
+            vec![0, 32, 1, 0],
+            13.45,
+            11.45,
+        ),
+    ] {
+        let mut metrics = Metrics::helvetica();
+        metrics.codes = codes;
+        assert_eq!(metrics.encode("A ").unwrap(), bytes);
+        assert_eq!(metrics.decode(&bytes).unwrap(), "A ");
+        let (advance, bounds) = metrics.spaced_layout("A ", 10., 2., 2.).unwrap();
+        assert!(
+            (advance - expected).abs() < 0.0001,
+            "{advance} != {expected}"
+        );
+        assert!(
+            (bounds[1] - right).abs() < 0.0001,
+            "{} != {right}",
+            bounds[1]
+        );
+    }
+}
