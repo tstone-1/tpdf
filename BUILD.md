@@ -7635,4 +7635,14 @@ harness code. The independent mapping oracle also rejects a deliberately wrong
 character width. The new fuzz seed reaches editable discovery; a 20-second
 `textedit_scan` campaign completes 27,745 inputs in 21 seconds with no finding,
 at 88 MiB peak RSS. This macOS run uses `--sanitizer=none`.
-Windows verification of this increment remains pending.
+Windows x64 verification at `4e48576` on 2026-09-14 passes all 129 text-editing
+tests, all 256 independent mapping decisions and 117 widths, both worker round
+trips, and all 15 native checks. The three unchanged fixtures expose the same
+36, six and 12 runs. All eight transferred PDFs match their Windows sizes and
+SHA-256 digests. Both worker saves and the UI save pass independent parsing on
+Windows and macOS, then PDFKit rendering: ASCII changes 2,394 pixels, mapped
+punctuation 1,634, with zero changes outside the edited line in every case.
+The worker-exit observer passes its live/dead control and reports no surviving
+test workers after enumerating 506 processes. The cached job takes 49 seconds,
+restores normal frontend assets with zero harness code, and leaves both source
+checkouts clean. The temporary task is removed; the isolated build cache is retained.

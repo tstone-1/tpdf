@@ -13618,9 +13618,9 @@ separately tagged background items in Edge exports, verified on macOS and Window
 Checks are in `BUILD.md`, *Text editing around painted rectangles*. Straight-line
 dividers and polylines are also verified on both platforms; see *Text editing around
 straight-line strokes*. Helvetica PDFs without an Encoding entry now use the
-validated default mapping, verified on macOS; see *Text editing with default
-Helvetica encoding*. Windows verification of that increment is next. Wider Unicode,
-subset extension and paragraph reflow remain open.
+validated default mapping, verified on macOS and Windows; see *Text editing with
+default Helvetica encoding*. Wider Unicode, subset extension and paragraph reflow
+remain open.
 
 ### Phase 6 — Cryptographic signing
 
