@@ -13643,11 +13643,18 @@ TrueType overhangs and an unchanged W3C fixture*. Both native workflows and
 independent readback of the Windows outputs pass. The practical-document target
 remains open, since an external test fixture does
 not establish broad document compatibility. Scalar single-byte character-map
-ranges now pass on macOS, removing the first font-map refusal in the unchanged
+ranges now pass on macOS and Windows, removing the first font-map refusal in the unchanged
 Quartz agenda; both pages still refuse unsupported operators. See `BUILD.md`,
 *Single-byte character-map ranges*, for the checks and remaining blockers.
-Windows verification of that increment is pending. Wider Unicode, subset
-extension and paragraph reflow remain open.
+The next milestone is a saved text replacement on page 1 of the **unchanged
+Wellington agenda**, verified through the native application and independent
+text/resource/pixel readback. Group its remaining admission work around that
+outcome: character spacing, the en dash, `/Perceptual` and its image invocation,
+with the resource and ink checks kept intact. Page 2's curves are a separate
+milestone; its content and resources must remain unchanged while page 1 is edited. `BUILD.md`
+records the per-page inventory and spacing requirements. Do not count another
+synthetic case or a later first-refusal reason as completing this milestone.
+Wider Unicode, subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 
