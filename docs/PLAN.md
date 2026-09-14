@@ -4577,14 +4577,21 @@ Unicode beyond Latin-1 and font-subset extension remain refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array).
-Balanced `q`/`Q` saves outside text blocks preserve font, size and leading, with
+Balanced `q`/`Q` saves outside text blocks preserve font, size, leading and character spacing, with
 a maximum nesting depth of 64. Replacement validation uses the active font's
 original operator address after restoration, including non-UTF-8 resource names.
 Explicit default text state (`0 Tc`, `0 Tw`, `100 Tz`, `0 Ts`, integer `0 Tr`)
 is accepted inside or outside text blocks. These setters preserve geometry and
-do not provide the independent positioning required between shows. Nondefault
-spacing, horizontal text scaling, rise, stroke/hidden/clipping modes and malformed
-operands remain refused, including a nondefault setter followed by a reset.
+do not provide the independent positioning required between shows. Nonzero `Tc`
+also persists across text blocks and saved graphics state. At each show, its
+magnitude must not exceed one quarter of the active font size; every decoded
+character must advance positively, and the accumulated advance is bounded to one
+million text-space units. Discovery and replacement validation share the same
+spacing-aware advances and outline bounds. Spacing applies after the last
+character too, while trailing spacing does not extend that character's ink.
+Nondefault word spacing, horizontal text scaling, rise, stroke/hidden/clipping
+modes and malformed operands remain refused, including an unsupported setter
+followed by a reset.
 Nonstroking device Gray/RGB/CMYK and bounded ICCBased colour spaces are preserved
 through `cs`, `sc`/`scn`, `g`/`rg`/`k` and `q`/`Q`. Components must be in [0, 1]
 and match the active space. At most 32 named spaces are accepted; ICC streams use
@@ -4632,8 +4639,8 @@ concatenated text and its adjusted advance. Arrays start and end with strings,
 contain at most 4,096 items and 4,096 total characters, and permit only strings
 and finite numeric offsets. Offsets are subtracted in thousandths of text space;
 each cursor stays between zero and one million and fragment ends cannot retreat.
-Replacement keeps `TJ` with one string, using normal font spacing within the
-original adjusted width; surrounding operators and arrays remain intact.
+Replacement keeps `TJ` with one string, retaining the active character spacing
+within the original adjusted width; surrounding operators and arrays remain intact.
 It reports the original operator address,
 text, font resource, size, text matrix and advance. Discovery uses the worker's
 shared document graph through `Request::TextRuns`. Unsupported content returns
@@ -13649,8 +13656,10 @@ Quartz agenda; both pages still refuse unsupported operators. See `BUILD.md`,
 The next milestone is a saved text replacement on page 1 of the **unchanged
 Wellington agenda**, verified through the native application and independent
 text/resource/pixel readback. Group its remaining admission work around that
-outcome: character spacing, the en dash, `/Perceptual` and its image invocation,
-with the resource and ink checks kept intact. Page 2's curves are a separate
+outcome: the en dash, `/Perceptual` and its image invocation, with the resource
+and ink checks kept intact. Character spacing is implemented and verified on
+macOS; see `BUILD.md`, *Character spacing in text edits*. Its Windows verification
+is pending. Page 2's curves are a separate
 milestone; its content and resources must remain unchanged while page 1 is edited. `BUILD.md`
 records the per-page inventory and spacing requirements. Do not count another
 synthetic case or a later first-refusal reason as completing this milestone.
