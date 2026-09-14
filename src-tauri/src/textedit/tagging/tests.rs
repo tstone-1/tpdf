@@ -778,6 +778,7 @@ fn textedit_tagged_requires_balanced_unique_markers_and_paragraph_text() {
 #[test]
 fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items() {
     for path in [
+        "/Im Do",
         "0 0 20 20 re f",
         "0 0 20 20 re S",
         "0 0 20 20 re B*",
@@ -794,7 +795,8 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
     ] {
         let painted = matches!(
             path,
-            "0 0 20 20 re f"
+            "/Im Do"
+                | "0 0 20 20 re f"
                 | "0 0 20 20 re S"
                 | "0 0 20 20 re B*"
                 | "0 0 m 20 20 l S"
@@ -803,6 +805,20 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
         // Paint outside the item must not make an empty marked item valid.
         let body = format!("0 0 20 20 re f /Standard << /MCID 0 >> BDC {path} EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC");
         let (mut doc, ids) = fixture(body.as_bytes());
+        if path == "/Im Do" {
+            let image = doc.add_object(Stream::new(
+                dictionary! {
+                    "Subtype" => "Image", "Width" => 1, "Height" => 1,
+                    "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray",
+                },
+                vec![127],
+            ));
+            let mut resources = textedit::resources(&doc, ids[0]).unwrap().clone();
+            resources.set("XObject", dictionary! { "Im" => image });
+            doc.get_dictionary_mut(ids[0])
+                .unwrap()
+                .set("Resources", resources);
+        }
         let objects = doc.objects.clone();
         let result = textedit::scan(&doc, 0);
         assert_eq!(result.is_ok(), painted, "{path}: {result:?}");

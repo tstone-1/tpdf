@@ -8003,3 +8003,35 @@ the clean control passes 1,448 Rust tests. Clippy, mutation anchors, normal bund
 and notices checks pass. Windows verification of this increment is pending.
 The unchanged agenda still refuses both pages; image and en-dash support remain
 before its practical-page milestone can be demonstrated.
+
+Windows x64 verification at `b779185` on 2026-09-14 passes all 149 text-editor
+tests and the 15-check native workflow. Worker and native outputs pass independent
+pypdf readback on both platforms and PDFKit rendering: 935 changed pixels inside
+the target, zero outside. All five retrieved PDFs match their Windows sizes and
+SHA-256 digests. Normal assets are restored, the temporary task is removed, and
+the ordinary checkout remains clean.
+
+### Images alongside editable text
+
+Opaque eight-bit image XObjects now remain intact during text edits. Dimensions,
+colour spaces, filters and samples are validated under the per-page limits in
+`docs/PLAN.md`; masks, forms, external data and custom decode mappings are refused.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-images/source.pdf --ranges --spacing -1 --intent Perceptual --image
+```
+
+macOS verification passes 153 focused Rust tests and the 15-check native workflow.
+Worker readback covers the generated RGB image and the unchanged `/Im1` image
+and ICC resource from the Wellington agenda, placed in the synthetic fixture.
+Native readback uses the latter. All three outputs preserve image/resource bytes
+and change 935 pixels inside the text target, zero outside. Pass `--image` to
+`text_edit_pdfkit.swift`: it also requires painted pixels in the fixed image area
+(18,816 for RGB, 1,826 for the agenda image); the no-image control must fail.
+All 14 selected mutations are caught, including seven new image-admission cases;
+the clean control passes 1,452 Rust tests. The worker probe confirms the new image
+fuzz seed reaches editable text. Both unchanged agenda pages now reach a character-map refusal;
+the practical-page milestone remains open, and Windows image verification is pending.
+The seeded fuzz run completes 27,742 executions in 21 seconds with 88 MiB peak
+RSS and no finding (`--sanitizer=none` on macOS). Clippy, mutation anchors,
+formatting, bundle and notices checks pass; normal frontend assets are restored.

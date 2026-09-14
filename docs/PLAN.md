@@ -4604,6 +4604,13 @@ The four standard rendering intents are preserved through `ri` and ExtGState
 `/RI`. Unknown names and malformed values are refused; the original operators
 and state dictionaries retain colour-conversion settings during edits without
 changing geometry or independently positioning the next text show.
+Opaque image XObjects are preserved through `Do` outside text blocks. The bounded
+subset uses eight-bit Gray/RGB/CMYK or ICCBased samples and the existing complete
+raw/Flate/ASCII85 decoder. Dimensions are at most 8192 per axis, with at most 32
+distinct names and a shared 1 MiB decoded-image budget per page. Samples must
+exactly match dimensions and components. Forms, masks, external data, alternate
+images, optional content and custom decode mappings remain refused. Image and
+profile bytes remain unchanged; painted images also retain marked-content items.
 Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
 outside text blocks, with positive dimensions and coordinates bounded to one
 million after transformation. They intersect in original page space and restore
@@ -13660,11 +13667,12 @@ Quartz agenda; both pages still refuse unsupported operators. See `BUILD.md`,
 The next milestone is a saved text replacement on page 1 of the **unchanged
 Wellington agenda**, verified through the native application and independent
 text/resource/pixel readback. Group its remaining admission work around that
-outcome: the en dash and its image invocation, with the resource and ink checks
-kept intact. Character spacing is verified on macOS and Windows; see `BUILD.md`,
-*Character spacing in text edits*. Standard rendering intents, including
-`/Perceptual`, are implemented and verified on macOS; Windows verification of
-that increment is pending. Page 2's curves are a separate
+outcome: the en dash and any subsequent font/ink checks, with resources kept
+intact. Character spacing and standard rendering intents are verified on macOS
+and Windows. Bounded image preservation is verified on macOS, including the
+agenda's unchanged ICC image in a synthetic editing fixture; its Windows check
+is pending. Both unchanged agenda pages now reach a character-map refusal.
+See `BUILD.md` for these checks. Page 2's curves are a separate
 milestone; its content and resources must remain unchanged while page 1 is edited. `BUILD.md`
 records the per-page inventory and spacing requirements. Do not count another
 synthetic case or a later first-refusal reason as completing this milestone.

@@ -3,7 +3,7 @@
 //! Supported text uses Helvetica with WinAnsi/default encoding or validated
 //! embedded TrueType/CFF glyphs, with explicit positioning between shows.
 //! Font/leading setup may precede a text block.
-//! Complete painted rectangles and straight-line strokes are preserved, and
+//! Complete painted rectangles, straight-line strokes and bounded opaque images are preserved, and
 //! bounded character spacing is retained. Other graphics, custom text state and implicit
 //! advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
@@ -13,6 +13,7 @@ mod colors;
 mod filters;
 mod fonts;
 mod graphics;
+mod images;
 mod streams;
 mod tagging;
 
@@ -321,6 +322,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut fill_components = colors::named(doc, resources, b"DeviceGray")?;
     let mut colour_spaces = BTreeMap::new();
     let mut graphics_states = BTreeSet::new();
+    let mut image_names = BTreeSet::new();
+    let mut image_bytes = 0;
     let mut result = PageRuns {
         page,
         revision: Sha256::digest(&bytes).to_vec(),
@@ -404,6 +407,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             // Every accepted path is consumed as a complete sequence, so an
             // isolated n outside BT has no pending path or clip to apply.
             ("n", []) if !inside => {}
+            ("Do", [Object::Name(name)]) if !inside => {
+                if !image_names.contains(name) {
+                    if image_names.len() >= 32 {
+                        return Err("too many images on an editable page".into());
+                    }
+                    image_bytes += images::check(doc, resources, name, MAX_CONTENT - image_bytes)?;
+                    image_names.insert(name.clone());
+                }
+                tags.paint();
+            }
             ("w", [value]) => clipping::line_width(value)?,
             ("cm", values) if !inside && values.len() == 6 => {
                 let mut next = [0.0; 6];

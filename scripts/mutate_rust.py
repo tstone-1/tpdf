@@ -465,6 +465,14 @@ MUTATIONS = [
     Mutation("textedit: accept hidden or clipping text modes", "src/textedit.rs", '("Tr", [Object::Integer(0)])', '("Tr", [_])', "textedit_default_setters_refuse_nondefault_and_malformed_operands"),
     Mutation("textedit: default setter positions a following show", "src/textedit.rs", '("Tw" | "Ts", [value]) if number(value)? == 0.0 => {}', '("Tw" | "Ts", [value]) if number(value)? == 0.0 => { positioned = true; }', "textedit_default_setters_do_not_position_a_following_show"),
 
+    Mutation('image: skip image validation', 'src/textedit.rs', 'images::check(doc, resources, name, MAX_CONTENT - image_bytes)?', '0', 'textedit_images_refuse_masks_forms_and_malformed_samples_atomically'),
+    Mutation('image: reset per-page decoded budget', 'src/textedit.rs', 'MAX_CONTENT - image_bytes', 'MAX_CONTENT', 'textedit_images_share_decode_budget_and_bound_resource_names'),
+    Mutation('image: omit distinct image name limit', 'src/textedit.rs', 'if image_names.len() >= 32 {', 'if false {', 'textedit_images_share_decode_budget_and_bound_resource_names'),
+    Mutation('image: omit dimension ceiling', 'src/textedit/images.rs', 'if !(1..=8192).contains(&value) {', 'if value <= 0 {', 'textedit_images_share_decode_budget_and_bound_resource_names'),
+    Mutation('image: allow missing samples', 'src/textedit/images.rs', 'if decoded.len() != bytes {', 'if false {', 'textedit_images_refuse_masks_forms_and_malformed_samples_atomically'),
+    Mutation('image: skip dictionary validation', 'src/textedit/images.rs', 'for (key, value) in &image.dict {', 'for (key, value) in image.dict.iter().take(0) {', 'textedit_images_refuse_masks_forms_and_malformed_samples_atomically'),
+    Mutation('image: forget marked image content', 'src/textedit.rs', 'image_names.insert(name.clone());\n                }\n                tags.paint();', 'image_names.insert(name.clone());\n                }', 'textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items'),
+
     Mutation('intent: skip direct intent validation', 'src/textedit.rs', '("ri", [Object::Name(name)]) => colors::intent(name)?,', '("ri", [Object::Name(_)]) => {},', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
     Mutation('intent: skip graphics state intent validation', 'src/textedit/graphics.rs', '(b"RI", Object::Name(name)) => super::colors::intent(name)?,', '(b"RI", Object::Name(_)) => {},', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
     Mutation('intent: setter positions a following show', 'src/textedit.rs', '("ri", [Object::Name(name)]) => colors::intent(name)?,', '("ri", [Object::Name(name)]) => { colors::intent(name)?; positioned = true; },', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),

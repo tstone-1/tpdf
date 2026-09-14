@@ -1,5 +1,5 @@
 // Independent readback of text-edit-probe's synthetic or W3C output on macOS.
-// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1]
+// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1|--image]
 import Foundation
 import PDFKit
 import CoreGraphics
@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--image"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -74,6 +74,19 @@ for (name, document) in [("before", before), ("after", after)] {
         page.draw(with: .mediaBox, to: context)
     }
     pictures.append(pixels)
+    if variant == "--image" {
+        // make_textedit_symbolic.py places the image at (40,40), 168.2x28.2pt.
+        // Require visible image content as well as unchanged pixels on save.
+        var imageInk = 0
+        for y in 344..<400 {
+            for x in 80..<416 {
+                let offset = (y * width + x) * 4
+                if (0..<3).contains(where: { pixels[offset + $0] < 200 }) { imageInk += 1 }
+            }
+        }
+        guard imageInk > 100 else { fail("image region is blank for \(name)") }
+        print("[PASS] \(name) image region contains \(imageInk) painted pixels")
+    }
 }
 var changedInside = 0, changedOutside = 0, ink = 0
 for y in 0..<height {

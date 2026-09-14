@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Allow in-place text edits alongside bounded opaque images while preserving
+  their original image and colour-profile data.
+
 - Preserve standard colour-rendering intents during in-place text edits.
 
 - Preserve bounded character spacing while editing text, including kerning arrays
