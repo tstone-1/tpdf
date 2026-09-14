@@ -321,7 +321,9 @@ MUTATIONS = [
     Mutation('cid: skip font permissions', 'src/textedit/fonts/composite.rs', 'super::face(&bytes, false)?', 'ttf_parser::Face::parse(&bytes, 0).map_err(|_| INVALID)?', 'textedit_composite_checks_embedding_rights_and_program_format'),
     Mutation('cid: raise width table bound', 'src/textedit/fonts/composite.rs', 'const MAX_WIDTHS: usize = 4096;', 'const MAX_WIDTHS: usize = 4097;', 'textedit_composite_width_table_bounds_and_defaults'),
     Mutation('cid: accept duplicate codes', 'src/textedit/fonts/mapping.rs', 'result.insert(code, ch).is_some()', '{ result.insert(code, ch); false }', 'textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width'),
-    Mutation('cid: expand beyond ASCII', 'src/textedit/fonts/mapping.rs', 'u32::from(target) + u32::from(last - first) > 126', 'false', 'textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width'),
+    Mutation('cid: expand beyond Latin-1', 'src/textedit/fonts/mapping.rs', 'last_target > 255', 'false', 'textedit_cid_mapping_latin1_boundaries_and_ranges'),
+    Mutation('cid: admit Latin-1 control gap', 'src/textedit/fonts/mapping.rs', '!(target..=last_target as u16).all(|ch| super::super::text_byte(ch as u8))', 'false', 'textedit_cid_mapping_latin1_boundaries_and_ranges'),
+    Mutation('cid: refuse existing Latin-1 glyphs', 'src/textedit/fonts/mapping.rs', 'super::super::text_byte(ch as u8)', '(32..=126).contains(&ch)', 'textedit_cid_mapping_latin1_boundaries_and_ranges'),
     Mutation('cid: count kerning bytes as characters', 'src/textedit.rs', 'characters += fragment.chars().count();', 'characters += bytes.len();', 'textedit_composite_kerning_limit_counts_characters_across_strings'),
 
     Mutation('tagged indent: skip numeric validation', 'src/textedit/tagging.rs', 'super::number(indent)?;', '// unchecked indent', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),

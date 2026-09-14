@@ -17,6 +17,12 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.8] - Unreleased
+
+- Edit existing accented Latin-1 characters in supported composite TrueType fonts,
+  including German umlauts and ß. Glyph availability, width, outline and clipping
+  checks still apply; no font glyphs are added or substituted.
+
 ## [26.9.7] - 2026-09-14
 
 - Edit existing PDF text from the command palette, preview the actual rendered

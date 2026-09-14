@@ -4466,7 +4466,7 @@ actual worker verdict; `BUILD.md` records reproduction and controls.
 
 **Composite-font milestone completed:** Type0/Identity-H with one embedded
 CIDFontType2 descendant and an explicit identity CIDToGIDMap supports existing
-ASCII glyphs. Two-byte ToUnicode bfchar and scalar bfrange entries must be
+ASCII glyphs (extended to printable Latin-1 below). Two-byte ToUnicode bfchar and scalar bfrange entries must be
 one-to-one; the bounded standard wrapper admits no inheritance or extra code.
 The reader validates default and explicit PDF widths against TrueType advances,
 checks glyph bounds and embedding permissions, and preserves the font program.
@@ -4519,6 +4519,18 @@ been rerun on Windows; the earlier single-page browser evidence covers both plat
 Alternate-text overrides, alignment and paragraph reflow require separate
 semantics, and replacements still fit the original line's advance.
 
+**Existing Latin-1 composite glyphs implemented, unreleased (2026-09-14).**
+The same bounded Identity-H mapping now admits printable Latin-1: 32-126 and
+160-255, with at most 191 unique values. Controls, ranges crossing the control
+gap, wider Unicode, duplicate mappings and missing glyphs remain refused.
+The unchanged Edge/Verdana export containing ÄÖÜ äöü ß passes worker and native
+editing on macOS, with independent parser and PDFKit readback. Font bytes,
+structure and surrounding content are preserved. Simple embedded fonts retain
+their ASCII-only scope. The unchanged Arial counterpart remains refused because
+Ä overhangs its advance; this change does not loosen outline or clipping guards.
+Horizontal overhangs are the next measured compatibility gap, requiring their
+own placement proof rather than a tolerance added to the existing guard.
+
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
 and encoded to single PDF bytes, with exact standard Helvetica advances; the
@@ -4545,11 +4557,11 @@ overhanging outlines, variable/colour fonts and non-editable embedding permissio
 are refused.
 The composite path additionally accepts only Adobe/Identity/0 CID collections,
 symbolic descriptor flags and OpenType-style TrueType programs. Its map is at
-most 16 KiB decoded and 95 unique printable ASCII characters; width tables are
+most 16 KiB decoded and 191 unique printable Latin-1 characters; width tables are
 sorted, non-overlapping and limited to 4,096 explicit CIDs. Each mapped CID must
 name a nonzero, in-range glyph; outlines and positive widths retain the simple
 font path's bounds. Vertical writing, nonidentity glyph maps, CFF descendants,
-Unicode beyond ASCII and font-subset extension remain refused.
+Unicode beyond Latin-1 and font-subset extension remain refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array).

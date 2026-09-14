@@ -5,6 +5,8 @@ uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py <b
 Uses an isolated temporary profile and Page.printToPDF's generateTaggedPDF flag.
 The independent parser verifies both variants; no installed browser profile is used.
 Add --flow to export one ordinary paragraph wrapping across two pages.
+Use --latin1 --latin1-font Verdana for the existing-glyph accented control;
+--latin1 alone retains the Arial overhang refusal.
 https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
 """
 import argparse
@@ -19,13 +21,14 @@ from pypdf import PdfReader
 import websocket
 
 
-def export(browser, output, flow=False):
+def export(browser, output, flow=False, latin1=False, latin1_font="Arial"):
     output.mkdir(parents=True, exist_ok=True)
     # A failed rerun must not leave yesterday's successful export as evidence.
     for name in ("browser-tagged.pdf", "browser-untagged.pdf"):
         (output / name).write_bytes(b"")
     source = Path(__file__).with_name(
-        "textedit-producer-browser-flow.html" if flow else "textedit-producer.html"
+        "textedit-producer-browser-flow.html" if flow else
+        "textedit-producer-browser-latin1.html" if latin1 else "textedit-producer.html"
     ).resolve()
     with tempfile.TemporaryDirectory(prefix="tpdf-browser-") as profile:
         with (output / "browser.log").open("wb") as log:
@@ -77,6 +80,11 @@ def export(browser, output, flow=False):
                         time.sleep(0.1)
                     else:
                         raise RuntimeError("synthetic page did not finish loading")
+                    if latin1:
+                        # A font control is authored before printing, never by
+                        # normalizing the browser's PDF or its glyph metrics.
+                        call("Runtime.evaluate", {"expression":
+                             "document.body.style.fontFamily = " + json.dumps(latin1_font)}, session)
                     fonts = call("Runtime.evaluate", {"expression": "document.fonts.ready.then(() => true)",
                                  "awaitPromise": True}, session)
                     if fonts.get("exceptionDetails") or fonts["result"].get("value") is not True:
@@ -91,7 +99,8 @@ def export(browser, output, flow=False):
                         assert ("/StructTreeRoot" in reader.trailer["/Root"]) == tagged, "browser ignored tagging request"
                         assert len(reader.pages) == (2 if flow else 1), "wrong page count"
                         for page in reader.pages:
-                            assert " ".join(page.extract_text().split()) == "SYNTHETIC FIRST SYNTHETIC SECOND", "wrong synthetic text"
+                            first = "SYNTHETIC ÄÖÜ äöü ß" if latin1 else "SYNTHETIC FIRST"
+                            assert " ".join(page.extract_text().split()) == first + " SYNTHETIC SECOND", "wrong synthetic text"
                         if flow and tagged:
                             root = reader.trailer["/Root"]["/StructTreeRoot"]
                             document = root["/K"]
@@ -109,7 +118,8 @@ def export(browser, output, flow=False):
                                 assert nums[index * 2] == page["/StructParents"] == index, "wrong page parent key"
                                 assert list(nums[index * 2 + 1].get_object()) == [leaf.indirect_reference], "wrong reverse ownership"
                     print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True,
-                                      "pages": 2 if flow else 1, "flow": flow}))
+                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1,
+                                      "font": latin1_font if latin1 else "Arial"}))
                 finally:
                     connection.close()
             finally:
@@ -125,6 +135,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("browser", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--flow", action="store_true", help="export one naturally wrapped paragraph across two pages")
+    variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--flow", action="store_true", help="export one naturally wrapped paragraph across two pages")
+    variant.add_argument("--latin1", action="store_true", help="export accented letters using the browser's embedded font")
+    parser.add_argument("--latin1-font", choices=("Arial", "Verdana"), default="Arial")
     args = parser.parse_args()
-    export(args.browser, args.output, args.flow)
+    if args.latin1_font != "Arial" and not args.latin1:
+        parser.error("--latin1-font requires --latin1")
+    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font)

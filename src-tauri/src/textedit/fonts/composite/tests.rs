@@ -136,6 +136,53 @@ fn textedit_composite_roundtrip_preserves_program_mapping_and_other_page() {
 }
 
 #[test]
+fn textedit_composite_latin1_uses_existing_codes_and_preserves_resources() {
+    let (mut doc, [font, _, _, mapping]) = fixture();
+    // Assign two unused synthetic glyphs non-ASCII semantics. Real accented
+    // outlines are checked independently with the unchanged browser export.
+    let map = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    let text = String::from_utf8(map.content.clone()).unwrap();
+    assert_eq!(text.matches("<0041>").count(), 1);
+    assert_eq!(text.matches("<0042>").count(), 1);
+    map.content = text
+        .replace("<0041>", "<00e4>")
+        .replace("<0042>", "<00df>")
+        .into_bytes();
+    let before = doc.objects.clone();
+    let pages = crate::pagetree::ordered_pages(&doc);
+    let other = textedit::scan(&doc, 1).unwrap();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert_eq!(metrics.encode("äß").unwrap().len(), 4);
+    assert_eq!(
+        metrics.decode(&metrics.encode("äß").unwrap()).unwrap(),
+        "äß"
+    );
+    assert!((metrics.advance("ä ß", 12.).unwrap() - 21.6).abs() < 0.0001);
+    let limit = metrics.encode(&"ä".repeat(4096)).unwrap();
+    assert_eq!(limit.len(), 8192);
+    assert_eq!(metrics.decode(&limit).unwrap().chars().count(), 4096);
+    assert!(metrics.encode(&"ä".repeat(4097)).is_err());
+    for replacement in ["ö", "A", "ä".repeat(40).as_str()] {
+        let change = update(&doc, replacement);
+        assert!(textedit::write(&mut doc, &[change]).is_err());
+        assert_eq!(doc.objects, before);
+    }
+    let change = update(&doc, "ä ß");
+    textedit::write(&mut doc, &[change]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "ä ß");
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs, other.runs);
+    for (id, value) in before {
+        if id != pages[0] {
+            assert_eq!(doc.objects[&id], value);
+        }
+    }
+}
+
+#[test]
 fn textedit_composite_refusals_leave_every_object_unchanged() {
     for (scope, key, value) in [
         (0, "Encoding", Object::Name(b"Identity-V".to_vec())),

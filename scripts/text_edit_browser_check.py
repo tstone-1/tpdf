@@ -23,14 +23,14 @@ def next_float32(value):
     return struct.unpack(">f", struct.pack(">I", bits + 1))[0]
 
 
-def controls(before, after):
+def controls(before, after, cid_latin1=False):
     from pypdf import PdfWriter
     from pypdf.generic import ContentStream, FloatObject, NameObject, NumberObject
 
     # The normal checker must still expose decimal normalization, instead of
     # silently adopting this mode for every existing fixture.
     try:
-        check(before, after)
+        check(before, after, cid_latin1=cid_latin1)
     except AssertionError as error:
         assert str(error) == "page resources changed", str(error)
     else:
@@ -89,7 +89,7 @@ def controls(before, after):
             writer.write(target)
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    check(before, target, float32=True)
+                    check(before, target, float32=True, cid_latin1=cid_latin1)
             except AssertionError as error:
                 assert str(error) == expected, (mode, str(error))
             else:
@@ -97,7 +97,7 @@ def controls(before, after):
             print("[PASS] independent browser corruption control:", mode)
 
 
-def tagged_controls(before, after):
+def tagged_controls(before, after, cid_latin1=False):
     from pypdf import PdfWriter
     from pypdf.generic import NameObject, NumberObject, TextStringObject
 
@@ -118,7 +118,9 @@ def tagged_controls(before, after):
             elif mode == "role":
                 leaf[NameObject("/S")] = NameObject("/Span")
             elif mode == "language":
-                document[NameObject("/Lang")] = TextStringObject("de")
+                language = "en" if document["/Lang"] == "de" else "de"
+                assert document["/Lang"] != language, "language control did not change its subject"
+                document[NameObject("/Lang")] = TextStringObject(language)
             elif mode == "actual-text":
                 leaf[NameObject("/ActualText")] = TextStringObject("OLD TEXT")
             elif mode == "next-key":
@@ -129,7 +131,7 @@ def tagged_controls(before, after):
             writer.write(target)
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    check(before, target, float32=True)
+                    check(before, target, float32=True, cid_latin1=cid_latin1)
             except AssertionError as error:
                 expected = "tagged structure disappeared" if mode == "removed-tree" else "tagged structure or parent references changed"
                 assert str(error) == expected, (mode, str(error))
@@ -187,7 +189,9 @@ def main():
     parser.add_argument("after", type=Path)
     parser.add_argument("--controls", action="store_true")
     parser.add_argument("--tagged", action="store_true")
-    parser.add_argument("--flow", action="store_true", help="check the two-page naturally wrapped fixture")
+    variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--latin1", action="store_true", help="check the browser accented-letter fixture")
+    variant.add_argument("--flow", action="store_true", help="check the two-page naturally wrapped fixture")
     parser.add_argument("--page", type=int, default=0, help="zero-based edited page")
     args = parser.parse_args()
     assert args.flow or args.page == 0, "page selection requires the flow fixture"
@@ -196,14 +200,14 @@ def main():
         reader = PdfReader(path)
         assert len(reader.pages) == (2 if args.flow else 1), "wrong browser fixture page count"
         assert ("/StructTreeRoot" in reader.trailer["/Root"]) == args.tagged, "browser fixture tagging differs"
-    check(args.before, args.after, page_index=args.page, float32=True)
+    check(args.before, args.after, page_index=args.page, float32=True, cid_latin1=args.latin1)
     if args.controls:
         if args.flow:
             flow_controls(args.before, args.after, args.page)
         else:
-            controls(args.before, args.after)
+            controls(args.before, args.after, cid_latin1=args.latin1)
             if args.tagged:
-                tagged_controls(args.before, args.after)
+                tagged_controls(args.before, args.after, cid_latin1=args.latin1)
 
 
 if __name__ == "__main__":

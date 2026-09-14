@@ -101,6 +101,45 @@ fn textedit_cid_mapping_accepts_bfchar_ranges_and_high_codes() {
 }
 
 #[test]
+fn textedit_cid_mapping_latin1_boundaries_and_ranges() {
+    let map = |body: &str| {
+        wide_map().replace(
+            "2 beginbfchar\n<0101> <0041>\n<0102> <0042>\nendbfchar",
+            body,
+        )
+    };
+    // Both ends of both printable intervals, and the control gap between them.
+    // Large UTF-16 values must be rejected before casting down to a byte.
+    for target in [
+        0_u16, 31, 32, 126, 127, 128, 159, 160, 196, 223, 228, 255, 256, 0xd800, 0xffff,
+    ] {
+        let source = map(&format!("1 beginbfchar <0101> <{target:04x}> endbfchar"));
+        let result = parse_cid(&stream(&source));
+        let accepted = matches!(target, 32..=126 | 160..=255);
+        assert_eq!(result.is_ok(), accepted, "{target:04x}");
+        if accepted {
+            assert_eq!(result.unwrap()[&257], target as u8);
+        }
+    }
+    let source = map("2 beginbfrange <0100> <015e> <0020> <0200> <025f> <00a0> endbfrange");
+    let result = parse_cid(&stream(&source)).unwrap();
+    assert_eq!(result.len(), 191);
+    assert_eq!(
+        result.values().copied().collect::<Vec<_>>(),
+        (32..=126).chain(160..=255).collect::<Vec<u8>>()
+    );
+    for body in [
+        "1 beginbfrange <0100> <0101> <00ff> endbfrange",
+        "1 beginbfrange <0100> <0180> <007e> endbfrange",
+        "1 beginbfrange <0100> <0101> <009f> endbfrange",
+        "2 beginbfchar <0100> <00e4> <0101> <00e4> endbfchar",
+        "2 beginbfrange <0100> <0101> <00e4> <0200> <0201> <00e5> endbfrange",
+    ] {
+        assert!(parse_cid(&stream(&map(body))).is_err(), "{body}");
+    }
+}
+
+#[test]
 fn textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width() {
     for (from, to) in [
         ("<0102>", "<0101>"),

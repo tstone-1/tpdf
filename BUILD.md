@@ -7399,3 +7399,37 @@ and the original exporter and PDFKit browser mode remain green.
 
 This fixture's native workflow was measured on macOS only. The earlier browser
 milestone above retains its Windows evidence; no new Windows run is claimed.
+
+### Existing accented glyphs in composite fonts
+
+Measured on macOS, 2026-09-14, with Edge `153.0.4234.32`. Before the change,
+the unchanged accented export was refused at its two-byte character map.
+The reader now permits unique printable Latin-1 mappings, bounded to 191 values;
+the 16 KiB CMap limit, glyph/width checks and outline bounds are unchanged.
+Single-byte mapped and ordinary simple embedded fonts retain their ASCII scope.
+
+The Arial fixture still fails because Ä extends 1.465 font units past each side
+of its advance. That refusal is retained. Independently measured Verdana outlines
+fit their advances; the unchanged browser export using that font passes the worker
+round trip and all 15 native editing checks. Independent parser and PDFKit readback
+of both worker and UI saves preserve the font, structure and surrounding content:
+2,984 changed pixels inside the edited line, zero outside. All 17 corruption
+controls fail. The language control now selects a different language dynamically;
+writing `de` into this already German fixture had changed nothing.
+
+```sh
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' scratch/textedit-browser-latin1/verdana --latin1 --latin1-font Verdana
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-browser-latin1/verdana/worker scratch/textedit-browser-latin1/verdana/browser-tagged.pdf --cid-latin1
+uv run --with pypdf scripts/text_edit_browser_check.py scratch/textedit-browser-latin1/verdana/worker/synthetic-before.pdf scratch/textedit-browser-latin1/verdana/worker/synthetic-after.pdf --tagged --latin1 --controls
+swift scripts/text_edit_pdfkit.swift scratch/textedit-browser-latin1/verdana/worker --browser-latin1
+uv run scripts/tabs_check.py 'src-tauri/target/debug/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf' scratch/textedit-browser-latin1/verdana/browser-tagged.pdf --phase textedit-cid-latin1 --saved-copy scratch/textedit-browser-latin1/verdana/ui-after.pdf
+```
+
+Build the debug checks app using the explicit profile at the top of this file.
+Generate the retained Arial refusal in a separate directory with `--latin1` alone.
+All 104 editor-module tests pass, and all three targeted mapping mutations are
+caught. The new `editable-composite-latin1` fuzz seed reaches discovery with one
+run; the bounded fuzz campaign executed 30,272 inputs in 21 seconds without a
+finding, at 87 MiB peak RSS, using the existing sanitizer-free macOS setup.
+Type checking, Clippy and all 1,667 frontend tests passed. These are macOS
+measurements; no Windows runtime result is claimed here.
