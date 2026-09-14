@@ -4506,7 +4506,7 @@ indirect arrays are supported. Page references may be absent from containers;
 an integer MCID still requires Pg on its own element, not an ancestor. Semantic
 overrides, extra child levels and NonStruct layout attributes remain refused.
 
-**Naturally wrapped, multi-page browser exports verified on macOS (2026-09-14).**
+**Naturally wrapped, multi-page browser exports verified on both platforms (2026-09-14).**
 A fresh Edge export of one ordinary HTML paragraph wraps across two pages without
 authored line or page breaks. Its NonStruct element owns the first page's integer
 MCID and an MCR for the second page. Existing application code already supports
@@ -4514,8 +4514,9 @@ this shape: unchanged tagged and untagged exports pass worker editing on either
 page, and all 19 native multi-page checks pass. Independent parser and PDFKit
 readback preserve the structure and untouched page, with zero pixel changes
 outside the edited line. Five cross-page corruption controls are rejected.
-The fixture and reproduction commands are in BUILD.md. This new fixture has not
-been rerun on Windows; the earlier single-page browser evidence covers both platforms.
+The fixture and reproduction commands are in BUILD.md. Windows follow-up at
+`c2e975b` also verifies page-two editing on the tagged export, all 19 native checks
+and independent parser/PDFKit readback of its worker and UI saves.
 Alternate-text overrides, alignment and paragraph reflow require separate
 semantics, and replacements still fit the original line's advance.
 
@@ -4524,7 +4525,7 @@ The same bounded Identity-H mapping now admits printable Latin-1: 32-126 and
 160-255, with at most 191 unique values. Controls, ranges crossing the control
 gap, wider Unicode, duplicate mappings and missing glyphs remain refused.
 The unchanged Edge/Verdana export containing ÄÖÜ äöü ß passes worker and native
-editing on macOS, with independent parser and PDFKit readback. Font bytes,
+editing on macOS and Windows, with independent parser and PDFKit readback. Font bytes,
 structure and surrounding content are preserved. Simple embedded fonts retain
 their ASCII-only scope.
 
@@ -4535,8 +4536,7 @@ and its unrounded horizontal envelope; vertical glyph bounds remain unchanged.
 The unchanged Arial export accepts `ÖÄÜ äöü ß`, with Ä inside the line, but refuses
 `ÄÖÜ äöü ß` because the leading Ä would cross its exact left boundary. The contained
 worker, all 16 native editing checks and independent parser/PDFKit readback pass
-on macOS. This expands supported placement
-without changing the authored clip, font program or character map.
+on macOS and Windows. This expands supported placement without changing the authored clip, font program or character map.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
@@ -13598,8 +13598,9 @@ operator-rewriting machinery built in Phase 3.
 **First application editor shipped in 26.9.7 (2026-09-14).** See §7 for
 Helvetica/Latin-1, bounded embedded TrueType/ASCII and Type0/Identity-H cases,
 worker preview, journal and native workflow. Naturally wrapped, multi-page browser
-exports are verified on macOS. Extended character mappings,
-subset extension and paragraph reflow remain open.
+exports are verified on macOS and Windows. Existing Latin-1 composite glyphs and
+bounded horizontal overhangs are implemented and verified on both platforms,
+unreleased. Wider Unicode, subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 

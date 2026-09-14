@@ -7397,8 +7397,10 @@ untouched page's content bytes; each fails for its named reason on both edited
 page choices. All 17 existing single-page browser corruption controls still fail,
 and the original exporter and PDFKit browser mode remain green.
 
-This fixture's native workflow was measured on macOS only. The earlier browser
-milestone above retains its Windows evidence; no new Windows run is claimed.
+Windows x64 follow-up at `c2e975b` on 2026-09-14 also passes the worker round trip,
+all 19 native checks and five cross-page corruption controls for editing page two
+of the tagged fixture. Both saved PDFs pass independent parser and PDFKit readback;
+page one is unchanged. The combined Windows record is below the overhang checks.
 
 ### Existing accented glyphs in composite fonts
 
@@ -7432,8 +7434,9 @@ All 104 editor-module tests pass, and all three targeted mapping mutations are
 caught. The new `editable-composite-latin1` fuzz seed reaches discovery with one
 run; the bounded fuzz campaign executed 30,272 inputs in 21 seconds without a
 finding, at 87 MiB peak RSS, using the existing sanitizer-free macOS setup.
-Type checking, Clippy and all 1,667 frontend tests passed. These are macOS
-measurements; no Windows runtime result is claimed here.
+Type checking, Clippy and all 1,667 frontend tests passed on macOS. Windows x64
+follow-up at `c2e975b` on 2026-09-14 passes the tagged Verdana worker round trip,
+all 15 native checks and independent readback, detailed below.
 
 
 ### Bounded horizontal overhangs in composite fonts
@@ -7468,4 +7471,22 @@ parser/PDFKit checks with 2,900 changed pixels inside the line and zero outside.
 The native harness waits for newly created editor targets: the old targets can
 remain visible while discovery awaits the worker, so existence alone raced the
 replacement editor. The refusal check requires the specific ink-boundary error.
-No Windows runtime result is claimed for this increment.
+Windows x64 verification at `c2e975b` on 2026-09-14 passes all 107 editor tests
+and 50 native checks: Arial overhangs (16), Verdana Latin-1 (15), and naturally
+wrapped browser text on page two (19). All three worker previews/saves pass,
+including refusal without output, as do 17 Arial and five cross-page parser
+corruption controls. Each worker and native save passes independent parsing on
+Windows and macOS, then PDFKit rendering:
+
+| Fixture | Changed pixels inside the edited line, worker / UI | Outside the line |
+| --- | ---: | ---: |
+| Arial overhangs | 2,900 / 2,900 | 0 / 0 |
+| Verdana Latin-1 | 2,984 / 2,984 | 0 / 0 |
+| Naturally wrapped, page two | 2,421 / 2,421 | 0 / 0 |
+
+The wrapped fixture's first page remains pixel-identical. All 15 transferred PDFs
+match their Windows sizes and SHA-256 digests. The external worker-exit observer
+passes its live/dead control and all three native runs. The job completes in about
+3.5 minutes including a fresh build, restores normal frontend assets with zero
+harness code, and leaves both source checkouts clean. The temporary scheduled
+task is removed; the isolated build cache is retained for subsequent checks.
