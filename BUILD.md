@@ -7908,4 +7908,28 @@ The instrumented `textedit_scan` run, including the new range-mapping seed,
 executes 27,962 inputs in 21 seconds without a finding, peaking at 88 MiB RSS.
 It uses `--sanitizer=none` on macOS. The existing `bfchar` generator output remains
 byte-identical. Normal frontend assets are restored with zero harness units.
-Windows verification of this increment remains pending.
+Windows x64 verification at `04c8fd7` on 2026-09-14 passes all 141 text-editor
+Rust tests and both 15-check native workflows (range-mapped geometric fixture
+and unchanged W3C control). All four worker/native outputs pass independent
+pypdf readback on Windows and macOS. PDFKit finds 935 changed pixels inside the
+range fixture's target and 243 inside the W3C target, zero outside, for both
+writing routes. All 11 retrieved PDF sizes and SHA-256 digests match the Windows
+manifest. Discovery agrees with macOS for the W3C document and both agenda pages.
+Normal assets are restored with zero harness units, the temporary task is removed,
+and the ordinary checkout remains clean; the isolated source/build cache is retained.
+
+The next acceptance candidate is page 1 of the unchanged Wellington agenda,
+whose URL and digest are in `testdata/textedit-public-corpus.json`. Its complete
+operator inventory has no curves, so page 2 need not be admitted to prove an
+edit on page 1. Page 1 has 107 `Tc` setters, ranging from -0.0076 to 0.0017 text
+space units, a `/Perceptual` rendering intent, and one 841x141, eight-bit,
+ICCBased Flate image without a mask. Its `/TT8` font maps an en dash (U+2013).
+These are admission requirements, not evidence that all other font/ink checks
+will pass. Page 2 adds 147 cubic-curve operators and remains a separate target.
+
+Character spacing needs one shared measurement path for discovery and writing:
+apply it once per decoded character (not per byte of a CID), include it in `TJ`
+fragment positions and advances, preserve it across `BT`/`ET` and `q`/`Q`, and
+validate replacement ink with the same state. Supporting the setter alone would
+mis-size edits. Keep the original image and font bytes, mapping, clipping and
+unrelated content unchanged throughout the eventual page-1 round trip.
