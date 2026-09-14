@@ -269,7 +269,7 @@ struct Inspection {
     // Unrounded horizontal bounds relative to the authored text origin.
     // A replacement must stay within these as well as the original advance.
     horizontal_bounds: BTreeMap<u32, [f64; 2]>,
-    character_spacing: BTreeMap<u32, f64>,
+    text_spacing: BTreeMap<u32, (f64, f64)>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
@@ -281,6 +281,7 @@ fn array_text(
     metrics: &fonts::Metrics,
     size: f64,
     spacing: f64,
+    word_spacing: f64,
 ) -> Result<(String, f64, [f64; 2]), String> {
     if values.is_empty()
         || values.len() > MAX_TEXT
@@ -301,7 +302,8 @@ fn array_text(
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
             }
-            let (width, [left, right]) = metrics.spaced_layout(&fragment, size, spacing)?;
+            let (width, [left, right]) =
+                metrics.spaced_layout(&fragment, size, spacing, word_spacing)?;
             bounds[0] = bounds[0].min(advance + left);
             bounds[1] = bounds[1].max(advance + right);
             advance += width;
@@ -358,13 +360,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
     let mut spacing = 0.0;
+    let mut word_spacing = 0.0;
     let mut states = Vec::new();
     let mut clip = None;
     let mut path_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut horizontal_bounds = BTreeMap::new();
-    let mut character_spacing = BTreeMap::new();
+    let mut text_spacing = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
@@ -388,6 +391,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     fill_components,
                     clip,
                     spacing,
+                    word_spacing,
                 ));
             }
             ("Q", []) if !inside => {
@@ -398,6 +402,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     fill_components,
                     clip,
                     spacing,
+                    word_spacing,
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
@@ -456,10 +461,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("ET", []) if inside => inside = false,
             // Explicit defaults have the same semantics as an omitted setting.
             // Text state can be set outside BT/ET and persists across blocks.
-            // Character spacing is saved by q/Q and checked against the active
+            // Text spacing is saved by q/Q and checked against the active
             // font at each show. Other nondefault text state remains refused.
             ("Tc", [value]) => spacing = number(value)?,
-            ("Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
+            ("Tw", [value]) => word_spacing = number(value)?,
+            ("Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
             ("Tr", [Object::Integer(0)]) => {}
             ("ri", [Object::Name(name)]) => colors::intent(name)?,
@@ -548,10 +554,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 metrics,
                 size,
                 spacing,
+                word_spacing,
             )?
         } else {
             let text = metrics.decode(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
-            let (advance, horizontal) = metrics.spaced_layout(&text, size, spacing)?;
+            let (advance, horizontal) =
+                metrics.spaced_layout(&text, size, spacing, word_spacing)?;
             (text, advance, horizontal)
         };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
@@ -593,7 +601,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         }
         font_operators.insert(index as u32, font_operator);
         horizontal_bounds.insert(index as u32, horizontal);
-        character_spacing.insert(index as u32, spacing);
+        text_spacing.insert(index as u32, (spacing, word_spacing));
         result.runs.push(Run {
             display_rect,
             operator: index as u32,
@@ -619,7 +627,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         runs: result,
         font_operators,
         horizontal_bounds,
-        character_spacing,
+        text_spacing,
     })
 }
 
@@ -658,7 +666,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             runs,
             font_operators,
             horizontal_bounds,
-            character_spacing,
+            text_spacing,
             patched,
             ..
         } = prepared.get_mut(&change.page).ok_or("missing text page")?;
@@ -679,11 +687,11 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             .as_name()
             .map_err(|e| e.to_string())?;
         let metrics = font(doc, resources(doc, *id)?, name)?;
-        let spacing = *character_spacing
+        let (spacing, word_spacing) = *text_spacing
             .get(&change.operator)
-            .ok_or("missing character spacing")?;
+            .ok_or("missing text spacing")?;
         let (replacement_advance, replacement_bounds) =
-            metrics.spaced_layout(&change.replacement, run.size, spacing)?;
+            metrics.spaced_layout(&change.replacement, run.size, spacing, word_spacing)?;
         if replacement_advance > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
@@ -1186,7 +1194,7 @@ pub(crate) mod tests {
 
     #[test]
     fn textedit_default_setters_refuse_nondefault_and_malformed_operands() {
-        for (operator, default) in [("Tw", "0"), ("Ts", "0"), ("Tz", "100"), ("Tr", "0")] {
+        for (operator, default) in [("Ts", "0"), ("Tz", "100"), ("Tr", "0")] {
             for operand in [
                 "", "0 0", "(0)", "/Zero", "[0]", "true", "null", "1", "-1", "0.01", "99.99",
                 "100.01", "1000001",

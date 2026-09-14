@@ -197,3 +197,127 @@ fn textedit_spacing_bounds_and_malformed_setters_remain_refused() {
         assert!(scan(&embedded(bytes), 0).is_err());
     }
 }
+
+#[test]
+fn textedit_word_spacing_measures_combined_steps_and_kerning_fragments() {
+    for word in [-2, 0, 2] {
+        for (show, adjustment) in [("(A B ) Tj", 0.), ("[(A ) 100 (B )] TJ", 1.)] {
+            let bytes = format!("1 Tc {word} Tw BT /F1 10 Tf 40 180 Td {show} ET");
+            let page = inspect(&embedded(bytes.as_bytes()), 0).unwrap();
+            let run = &page.runs.runs[0];
+            close(run.advance, 28. + 2. * f64::from(word) - adjustment);
+            close(
+                page.horizontal_bounds[&run.operator][1],
+                27. + f64::from(word) - adjustment,
+            );
+        }
+    }
+}
+
+#[test]
+fn textedit_word_spacing_restores_state_and_checks_replacements_atomically() {
+    let mut doc = embedded(b"-2 Tw BT /F1 10 Tf 40 180 Td (A B) Tj ET q 2 Tw BT 40 140 Td (A B) Tj ET Q BT 40 100 Td (A B) Tj ET");
+    let before = inspect(&doc, 0).unwrap();
+    assert_eq!(
+        before
+            .runs
+            .runs
+            .iter()
+            .map(|r| r.advance)
+            .collect::<Vec<_>>(),
+        [16., 20., 16.]
+    );
+    let unchanged = doc.objects.clone();
+    // Removing the space would fit if the writer forgot the source's negative Tw.
+    let update = Change {
+        replacement: "ABC".into(),
+        ..tests::change(&doc)
+    };
+    assert!(write(&mut doc, &[update])
+        .unwrap_err()
+        .contains("original text advance"));
+    assert_eq!(doc.objects, unchanged);
+    let updates = [0, 2].map(|index| Change {
+        page: 0,
+        revision: before.runs.revision.clone(),
+        operator: before.runs.runs[index].operator,
+        original: "A B".into(),
+        replacement: "B A".into(),
+    });
+    write(&mut doc, &updates).unwrap();
+    let after = inspect(&doc, 0).unwrap();
+    assert_eq!(after.runs.runs[1], before.runs.runs[1]);
+    for index in [0, 2] {
+        assert_eq!(after.runs.runs[index].text, "B A");
+        close(after.runs.runs[index].advance, 16.);
+    }
+    for (index, (old, new)) in before
+        .content
+        .operations
+        .iter()
+        .zip(&after.content.operations)
+        .enumerate()
+    {
+        if !updates.iter().any(|u| u.operator as usize == index) {
+            assert_eq!(
+                (&old.operator, &old.operands),
+                (&new.operator, &new.operands)
+            );
+        }
+    }
+    assert_eq!(
+        scan(&doc, 1).unwrap().runs,
+        scan(&embedded(b"BT /F1 10 Tf 40 180 Td (AB) Tj ET"), 1)
+            .unwrap()
+            .runs
+    );
+
+    // An added space fits without Tw, but positive Tw can make it overflow.
+    let mut doc = content(tests::fixture(), b"2 Tw BT /F1 10 Tf 40 180 Td (A) Tj ET");
+    let unchanged = doc.objects.clone();
+    let update = Change {
+        replacement: "i ".into(),
+        ..tests::change(&doc)
+    };
+    assert!(write(&mut doc, &[update])
+        .unwrap_err()
+        .contains("original text advance"));
+    assert_eq!(doc.objects, unchanged);
+}
+
+#[test]
+fn textedit_word_spacing_bounds_combined_backtracking_and_positioning() {
+    for (value, accepted) in [
+        ("2.5", true),
+        ("-2.5", true),
+        ("2.5001", false),
+        ("-2.5001", false),
+    ] {
+        let bytes = format!("{value} Tw BT /F1 10 Tf 40 180 Td (A B) Tj ET");
+        assert_eq!(
+            scan(&embedded(bytes.as_bytes()), 0).is_ok(),
+            accepted,
+            "{value}"
+        );
+    }
+    for value in [
+        "", "0 0", "(0)", "/Zero", "[0]", "true", "null", "1000001", "-1000001",
+    ] {
+        let bytes = format!("{value} Tw 0 Tw BT /F1 10 Tf 40 180 Td (A B) Tj ET");
+        assert!(scan(&embedded(bytes.as_bytes()), 0).is_err(), "{value}");
+    }
+    // Each spacing alone is legal, but their sum reverses a Helvetica space.
+    let doc = content(
+        tests::fixture(),
+        b"-2 Tc -2 Tw BT /F1 10 Tf 40 180 Td (A B) Tj ET",
+    );
+    assert!(scan(&doc, 0)
+        .unwrap_err()
+        .contains("backtracking character"));
+    for bytes in [
+        b"2 Tw BT /F1 10 Tf (A B) Tj ET".as_slice(),
+        b"BT /F1 10 Tf 40 180 Td (A B) Tj 2 Tw (A B) Tj ET",
+    ] {
+        assert!(scan(&embedded(bytes), 0).is_err());
+    }
+}

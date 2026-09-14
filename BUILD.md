@@ -8152,8 +8152,53 @@ normalizing extracted text alone would conceal a real change.
 All eleven targeted mutations are caught by their named tests; the clean control
 passes 1,459 Rust tests. The `editable-curves` fuzz seed reaches text discovery
 through the contained probe. The seven unchanged practical PDFs now report two
-editable pages and 46 refused pages. Windows curved-path verification is pending.
+editable pages and 46 refused pages. Windows verification at `33998a1` passes
+160 focused tests and both agenda native workflows. Hash-verified Windows outputs
+pass independent pypdf and macOS PDFKit readback: 914 changed heading pixels on
+page 1 or 283 on page 2, zero outside the edited heading and zero on the untouched
+page. The temporary scheduled task was removed; the normal checkout was unchanged.
 The seeded fuzz run completes 27,574 executions in 21 seconds, with 88 MiB
 peak RSS and no finding (`--sanitizer=none` on macOS). Clippy, frontend type
 checking, formatting, mutation anchors, notices and the normal-bundle check pass.
 Normal frontend assets are restored, with zero harness code.
+
+
+### Word spacing and the next practical target
+
+`Tw` joins `Tc` in the saved graphics state and per-run replacement geometry.
+Each is bounded to one quarter of the active font size; combined glyph steps
+must remain positive. Original operators, font mappings and resources survive.
+ISO 32000-1 section 9.3.3 applies word spacing to single-byte PDF code 32,
+regardless of its mapped character. A mapped Unicode space at another code and
+all Identity-H two-byte codes receive no word spacing.
+
+Generate the native fixture in both directions (`1` and `-1`):
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py <source.pdf> --ranges --word-spacing 1 --word-code space
+uv run scripts/tabs_check.py <checks-binary> <source.pdf> --phase textedit --saved-copy <saved.pdf>
+uv run --with pypdf testdata/make_textedit_embedded.py --check <source.pdf> <saved.pdf>
+swift scripts/text_spacing_pdfkit.swift <positive-source.pdf> <negative-source.pdf> <positive-saved.pdf> <negative-saved.pdf> --word-char=space
+```
+
+`--word-code letter` maps `S` to byte 32; verify it with `--word-char=S`.
+Omitting `--word-code` leaves byte 32 absent; `--word-char=none` checks that changing
+Tw moves no glyph. The Swift reader's original four-argument Tc mode is unchanged.
+On macOS, 2026-09-14: all six worker cases pass independent operand/resource
+readback and measured PDFKit glyph positions. Both space-code native workflows
+pass 15 checks and the same independent readback. Seven targeted mutations are
+caught by their named tests; the clean Rust control passes 1,463 tests (164 focused
+text-editor tests). Both native saves change 1,115 pixels inside the target and
+zero outside it. Negative controls reject missing word-spacing movement and an
+unchanged input. The two new word-spacing fuzz seeds reach discovery; the seeded
+run completes 23,734 executions in 21 seconds with 88 MiB peak RSS and no finding
+(`--sanitizer=none` on macOS). Clippy, type checking, formatting, mutation anchors,
+notices and the normal bundle check pass; the normal bundle contains no harness.
+Windows word-spacing verification remains outstanding.
+
+The next unchanged practical input is passport-guide page 16, identified by the
+existing manifest digest. Across its 415 operators, every text show has an explicit
+position; there are no images or soft masks. Word spacing ranges from -0.125 to
+0.01. External graphics state, stroke-state operators and custom Myriad CFF
+mappings (including ligatures and curly quotes) still prevent admission. This
+increment does not increase the practical corpus's editable-page count.

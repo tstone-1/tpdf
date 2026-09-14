@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Support bounded word spacing during in-place text editing, preserving original
+  font-code semantics and refusing replacements that exceed the source layout.
+
 - Preserve bounded filled and stroked curves during text editing, including
   compound graphics made from multiple line and Bezier subpaths.
 
