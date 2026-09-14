@@ -4,6 +4,7 @@
 uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py <browser> <output-dir>
 Uses an isolated temporary profile and Page.printToPDF's generateTaggedPDF flag.
 The independent parser verifies both variants; no installed browser profile is used.
+Add --flow to export one ordinary paragraph wrapping across two pages.
 https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
 """
 import argparse
@@ -18,12 +19,14 @@ from pypdf import PdfReader
 import websocket
 
 
-def export(browser, output):
+def export(browser, output, flow=False):
     output.mkdir(parents=True, exist_ok=True)
     # A failed rerun must not leave yesterday's successful export as evidence.
     for name in ("browser-tagged.pdf", "browser-untagged.pdf"):
         (output / name).write_bytes(b"")
-    source = Path(__file__).with_name("textedit-producer.html").resolve()
+    source = Path(__file__).with_name(
+        "textedit-producer-browser-flow.html" if flow else "textedit-producer.html"
+    ).resolve()
     with tempfile.TemporaryDirectory(prefix="tpdf-browser-") as profile:
         with (output / "browser.log").open("wb") as log:
             process = subprocess.Popen([str(browser.resolve()), "--headless",
@@ -86,9 +89,27 @@ def export(browser, output):
                         path.write_bytes(base64.b64decode(pdf["data"], validate=True))
                         reader = PdfReader(path)
                         assert ("/StructTreeRoot" in reader.trailer["/Root"]) == tagged, "browser ignored tagging request"
-                        assert len(reader.pages) == 1, "wrong page count"
-                        assert " ".join(reader.pages[0].extract_text().split()) == "SYNTHETIC FIRST SYNTHETIC SECOND", "wrong synthetic text"
-                    print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True}))
+                        assert len(reader.pages) == (2 if flow else 1), "wrong page count"
+                        for page in reader.pages:
+                            assert " ".join(page.extract_text().split()) == "SYNTHETIC FIRST SYNTHETIC SECOND", "wrong synthetic text"
+                        if flow and tagged:
+                            root = reader.trailer["/Root"]["/StructTreeRoot"]
+                            document = root["/K"]
+                            paragraph = document["/K"]
+                            leaf = paragraph["/K"]
+                            assert [node["/S"] for node in (document, paragraph, leaf)] == ["/Document", "/P", "/NonStruct"], "expected one flowing paragraph"
+                            items = leaf["/K"]
+                            assert len(items) == 2 and items[0] == 0, "wrong flow content items"
+                            assert leaf.raw_get("/Pg") == reader.pages[0].indirect_reference, "wrong first-page ownership"
+                            assert items[1]["/Type"] == "/MCR" and items[1]["/MCID"] == 0, "wrong continuation item"
+                            assert items[1].raw_get("/Pg") == reader.pages[1].indirect_reference, "wrong continuation page"
+                            nums = root["/ParentTree"]["/Nums"]
+                            assert len(nums) == 4, "wrong parent-tree page count"
+                            for index, page in enumerate(reader.pages):
+                                assert nums[index * 2] == page["/StructParents"] == index, "wrong page parent key"
+                                assert list(nums[index * 2 + 1].get_object()) == [leaf.indirect_reference], "wrong reverse ownership"
+                    print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True,
+                                      "pages": 2 if flow else 1, "flow": flow}))
                 finally:
                     connection.close()
             finally:
@@ -104,5 +125,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("browser", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--flow", action="store_true", help="export one naturally wrapped paragraph across two pages")
     args = parser.parse_args()
-    export(args.browser, args.output)
+    export(args.browser, args.output, args.flow)
