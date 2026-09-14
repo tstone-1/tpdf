@@ -24,7 +24,7 @@ def main():
     from fontTools.ttLib import TTFont
     from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
     from pypdf import PdfReader, PdfWriter
-    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject, BooleanObject
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
@@ -35,6 +35,7 @@ def main():
                         help="map a space or S to PDF byte 32; default has no code 32")
     parser.add_argument("--intent", choices=["AbsoluteColorimetric", "RelativeColorimetric", "Saturation", "Perceptual"])
     parser.add_argument("--image", action="store_true")
+    parser.add_argument("--print-state", action="store_true", help="preserve explicit mask defaults and scoped overprint settings")
     parser.add_argument("--dash", action="store_true")
     args = parser.parse_args()
     if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
@@ -109,6 +110,21 @@ def main():
             })),
         })
         first = f"/{args.intent} ri q /IntentState gs {first} Q"
+    if args.print_state:
+        states = page["/Resources"].setdefault(NameObject("/ExtGState"), DictionaryObject())
+        for name, overprint, mode in [("PrintOn", True, 0), ("PrintOff", False, 1)]:
+            states[NameObject("/" + name)] = writer._add_object(DictionaryObject({
+                NameObject("/Type"): NameObject("/ExtGState"),
+                NameObject("/BM"): NameObject("/Normal"),
+                NameObject("/ca"): NumberObject(1), NameObject("/CA"): NumberObject(1),
+                NameObject("/OP"): BooleanObject(overprint),
+                NameObject("/op"): BooleanObject(overprint),
+                NameObject("/OPM"): NumberObject(mode),
+                NameObject("/SA"): BooleanObject(True),
+                NameObject("/AIS"): BooleanObject(False),
+                NameObject("/SMask"): NameObject("/None"),
+            }))
+        first = f"/PrintOff gs q /PrintOn gs {first} Q"
     if args.image:
         image = DecodedStreamObject()
         image.update({NameObject(k): value for k, value in {

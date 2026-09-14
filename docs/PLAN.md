@@ -13699,11 +13699,16 @@ replacement; see `BUILD.md`, *Word spacing and the next practical target*.
 Next acceptance target: page 16 of the unchanged passport guide. A read-only
 inventory of all 16 pages found this page has 415 operators, no images or soft
 masks, and explicit positioning before every text show. Its nonzero word spacing
-is within the new bound. Remaining work includes external graphics-state defaults
-and overprint settings, stroke-state operators, and custom CFF mappings with
-ligatures and curly quotes. Do not bypass unsupported states or normalize the
-source to admit it. First isolate the graphics-state semantics and verify their
-preservation; the CFF mapping work is a separate, larger step.
+is within the new bound. Explicit mask defaults, valid overprint flags/modes and
+stroke adjustment are now preserved and verified through native save/readback
+(2026-09-14; `BUILD.md`, *Print graphics state during text editing*). The unchanged
+source's first refusal now names its embedded CFF font on all 16 pages.
+
+Next: custom CFF Encoding/ToUnicode mappings, including ligatures and curly
+quotes. Ligatures require mapping PDF glyphs to character sequences without
+applying character spacing once per expanded Unicode character. Stroke-state
+operators remain a later blocker. Do not bypass unsupported states or normalize
+the source to admit it.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.

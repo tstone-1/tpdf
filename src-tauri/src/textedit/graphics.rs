@@ -1,5 +1,6 @@
 //! Accept only graphics-state entries that retain opaque, normally blended text.
-//! No fonts, masks, transfer functions or other rendering effects are admitted.
+//! Print overprint and stroke adjustment are preserved, not simulated here.
+//! No fonts, active masks, transfer functions or other rendering effects are admitted.
 
 use super::{dictionary, number};
 use lopdf::{Dictionary, Document, Object};
@@ -16,6 +17,13 @@ pub(super) fn normal(doc: &Document, resources: &Dictionary, name: &[u8]) -> Res
             (b"Type", Object::Name(name)) if name == b"ExtGState" => {}
             (b"BM", Object::Name(name)) if name == b"Normal" => {}
             (b"ca" | b"CA", value) if number(value)? == 1. => {}
+            // ISO 32000-1, Table 58. Keep the dictionary verbatim: OP also
+            // sets nonstroking overprint when op is absent. Do not materialize
+            // defaults or split these entries into independently applied state.
+            (b"OP" | b"op" | b"SA", Object::Boolean(_)) => {}
+            (b"OPM", Object::Integer(0 | 1)) => {}
+            (b"SMask", Object::Name(name)) if name == b"None" => {}
+            (b"AIS", Object::Boolean(false)) => {}
             (b"RI", Object::Name(name)) => super::colors::intent(name)?,
             _ => return Err(invalid()),
         }

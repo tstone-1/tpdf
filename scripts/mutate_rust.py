@@ -494,6 +494,12 @@ MUTATIONS = [
     Mutation('spacing: forget saved character spacing', 'src/textedit.rs', '                    clip,\n                    spacing,\n                    word_spacing,\n                ));', '                    clip,\n                    0.,\n                    word_spacing,\n                ));', 'textedit_spacing_persists_across_blocks_and_restores_for_writing'),
     Mutation('spacing: reset spacing at each text block', 'src/textedit.rs', 'inside = true;\n                positioned = false;', 'inside = true;\n                spacing = 0.;\n                positioned = false;', 'textedit_spacing_persists_across_blocks_and_restores_for_writing'),
 
+    Mutation('print state: accept nonboolean print flags', 'src/textedit/graphics.rs', '(b"OP" | b"op" | b"SA", Object::Boolean(_))', '(b"OP" | b"op" | b"SA", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
+    Mutation('print state: accept arbitrary overprint modes', 'src/textedit/graphics.rs', '(b"OPM", Object::Integer(0 | 1))', '(b"OPM", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
+    Mutation('print state: accept active soft mask names', 'src/textedit/graphics.rs', '(b"SMask", Object::Name(name)) if name == b"None"', '(b"SMask", Object::Name(_))', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
+    Mutation('print state: accept active soft mask dictionaries', 'src/textedit/graphics.rs', '(b"SMask", Object::Name(name)) if name == b"None"', '(b"SMask", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
+    Mutation('print state: accept nondefault alpha source', 'src/textedit/graphics.rs', '(b"AIS", Object::Boolean(false))', '(b"AIS", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
+
     Mutation('word spacing: omit relative size limit', 'src/textedit/fonts.rs', 'word_spacing.abs() > size * 0.25', 'false', 'textedit_word_spacing_bounds_combined_backtracking_and_positioning'),
     Mutation('word spacing: use Unicode space for custom codes', 'src/textedit/fonts.rs', 'Some(Codes::Single(codes)) => codes[32],', 'Some(Codes::Single(_)) => Some(32),', 'textedit_word_spacing_uses_pdf_code_32_not_unicode_space'),
     Mutation('word spacing: apply to two-byte code 32', 'src/textedit/fonts.rs', 'Some(Codes::Double(_)) => None,', 'Some(Codes::Double(codes)) => codes.get(&32).copied(),', 'textedit_word_spacing_uses_pdf_code_32_not_unicode_space'),
