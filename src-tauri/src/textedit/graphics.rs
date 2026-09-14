@@ -8,6 +8,37 @@ use lopdf::{Dictionary, Document, Object};
 #[cfg(test)]
 mod tests;
 
+/// Stroke-only parameters cannot affect the supported fill-only text (Tr = 0).
+/// Preserve the operators, including q/Q scoping, instead of recreating paths.
+/// Dash arrays follow PDF 1.7 section 4.3.2; the 32-entry limit bounds validation.
+pub(super) fn stroke(operator: &str, values: &[Object]) -> Result<(), String> {
+    let invalid = || "unsupported line stroke state".to_string();
+    match (operator, values) {
+        ("J" | "j", [Object::Integer(0..=2)]) => Ok(()),
+        ("M", [value]) if number(value)? >= 1. => Ok(()),
+        ("d", [Object::Array(pattern), phase]) => {
+            if pattern.len() > 32 || number(phase)? < 0. {
+                return Err(invalid());
+            }
+            let mut positive = false;
+            for value in pattern {
+                let length = number(value)?;
+                if length < 0. {
+                    return Err(invalid());
+                }
+                positive |= length > 0.;
+            }
+            // Zero-length dashes are valid for dotted lines, but an all-zero
+            // nonempty cycle cannot advance. An empty array restores solid lines.
+            if !pattern.is_empty() && !positive {
+                return Err(invalid());
+            }
+            Ok(())
+        }
+        _ => Err(invalid()),
+    }
+}
+
 pub(super) fn normal(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
     let invalid = || "unsupported external text graphics state".to_string();
     let states = dictionary(doc, resources.get(b"ExtGState").map_err(|_| invalid())?)?;

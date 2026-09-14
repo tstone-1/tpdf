@@ -13718,9 +13718,16 @@ space, curly single quotes, en dash and sterling (2026-09-14; `BUILD.md`,
 nonbreaking space requires ToUnicode. The guide remains refused at its ligature
 names, with the same first-refusal message and no additional editable pages.
 
+Stroke styles now pass worker and native save/readback on an unchanged ReportLab
+export: line caps, joins, miter limits and bounded dash patterns, including the
+zero-length dashes used for dots in the passport guide. Only filled text remains
+editable; the authored drawing operators are preserved. See `BUILD.md`,
+*Line stroke styles during text editing*. This removes the guide's stroke-state
+blocker without resolving its ligature mappings or CMap code-space mismatch.
+
 Next: CFF ligature mappings. These require mapping PDF glyphs to character sequences without
-applying character spacing once per expanded Unicode character. Stroke-state
-operators remain a later blocker. Do not bypass unsupported states or normalize
+applying character spacing once per expanded Unicode character. The CMap
+code-space mismatch remains a separate blocker. Do not bypass unsupported states or normalize
 the source to admit it.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
