@@ -3,10 +3,13 @@
 
 uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-symbolic/fixture.pdf
 Append --ranges to use Quartz-style scalar ToUnicode ranges.
+Append --spacing -0.005 to retain character spacing around the first line.
 Original geometric outlines, MIT like this repository; no installed font is read.
 """
 from io import BytesIO
 from pathlib import Path
+import argparse
+import math
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,10 +23,14 @@ def main():
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import ArrayObject, DecodedStreamObject, NameObject, NumberObject
 
-    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--ranges"):
-        raise SystemExit("expected output PDF path [--ranges]")
-    ranges = len(sys.argv) == 3
-    target = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--ranges", action="store_true")
+    parser.add_argument("--spacing", type=float, default=0.)
+    args = parser.parse_args()
+    if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
+        parser.error("spacing must be finite and within -3..3 for the 12pt fixture")
+    ranges, target = args.ranges, args.output
     target.parent.mkdir(parents=True, exist_ok=True)
     alphabet = "SYNTHEIC FRODAB"
     assert len(set(alphabet)) == len(alphabet)
@@ -75,8 +82,11 @@ def main():
     def encoded(text):
         return "<" + bytes(codes[ch] for ch in text).hex() + ">"
     # Mix Tj and TJ so both paths must decode and re-encode the symbolic codes.
-    content.set_data((f"BT /F1 12 Tf 40 180 Td [{encoded('SYNTHETIC ')} 20 {encoded('FIRST')}] TJ ET\n"
-                      f"BT /F1 12 Tf 40 140 Td {encoded('SYNTHETIC SECOND')} Tj ET").encode())
+    first = f"BT /F1 12 Tf 40 180 Td [{encoded('SYNTHETIC ')} 20 {encoded('FIRST')}] TJ ET"
+    if args.spacing:
+        first = f"q {args.spacing:g} Tc {first} Q"
+    content.set_data((first + "\n" +
+                     f"BT /F1 12 Tf 40 140 Td {encoded('SYNTHETIC SECOND')} Tj ET").encode())
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(target)
     print("[PASS] generated symbolic TrueType fixture with distinct PDF and Unicode codes")

@@ -3,8 +3,9 @@
 //! Supported text uses Helvetica with WinAnsi/default encoding or validated
 //! embedded TrueType/CFF glyphs, with explicit positioning between shows.
 //! Font/leading setup may precede a text block.
-//! Complete painted rectangles and straight-line strokes are preserved. Other graphics,
-//! custom text state and implicit advances between shows are refused.
+//! Complete painted rectangles and straight-line strokes are preserved, and
+//! bounded character spacing is retained. Other graphics, custom text state and implicit
+//! advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod clipping;
@@ -249,6 +250,7 @@ struct Inspection {
     // Unrounded horizontal bounds relative to the authored text origin.
     // A replacement must stay within these as well as the original advance.
     horizontal_bounds: BTreeMap<u32, [f64; 2]>,
+    character_spacing: BTreeMap<u32, f64>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
@@ -259,6 +261,7 @@ fn array_text(
     values: &[Object],
     metrics: &fonts::Metrics,
     size: f64,
+    spacing: f64,
 ) -> Result<(String, f64, [f64; 2]), String> {
     if values.is_empty()
         || values.len() > MAX_TEXT
@@ -279,10 +282,10 @@ fn array_text(
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
             }
-            let [left, right] = metrics.horizontal_bounds(&fragment, size)?;
+            let (width, [left, right]) = metrics.spaced_layout(&fragment, size, spacing)?;
             bounds[0] = bounds[0].min(advance + left);
             bounds[1] = bounds[1].max(advance + right);
-            advance += metrics.advance(&fragment, size)?;
+            advance += width;
             if advance < furthest {
                 return Err("backtracking kerning text is not editable yet".into());
             }
@@ -333,12 +336,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
+    let mut spacing = 0.0;
     let mut states = Vec::new();
     let mut clip = None;
     let mut path_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut horizontal_bounds = BTreeMap::new();
+    let mut character_spacing = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
@@ -361,6 +366,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     page_transform,
                     fill_components,
                     clip,
+                    spacing,
                 ));
             }
             ("Q", []) if !inside => {
@@ -370,6 +376,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     page_transform,
                     fill_components,
                     clip,
+                    spacing,
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
@@ -418,9 +425,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("ET", []) if inside => inside = false,
             // Explicit defaults have the same semantics as an omitted setting.
             // Text state can be set outside BT/ET and persists across blocks.
-            // Every nondefault setter is still refused, so q/Q cannot restore
-            // unsupported spacing, rise, scaling or a hidden/clipping mode.
-            ("Tc" | "Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
+            // Character spacing is saved by q/Q and checked against the active
+            // font at each show. Other nondefault text state remains refused.
+            ("Tc", [value]) => spacing = number(value)?,
+            ("Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
             ("Tr", [Object::Integer(0)]) => {}
             ("gs", [Object::Name(name)]) => {
@@ -507,11 +515,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 op.operands[0].as_array().map_err(|e| e.to_string())?,
                 metrics,
                 size,
+                spacing,
             )?
         } else {
             let text = metrics.decode(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
-            let advance = metrics.advance(&text, size)?;
-            let horizontal = metrics.horizontal_bounds(&text, size)?;
+            let (advance, horizontal) = metrics.spaced_layout(&text, size, spacing)?;
             (text, advance, horizontal)
         };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
@@ -553,6 +561,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         }
         font_operators.insert(index as u32, font_operator);
         horizontal_bounds.insert(index as u32, horizontal);
+        character_spacing.insert(index as u32, spacing);
         result.runs.push(Run {
             display_rect,
             operator: index as u32,
@@ -578,6 +587,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         runs: result,
         font_operators,
         horizontal_bounds,
+        character_spacing,
     })
 }
 
@@ -616,6 +626,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             runs,
             font_operators,
             horizontal_bounds,
+            character_spacing,
             patched,
             ..
         } = prepared.get_mut(&change.page).ok_or("missing text page")?;
@@ -636,13 +647,17 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             .as_name()
             .map_err(|e| e.to_string())?;
         let metrics = font(doc, resources(doc, *id)?, name)?;
-        if metrics.advance(&change.replacement, run.size)? > run.advance + 0.000_001 {
+        let spacing = *character_spacing
+            .get(&change.operator)
+            .ok_or("missing character spacing")?;
+        let (replacement_advance, replacement_bounds) =
+            metrics.spaced_layout(&change.replacement, run.size, spacing)?;
+        if replacement_advance > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
         let original = horizontal_bounds
             .get(&change.operator)
             .ok_or("missing text ink bounds")?;
-        let replacement_bounds = metrics.horizontal_bounds(&change.replacement, run.size)?;
         if replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1] {
             return Err("replacement ink would exceed the original text bounds".into());
         }
@@ -682,6 +697,9 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
 
 #[cfg(test)]
 mod reflected_tests;
+
+#[cfg(test)]
+mod spacing_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1111,13 +1129,7 @@ pub(crate) mod tests {
 
     #[test]
     fn textedit_default_setters_refuse_nondefault_and_malformed_operands() {
-        for (operator, default) in [
-            ("Tc", "0"),
-            ("Tw", "0"),
-            ("Ts", "0"),
-            ("Tz", "100"),
-            ("Tr", "0"),
-        ] {
+        for (operator, default) in [("Tw", "0"), ("Ts", "0"), ("Tz", "100"), ("Tr", "0")] {
             for operand in [
                 "", "0 0", "(0)", "/Zero", "[0]", "true", "null", "1", "-1", "0.01", "99.99",
                 "100.01", "1000001",
@@ -1420,7 +1432,7 @@ pub(crate) mod tests {
             "BT BT /F1 12 Tf 40 180 Td (TEXT) Tj ET ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET ET",
             "BT 40 180 Td (TEXT) Tj ET",
-            "BT /F1 12 Tf 40 180 Td (TEXT) Tj 1 Tc T* (MORE) Tj ET",
+            "BT /F1 12 Tf 40 180 Td (TEXT) Tj 4 Tc T* (MORE) Tj ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj /F1 10 Tf (MORE) Tj ET",
             "BT /F1 12 Tf (TEXT) Tj ET",
             "BT /F1 12 Tf 1000000 0 0 1 40 180 Tm 2 0 Td (TEXT) Tj ET",

@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Preserve bounded character spacing while editing text, including kerning arrays
+  and restored text state, with matching preview and save measurements.
+
 - Support scalar character-map ranges in symbolic TrueType fonts, preserving
   the original mapping and refusing ambiguous or non-ASCII expansions.
 

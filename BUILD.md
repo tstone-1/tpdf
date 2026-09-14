@@ -7933,3 +7933,44 @@ fragment positions and advances, preserve it across `BT`/`ET` and `q`/`Q`, and
 validate replacement ink with the same state. Supporting the setter alone would
 mis-size edits. Keep the original image and font bytes, mapping, clipping and
 unrelated content unchanged throughout the eventual page-1 round trip.
+
+
+### Character spacing in text edits
+
+Nonzero `Tc` is retained during discovery, preview and writing. A shared layout
+calculation measures its per-character advance and glyph envelope; it applies
+once per decoded character, including two-byte CID fonts, and carries through
+`TJ` fragments and `q`/`Q` restoration. Each show limits spacing to a quarter of
+the font size, requires positive character steps and bounds the accumulated
+advance. The final spacing step affects advance without enlarging glyph ink.
+Other text-state exclusions remain in place.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-spacing/positive.pdf --ranges --spacing 1
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-spacing/negative.pdf --ranges --spacing -1
+```
+
+Run each source through `text-edit-probe` and the native `textedit` phase using
+the existing commands above. Both existing no-spacing generator modes remain
+byte-identical. Independent pypdf and `text_edit_pdfkit.swift` readback preserve
+resources and find 935 changed pixels inside the edited line, zero outside, for
+both worker and native saves in both spacing directions.
+
+`scripts/text_spacing_pdfkit.swift` takes the positive source, negative source,
+positive saved PDF and negative saved PDF as four arguments. It independently
+measures the rendered position of every painted glyph: the +/-1 Tc pair must
+differ by 2pt per character, including spaces in the character count. The
+identical-source control must fail. PDFKit's selection rectangles are unsuitable
+for this measurement; the check reads rendered columns instead.
+
+On macOS, 147 focused Rust tests and both 15-check native workflows pass. All
+13 selected mutations are caught; the clean controls pass 1,446 Rust tests.
+Clippy and mutation-anchor checks pass. The unchanged agenda is still refused:
+page 1 reaches an unsupported operator and page 2 the single-byte map refusal.
+This completes the spacing prerequisite, not the practical-page milestone.
+
+The seeded `textedit_scan` fuzz run completes 27,176 executions in 21 seconds,
+with 88 MiB peak RSS and no finding. This macOS run uses `--sanitizer=none`;
+it is not AddressSanitizer coverage.
+Normal frontend assets are restored; the bundle contains zero harness units,
+and the third-party notices check passes.

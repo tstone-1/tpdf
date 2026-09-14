@@ -200,6 +200,46 @@ impl Metrics {
         }
         Ok(bounds.map(|value| value * size / 1000.))
     }
+
+    // Tc is in unscaled text space and applies after every character, including
+    // the last. It changes the advance, but trailing spacing is not glyph ink.
+    // Work on decoded characters: an Identity-H code consumes two PDF bytes.
+    pub(super) fn spaced_layout(
+        &self,
+        text: &str,
+        size: f64,
+        spacing: f64,
+    ) -> Result<(f64, [f64; 2]), String> {
+        if spacing == 0. {
+            return Ok((
+                self.advance(text, size)?,
+                self.horizontal_bounds(text, size)?,
+            ));
+        }
+        if !spacing.is_finite() || spacing.abs() > size * 0.25 {
+            return Err("character spacing exceeds a quarter of the font size".into());
+        }
+        let mut cursor = 0.;
+        let mut bounds = [0_f64; 2];
+        for byte in super::encode_text(text)? {
+            let width = self.width(byte)? * size / 1000.;
+            let [left, right] = self
+                .horizontal_overhangs
+                .as_ref()
+                .map_or([0.; 2], |values| values[byte as usize]);
+            let step = width + spacing;
+            if step <= 0. {
+                return Err("backtracking character spacing is not editable yet".into());
+            }
+            bounds[0] = bounds[0].min(cursor + left * size / 1000.);
+            bounds[1] = bounds[1].max(cursor + width + right * size / 1000.);
+            cursor += step;
+            if !cursor.is_finite() || cursor > 1_000_000. {
+                return Err("spaced text advance exceeds its limit".into());
+            }
+        }
+        Ok((cursor, bounds))
+    }
 }
 
 // outline_glyph returns None for both empty and malformed glyphs. Only equal,

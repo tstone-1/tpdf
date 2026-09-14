@@ -62,6 +62,34 @@ fn update(doc: &Document, replacement: &str) -> Change {
 }
 
 #[test]
+fn textedit_spacing_counts_decoded_cids_and_keeps_font_resources() {
+    let (mut doc, ids) = fixture();
+    let original = textedit::scan(&doc, 0).unwrap();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let mut content = b"0.5 Tc ".to_vec();
+    content.extend(doc.get_page_content(page));
+    let stream = doc.add_object(Stream::new(Dictionary::new(), content));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let before = doc.objects.clone();
+    let spaced = textedit::scan(&doc, 0).unwrap();
+    for (old, new) in original.runs.iter().zip(&spaced.runs) {
+        assert!((new.advance - old.advance - old.text.chars().count() as f64 * 0.5).abs() < 1e-6);
+    }
+    let edit = update(&doc, "EDITED FIRST");
+    textedit::write(&mut doc, &[edit]).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "EDITED FIRST");
+    assert!((after.runs[0].advance - 12. * (7.2 + 0.5)).abs() < 1e-6);
+    assert_eq!(after.runs[1], spaced.runs[1]);
+    for id in ids {
+        assert_eq!(doc.objects[&id], before[&id]);
+    }
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs, original.runs);
+}
+
+#[test]
 fn textedit_composite_glyph_envelope_covers_fractional_and_unused_replacements() {
     let (doc, [font, _, descriptor, _]) = fixture();
     let program = doc

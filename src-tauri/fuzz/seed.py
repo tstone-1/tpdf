@@ -182,7 +182,7 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
-def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False, rectangles: bool = False, strokes: bool = False, default_encoding: bool = False) -> bytes:
+def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False, rectangles: bool = False, strokes: bool = False, default_encoding: bool = False, spacing: float = 0.) -> bytes:
     """A supported seed reaches the text writer instead of only refusal paths."""
     content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
     if kerning:
@@ -210,6 +210,8 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
         content += b" 30 30 m 80 50 l 130 30 l h S 30 75 m 80 95 l 130 75 l S"
     if default_encoding:
         content = content.replace(b"ACME SYNTHETIC TEXT", b"ACME \xa9 \xc1 \xa3 \xfb")
+    if spacing:
+        content = b"q " + str(spacing).encode() + b" Tc " + content + b" Q"
     filters = b""
     if encoding != "plain":
         assert encoding in ("ascii85", "ascii85-flate")
@@ -394,6 +396,8 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "forms_scan": docs,
         "textedit_scan": docs + [("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
+                                  ("editable-positive-spacing", editable_text(kerning=True, spacing=1.)),
+                                  ("editable-negative-spacing", editable_text(kerning=True, spacing=-1.)),
                                  ("editable-defaults", editable_text(defaults=True)),
                                  ("editable-scaled", editable_text(scaled=True)),
                                  ("editable-translated", editable_text(translated=True)),
