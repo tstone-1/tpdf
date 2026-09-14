@@ -7858,5 +7858,16 @@ font resources. PDFKit confirms the expected text and 243 changed pixels within
 the final fragment, zero outside, for both saves. Four targeted `simple overhang:`
 mutations are caught by their named tests; the clean Rust control passes 1,437
 tests. The instrumented fuzz run executes 26,509 inputs in 21 seconds without a
-finding, at 87 MiB peak RSS (`--sanitizer=none` on macOS). Windows verification of
-this increment remains pending.
+finding, at 87 MiB peak RSS (`--sanitizer=none` on macOS).
+
+Windows x64 verification at `ac82af5` on 2026-09-14 passes all 138 text-editor
+Rust tests, the contained worker probes, and both 15-check native workflows
+(unchanged W3C input and synthetic CFF control). All four saved outputs pass
+independent pypdf readback on Windows and macOS. PDFKit renders each Windows
+W3C output with 243 changed pixels inside the final fragment and zero outside;
+each CFF control has 988 inside and zero outside. All 11 retrieved PDF sizes and
+SHA-256 digests match the Windows manifest. The external all-pages survey agrees
+with macOS for both documents and all six pages: one editable and five refused.
+Normal frontend assets are restored with zero harness units, the temporary task
+is removed, and the ordinary checkout remains clean. The isolated exact-commit
+source and build cache are retained.

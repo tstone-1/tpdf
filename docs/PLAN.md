@@ -13634,12 +13634,13 @@ readback. Two further public candidates (a Quartz council agenda and Adobe lette
 template) also remain refused; the template has a restricted heading font. Their
 fuller blocker inventory is in `BUILD.md`, *Public target follow-up*. Further
 synthetic-only grammar additions are a lower priority. The first unchanged
-external acceptance control now passes on macOS: W3C's small PDF test fixture,
+external acceptance control now passes on macOS and Windows: W3C's small PDF test fixture,
 previously refused solely for a simple TrueType `f` overhang. Worker and native
 editing, saving and independent readback pass after applying the established
 bounded-overhang handling to simple TrueType fonts. See `BUILD.md`, *Simple
-TrueType overhangs and an unchanged W3C fixture*. Windows verification is next;
-the practical-document target remains open, since an external test fixture does
+TrueType overhangs and an unchanged W3C fixture*. Both native workflows and
+independent readback of the Windows outputs pass. The practical-document target
+remains open, since an external test fixture does
 not establish broad document compatibility. Wider
 Unicode, subset extension and paragraph reflow remain open.
 
