@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Edit supported Helvetica text when the PDF omits its encoding entry, preserving
+  the default character mapping and refusing unavailable replacement characters.
+
 - Edit supported text alongside straight-line dividers and polylines, preserving
   their strokes and the existing text clip.
 

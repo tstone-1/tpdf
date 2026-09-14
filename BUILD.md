@@ -7594,3 +7594,45 @@ its live/dead control and confirms no surviving test workers after the native ru
 The cached job takes 61 seconds, restores normal frontend assets with zero harness
 code, and leaves both source checkouts clean. The temporary task is removed and
 the isolated source/build cache retained.
+
+
+### Text editing with default Helvetica encoding
+
+Unembedded standard Helvetica without an Encoding entry uses Adobe's default
+mapping. Only its 117 characters inside the existing printable Latin-1 domain
+are offered; codes for curly quotes and ligatures remain refused. Custom metrics,
+encoding dictionaries and an explicit StandardEncoding name remain refused.
+The font resource is preserved without adding an Encoding entry.
+
+```sh
+mkdir -p scratch/textedit-default
+TPDF_DEFAULT_ENCODING_PROBE="$PWD/scratch/textedit-default/mapping.json" cargo test --locked --manifest-path src-tauri/Cargo.toml --lib textedit -- --quiet
+uv run --with reportlab --with pypdf testdata/make_textedit_default.py scratch/textedit-default --mapping scratch/textedit-default/mapping.json
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-default/mapped-worker scratch/textedit-default/mapped.pdf --default-encoding
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-default/mapped-worker/synthetic-before.pdf scratch/textedit-default/mapped-worker/synthetic-after.pdf --default-encoding
+swift scripts/text_edit_pdfkit.swift scratch/textedit-default/mapped-worker --default-encoding
+uv run scripts/tabs_check.py 'src-tauri/target/debug/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf' scratch/textedit-default/ascii.pdf --phase textedit --saved-copy scratch/textedit-default/ui-after.pdf
+python3 scripts/mutate_rust.py --only 'default encoding:'
+python3 src-tauri/fuzz/run.py --target textedit_scan --seconds 20
+```
+
+Measured on macOS, 2026-09-14: all 129 text-editing tests pass; ReportLab's
+independent tables agree with all 256 decoding decisions and all 117 supported
+character widths. ASCII and mapped-punctuation worker saves pass preview,
+extraction, search, undo and refusal checks. Independent parsing confirms only
+the target text operand changes; PDFKit reads the intended text and measures
+2,394 changed pixels for ASCII and 1,634 for mapped punctuation, all inside the
+edited line with zero outside. All four targeted mutations are caught by their
+named tests, with a green full Rust control. The unchanged comments, inherited
+and rotated fixtures now expose 36, six and 12 text runs respectively; these are
+synthetic compatibility examples, not a real-document success rate.
+All 15 native checks pass on the ASCII fixture. Its UI-saved output passes the
+independent parser and PDFKit checks with 2,394 changed pixels inside the edited
+line and zero outside. The mapped-punctuation fixture is covered through the
+worker; the native phase types ASCII. Clippy across all targets, type checking,
+formatting and mutation anchors pass. The normal production build contains zero
+harness code. The independent mapping oracle also rejects a deliberately wrong
+character width. The new fuzz seed reaches editable discovery; a 20-second
+`textedit_scan` campaign completes 27,745 inputs in 21 seconds with no finding,
+at 88 MiB peak RSS. This macOS run uses `--sanitizer=none`.
+Windows verification of this increment remains pending.

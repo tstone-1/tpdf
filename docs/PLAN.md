@@ -4540,8 +4540,11 @@ worker, all 16 native editing checks and independent parser/PDFKit readback pass
 on macOS and Windows. This expands supported placement without changing the authored clip, font program or character map.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
-explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
-and encoded to single PDF bytes, with exact standard Helvetica advances; the
+explicit WinAnsiEncoding and printable Latin-1. An omitted encoding uses Adobe's
+default mapping, with 117 supported characters in the same domain; curly quotes,
+ligatures and unavailable characters remain refused. An explicit StandardEncoding
+name is not a predefined PDF encoding and is refused. Text is decoded from
+and encoded to the existing single-byte font codes, with exact Helvetica advances; the
 4,096-character bound counts characters rather than UTF-8 bytes. Simple embedded
 TrueType fonts additionally support existing ASCII glyphs when explicit WinAnsi
 or MacRoman, nonsymbolic flags, cmap agreement and PDF/program widths validate. The
@@ -13614,9 +13617,10 @@ unreleased. Painted rectangular backgrounds and borders are now supported, inclu
 separately tagged background items in Edge exports, verified on macOS and Windows.
 Checks are in `BUILD.md`, *Text editing around painted rectangles*. Straight-line
 dividers and polylines are also verified on both platforms; see *Text editing around
-straight-line strokes*. The next compatibility check is Helvetica PDFs without an
-explicit Encoding entry. Wider Unicode, subset extension and paragraph reflow
-remain open.
+straight-line strokes*. Helvetica PDFs without an Encoding entry now use the
+validated default mapping, verified on macOS; see *Text editing with default
+Helvetica encoding*. Windows verification of that increment is next. Wider Unicode,
+subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 

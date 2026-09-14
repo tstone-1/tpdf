@@ -632,3 +632,138 @@ fn textedit_symbolic_codes_refuse_unmapped_and_oversized_runs() {
         assert!(textedit::scan(&doc, 0).unwrap_err().contains(reason));
     }
 }
+
+#[test]
+fn textedit_default_helvetica_maps_codes_and_widths() {
+    let metrics = Metrics::helvetica_default();
+    assert_eq!(metrics.decode(&[169, 193, 163, 251]).unwrap(), "'`£ß");
+    assert_eq!(metrics.encode("'`£ß").unwrap(), vec![169, 193, 163, 251]);
+    assert_eq!(
+        metrics.advance("'`£ß", 1000.).unwrap(),
+        191. + 333. + 556. + 611.
+    );
+    for code in [0, 31, 39, 96, 127, 160, 164, 174, 255] {
+        assert!(metrics.decode(&[code]).is_err(), "accepted code {code}");
+    }
+    for text in ["Ä", "é", "’", "\u{a0}"] {
+        assert!(metrics.encode(text).is_err(), "encoded {text}");
+        assert!(metrics.advance(text, 12.).is_err(), "measured {text}");
+    }
+    assert!(metrics.decode(&vec![65; textedit::MAX_TEXT + 1]).is_err());
+    let rows: Vec<_> = (0..=255_u8)
+        .map(|code| {
+            let text = metrics.decode(&[code]).ok();
+            let width = text
+                .as_ref()
+                .map(|text| metrics.advance(text, 1000.).unwrap());
+            let encoded = text.as_ref().map(|text| metrics.encode(text).unwrap());
+            if text.is_some() {
+                assert_eq!(encoded, Some(vec![code]));
+            }
+            serde_json::json!({"code":code,"text":text,"width":width,"encoded":encoded})
+        })
+        .collect();
+    assert_eq!(
+        rows.iter().filter(|row| !row["text"].is_null()).count(),
+        117
+    );
+    if let Some(path) = std::env::var_os("TPDF_DEFAULT_ENCODING_PROBE") {
+        std::fs::write(path, serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    }
+}
+
+fn default_helvetica_fixture() -> (Document, lopdf::ObjectId) {
+    let mut doc = textedit::tests::fixture();
+    let font = *doc
+        .objects
+        .iter()
+        .find(|(_, o)| o.as_dict().is_ok_and(|d| d.get(b"BaseFont").is_ok()))
+        .unwrap()
+        .0;
+    doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+    (doc, font)
+}
+
+#[test]
+fn textedit_default_helvetica_preserves_resources_and_mapped_text() {
+    let (mut doc, font) = default_helvetica_fixture();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let bytes=b"BT /F1 12 Tf 40 180 Td (SYNTHETIC \xa9 \xc1 \xa3 \xfb) Tj ET BT /F1 12 Tf 40 140 Td (SECOND) Tj ET";
+    let stream = doc.add_object(Stream::new(Dictionary::new(), bytes.to_vec()));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(before.runs[0].text, "SYNTHETIC ' ` £ ß");
+    let objects = doc.objects.clone();
+    for replacement in ["Ä", "é", "SYNTHETIC FIRST FIRST FIRST"] {
+        let edit = Change {
+            page: 0,
+            revision: before.revision.clone(),
+            operator: before.runs[0].operator,
+            original: before.runs[0].text.clone(),
+            replacement: replacement.into(),
+        };
+        assert!(textedit::write(&mut doc, &[edit]).is_err());
+        assert_eq!(doc.objects, objects);
+    }
+    textedit::write(
+        &mut doc,
+        &[Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: before.runs[0].text.clone(),
+            replacement: "£ ' ` ß".into(),
+        }],
+    )
+    .unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "£ ' ` ß");
+    assert_eq!(after.runs[1], before.runs[1]);
+    for (id, object) in objects {
+        if id != page {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+    assert!(!doc.get_dictionary(font).unwrap().has(b"Encoding"));
+    let content = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    assert_eq!(
+        content.operations[before.runs[0].operator as usize].operands[0]
+            .as_str()
+            .unwrap(),
+        b"\xa3 \xa9 \xc1 \xfb"
+    );
+}
+
+#[test]
+fn textedit_default_helvetica_refuses_explicit_or_custom_encodings() {
+    for value in [
+        Object::Null,
+        Object::Name(b"StandardEncoding".to_vec()),
+        Object::Name(b"MacRomanEncoding".to_vec()),
+        Object::Dictionary(dictionary! {}),
+        Object::Reference((9999, 0)),
+    ] {
+        let (mut doc, font) = default_helvetica_fixture();
+        doc.get_dictionary_mut(font).unwrap().set("Encoding", value);
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+    for key in [
+        "ToUnicode",
+        "Widths",
+        "FontDescriptor",
+        "FirstChar",
+        "LastChar",
+    ] {
+        let (mut doc, font) = default_helvetica_fixture();
+        doc.get_dictionary_mut(font).unwrap().set(key, Object::Null);
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+    let (mut doc, font) = default_helvetica_fixture();
+    assert!(textedit::scan(&doc, 0).is_ok());
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .set("BaseFont", "Courier");
+    assert!(textedit::scan(&doc, 0).is_err());
+}

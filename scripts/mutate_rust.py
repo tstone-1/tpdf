@@ -379,7 +379,7 @@ MUTATIONS = [
     Mutation('clip: accept negative line width', 'src/textedit/clipping.rs', 'if super::number(value)? < 0. {', 'if super::number(value)? < -100. {', 'textedit_clips_refuse_partial_compound_painted_and_unbounded_paths'),
 
     Mutation('mapped: write Unicode instead of font codes', 'src/textedit.rs', 'let replacement = metrics.encode(&change.replacement)?;', 'let replacement = encode_text(&change.replacement)?;', 'textedit_symbolic_codes_round_trip_without_changing_font_resources'),
-    Mutation('mapped: decode bytes without font mapping', 'src/textedit/fonts.rs', 'codes[code as usize]', 'Some(code)', 'textedit_symbolic_codes_round_trip_without_changing_font_resources'),
+    Mutation('mapped: decode bytes without font mapping', 'src/textedit/fonts.rs', 'codes[code as usize]\n                    .map(char::from)', 'Some(code)\n                    .map(char::from)', 'textedit_symbolic_codes_round_trip_without_changing_font_resources'),
     Mutation('mapped: permit competing font cmaps', 'src/textedit/fonts.rs', 'if custom && cmap.subtables.len() != 1 {', 'if false {', 'textedit_symbolic_codes_require_unambiguous_glyph_selection_and_widths'),
     Mutation('mapped: omit text length bound', 'src/textedit/fonts.rs', 'if bytes.len() > super::MAX_TEXT {', 'if false {', 'textedit_symbolic_codes_refuse_unmapped_and_oversized_runs'),
     Mutation('mapped: permit duplicate Unicode values', 'src/textedit/fonts/mapping.rs', '|| unicode[*ch as usize]', '|| false', 'textedit_mapping_refuses_ambiguous_partial_and_extended_data'),
@@ -424,8 +424,13 @@ MUTATIONS = [
     Mutation("textedit: keep unreachable old content", "src/save.rs", "        || !plan.text_edits.is_empty()", "        || false", "textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans"),
     Mutation("textedit: accept a stale content revision", "src/textedit.rs", "change.revision != runs.revision || change.original != run.text", "change.original != run.text", "textedit_rejects_invalid_batches_without_mutating_the_document"),
 
-    Mutation("textedit: accept a missing embedded glyph", "src/textedit/fonts.rs", '.ok_or("the embedded font has no validated glyph for this character")?', '.unwrap_or(600.)', "textedit_embedded_missing_glyph_and_own_width_overflow_leave_document_untouched"),
+    Mutation("textedit: accept a missing embedded glyph", "src/textedit/fonts.rs", '.ok_or("the font has no validated glyph for this character")?', '.unwrap_or(600.)', "textedit_embedded_missing_glyph_and_own_width_overflow_leave_document_untouched"),
     Mutation("textedit: ignore conflicting Unicode cmaps", "src/textedit/fonts.rs", '.any(|table| table.glyph_index(code) != Some(glyph))', '.any(|table| { let _ = (table, code, glyph); false })', "textedit_embedded_requires_unicode_cmaps_to_agree"),
+    Mutation('default encoding: use WinAnsi for omitted encoding', 'src/textedit.rs', 'None => Ok(fonts::Metrics::helvetica_default()),', 'None => Ok(fonts::Metrics::helvetica()),', 'textedit_default_helvetica_preserves_resources_and_mapped_text'),
+    Mutation('default encoding: accept an explicit unsupported encoding', 'src/textedit.rs', '_ => Err("unsupported standard Helvetica encoding".into()),', '_ => Ok(fonts::Metrics::helvetica_default()),', 'textedit_default_helvetica_refuses_explicit_or_custom_encodings'),
+    Mutation('default encoding: interpret curly quote codes as ASCII', 'src/textedit/fonts.rs', 'if !matches!(code, 39 | 96) {', 'if true {', 'textedit_default_helvetica_maps_codes_and_widths'),
+    Mutation('default encoding: retain widths for unavailable characters', 'src/textedit/fonts.rs', 'if !codes.contains(&Some(ch as u8)) {', 'if false {', 'textedit_default_helvetica_maps_codes_and_widths'),
+
     Mutation("textedit: treat a malformed space as blank", "src/textedit/fonts.rs", "empty_glyph(&face, glyph) == Some(true)", "true", "textedit_embedded_does_not_treat_a_broken_space_as_blank"),
     Mutation("textedit: discard restored text state", "src/textedit.rs", '("Q", []) if !inside => {\n                (\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                ) =', '("Q", []) if !inside => {\n                let _ =', "textedit_graphics_stack_restores_font_size_and_leading"),
     Mutation("textedit: allow unclosed graphics state", "src/textedit.rs", 'if !states.is_empty() {', 'if false {', "textedit_graphics_stack_requires_balanced_bounded_outer_saves"),
