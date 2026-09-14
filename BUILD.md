@@ -8439,3 +8439,20 @@ editable practical page. Windows native verification remains outstanding.
 All 24 final gates pass (242.9s summed gate time): 1,481 Rust tests pass
 with 3 ignored, 1,668 frontend tests pass, and normal assets contain zero
 check-harness code.
+
+### Signed-fixture padding regression
+
+`fixturebytes` runs `python3 testdata/test_incremental_pdf.py` without optional
+dependencies. The three tests cover all 256 final payload bytes through the
+actual BER fixture writer in both hexadecimal cases, short/long outer lengths,
+reserved offsets, truncated payloads and nonzero padding. The generator must
+consume the encoded outer length; stripping trailing zeros corrupts valid
+signatures and caused Windows CI run 34892610186 to fail before the gates.
+Both `python3 scripts/mutate_python.py --only fixturebytes` controls turn red
+when trimming is restored or nonzero padding is admitted.
+
+On macOS, 2026-09-14, the three tests and two mutations pass. A fresh generation
+with the pinned fixture tools writes all 11 signed/encrypted fixtures; OpenSSL
+parses both the original CMS and its BER conversion. All 25 final gates pass
+(43.1s summed gate time), including 1,481 Rust tests with 3 ignored and
+1,668 frontend tests. No application signing behavior changed.

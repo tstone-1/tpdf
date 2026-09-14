@@ -182,6 +182,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a workflow step names a fixture a runner cannot generate",
         ),
         (
+            "fixturebytes",
+            [sys.executable, str(ROOT / "testdata" / "test_incremental_pdf.py")],
+            "signature fixture conversion changes payload bytes or reserved offsets",
+        ),
+        (
             "anchors",
             [sys.executable, str(ROOT / "scripts" / "check_mutation_anchors.py")],
             "a mutation is aimed at code that is gone, or a killed harness left its edit behind",

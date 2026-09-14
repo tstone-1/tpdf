@@ -690,6 +690,8 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
 - `workflows` --- `release.yml`'s `gates` job was copied from `ci.yml` and dropped a whole step,
   so the release gate was weaker than the gate it exists to satisfy. It also asserts what
   authority that job holds, which comparing steps was blind to.
+- `fixturebytes` --- deterministic signed-fixture conversion checks cover every final
+  payload byte, reserved offsets and malformed padding, without generating random keys.
 - `anchors` --- every mutation's search string occurs exactly once in the file it names, the
   test it names exists, and that test can go red on this platform. A killed harness's leftover
   edit and a drifted anchor are both invisible in `git status`.

@@ -14729,6 +14729,18 @@ After: `cert="Dropbox Sign"`, the key usage it states, and a timestamp from *Tim
 2 — Notarius* one second after the signing time. One change, three readers that had never seen a
 real CAdES document between them.
 
+**The generator still had the same scan, found 2026-09-14 by Windows CI.**
+`make_incremental_pdf.py::build_ber` trimmed the freshly generated DER signature
+before converting it to BER. A legitimate final zero made the fixture-generation
+step fail with `trailing bytes after the first value`, before any application
+test ran. The converter now uses the outer value's consumed length and accepts
+only zero padding beyond it. The `fixturebytes` gate exercises all 256 final
+payload bytes in both hexadecimal cases through the actual file writer, checks
+reserved offsets and rejects nonzero padding. Reinstating the trim and allowing
+nonzero padding each turn the gate red; a fresh pyHanko generation and OpenSSL parsing
+of both CMS values also pass. The application reader was already fixed; the fixture
+producer had remained outside that test's coverage.
+
 ### A guard whose neighbour refuses the same input cannot be tested by it
 
 Three mutations of the timestamp reader survived on the first run, and all three were the same

@@ -134,6 +134,20 @@ BULLET = "- A `run:` line is not a `run:` step, and the emptiness control could 
 ENTRY = '    ("testdata/text-wide.pdf", ["testdata/make_wide_pdf.py", "testdata"]),'
 
 MUTATIONS = [
+    Mutation(
+        "fixturebytes: trim legitimate zero payload bytes",
+        "fixturebytes", "testdata/make_incremental_pdf.py",
+        "rewritten = to_indefinite(blob, padded=True)",
+        "rewritten = to_indefinite(blob.rstrip(bytes([0])))",
+        red=True, says="test_every_final_byte_survives_reserved_padding",
+    ),
+    Mutation(
+        "fixturebytes: accept nonzero padding",
+        "fixturebytes", "testdata/make_incremental_pdf.py",
+        "not padded or any(der[consumed:])", "not padded",
+        red=True, says="test_outer_lengths_preserve_zero_payload_and_reject_nonzero_padding",
+    ),
+
     # --- the fixture gate, and the blindness that started this file ----------
     Mutation(
         "fixtures: name an ungeneratable fixture inside a `run: |` block",
