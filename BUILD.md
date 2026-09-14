@@ -7584,4 +7584,13 @@ all-target Clippy, formatting, mutation anchors and the production build pass, w
 harness code. The new stroke seed reaches editable discovery, and a 20-second
 `textedit_scan` campaign completes 23,577 inputs in 21 seconds without a finding,
 at 87 MiB peak RSS. This macOS run uses `--sanitizer=none`.
-Windows runtime verification of this increment is pending.
+Windows x64 verification at `66c8350` on 2026-09-14 passes all 126 text-editing
+tests and 15 native checks. The unchanged column-divider and background/polyline
+fixtures expose 20 and four text runs respectively. Both ReportLab worker and UI
+saves pass independent parsing on Windows and macOS, then PDFKit rendering with
+2,394 changed pixels inside the edited line and zero outside. All five transferred
+PDFs match their Windows sizes and SHA-256 digests. The worker-exit observer passes
+its live/dead control and confirms no surviving test workers after the native run.
+The cached job takes 61 seconds, restores normal frontend assets with zero harness
+code, and leaves both source checkouts clean. The temporary task is removed and
+the isolated source/build cache retained.
