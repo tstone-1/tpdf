@@ -39,15 +39,15 @@ guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-befor
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount
 else { fail("invalid document or page count") }
 let width = w3c || agenda ? 1192 : 600, height = w3c || agenda ? 1684 : 480
-if agenda && (selected != 0 || before.pageCount != 2) { fail("expected two-page agenda") }
+if agenda && (selected > 1 || before.pageCount != 2) { fail("expected two-page agenda") }
 if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C fixture") }
 // Fixed fixture regions, independent of the editor's reported run/hit box.
 // Edge's first baseline is y=189.75 (row 100.5), second y=148.5 (row 183).
 // The flow HTML has 40pt line height: its first baseline is 63.75pt from the top.
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
 // W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
-let targetRows = agenda ? (156..<200) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = agenda ? (740..<880) : w3c ? (330..<368) : (76..<520)
+let targetRows = agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
+let targetColumns = agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
@@ -62,8 +62,10 @@ for (name, document) in [("before", before), ("after", after)] {
     guard let page = document.page(at: pageIndex) else { fail("missing page") }
     if agenda {
         guard let sourceText = before.page(at: pageIndex)?.string else { fail("missing agenda text") }
-        if pageIndex == 0 && (sourceText.components(separatedBy: "REGULAR").count != 2 || sourceText.contains("ANNUAL")) { fail("wrong agenda source text") }
-        let expected = name == "after" && pageIndex == selected ? sourceText.replacingOccurrences(of: "REGULAR", with: "ANNUAL") : sourceText
+        let oldText = selected == 0 ? "REGULAR" : "Community Hub"
+        let newText = selected == 0 ? "ANNUAL" : "Community"
+        if pageIndex == selected && sourceText.components(separatedBy: oldText).count != 2 { fail("wrong agenda source text") }
+        let expected = name == "after" && pageIndex == selected ? sourceText.replacingOccurrences(of: oldText, with: newText) : sourceText
         guard page.string == expected else { fail("agenda text or adjacent content changed") }
     } else {
         guard page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == first + (w3c ? "" : " SYNTHETIC SECOND")

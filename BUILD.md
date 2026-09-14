@@ -8087,7 +8087,7 @@ second-page content for their respective reasons.
 The same seven unchanged practical PDFs now report 1 editable page and 47 refused
 pages. The agenda's second page still refuses curved graphics. This is a small
 selected compatibility sample, not a representative success rate. Windows en-dash
-and unchanged-agenda verification remains pending.
+and unchanged-agenda verification subsequently passed at `61239a2`, as recorded below.
 
 All eleven selected Rust mutations are caught by their named tests, with 1,456
 passing tests in the clean control. The frontend en-dash mutation is caught too,
@@ -8097,3 +8097,63 @@ executions in 21 seconds, with 88 MiB peak RSS and no finding
 (`--sanitizer=none` on macOS). Type checking, Clippy, formatting,
 mutation anchors, notices and the normal bundle check pass; normal frontend
 assets are restored and contain zero harness code.
+
+
+Windows x64 verification at `61239a2` passes 157 focused Rust tests, the en-dash
+worker probe and both 15-check native workflows (en dash and unchanged agenda
+page 1). All seven retrieved PDFs match their Windows sizes and SHA-256 digests.
+pypdf and PDFKit independently confirm the Windows outputs: 939 changed pixels
+inside the synthetic target, 914 inside the agenda target, zero outside, and
+zero changes on agenda page 2. The checks task is removed, normal frontend assets
+are restored, and the ordinary checkout remains clean.
+
+### Text editing around curved paths
+
+Complete line/Bezier paths retain their original operators and coordinates.
+Multiple nonempty subpaths, cubic `c`/`v`/`y` segments and fill/stroke endings are
+supported within the existing stream and coordinate bounds. Every explicit
+control point is validated after transformation; no flattening or reconstruction
+is performed. Path clipping, mixed rectangle subpaths and interleaved graphics
+state/text operators remain refused. `docs/PLAN.md` records the precise grammar.
+
+The acceptance input is the unchanged Wellington agenda in
+`testdata/textedit-public-corpus.json`. Its second-page graphic has seven subpaths,
+147 cubic segments and 24 line segments before a single fill. The contained
+probe now discovers 236 text runs on page 1 and 85 on page 2.
+
+After building the separate checks application:
+
+```sh
+uv run scripts/tabs_check.py <checks-binary> <unchanged-agenda.pdf> --phase textedit-agenda-page2 --saved-copy <saved.pdf>
+uv run --with pypdf testdata/make_textedit_embedded.py --check <unchanged-agenda.pdf> <saved.pdf> --agenda --page=1
+swift scripts/text_edit_pdfkit.swift <readback-directory> --agenda --page=1
+```
+
+The Swift reader uses `synthetic-before.pdf` and `synthetic-after.pdf` in the
+readback directory, as for the previous external fixture checks. Page indices
+are zero based. Only disposable copies are edited.
+
+macOS verification on 2026-09-14 passes 160 focused Rust tests and all 19 native
+workflow checks. The application changes `Community Hub` to `Community` on page 2.
+pypdf confirms the exact mapped replacement, unchanged font/image/colour resources,
+identical other operands (including the whole curved graphic) and byte-identical
+page-1 content. PDFKit confirms adjacent text and geometry: 283 pixels change inside
+the page-2 heading, zero outside, and page 1 remains pixel-identical. The rendered
+second page was also inspected. Negative controls reject an unchanged input,
+a deleted curve, modified first-page content and an actual added space in the
+replacement operand.
+
+pypdf infers an extra trailing space in the shortened heading before the original,
+separately positioned space. Its page-2 text comparison therefore normalizes
+extracted whitespace only after checking the exact font-coded replacement and
+all other operands. The added-space control must fail that exact operand check;
+normalizing extracted text alone would conceal a real change.
+
+All eleven targeted mutations are caught by their named tests; the clean control
+passes 1,459 Rust tests. The `editable-curves` fuzz seed reaches text discovery
+through the contained probe. The seven unchanged practical PDFs now report two
+editable pages and 46 refused pages. Windows curved-path verification is pending.
+The seeded fuzz run completes 27,574 executions in 21 seconds, with 88 MiB
+peak RSS and no finding (`--sanitizer=none` on macOS). Clippy, frontend type
+checking, formatting, mutation anchors, notices and the normal-bundle check pass.
+Normal frontend assets are restored, with zero harness code.

@@ -368,14 +368,10 @@ fn textedit_stroked_lines_refuse_invalid_and_incomplete_paths_atomically() {
         "0 0 m 20 20 l 1 n",
         "0 0 m 20 20 l 1 s",
         "0 0 m 20 20 l h 40 0 l S",
-        "0 0 m 20 20 l 30 30 m 40 40 l S",
         "0 0 m 20 20 l W n",
         "0 0 m 20 20 l W S",
-        "0 0 m 20 20 l f",
-        "0 0 m 20 20 l B",
         "0 0 m 20 20 l q S Q",
         "0 0 m 20 20 l 2 w S",
-        "0 0 m 20 20 30 30 40 40 c S",
         "0 0 m 20 20 l 0 0 10 10 re S",
         "BT 0 0 m 20 20 l S ET",
         "20 20 l S",
@@ -397,5 +393,120 @@ fn textedit_stroked_lines_refuse_invalid_and_incomplete_paths_atomically() {
         )
         .is_err());
         assert_eq!(doc.objects, objects);
+    }
+}
+
+#[test]
+fn textedit_curves_preserve_complete_subpaths_and_following_text() {
+    for end in ["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"] {
+        for close in ["", "h"] {
+            let path = format!("0 0 m 10 30 30 30 40 0 c 50 -10 60 0 v 70 10 80 0 y 90 0 l {close} 100 0 m 110 0 l {end}");
+            let body = format!("0 0 300 240 re W n q -1 0 0 2 200 40 cm {path} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {path} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+            let mut doc = page(body.as_bytes());
+            let before = textedit::scan(&doc, 0).unwrap();
+            assert_eq!(before.runs.len(), 2);
+            let id = crate::pagetree::ordered_pages(&doc)[0];
+            let objects = doc.objects.clone();
+            textedit::write(
+                &mut doc,
+                &[Change {
+                    page: 0,
+                    revision: before.revision,
+                    operator: before.runs[0].operator,
+                    original: "FIRST".into(),
+                    replacement: "IN".into(),
+                }],
+            )
+            .unwrap();
+            let after = textedit::scan(&doc, 0).unwrap();
+            assert_eq!(after.runs[0].text, "IN");
+            assert_eq!(after.runs[1], before.runs[1]);
+            let old = Content::decode_strict(body.as_bytes()).unwrap();
+            let new = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+            assert_eq!(old.operations.len(), new.operations.len());
+            for (index, (a, b)) in old.operations.iter().zip(new.operations).enumerate() {
+                assert_eq!(a.operator, b.operator);
+                if index != before.runs[0].operator as usize {
+                    assert_eq!(a.operands, b.operands);
+                }
+            }
+            for (key, object) in objects {
+                if key != id {
+                    assert_eq!(doc.objects[&key], object);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically() {
+    let mut paths = vec![
+        "0 0 m 0 0 m 10 10 l f".to_string(),
+        "0 0 m 10 10 l 20 20 m f".to_string(),
+        "0 0 m 1 2 3 4 5 6 c h h f".to_string(),
+        "0 0 m 1 2 3 4 5 6 c W n".to_string(),
+        "0 0 m 1 2 3 4 5 6 c W* f".to_string(),
+        "0 0 m 1 2 3 4 5 6 c q f Q".to_string(),
+        "0 0 m 1 2 3 4 5 6 c BT /F1 12 Tf ET f".to_string(),
+        "0 0 m 1 2 3 4 5 6 c 1 f".to_string(),
+        "0 0 m 1 2 3 4 5 6 c".to_string(),
+    ];
+    for (op, count) in [("c", 6), ("v", 4), ("y", 4)] {
+        for size in [count - 1, count + 1] {
+            paths.push(format!("0 0 m {} {op} f", vec!["1"; size].join(" ")));
+        }
+        for index in 0..count {
+            for invalid in ["/bad", "1000001", "-1000001"] {
+                let mut points = vec!["1"; count];
+                points[index] = invalid;
+                paths.push(format!("0 0 m {} {op} f", points.join(" ")));
+            }
+            let mut points = vec!["1"; count];
+            points[index] = "500001";
+            paths.push(format!("2 0 0 2 0 0 cm 0 0 m {} {op} f", points.join(" ")));
+        }
+    }
+    for path in paths {
+        let mut doc = page(format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {path}").as_bytes());
+        let objects = doc.objects.clone();
+        assert!(textedit::scan(&doc, 0).is_err(), "accepted {path}");
+        assert!(
+            textedit::write(
+                &mut doc,
+                &[Change {
+                    page: 0,
+                    revision: vec![],
+                    operator: 3,
+                    original: "FIRST".into(),
+                    replacement: "IN".into(),
+                }]
+            )
+            .is_err(),
+            "wrote {path}"
+        );
+        assert_eq!(doc.objects, objects);
+    }
+}
+
+#[test]
+fn textedit_curves_preserve_clip_and_validate_transformed_boundary() {
+    let curve = "0 0 m 1 2 3 4 5 6 c 7 8 9 10 v 11 12 13 14 y f";
+    for (rect, accepted) in [("0 0 300 240", true), ("41 0 259 240", false)] {
+        let body = format!("{rect} re W n q {curve} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+        assert_eq!(textedit::scan(&page(body.as_bytes()), 0).is_ok(), accepted);
+    }
+    for (op, count) in [("c", 6), ("v", 4), ("y", 4)] {
+        for index in 0..count {
+            for value in ["500000", "-500000"] {
+                let mut points = vec!["1"; count];
+                points[index] = value;
+                let body = format!(
+                    "q 2 0 0 2 0 0 cm 0 0 m {} {op} f Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET",
+                    points.join(" ")
+                );
+                assert!(textedit::scan(&page(body.as_bytes()), 0).is_ok(), "{body}");
+            }
+        }
     }
 }
