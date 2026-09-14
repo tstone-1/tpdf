@@ -8257,8 +8257,8 @@ position; word spacing still follows byte 32 even when it represents a letter.
 Optional ToUnicode maps use the existing bounded single-byte grammar: bfchar and
 scalar bfrange, a 16 KiB decoded limit and unique targets. Every declared target
 must agree with the glyph selected by Encoding. Missing entries are not inferred.
-Non-ASCII names and ligatures remain unsupported. Font programs and all mapping
-resources remain byte-identical when saving.
+The next increment below adds six non-ASCII names; ligatures remain unsupported.
+Font programs and all mapping resources remain byte-identical when saving.
 
 ```sh
 uv run --with fonttools --with pypdf testdata/make_textedit_cff.py <fixture-directory>
@@ -8291,3 +8291,51 @@ Its ToUnicode declares a two-byte code space while bfchar sources have one byte;
 the current strict wrapper does not accept that shape. Further support needs
 independent reader comparisons, not a skipped mapping check. The practical-corpus
 editable-page count is unchanged; Windows verification remains outstanding.
+
+### Non-ASCII CFF glyphs
+
+The same bounded CFF path now accepts the exact names `minus`, `uni00A0`,
+`quoteleft`, `quoteright`, `endash` and `sterling`. The last four also use their
+WinAnsi codes. Differences retain the actual glyph name alongside its Unicode
+metric slot; the writer never substitutes a space for `uni00A0` or a hyphen for
+minus. Widths and ink bounds still come from the selected embedded outline.
+NBSP does not receive word spacing unless the PDF assigns it byte 32.
+
+`uni00A0` requires matching ToUnicode: pypdf without that map extracts the literal
+name instead of a character. Other offered names may use their standard mappings.
+A present ToUnicode must agree and may narrow the repertoire. This increment does
+not widen the TrueType or CID map repertoire, accept control characters, or change
+the existing single-byte CMap grammar. Ligatures remain refused.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_cff.py <fixtures>
+cargo run --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- <worker-output> <fixtures>/unicode-mapped.pdf --cff-unicode
+uv run scripts/tabs_check.py <checks-binary> <fixtures>/unicode-mapped.pdf --phase textedit-cff-unicode --saved-copy <saved.pdf>
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --check <fixtures>/unicode-mapped.pdf <saved.pdf> --cff-unicode
+swift scripts/text_edit_pdfkit.swift <readback-directory> --cff-unicode
+uv run src-tauri/fuzz/run.py --target textedit_scan --seconds 20
+```
+
+`unicode.cff` is another original geometric font, including a blank NBSP and a
+minus with ink on both sides of its advance. `unicode-mapped.pdf` exercises all
+six additions; `unicode.pdf` uses an en dash without ToUnicode (`--dash` in the
+worker and independent readers). All 14 pre-existing generator outputs remain
+byte-identical. PDFKit normalizes NBSP to space in extraction; the exact pypdf
+operand check separately rejects a control that replaces NBSP with a plain space.
+
+On macOS, 2026-09-14: 174 focused text-editor tests pass; the mutation controls
+pass 1,473 Rust and 1,494 frontend tests. All 11 selected Rust mutations and both
+frontend mutations are caught. Both worker variants and all 15 native checks
+pass. Independent pypdf readback preserves all font resources and other operands;
+PDFKit reports 1,455 changed pixels within the target and zero outside for both
+worker and native output, and 593 within the target for the no-ToUnicode variant.
+The new `editable-cff-unicode` fuzz seed reaches one editable run. The seeded
+fuzz run completes 25,154 executions in 21 seconds, with 89 MiB peak RSS and no
+finding (`--sanitizer=none` on macOS). Clippy, type checking, formatting, mutation
+anchors, notices and the normal-bundle check pass; normal assets are restored
+with zero harness code.
+
+The unchanged passport guide remains refused on all 16 pages at its unsupported
+ligature names. No additional practical page is editable yet. Its CMap code-space
+mismatch and later stroke-state operators remain separate work. Windows
+verification of this increment is outstanding.

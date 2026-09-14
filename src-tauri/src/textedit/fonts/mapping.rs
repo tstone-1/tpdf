@@ -58,6 +58,16 @@ fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
 }
 
 pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
+    parse_single(stream, false)
+}
+
+// CFF glyph-name agreement is checked by the caller. Other font paths keep
+// their independently verified repertoire and do not inherit these additions.
+pub(super) fn parse_cff(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
+    parse_single(stream, true)
+}
+
+fn parse_single(stream: &Stream, cff: bool) -> Result<Box<[Option<u8>; 256]>, String> {
     let ops = blocks(stream, false)?;
     let invalid = || "unsupported or ambiguous single-byte character map".to_string();
     let mut result = Box::new([None; 256]);
@@ -93,7 +103,11 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
             let end_target = u32::from(target) + u32::from(last.saturating_sub(first));
             // A source range has at most 256 entries. Validate Unicode before
             // narrowing to metric slots; a range cannot wrap into allowed text.
-            let allowed = |ch| (32..=126).contains(&ch) || ch == 0x2013;
+            let allowed = |ch| {
+                (32..=126).contains(&ch)
+                    || ch == 0x2013
+                    || (cff && matches!(ch, 0x00a0 | 0x00a3 | 0x2018 | 0x2019 | 0x2212))
+            };
             if last < first || !(u32::from(target)..=end_target).all(allowed) {
                 return Err(invalid());
             }
@@ -146,7 +160,10 @@ pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u1
             let last = if stride == 3 { word(&entry[1])? } else { first };
             let target = word(&entry[stride - 1])?;
             let last_target = u32::from(target) + u32::from(last.saturating_sub(first));
-            let slot = |ch| char::from_u32(ch).and_then(super::super::character_slot);
+            let slot = |ch| {
+                let target = char::from_u32(ch).and_then(super::super::character_slot);
+                target.filter(|_| !matches!(ch, 0x2018 | 0x2019 | 0x2212))
+            };
             if last < first || !(u32::from(target)..=last_target).all(|ch| slot(ch).is_some()) {
                 return Err(invalid());
             }

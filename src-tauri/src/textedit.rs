@@ -140,11 +140,17 @@ fn text_byte(byte: u8) -> bool {
     (32..=126).contains(&byte) || byte >= 160
 }
 
-// Metric slots use Latin-1 indices plus the WinAnsi slot for the en dash.
+// Metric slots use Latin-1 indices plus three punctuation slots and one minus slot.
 // A slot is not a PDF code in a custom font; its ToUnicode map supplies that.
 // In particular, U+0096 is a control character, never an alias for U+2013.
 fn character_slot(ch: char) -> Option<u8> {
-    if ch == '\u{2013}' {
+    if ch == '\u{2212}' {
+        Some(0x80) // Internal metric slot only; never a literal WinAnsi byte.
+    } else if ch == '\u{2018}' {
+        Some(0x91)
+    } else if ch == '\u{2019}' {
+        Some(0x92)
+    } else if ch == '\u{2013}' {
         Some(0x96)
     } else {
         u8::try_from(ch as u32).ok().filter(|&byte| text_byte(byte))
@@ -152,7 +158,13 @@ fn character_slot(ch: char) -> Option<u8> {
 }
 
 fn slot_character(slot: u8) -> char {
-    if slot == 0x96 {
+    if slot == 0x80 {
+        '\u{2212}'
+    } else if slot == 0x91 {
+        '\u{2018}'
+    } else if slot == 0x92 {
+        '\u{2019}'
+    } else if slot == 0x96 {
         '\u{2013}'
     } else {
         char::from(slot)
@@ -176,7 +188,7 @@ fn encode_text(text: &str) -> Result<Vec<u8>, String> {
         .chars()
         .map(|ch| {
             character_slot(ch)
-                .ok_or("text editing currently supports printable Latin-1 and en dash only")
+                .ok_or("text editing currently supports printable Latin-1, en dash, curly single quotes and minus only")
         })
         .collect::<Result<Vec<_>, _>>()?;
     if bytes.len() > MAX_TEXT {
@@ -910,8 +922,9 @@ pub(crate) mod tests {
             let Some(ch) = char::from_u32(value) else {
                 continue;
             };
-            let expected =
-                (32..=126).contains(&value) || (160..=255).contains(&value) || value == 0x2013;
+            let expected = (32..=126).contains(&value)
+                || (160..=255).contains(&value)
+                || matches!(value, 0x2013 | 0x2018 | 0x2019 | 0x2212);
             let slot = character_slot(ch);
             assert_eq!(slot.is_some(), expected, "U+{value:04X}");
             if let Some(slot) = slot {
@@ -919,7 +932,7 @@ pub(crate) mod tests {
                 assert_eq!(slot_character(slot), ch);
             }
         }
-        assert_eq!(accepted, 192);
+        assert_eq!(accepted, 195);
         assert_eq!(
             encode_text(&"\u{2013}".repeat(MAX_TEXT)).unwrap(),
             vec![0x96; MAX_TEXT]
@@ -1454,7 +1467,7 @@ pub(crate) mod tests {
                     replacement: "\u{03b1}".into(),
                     ..valid.clone()
                 },
-                "Latin-1 and en dash only",
+                "Latin-1, en dash, curly single quotes and minus only",
             ),
             (
                 Change {

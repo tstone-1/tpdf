@@ -138,6 +138,7 @@ fn run() -> Result<(), String> {
         .ok_or("usage: text-edit-probe <scratch-directory>")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut dash = false;
+    let mut cff_unicode = false;
     let mut latin1 = false;
     let mut cid_latin1 = false;
     let mut overhang = false;
@@ -150,6 +151,8 @@ fn run() -> Result<(), String> {
             page = index.parse::<u32>().map_err(|_| "invalid page index")?;
         } else if option == "--default-encoding" {
             default_encoding = true;
+        } else if option == "--cff-unicode" {
+            cff_unicode = true;
         } else if option == "--dash" {
             dash = true;
         } else if option == "--latin1" {
@@ -164,12 +167,13 @@ fn run() -> Result<(), String> {
             spacers = true;
         } else {
             return Err(
-                "expected --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers or --page=N after the fixture path".into(),
+                "expected --cff-unicode, --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers or --page=N after the fixture path".into(),
             );
         }
     }
     if [
         dash,
+        cff_unicode,
         latin1,
         cid_latin1,
         overhang,
@@ -184,7 +188,9 @@ fn run() -> Result<(), String> {
     {
         return Err("choose one fixture text variant".into());
     }
-    let original = if dash {
+    let original = if cff_unicode {
+        "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£"
+    } else if dash {
         "SYNTHETIC\u{2013}FIRST"
     } else if default_encoding {
         "SYNTHETIC ' ` £ ß"
@@ -195,7 +201,9 @@ fn run() -> Result<(), String> {
     } else {
         "SYNTHETIC FIRST"
     };
-    let replacement = if dash {
+    let replacement = if cff_unicode {
+        "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}"
+    } else if dash {
         "EDITED\u{2013}FIRST"
     } else if default_encoding {
         "£ ' ` ß"
@@ -406,7 +414,10 @@ fn run() -> Result<(), String> {
     println!("[PASS] contained discovery and replacement; second text block preserved");
     let mut invalid_replacements = vec![
         ("S".repeat(80), "exceed the original"),
-        ("\u{03b1}".into(), "Latin-1 and en dash only"),
+        (
+            "\u{03b1}".into(),
+            "Latin-1, en dash, curly single quotes and minus only",
+        ),
     ];
     if default_encoding {
         invalid_replacements.push(("Ä".into(), "no validated glyph"));

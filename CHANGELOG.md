@@ -19,8 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
-- Edit existing ASCII glyphs in CFF fonts with bounded custom encodings and
-  matching ToUnicode maps, retaining original font codes, spacing and outlines.
+- Edit existing glyphs in CFF fonts with bounded custom encodings and matching
+  ToUnicode maps, including minus, nonbreaking space, curly single quotes, en dash
+  and pound signs. Original font codes, spacing and outlines are retained.
 
 - Preserve overprint and stroke-adjustment settings during in-place text editing;
   accept explicit no-mask defaults while continuing to refuse active masks.

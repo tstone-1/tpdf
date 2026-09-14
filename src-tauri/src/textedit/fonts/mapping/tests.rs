@@ -306,3 +306,47 @@ fn textedit_mapped_dash_uses_unicode_targets_not_low_bytes() {
         assert!(parse_cid(&cid(body)).is_err(), "{body}");
     }
 }
+
+#[test]
+fn textedit_cff_unicode_mapping_stays_bounded_and_font_specific() {
+    for (target, slot) in [
+        (0xa0, 0xa0),
+        (0xa3, 0xa3),
+        (0x2018, 0x91),
+        (0x2019, 0x92),
+        (0x2212, 0x80),
+    ] {
+        for code in [0, 26, 128, 255] {
+            let body = format!("1 beginbfchar <{code:02x}> <{target:04x}> endbfchar");
+            let map = stream(&single_body(&body));
+            assert_eq!(parse_cff(&map).unwrap()[code], Some(slot));
+            assert!(parse(&map).is_err());
+            if target > 255 {
+                let cid = format!("1 beginbfchar <{code:04x}> <{target:04x}> endbfchar");
+                assert!(parse_cid(&stream(
+                    &single_body(&cid).replace("<00> <FF>", "<0000> <FFFF>")
+                ))
+                .is_err());
+            }
+        }
+    }
+    let pair = parse_cff(&stream(&single_body(
+        "1 beginbfrange <fe> <ff> <2018> endbfrange",
+    )))
+    .unwrap();
+    assert_eq!(&pair[254..], &[Some(0x91), Some(0x92)]);
+    for body in [
+        "1 beginbfrange <fd> <ff> <2018> endbfrange",
+        "1 beginbfrange <ff> <fe> <2018> endbfrange",
+        "1 beginbfrange <00> <ff> <ff80> endbfrange",
+        "2 beginbfchar <1a> <2212> <ff> <2212> endbfchar",
+        "1 beginbfchar <1a> <0080> endbfchar",
+        "1 beginbfchar <1a> <0091> endbfchar",
+        "1 beginbfchar <1a> <0092> endbfchar",
+        "1 beginbfchar <1a> <00660069> endbfchar",
+        "1 beginbfchar <1a> <fb01> endbfchar",
+        "1 beginbfchar <001a> <2212> endbfchar",
+    ] {
+        assert!(parse_cff(&stream(&single_body(body))).is_err(), "{body}");
+    }
+}

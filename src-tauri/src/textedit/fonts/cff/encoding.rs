@@ -3,11 +3,36 @@
 use super::{dictionary, Document, Object, ASCII_NAMES};
 use lopdf::Dictionary;
 
-pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Box<[Option<u8>; 256]>, String> {
+pub(super) struct Encoding {
+    pub slots: Box<[Option<u8>; 256]>,
+    pub names: Box<[&'static str; 256]>,
+}
+
+// Exact names, not name normalization: these select the embedded outlines.
+const EXTRA: [(&str, u8); 6] = [
+    ("minus", 0x80),
+    ("uni00A0", 0xa0),
+    ("sterling", 0xa3),
+    ("quoteleft", 0x91),
+    ("quoteright", 0x92),
+    ("endash", 0x96),
+];
+
+pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, String> {
     let invalid = || "unsupported or ambiguous CFF encoding".to_string();
     let mut slots = Box::new([None; 256]);
+    let mut names = Box::new([""; 256]);
     for code in 32..=126 {
         slots[code] = Some(code as u8);
+        names[code] = ASCII_NAMES[code - 32];
+    }
+    // WinAnsi names for the supported non-ASCII codes. Its code 160 names
+    // space, not uni00A0; do not invent a NBSP glyph or a duplicate space code.
+    for (name, slot) in EXTRA {
+        if matches!(slot, 0x91 | 0x92 | 0x96 | 0xa3) {
+            slots[slot as usize] = Some(slot);
+            names[slot as usize] = name;
+        }
     }
     let encoding = crate::encoding::resolve(doc, font.get(b"Encoding").map_err(|_| invalid())?);
     if encoding.as_name().ok() != Some(b"WinAnsiEncoding") {
@@ -45,15 +70,18 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Box<[Option<u8>
                             return Err(invalid());
                         }
                         let slot = if name == b".notdef" {
+                            names[code] = "";
                             None
                         } else {
-                            Some(
-                                (ASCII_NAMES
-                                    .iter()
-                                    .position(|candidate| candidate.as_bytes() == name)
-                                    .ok_or("unsupported CFF glyph name")?
-                                    + 32) as u8,
-                            )
+                            let (glyph_name, slot) = ASCII_NAMES
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &name)| (name, (index + 32) as u8))
+                                .chain(EXTRA)
+                                .find(|(candidate, _)| candidate.as_bytes() == name)
+                                .ok_or("unsupported CFF glyph name")?;
+                            names[code] = glyph_name;
+                            Some(slot)
                         };
                         slots[code] = slot;
                         changed[code] = true;
@@ -72,7 +100,7 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Box<[Option<u8>
         let stream = crate::encoding::resolve(doc, mapping)
             .as_stream()
             .map_err(|_| invalid())?;
-        let unicode = super::super::mapping::parse(stream)?;
+        let unicode = super::super::mapping::parse_cff(stream)?;
         for (slot, target) in slots.iter_mut().zip(unicode.iter()) {
             if target.is_some() && target != slot {
                 return Err("CFF ToUnicode disagrees with its glyph encoding".into());
@@ -82,5 +110,13 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Box<[Option<u8>
             *slot = *target;
         }
     }
-    Ok(slots)
+    if !font.has(b"ToUnicode") {
+        // Reader agreement for uni00A0 requires an explicit Unicode map.
+        for slot in slots.iter_mut() {
+            if *slot == Some(0xa0) {
+                *slot = None;
+            }
+        }
+    }
+    Ok(Encoding { slots, names })
 }
