@@ -177,7 +177,9 @@ def build(work, output, install_sdk):
         git = shutil.which("git")
         if not git:
             raise ValueError("Git is absent")
-        (shim / "git.bat").write_text('@"' + git + '" %*\n', encoding="utf-8")
+        # git_common.py parses the final line, which must start with a quote,
+        # not @. Keep echo suppression on its own line (Windows experiment).
+        (shim / "git.bat").write_text('@echo off\n"' + git + '" %*\n', encoding="utf-8")
         env["PATH"] = str(shim) + os.pathsep + env["PATH"]
     else:
         sdk["xcode"] = run(["xcodebuild", "-version"], work, env, capture=True).strip()
@@ -261,6 +263,9 @@ def build(work, output, install_sdk):
     license_env = dict(env, PDFium_SOURCE_DIR=source.as_posix(), PDFium_BUILD_DIR=build_dir.as_posix(), PDFium_ENABLE_V8="false")
     license_log = run(["bash", "steps/08-licenses.sh"], builder, license_env, capture=True)
     complete_licenses(source, stage, license_log)
+    # The engine archive is also distributed independently of the application.
+    # It must carry the licence for tpdf's patch as well as PDFium's notices.
+    shutil.copy2(ROOT / "LICENSE", stage / "licenses/tpdf.txt")
     clang = source / "third_party/llvm-build/Release+Asserts/bin" / ("clang-cl.exe" if windows else "clang")
     sdk["clang"] = run([clang, "--version"], source, env, capture=True).splitlines()[0]
     if windows:
@@ -275,7 +280,7 @@ def build(work, output, install_sdk):
                   "pdfium": pins["pdfium"], "builder": pins["builder"], "depot_tools": pins["depot_tools"],
                   "patch_sha256": digest(PATCH), "packaging_patches": applied, "toolchain": sdk,
                   "inputs_sha256": {name: digest(ROOT / name) for name in (
-                      ".github/workflows/pdfium.yml", "scripts/build_pdfium.py",
+                      "LICENSE", ".github/workflows/pdfium.yml", "scripts/build_pdfium.py",
                       "scripts/pdfium_build.json", "scripts/pdfium_verify.py",
                       "scripts/pdfium_rtl_check.py", "scripts/pdfium-fixture-tools.txt",
                       "testdata/make_rtl_pdf.py", "testdata/make_multilingual_pdf.py", "testdata/make_text_pdf.py")},
