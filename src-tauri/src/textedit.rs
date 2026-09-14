@@ -2,8 +2,8 @@
 //!
 //! Supported text uses Helvetica/WinAnsi or a validated embedded TrueType subset, with explicit
 //! positioning between shows. Font/leading setup may precede a text block.
-//! Complete painted rectangles are preserved. Other graphics, custom text state
-//! and implicit advances between shows are refused.
+//! Complete painted rectangles and straight-line strokes are preserved. Other graphics,
+//! custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod clipping;
@@ -377,6 +377,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     )?);
                     path_until = index + 3;
                 }
+            }
+            ("m", _) if !inside => {
+                let consumed = clipping::stroked(&content.operations[index..], page_transform)?;
+                if content.operations[index + consumed - 1].operator != "n" {
+                    tags.paint();
+                }
+                path_until = index + consumed;
             }
             // Every accepted path is consumed as a complete sequence, so an
             // isolated n outside BT has no pending path or clip to apply.

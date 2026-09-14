@@ -128,7 +128,7 @@ fn textedit_clips_refuse_partial_compound_painted_and_unbounded_paths() {
     // A line-width setter does not enable arbitrary paths or stroke text.
     for body in [
         "0 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
-        "1 w 0 0 m 100 100 l S",
+        "1 w 0 0 m 100 100 l W S",
     ] {
         assert!(textedit::scan(&page(body.as_bytes()), 0).is_err());
     }
@@ -272,6 +272,117 @@ fn textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atom
     ] {
         let bytes = format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {path}");
         let mut doc = page(bytes.as_bytes());
+        let objects = doc.objects.clone();
+        assert!(textedit::scan(&doc, 0).is_err(), "accepted {path}");
+        assert!(textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: vec![],
+                operator: 3,
+                original: "FIRST".into(),
+                replacement: "IN".into()
+            }]
+        )
+        .is_err());
+        assert_eq!(doc.objects, objects);
+    }
+}
+
+#[test]
+fn textedit_stroked_lines_preserve_graphics_and_following_text() {
+    for ending in ["S", "s", "h S", "h s", "n", "h n"] {
+        let body = format!("q .1 .2 .3 RG 2 w -2 0 0 2 100 0 cm 0 0 m 20 20 l 40 0 l {ending} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET 0 0 m 20 20 l {ending} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+        let mut doc = page(body.as_bytes());
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), 2);
+        assert_eq!(before.runs[0].matrix, [1., 0., 0., 1., 40., 180.]);
+        let objects = doc.objects.clone();
+        let id = crate::pagetree::ordered_pages(&doc)[0];
+        textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        let original = Content::decode_strict(body.as_bytes()).unwrap();
+        let saved = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+        assert_eq!(original.operations.len(), saved.operations.len());
+        for (index, (a, b)) in original.operations.iter().zip(saved.operations).enumerate() {
+            assert_eq!(a.operator, b.operator);
+            if index != before.runs[0].operator as usize {
+                assert_eq!(a.operands, b.operands);
+            }
+        }
+        for (old_id, object) in objects {
+            if old_id != id {
+                assert_eq!(doc.objects[&old_id], object);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_stroked_lines_cannot_replace_or_discard_a_clip() {
+    for ending in ["S", "s", "h S", "n"] {
+        for (clip, accepted) in [("0 0 300 240", true), ("41 0 259 240", false)] {
+            for (open, before, after) in [("", "", ""), ("q", "", "Q"), ("q", "Q", "")] {
+                let body=format!("{clip} re W n {open} 0 0 m 20 20 l {ending} {before} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {after}");
+                let result = textedit::scan(&page(body.as_bytes()), 0);
+                assert_eq!(result.is_ok(), accepted, "{body}: {result:?}");
+                if !accepted {
+                    assert!(result.unwrap_err().contains("partly clipped"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_stroked_lines_refuse_invalid_and_incomplete_paths_atomically() {
+    for path in [
+        "0 m 20 20 l S",
+        "0 0 0 m 20 20 l S",
+        "0 /bad m 20 20 l S",
+        "0 0 m 20 l S",
+        "0 0 m /bad 20 l S",
+        "0 0 m 20 20 20 l S",
+        "1000001 0 m 20 20 l S",
+        "0 0 m 1000001 20 l S",
+        "2 0 0 2 0 0 cm 600000 0 m 20 20 l S",
+        "2 0 0 2 0 0 cm 0 0 m 20 600000 l S",
+        "0 0 m S",
+        "0 0 m n",
+        "0 0 m 20 20 l",
+        "0 0 m 20 20 l h",
+        "0 0 m 20 20 l 1 h S",
+        "0 0 m 20 20 l h 1 S",
+        "0 0 m 20 20 l 1 n",
+        "0 0 m 20 20 l 1 s",
+        "0 0 m 20 20 l h 40 0 l S",
+        "0 0 m 20 20 l 30 30 m 40 40 l S",
+        "0 0 m 20 20 l W n",
+        "0 0 m 20 20 l W S",
+        "0 0 m 20 20 l f",
+        "0 0 m 20 20 l B",
+        "0 0 m 20 20 l q S Q",
+        "0 0 m 20 20 l 2 w S",
+        "0 0 m 20 20 30 30 40 40 c S",
+        "0 0 m 20 20 l 0 0 10 10 re S",
+        "BT 0 0 m 20 20 l S ET",
+        "20 20 l S",
+        "h S",
+    ] {
+        let body = format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {path}");
+        let mut doc = page(body.as_bytes());
         let objects = doc.objects.clone();
         assert!(textedit::scan(&doc, 0).is_err(), "accepted {path}");
         assert!(textedit::write(
