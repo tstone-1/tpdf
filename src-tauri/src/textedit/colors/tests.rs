@@ -103,7 +103,7 @@ fn textedit_colours_refuse_bad_components_and_unsupported_spaces() {
         "[0] g",
         "0 0 0 /Pattern scn",
         "/DeviceRGB cs q /DeviceGray cs Q 0 sc",
-        "0 g 0 SC",
+        "0 g 0 0 SC",
         "0 g 0 cs",
     ] {
         let (doc, _) = page(format!("{prefix} BT /F1 12 Tf 40 180 Td (TEXT) Tj ET").as_bytes());
@@ -196,5 +196,57 @@ fn textedit_icc_decoding_and_colour_space_count_are_bounded() {
         }
         spaces(&mut doc, id, entries);
         assert_eq!(textedit::scan(&doc, 0).is_ok(), count == 32);
+    }
+}
+
+#[test]
+fn textedit_stroke_colours_restore_independent_state_and_preserve_operators() {
+    let body = b"/RGB CS /DeviceCMYK cs q /DeviceGray CS /DeviceRGB cs 0 SC 1 0 0 scn Q .1 .2 .3 SCN 0 0 0 1 sc 0 0 m 20 20 l S BT /F1 12 Tf 40 180 Td (FIRST) Tj ET";
+    let (mut doc, id) = page(body);
+    spaces(&mut doc, id, dictionary! { "RGB" => "DeviceRGB" });
+    let before = textedit::scan(&doc, 0).unwrap();
+    let original = Content::decode_strict(body).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    let saved = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+    assert_eq!(saved.operations.len(), original.operations.len());
+    for (index, (a, b)) in original
+        .operations
+        .iter()
+        .zip(&saved.operations)
+        .enumerate()
+    {
+        assert_eq!(a.operator, b.operator);
+        if index != before.runs[0].operator as usize {
+            assert_eq!(a.operands, b.operands);
+        }
+    }
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    for (prefix, accepted) in [
+        ("0 SC", true),
+        ("/DeviceRGB CS 0 G 1 SC", true),
+        ("/DeviceGray CS 0 0 0 RG 1 0 0 SCN", true),
+        ("/DeviceRGB CS 0 0 0 1 K 0 0 0 0 SC", true),
+        ("/DeviceRGB CS q /DeviceGray CS Q 0 SC", false),
+        ("/DeviceRGB CS /DeviceGray cs 0 SC", false),
+        ("/DeviceRGB CS /DeviceGray cs 0 sc 1 0 0 SC", true),
+        ("/Missing CS", false),
+        ("/Pattern CS", false),
+        ("1 CS", false),
+        ("/DeviceRGB CS -1 0 0 SCN", false),
+        ("/DeviceRGB CS 0 0 1.1 SC", false),
+        ("/DeviceRGB CS 0 0 /Pattern SCN", false),
+    ] {
+        let (doc, _) = page(format!("{prefix} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "{prefix}");
     }
 }

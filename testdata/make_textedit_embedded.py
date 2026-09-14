@@ -2,6 +2,7 @@
 """Generate the original MIT-licensed subset used by worker/editor tests.
 
 uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --named-mapping output.pdf
 uv run --with pypdf testdata/make_textedit_embedded.py --check before.pdf after.pdf
 uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls before.pdf after.pdf
 Writes a deterministic test font and an ignored PDF with the native UI fixture's
@@ -15,7 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -134,15 +135,20 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         if cff_unicode:
             expected_operands = [(old, "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£"),
                                  (new, "EDITED £\u2013\u2019\u2018\u00a0\u2212")]
+        if cff_ligatures:
+            expected_operands = [(old, "SYNTHETIC ffi ffi fi fl ff"), (new, "EDITED ffi fi fl ff")]
         encoding, mapping = get_encoding(mapped_font)
         if mapped_font in cff_fonts and "/ToUnicode" not in mapped_font:
             assert isinstance(encoding, dict), "expected explicit CFF glyph encoding"
             mapping = {chr(code): text for code, text in encoding.items()}
-        assert mapping and all(isinstance(k, str) and len(k) == len(v) == 1 for k, v in mapping.items()), "unexpected fixture map"
+        assert mapping and all(isinstance(k, str) and len(k) == 1 and (len(v) == 1 or (cff_ligatures and v in ("ffi", "ff", "fi", "fl"))) for k, v in mapping.items()), "unexpected fixture map"
         for operation, expected in expected_operands:
             parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
             raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
                            for part in parts if isinstance(part, (str, bytes)))
+            if cff_ligatures:
+                expected_codes = b"SYNTHETIC ffi \x1f \x1e \x1c \x1d" if operation is old else b"EDITED \x1f \x1e \x1c \x1d"
+                assert raw == expected_codes, "ligature glyph codes changed"
             assert all(chr(code) in mapping for code in raw), "unmapped symbolic code"
             assert "".join(mapping[chr(code)] for code in raw) == expected, "wrong mapped operand"
     # Let the independent parser apply the font's encoding and ToUnicode map.
@@ -150,6 +156,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
     if cff_unicode:
         expected_text = ("SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£", "EDITED £\u2013\u2019\u2018\u00a0\u2212")
+    if cff_ligatures:
+        expected_text = ("SYNTHETIC ffi ffi fi fl ff", "EDITED ffi fi fl ff")
     if dash:
         expected_text = ("SYNTHETIC\u2013FIRST", "EDITED\u2013FIRST")
     if default_encoding:
@@ -248,10 +256,42 @@ def tagged_controls(before, after, page_index=0, wrapped=False):
             print("[PASS] independent structure control:", mode)
 
 
+def named_mapping(target):
+    """Synthetic WinAnsi font with agreeing Mac/Windows maps and ToUnicode."""
+    import io
+    from fontTools.ttLib import TTFont
+    from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import DecodedStreamObject, NameObject
+
+    source = ROOT / "testdata/textedit-embedded.pdf"
+    writer = PdfWriter(clone_from=source)
+    font = writer.pages[0]["/Resources"]["/Font"]["/F1"]
+    program = TTFont(io.BytesIO(font["/FontDescriptor"]["/FontFile2"].get_data()), recalcTimestamp=False)
+    legacy = CmapSubtable.newSubtable(0)
+    legacy.platformID, legacy.platEncID, legacy.language = 1, 0, 0
+    legacy.cmap = {code: name for code, name in program.getBestCmap().items() if 32 <= code <= 126}
+    program["cmap"].tables.append(legacy)
+    output = io.BytesIO()
+    program.save(output)
+    stream = DecodedStreamObject()
+    stream.set_data(output.getvalue())
+    font["/FontDescriptor"][NameObject("/FontFile2")] = writer._add_object(stream)
+    mapping = DecodedStreamObject()
+    mapping.set_data(b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <0000> <FFFF> endcodespacerange 1 beginbfrange <20> <59> <0020> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end")
+    font[NameObject("/ToUnicode")] = writer._add_object(mapping)
+    writer.write(target)
+    assert "SYNTHETIC FIRST" in PdfReader(target).pages[0].extract_text()
+    print("[PASS] generated independently decoded matching named-font maps")
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--named-mapping":
+        named_mapping(Path(sys.argv[2]))
+        return
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
         page, wrapped, float32, default_encoding = 0, False, False, False
-        w3c = dash = agenda = cff_unicode = False
+        w3c = dash = agenda = cff_unicode = cff_ligatures = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -261,6 +301,8 @@ def main():
                 default_encoding = True
             elif option == "--agenda" and sys.argv[1] == "--check":
                 agenda = True
+            elif option == "--cff-ligatures" and sys.argv[1] == "--check":
+                cff_ligatures = True
             elif option == "--cff-unicode" and sys.argv[1] == "--check":
                 cff_unicode = True
             elif option == "--dash" and sys.argv[1] == "--check":
@@ -270,10 +312,10 @@ def main():
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --dash, --agenda or --w3c-dummy (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --dash, --agenda or --w3c-dummy (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c or dash or agenda or cff_unicode:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode)
+        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return

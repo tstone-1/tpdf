@@ -179,7 +179,7 @@ fn textedit_painted_rectangles_preserve_paint_state_and_surrounding_operators() 
     for paint in ["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"] {
         // This decoration is far from the text: treating it as a clip must fail
         // the positive control. q/Q restores its colour and transform.
-        let body = format!("n q 0.3 0.6 0.9 rg 0.1 0.2 0.3 RG 2 w -2 0 0 2 100 0 cm 0 0 20 20 re {paint} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET 0.1 g 20 20 10 10 re {paint} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET n");
+        let body = format!("n q 0.3 0.6 0.9 rg 0.1 0.2 0.3 RG 2 w -2 0 0 2 100 0 cm 0 0 -20 20 re 10 10 20 -20 re -10 -10 -5 -5 re {paint} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET 0.1 g 20 20 10 10 re {paint} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET n");
         let mut doc = page(body.as_bytes());
         let before = textedit::scan(&doc, 0).unwrap();
         for (actual, expected) in before.runs.iter().zip(&geometry.runs) {
@@ -251,7 +251,6 @@ fn textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atom
         "0 0 20 re f",
         "0 0 20 20 20 re f",
         "0 0 /bad 20 re f",
-        "0 0 -20 20 re f",
         "0 0 20 0 re f",
         "0 0 1000001 20 re f",
         "1000000 0 20 20 re f",
@@ -259,7 +258,9 @@ fn textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atom
         "0 0 20 20 re 1 f",
         "0 0 20 20 re W f",
         "0 0 20 20 re W S",
-        "0 0 20 20 re 0 0 10 10 re f",
+        "0 0 20 20 re 0 0 10 0 re f",
+        "0 0 20 20 re 1000000 0 10 10 re f",
+        "0 0 20 20 re 0 /bad 10 10 re f",
         "0 0 20 20 re q f Q",
         "0 0 20 20 re h f",
         "0 0 20 20 re 10 10 l f",

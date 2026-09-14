@@ -8380,3 +8380,62 @@ and dotted patterns with a zero dash and a positive gap. Its source digest
 matches the public corpus manifest. Font ligatures and its CMap code-space
 mismatch remain separate blockers; this increment does not establish another
 editable practical page. Windows native verification remains outstanding.
+
+### Ligatures and matching simple-font maps
+
+CFF text editing supports existing `f_f`, `f_i`, `f_l` and `f_f_i` glyphs only
+when their ToUnicode entries exactly spell `ff`, `fi`, `fl` and `ffi`.
+Discovery measures original PDF glyph codes, including each `TJ` fragment;
+expanding a ligature for extraction does not add character-spacing steps.
+Replacement encoding uses the longest available validated sequence. Both source
+expansion and replacement text retain the 4,096-character limit. Missing glyphs,
+ambiguous maps, compatibility characters and other sequences remain refused.
+
+Simple CFF and WinAnsi TrueType fonts may carry the exact `<0000> <FFFF>`
+code-space header with one-byte source entries. The entries themselves remain
+one byte; Identity-H and symbolic TrueType retain their separate rules. WinAnsi
+ToUnicode entries must be ASCII identity mappings, and all accepted Unicode and
+Macintosh cmaps must agree on each offered glyph. No font is repaired or extended.
+Named stroke colours retain independent `CS`/`SC`/`SCN` state through `q`/`Q`.
+Complete groups of painted rectangles may have negative dimensions; every
+rectangle is bounded and preserved, while clipping keeps its stricter subset.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_cff.py scratch/textedit-ligatures/fixtures --rust-fixtures
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --named-mapping scratch/textedit-ligatures/fixtures/named-mapping.pdf
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-ligatures/worker scratch/textedit-ligatures/fixtures/ligatures.pdf --cff-ligatures
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-ligatures/worker/synthetic-before.pdf scratch/textedit-ligatures/worker/synthetic-after.pdf --cff-ligatures
+swift scripts/text_edit_pdfkit.swift scratch/textedit-ligatures/worker --cff-ligatures
+uv run scripts/tabs_check.py <checks-binary> scratch/textedit-ligatures/fixtures/ligatures.pdf --phase textedit-cff-ligatures --saved-copy <saved.pdf>
+python3 scripts/mutate_rust.py --only 'ligature:'
+uv run src-tauri/fuzz/run.py --target textedit_scan --seconds 20
+```
+
+Use the named-mapping fixture with the ordinary worker, native `textedit` phase
+and readback commands, omitting `--cff-ligatures`. For native PDFKit readback,
+place the original and saved files in a directory as `synthetic-before.pdf` and
+`synthetic-after.pdf`.
+
+Measured on macOS, 2026-09-14: 185 focused editor tests pass; all 25 new or
+re-aimed mutations are caught by their named test. Both worker round trips and
+both native workflows pass (15/15 checks each). Independent pypdf readback
+confirms the exact ligature codes, unchanged resources and untouched operands.
+PDFKit measures 2,261 changed pixels inside the ligature target and 898 inside
+the named-map target, with zero outside, for both worker and native saves.
+Replacing one ligature by its separate letters leaves extracted text unchanged
+but fails the exact-code check. Altering a stroke colour fails both readers,
+including 864 changed pixels outside the target. The exact wider CFF header
+control preserves independently extracted text and pixel-identical rendering.
+
+The new `editable-ligatures` fuzz seed reaches one editable run. The seeded fuzz
+run completes 24,730 executions in 21 seconds with 88 MiB peak RSS and no finding
+(`--sanitizer=none` on macOS). The seven unchanged, digest-verified public
+samples remain at 2 editable and 46 refused pages. Passport guide page 16 now
+reaches its final, 90-degree text matrix; it remains refused pending support for
+orthogonal text rotation. This is verified grammar coverage, not another
+editable practical page. Windows native verification remains outstanding.
+
+All 24 final gates pass (242.9s summed gate time): 1,481 Rust tests pass
+with 3 ignored, 1,668 frontend tests pass, and normal assets contain zero
+check-harness code.

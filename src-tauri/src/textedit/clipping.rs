@@ -45,23 +45,26 @@ pub(super) fn apply(
 }
 
 // ISO 32000-1, 8.5.3: painting ends the current path. With no W/W*,
-// this complete pair changes pixels but cannot change a later text clip.
+// this complete sequence changes pixels but cannot change a later text clip.
 // https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#853-path-painting-operators
-pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<bool, String> {
-    let [rect, end, ..] = ops else {
-        return Ok(false);
+pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>, String> {
+    let count = ops.iter().take_while(|op| op.operator == "re").count();
+    let Some(end) = ops.get(count).filter(|_| count > 0) else {
+        return Ok(None);
     };
     if !matches!(
         end.operator.as_str(),
         "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n"
     ) {
-        return Ok(false);
+        return Ok(None);
     }
     if !end.operands.is_empty() {
         return Err("invalid rectangle paint operands".into());
     }
-    rectangle(rect, ctm)?;
-    Ok(true)
+    for rect in &ops[..count] {
+        rectangle_bounds(rect, ctm, false)?;
+    }
+    Ok(Some(count + 1))
 }
 
 // Complete line/Bezier subpaths, finished before any state or text operator.
@@ -117,6 +120,10 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
 }
 
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
+    rectangle_bounds(rect, ctm, true)
+}
+
+fn rectangle_bounds(rect: &Operation, ctm: [f64; 6], clipping: bool) -> Result<Rect, String> {
     if rect.operator != "re" || rect.operands.len() != 4 {
         return Err("invalid rectangle operands".into());
     }
@@ -125,7 +132,9 @@ fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
         *dest = super::number(value)?;
     }
     let [x, y, width, height] = values;
-    if width <= 0. || height <= 0. {
+    // A reversed painted rectangle retains its winding and all authored
+    // operators. Clipping keeps its independently validated positive subset.
+    if width == 0. || height == 0. || (clipping && (width < 0. || height < 0.)) {
         return Err("empty or reversed rectangle is not editable".into());
     }
     let next = [

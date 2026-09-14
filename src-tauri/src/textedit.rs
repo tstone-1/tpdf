@@ -309,13 +309,12 @@ fn array_text(
     let mut bounds = [0_f64; 2];
     for value in values {
         if let Object::String(bytes, _) = value {
-            let fragment = metrics.decode(bytes)?;
+            let (fragment, width, [left, right]) =
+                metrics.source_layout(bytes, size, spacing, word_spacing)?;
             characters += fragment.chars().count();
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
             }
-            let (width, [left, right]) =
-                metrics.spaced_layout(&fragment, size, spacing, word_spacing)?;
             bounds[0] = bounds[0].min(advance + left);
             bounds[1] = bounds[1].max(advance + right);
             advance += width;
@@ -373,6 +372,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut leading = 0.0;
     let mut spacing = 0.0;
     let mut word_spacing = 0.0;
+    let mut stroke_components = 1;
     let mut states = Vec::new();
     let mut clip = None;
     let mut path_until = 0;
@@ -404,6 +404,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     clip,
                     spacing,
                     word_spacing,
+                    stroke_components,
                 ));
             }
             ("Q", []) if !inside => {
@@ -415,14 +416,17 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     clip,
                     spacing,
                     word_spacing,
+                    stroke_components,
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
-                if clipping::painted(&content.operations[index..], page_transform)? {
-                    if content.operations[index + 1].operator != "n" {
+                if let Some(rectangles_consumed) =
+                    clipping::painted(&content.operations[index..], page_transform)?
+                {
+                    if content.operations[index + rectangles_consumed - 1].operator != "n" {
                         tags.paint();
                     }
-                    path_until = index + 2;
+                    path_until = index + rectangles_consumed;
                 } else {
                     clip = Some(clipping::apply(
                         clip,
@@ -491,16 +495,21 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     graphics_states.insert(name.clone());
                 }
             }
-            ("cs", [Object::Name(name)]) => {
+            ("cs" | "CS", [Object::Name(name)]) => {
                 if !colour_spaces.contains_key(name) {
                     if colour_spaces.len() >= 32 {
                         return Err("too many text colour spaces".into());
                     }
                     colour_spaces.insert(name.clone(), colors::named(doc, resources, name)?);
                 }
-                fill_components = colour_spaces[name];
+                if op.operator == "cs" {
+                    fill_components = colour_spaces[name];
+                } else {
+                    stroke_components = colour_spaces[name];
+                }
             }
             ("sc" | "scn", values) => colors::values(values, fill_components)?,
+            ("SC" | "SCN", values) => colors::values(values, stroke_components)?,
             ("g" | "rg" | "k", values) => {
                 fill_components = match op.operator.as_str() {
                     "g" => 1,
@@ -517,6 +526,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     "RG" => 3,
                     _ => 4,
                 };
+                stroke_components = components;
                 colors::values(values, components)?;
             }
             ("Tf", [name, size]) if inside => {
@@ -570,10 +580,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 word_spacing,
             )?
         } else {
-            let text = metrics.decode(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
-            let (advance, horizontal) =
-                metrics.spaced_layout(&text, size, spacing, word_spacing)?;
-            (text, advance, horizontal)
+            metrics.source_layout(
+                op.operands[0].as_str().map_err(|e| e.to_string())?,
+                size,
+                spacing,
+                word_spacing,
+            )?
         };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
         if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {

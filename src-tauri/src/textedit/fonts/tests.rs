@@ -955,3 +955,143 @@ fn textedit_word_spacing_uses_pdf_code_32_not_unicode_space() {
         );
     }
 }
+
+#[test]
+fn textedit_named_unicode_requires_identity_and_agreeing_legacy_glyphs() {
+    let (mut doc, font, _, program) = fixture();
+    let face = Face::parse(SYNTHETIC, 0).unwrap();
+    let raw = face.raw_face().table(Tag::from_bytes(b"cmap")).unwrap();
+    assert_eq!(u16::from_be_bytes(raw[2..4].try_into().unwrap()), 2);
+    // Retain both original Unicode records; append an independent Mac format 0.
+    let mut cmap = vec![0, 0, 0, 3];
+    for record in raw[4..20].chunks_exact(8) {
+        cmap.extend(&record[..4]);
+        cmap.extend((u32::from_be_bytes(record[4..8].try_into().unwrap()) + 8).to_be_bytes());
+    }
+    let mac_offset = raw.len() + 8;
+    cmap.extend([0, 1, 0, 0]);
+    cmap.extend((mac_offset as u32).to_be_bytes());
+    cmap.extend(&raw[20..]);
+    cmap.extend([0, 0, 1, 6, 0, 0]);
+    for code in 0_u8..=255 {
+        cmap.push(
+            face.glyph_index(char::from(code))
+                .map_or(0, |g| u8::try_from(g.0).unwrap()),
+        );
+    }
+    let mut bytes = SYNTHETIC.to_vec();
+    let offset = bytes.len();
+    let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
+    for record in bytes[12..12 + count * 16].chunks_exact_mut(16) {
+        if &record[..4] == b"cmap" {
+            record[8..12].copy_from_slice(&(offset as u32).to_be_bytes());
+            record[12..16].copy_from_slice(&(cmap.len() as u32).to_be_bytes());
+        }
+    }
+    bytes.extend(cmap);
+    assert_eq!(
+        Face::parse(&bytes, 0)
+            .unwrap()
+            .tables()
+            .cmap
+            .unwrap()
+            .subtables
+            .len(),
+        3
+    );
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content = bytes;
+    assert!(textedit::scan(&doc, 0).is_err()); // No verified extraction map yet.
+    let source = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <0000> <FFFF> endcodespacerange 1 beginbfrange <20> <59> <0020> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end";
+    let map = doc.add_object(Stream::new(Dictionary::new(), source.as_bytes().to_vec()));
+    doc.get_dictionary_mut(font).unwrap().set("ToUnicode", map);
+    let update = change(&doc, "FIRST");
+    let original = doc.objects.clone();
+    textedit::write(&mut doc, &[update]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "FIRST");
+    for id in [font, program, map] {
+        assert_eq!(doc.objects[&id], original[&id]);
+    }
+    for defect in 0..7 {
+        let mut broken = doc.clone();
+        match defect {
+            0 => {
+                broken
+                    .get_object_mut(map)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content = source.replace("<0020>", "<0021>").into_bytes();
+            }
+            1 => {
+                broken
+                    .get_object_mut(program)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content[offset + mac_offset + 6 + 70] = 0;
+            }
+            2 => {
+                broken
+                    .get_dictionary_mut(font)
+                    .unwrap()
+                    .set("Encoding", "MacRomanEncoding");
+            }
+            3 => {
+                broken
+                    .get_dictionary_mut(font)
+                    .unwrap()
+                    .set("Encoding", "Unknown");
+            }
+            4 => {
+                broken
+                    .get_object_mut(map)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content = source.replace("<59>", "<45>").into_bytes();
+            }
+            5 => {
+                broken
+                    .get_object_mut(map)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content = source.replace("<20>", "<0020>").into_bytes();
+            }
+            _ => {
+                let entries = (32_u8..=89)
+                    .map(|code| {
+                        let target = match code {
+                            b'F' => b'I',
+                            b'I' => b'F',
+                            _ => code,
+                        };
+                        format!("<{code:02x}> <{target:04x}> ")
+                    })
+                    .collect::<String>();
+                broken
+                    .get_object_mut(map)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .content = source
+                    .replace(
+                        "1 beginbfrange <20> <59> <0020> endbfrange",
+                        &format!("58 beginbfchar {entries} endbfchar"),
+                    )
+                    .into_bytes();
+            }
+        }
+        assert!(
+            textedit::scan(&broken, 0).is_err(),
+            "accepted defect {defect}"
+        );
+        let objects = broken.objects.clone();
+        assert!(textedit::write(&mut broken, &[change(&doc, "IN")]).is_err());
+        assert_eq!(broken.objects, objects);
+    }
+}

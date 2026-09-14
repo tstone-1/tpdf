@@ -78,6 +78,10 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
                                 .enumerate()
                                 .map(|(index, &name)| (name, (index + 32) as u8))
                                 .chain(EXTRA)
+                                .chain(
+                                    super::super::ligatures::GLYPHS
+                                        .map(|(name, _, slot)| (name, slot)),
+                                )
                                 .find(|(candidate, _)| candidate.as_bytes() == name)
                                 .ok_or("unsupported CFF glyph name")?;
                             names[code] = glyph_name;
@@ -113,7 +117,9 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
     if !font.has(b"ToUnicode") {
         // Reader agreement for uni00A0 requires an explicit Unicode map.
         for slot in slots.iter_mut() {
-            if *slot == Some(0xa0) {
+            if slot
+                .is_some_and(|slot| slot == 0xa0 || super::super::ligatures::text(slot).is_some())
+            {
                 *slot = None;
             }
         }

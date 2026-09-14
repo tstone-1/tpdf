@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Edit existing CFF ligatures (`ff`, `fi`, `fl`, `ffi`) with matching Unicode
+  maps, preserving the original glyph spacing and rejecting ambiguous mappings.
+- Support matching ASCII ToUnicode maps on WinAnsi TrueType fonts, named stroke
+  colours and bounded groups of painted rectangles during text edits.
+
 - Preserve dotted and dashed lines, line caps, joins and miter limits during
   in-place text edits, with bounded validation of their original settings.
 
