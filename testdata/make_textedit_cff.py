@@ -24,6 +24,8 @@ from pypdf.generic import (
 
 def program(mode="normal"):
     names = [".notdef"] + [UV2AGL[code] for code in range(32, 127)]
+    if mode == "ligatures":
+        names += ["f_l", "f_f", "f_i", "f_f_i"]
     if mode == "unicode":
         names += ["minus", "uni00A0", "quoteleft", "quoteright", "endash", "sterling"]
     chars = {}
@@ -162,6 +164,40 @@ def pdf(data, path, *, remap=False, to_unicode=False, unicode=False):
     )
 
 
+def pdf_ligatures(path):
+    # The first ffi is three ordinary glyphs, the second is one ligature.
+    # They extract identically but must have different advances and Tc counts.
+    pdf(program("ligatures"), path)
+    writer = PdfWriter(clone_from=path)
+    page = writer.pages[0]
+    font = page["/Resources"]["/Font"]["/F1"]
+    font[NameObject("/FirstChar")] = NumberObject(28)
+    font[NameObject("/Widths")] = ArrayObject([NumberObject(600)] * 99)
+    font[NameObject("/Encoding")] = DictionaryObject({
+        NameObject("/BaseEncoding"): NameObject("/WinAnsiEncoding"),
+        NameObject("/Differences"): ArrayObject([NumberObject(28)] +
+            [NameObject("/" + name) for name in ["f_l", "f_f", "f_i", "f_f_i"]]),
+    })
+    mapping = DecodedStreamObject()
+    entries = "".join(f"<{code:02x}> <{code:04x}> " for code in range(32, 127))
+    entries += "<1c> <0066006c> <1d> <00660066> <1e> <00660069> <1f> <006600660069>"
+    mapping.set_data(("/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def "
+        "/CMapName /Adobe-Identity-UCS def /CMapType 2 def "
+        "1 begincodespacerange <00> <FF> endcodespacerange "
+        "99 beginbfchar " + entries + " endbfchar "
+        "endcmap CMapName currentdict /CMap defineresource pop end end").encode())
+    font[NameObject("/ToUnicode")] = writer._add_object(mapping)
+    content = DecodedStreamObject()
+    page["/Resources"][NameObject("/ColorSpace")] = DictionaryObject({NameObject("/RGB"): NameObject("/DeviceRGB")})
+    first = b"SYNTHETIC ffi \x1f \x1e \x1c \x1d".hex()
+    content.set_data((f"q /RGB CS .2 .4 .6 SCN 2 w 10 30 15 -20 re 35 10 -10 20 re B Q 1 Tc 1 Tw BT /F1 12 Tf 40 180 Td <{first}> Tj ET "
+        "0 Tc 0 Tw BT /F1 12 Tf 40 140 Td (SYNTHETIC SECOND) Tj ET").encode())
+    page[NameObject("/Contents")] = writer._add_object(content)
+    writer.write(path)
+    assert " ".join(PdfReader(path).pages[0].extract_text().split()) == "SYNTHETIC ffi ffi fi fl ff SYNTHETIC SECOND"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
@@ -181,6 +217,7 @@ def main():
         "expert-encoding",
         "overhang",
         "unicode",
+        "ligatures",
     ]
     for mode in modes:
         data = program(mode)
@@ -192,6 +229,7 @@ def main():
             )
             dest.mkdir(exist_ok=True)
             (dest / (mode + ".cff")).write_bytes(data)
+    pdf_ligatures(args.output / "ligatures.pdf")
     pdf(program(), args.output / "synthetic.pdf")
     pdf(program(), args.output / "remapped.pdf", remap=True)
     pdf(program(), args.output / "remapped-unicode.pdf", remap=True, to_unicode=True)

@@ -11,7 +11,8 @@ mod tests;
 
 // Standard wrapper emitted by the measured LibreOffice and Quartz exports.
 // Only bfchar and scalar bfrange blocks vary. Other wrappers, array targets,
-// inheritance and multi-character mappings remain unsupported.
+// inheritance and general multi-character mappings remain unsupported. CFF
+// admits only the exact sequences enumerated in ligatures.rs.
 const PREFIX: &[u8] = br"/CIDInit /ProcSet findresource begin
 12 dict begin begincmap
 /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
@@ -21,6 +22,14 @@ const SUFFIX: &[u8] = b"endcmap CMapName currentdict /CMap defineresource pop en
 const MAX_MAP: usize = 16 * 1024;
 
 fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
+    blocks_with_header(stream, wide, false)
+}
+
+fn blocks_with_header(
+    stream: &Stream,
+    wide: bool,
+    padded_single: bool,
+) -> Result<Vec<Operation>, String> {
     if stream.dict.has(b"UseCMap") {
         return Err("inherited character maps are not editable yet".into());
     }
@@ -50,7 +59,16 @@ fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
         .zip(&prefix.operations)
         .chain(ops[end..].iter().zip(&suffix.operations))
     {
-        if actual.operator != expected.operator || actual.operands != expected.operands {
+        // Some simple-font exports declare a two-byte code space while every
+        // source entry remains one byte. Admit only that exact header variant;
+        // parsing below still validates all source lengths, targets and counts.
+        let padded_range = padded_single
+            && expected.operator == "endcodespacerange"
+            && matches!(actual.operands.as_slice(), [Object::String(low, _), Object::String(high, _)]
+                if low == &[0, 0] && high == &[255, 255]);
+        if actual.operator != expected.operator
+            || (actual.operands != expected.operands && !padded_range)
+        {
             return Err(invalid());
         }
     }
@@ -58,17 +76,31 @@ fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
 }
 
 pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    parse_single(stream, false)
+    parse_single(stream, false, false)
 }
 
 // CFF glyph-name agreement is checked by the caller. Other font paths keep
 // their independently verified repertoire and do not inherit these additions.
 pub(super) fn parse_cff(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    parse_single(stream, true)
+    parse_single(stream, true, true)
 }
 
-fn parse_single(stream: &Stream, cff: bool) -> Result<Box<[Option<u8>; 256]>, String> {
-    let ops = blocks(stream, false)?;
+pub(super) fn parse_named(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
+    let codes = parse_single(stream, false, true)?;
+    if codes.iter().enumerate().any(|(code, slot)| {
+        slot.is_some_and(|slot| !(32..=126).contains(&code) || usize::from(slot) != code)
+    }) {
+        return Err("named TrueType ToUnicode disagrees with its ASCII encoding".into());
+    }
+    Ok(codes)
+}
+
+fn parse_single(
+    stream: &Stream,
+    cff: bool,
+    padded: bool,
+) -> Result<Box<[Option<u8>; 256]>, String> {
+    let ops = blocks_with_header(stream, false, padded)?;
     let invalid = || "unsupported or ambiguous single-byte character map".to_string();
     let mut result = Box::new([None; 256]);
     let mut unicode = [false; 256];
@@ -96,6 +128,15 @@ fn parse_single(stream: &Stream, cff: bool) -> Result<Box<[Option<u8>; 256]>, St
             let Object::String(text, _) = &entry[stride - 1] else {
                 return Err(invalid());
             };
+            if cff && stride == 2 && text.len() > 2 {
+                let slot = super::ligatures::target(text).ok_or_else(invalid)?;
+                if result[first as usize].is_some() || unicode[slot as usize] {
+                    return Err(invalid());
+                }
+                result[first as usize] = Some(slot);
+                unicode[slot as usize] = true;
+                continue;
+            }
             let [high, low] = text.as_slice() else {
                 return Err(invalid());
             };

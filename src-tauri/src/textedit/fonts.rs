@@ -14,6 +14,7 @@ pub(super) mod ink_tests;
 mod cff;
 mod composite;
 pub(super) use cff::embedded as cff;
+mod ligatures;
 mod mapping;
 mod outlines;
 pub(super) use composite::embedded as composite;
@@ -37,6 +38,30 @@ pub(super) struct Metrics {
 }
 
 impl Metrics {
+    fn text_slots(&self, text: &str) -> Result<Vec<u8>, String> {
+        let bytes = super::encode_text(text)?;
+        if !ligatures::GLYPHS
+            .iter()
+            .any(|(_, _, slot)| self.widths[*slot as usize].is_some())
+        {
+            return Ok(bytes);
+        }
+        let mut result = Vec::with_capacity(bytes.len());
+        let mut rest = bytes.as_slice();
+        while !rest.is_empty() {
+            if let Some((_, sequence, slot)) = ligatures::GLYPHS.iter().find(|(_, text, slot)| {
+                self.widths[*slot as usize].is_some() && rest.starts_with(text.as_bytes())
+            }) {
+                result.push(*slot);
+                rest = &rest[sequence.len()..];
+            } else {
+                result.push(rest[0]);
+                rest = &rest[1..];
+            }
+        }
+        Ok(result)
+    }
+
     pub(super) fn helvetica() -> Self {
         let mut widths = Box::new([None; 256]);
         for byte in (32..=126).chain(160..=255) {
@@ -128,18 +153,26 @@ impl Metrics {
         if bytes.len() > super::MAX_TEXT {
             return Err("mapped text exceeds its limit".into());
         }
-        bytes
-            .iter()
-            .map(|&code| {
-                codes[code as usize]
-                    .map(super::slot_character)
-                    .ok_or_else(|| "text contains an unmapped font code".to_string())
-            })
-            .collect()
+        let mut text = String::new();
+        let mut characters = 0;
+        for &code in bytes {
+            let slot = codes[code as usize].ok_or("text contains an unmapped font code")?;
+            if let Some(sequence) = ligatures::text(slot) {
+                text.push_str(sequence);
+                characters += sequence.len();
+            } else {
+                text.push(super::slot_character(slot));
+                characters += 1;
+            }
+            if characters > super::MAX_TEXT {
+                return Err("expanded text exceeds its limit".into());
+            }
+        }
+        Ok(text)
     }
 
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
-        let bytes = super::encode_text(text)?;
+        let bytes = self.text_slots(text)?;
         let Some(codes) = &self.codes else {
             // The unmapped font paths retain their existing Latin-1 repertoire.
             // A mapped-only metric slot must never escape as a literal PDF code.
@@ -182,7 +215,7 @@ impl Metrics {
 
     pub(super) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
         let mut width = 0.;
-        for byte in super::encode_text(text)? {
+        for byte in self.text_slots(text)? {
             width += self.width(byte)?;
         }
         Ok(width * size / 1000.)
@@ -191,7 +224,7 @@ impl Metrics {
     pub(super) fn horizontal_bounds(&self, text: &str, size: f64) -> Result<[f64; 2], String> {
         let mut bounds = [0_f64; 2];
         let mut cursor = 0.;
-        for byte in super::encode_text(text)? {
+        for byte in self.text_slots(text)? {
             let width = self.width(byte)?;
             let [left, right] = self
                 .horizontal_overhangs
@@ -220,6 +253,41 @@ impl Metrics {
                 self.horizontal_bounds(text, size)?,
             ));
         }
+        self.spaced_slots(&self.text_slots(text)?, size, spacing, word_spacing)
+    }
+
+    // A ligature and its separate letters can coexist in one font and extract
+    // identically. Measuring re-encoded Unicode would change the source width.
+    pub(super) fn source_layout(
+        &self,
+        bytes: &[u8],
+        size: f64,
+        spacing: f64,
+        word_spacing: f64,
+    ) -> Result<(String, f64, [f64; 2]), String> {
+        let text = self.decode(bytes)?;
+        let (advance, bounds) = if let Some(Codes::Single(codes)) = &self.codes {
+            let slots = bytes
+                .iter()
+                .map(|code| {
+                    codes[*code as usize]
+                        .ok_or_else(|| "text contains an unmapped font code".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            self.spaced_slots(&slots, size, spacing, word_spacing)?
+        } else {
+            self.spaced_layout(&text, size, spacing, word_spacing)?
+        };
+        Ok((text, advance, bounds))
+    }
+
+    fn spaced_slots(
+        &self,
+        slots: &[u8],
+        size: f64,
+        spacing: f64,
+        word_spacing: f64,
+    ) -> Result<(f64, [f64; 2]), String> {
         if !spacing.is_finite() || spacing.abs() > size * 0.25 {
             return Err("character spacing exceeds a quarter of the font size".into());
         }
@@ -235,7 +303,7 @@ impl Metrics {
         };
         let mut cursor = 0.;
         let mut bounds = [0_f64; 2];
-        for byte in super::encode_text(text)? {
+        for &byte in slots {
             let width = self.width(byte)? * size / 1000.;
             let [left, right] = self
                 .horizontal_overhangs
@@ -287,13 +355,14 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     let custom = !font.has(b"Encoding") && font.has(b"ToUnicode");
     let mac_roman =
         font.get(b"Encoding").and_then(Object::as_name).ok() == Some(b"MacRomanEncoding");
+    let named_unicode = !custom && !mac_roman && font.has(b"ToUnicode");
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
         || (!mac_roman
             && !custom
             && font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding"))
         || font.get(b"BaseFont").and_then(Object::as_name).is_err()
         || font.iter().any(|(key, _)| {
-            !(custom && key == b"ToUnicode")
+            !((custom || named_unicode) && key == b"ToUnicode")
                 && !matches!(
                     key.as_slice(),
                     b"Type"
@@ -317,7 +386,8 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         .map_err(|_| invalid())?;
     // ISO 32000-1, 9.6.6.4: standard mappings require nonsymbolic flags.
     // The custom path requires symbolic byte lookup through one Macintosh cmap.
-    // No name-based fallback or competing platform map is accepted.
+    // WinAnsi with ToUnicode may retain a Mac cmap only when every offered
+    // ASCII glyph agrees with the Windows cmap. No name fallback is used.
     if flags & (4 | 32 | 262144) != if custom { 4 } else { 32 }
         || descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
@@ -349,7 +419,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     // them. All accepted maps must agree on each offered ASCII glyph.
     if cmap.subtables.into_iter().any(|table| {
         !table.is_unicode()
-            && !((mac_roman || custom)
+            && !((mac_roman || custom || named_unicode)
                 && table.platform_id == PlatformId::Macintosh
                 && table.encoding_id == 0)
     }) {
@@ -361,11 +431,15 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     if custom && cmap.subtables.len() != 1 {
         return Err(invalid());
     }
-    let codes = if custom {
+    let codes = if custom || named_unicode {
         let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| invalid())?)
             .as_stream()
             .map_err(|_| invalid())?;
-        Some(mapping::parse(stream)?)
+        Some(if custom {
+            mapping::parse(stream)?
+        } else {
+            mapping::parse_named(stream)?
+        })
     } else {
         None
     };

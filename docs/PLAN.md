@@ -13725,10 +13725,19 @@ editable; the authored drawing operators are preserved. See `BUILD.md`,
 *Line stroke styles during text editing*. This removes the guide's stroke-state
 blocker without resolving its ligature mappings or CMap code-space mismatch.
 
-Next: CFF ligature mappings. These require mapping PDF glyphs to character sequences without
-applying character spacing once per expanded Unicode character. The CMap
-code-space mismatch remains a separate blocker. Do not bypass unsupported states or normalize
-the source to admit it.
+CFF ligatures now retain original glyph advances and spacing while exposing
+`ff`, `fi`, `fl` and `ffi` as text. The exact two-byte code-space header with
+single-byte entries is admitted for independently checked simple-font paths.
+WinAnsi TrueType maps must preserve ASCII identity and agree across font cmaps.
+Named stroke colours and bounded groups of reversed painted rectangles are also
+preserved. See `BUILD.md`, *Ligatures and matching simple-font maps*.
+
+The unchanged guide's page 16 now reaches its final text matrix:
+`0 8 -8 0 382.6772 31.0394 Tm`, a 90-degree vertical label. It is still refused,
+so this increment does not add an editable practical page. Next: support this
+orthogonal text rotation with proven hit boxes, glyph bounds, clipping and
+replacement placement. Do not bypass unsupported states or normalize the source
+to admit it.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.

@@ -547,3 +547,222 @@ fn textedit_cff_unicode_missing_maps_glyphs_and_unmapped_fonts_never_guess() {
             .is_err());
     }
 }
+
+fn ligature_fixture(body: &[u8]) -> (Document, lopdf::ObjectId) {
+    let (mut doc, font, _, _) = fixture(include_bytes!("fixtures/ligatures.cff"));
+    let f = doc.get_dictionary_mut(font).unwrap();
+    f.set("FirstChar", 28);
+    f.set("Widths", vec![Object::Integer(600); 99]);
+    f.set("Encoding", dictionary! {
+        "BaseEncoding" => "WinAnsiEncoding",
+        "Differences" => vec![28.into(), "f_l".into(), "f_f".into(), "f_i".into(), "f_f_i".into()]
+    });
+    let mut entries = (32..=126)
+        .map(|code| format!("<{code:02x}> <{code:04x}> "))
+        .collect::<String>();
+    entries += "<1c> <0066006c> <1d> <00660066> <1e> <00660069> <1f> <006600660069>";
+    let map = doc.add_object(unicode(&entries, 99));
+    doc.get_dictionary_mut(font).unwrap().set("ToUnicode", map);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc.add_object(Stream::new(Dictionary::new(), body.to_vec()));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    (doc, font)
+}
+
+#[test]
+fn textedit_ligatures_measure_original_glyphs_and_encode_longest_existing_match() {
+    let (doc, font) = ligature_fixture(b"");
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert_eq!(
+        metrics.decode(&[31, 32, 29, 32, 30, 32, 28]).unwrap(),
+        "ffi ff fi fl"
+    );
+    assert_eq!(
+        metrics.encode("ffi ff fi fl").unwrap(),
+        [31, 32, 29, 32, 30, 32, 28]
+    );
+    assert_eq!(metrics.encode("fffi").unwrap(), [29, 30]);
+    assert_eq!(metrics.advance("ffi", 1000.).unwrap(), 600.);
+    assert_eq!(metrics.horizontal_bounds("ffi", 1000.).unwrap(), [0., 600.]);
+    assert_eq!(
+        metrics.spaced_layout("ffi", 1000., 2., 3.).unwrap(),
+        (602., [0., 600.])
+    );
+    assert_eq!(
+        metrics.source_layout(b"ffi", 1000., 2., 3.).unwrap(),
+        ("ffi".into(), 1806., [0., 1804.])
+    );
+    assert_eq!(
+        metrics.source_layout(&[31], 1000., 2., 3.).unwrap(),
+        ("ffi".into(), 602., [0., 600.])
+    );
+    assert_eq!(
+        metrics.source_layout(b"ffi", 1000., 0., 0.).unwrap().1,
+        1800.
+    );
+    for ch in ["\u{1}", "\u{2}", "\u{3}", "\u{4}", "\u{fb01}", "\u{fb03}"] {
+        assert!(metrics.encode(ch).is_err());
+    }
+    assert_eq!(
+        super::super::Metrics::helvetica().encode("ffi").unwrap(),
+        b"ffi"
+    );
+}
+
+#[test]
+fn textedit_ligatures_preserve_source_fragment_boundaries_and_other_operators() {
+    let body = b"1 Tc 2 Tw BT /F1 12 Tf 40 180 Td [(f) 0 (fi) 0 <1f>] TJ ET BT /F1 12 Tf 40 140 Td (ffi) Tj ET";
+    let (mut doc, _) = ligature_fixture(body);
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(before.runs[0].text, "ffiffi");
+    assert!((before.runs[0].advance - 32.8).abs() < 1e-6); // Four glyphs, not six letters or two ligatures.
+    assert!((before.runs[1].advance - 24.6).abs() < 1e-6); // Three separate glyphs.
+    let objects = doc.objects.clone();
+    let change = Change {
+        page: 0,
+        revision: before.revision,
+        operator: before.runs[0].operator,
+        original: "ffiffi".into(),
+        replacement: "ffi fi".into(),
+    };
+    textedit::write(&mut doc, std::slice::from_ref(&change)).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "ffi fi");
+    assert!((after.runs[0].advance - 26.6).abs() < 1e-6); // Three glyphs, one Tw space.
+    assert_eq!(after.runs[1], before.runs[1]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let ops = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    assert_eq!(
+        ops.operations[change.operator as usize].operands[0],
+        Object::Array(vec![Object::string_literal(vec![31, 32, 30])])
+    );
+    for (id, object) in objects {
+        if id != page {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+}
+
+#[test]
+fn textedit_ligatures_refuse_overflow_expansion_and_stale_edits_atomically() {
+    let (mut doc, font) = ligature_fixture(b"BT /F1 12 Tf 40 180 Td <1f> Tj ET");
+    let before = textedit::scan(&doc, 0).unwrap();
+    let objects = doc.objects.clone();
+    for (original, replacement) in [("ffi", "ffl"), ("ffi", "f f"), ("ff", "fi")] {
+        assert!(textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision.clone(),
+                operator: before.runs[0].operator,
+                original: original.into(),
+                replacement: replacement.into()
+            }]
+        )
+        .is_err());
+        assert_eq!(doc.objects, objects);
+    }
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let count = textedit::MAX_TEXT / 3;
+    assert_eq!(metrics.decode(&vec![31; count]).unwrap().len(), count * 3);
+    assert!(metrics.decode(&vec![31; count + 1]).is_err());
+    assert!(metrics.decode(&vec![b'A'; textedit::MAX_TEXT + 1]).is_err());
+}
+
+#[test]
+fn textedit_ligatures_require_matching_maps_and_existing_outlines() {
+    let (doc, font) = ligature_fixture(b"");
+    let map = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"ToUnicode")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    for (from, to) in [
+        ("<00660069>", "<0066006c>"), // Different glyph, duplicate target.
+        ("<00660069>", "<fb01>"),     // Compatibility character is not the declared sequence.
+        ("<00660069>", "<00660066006c>"),
+        ("<1f>", "<1e>"),
+        ("<00660069>", "<006600>"),
+    ] {
+        let mut bad = doc.clone();
+        let stream = bad.get_object_mut(map).unwrap().as_stream_mut().unwrap();
+        let text = String::from_utf8(stream.content.clone()).unwrap();
+        assert!(text.contains(from));
+        stream.content = text.replace(from, to).into_bytes();
+        assert!(
+            embedded(&bad, bad.get_dictionary(font).unwrap()).is_err(),
+            "{from} -> {to}"
+        );
+    }
+    // An identical duplicate would otherwise be overwritten without changing
+    // the later glyph-name agreement check.
+    let mut duplicate = doc.clone();
+    let stream = duplicate
+        .get_object_mut(map)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    let text = String::from_utf8(stream.content.clone()).unwrap();
+    stream.content = text
+        .replace("99 beginbfchar", "100 beginbfchar")
+        .replace("endbfchar", "<1f> <006600660069> endbfchar")
+        .into_bytes();
+    assert!(embedded(&duplicate, duplicate.get_dictionary(font).unwrap()).is_err());
+    let mut missing = doc.clone();
+    missing
+        .get_dictionary_mut(font)
+        .unwrap()
+        .remove(b"ToUnicode");
+    let metrics = embedded(&missing, missing.get_dictionary(font).unwrap()).unwrap();
+    assert!(metrics.decode(&[31]).is_err());
+    assert_eq!(metrics.encode("ffi").unwrap(), b"ffi");
+    let descriptor = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"FontDescriptor")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let program = doc
+        .get_dictionary(descriptor)
+        .unwrap()
+        .get(b"FontFile3")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let mut absent = doc;
+    absent
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content = NORMAL.to_vec();
+    let metrics = embedded(&absent, absent.get_dictionary(font).unwrap()).unwrap();
+    assert!(metrics.decode(&[31]).is_err());
+    assert_eq!(metrics.encode("ffi").unwrap(), b"ffi");
+}
+
+#[test]
+fn textedit_ligatures_count_word_spacing_by_original_pdf_code() {
+    let (mut doc, font) = ligature_fixture(b"");
+    let f = doc.get_dictionary_mut(font).unwrap();
+    f.set(
+        "Encoding",
+        dictionary! { "BaseEncoding" => "WinAnsiEncoding",
+        "Differences" => vec![31.into(), "space".into(), "f_f_i".into()] },
+    );
+    let map = doc.add_object(unicode("<1f> <0020> <20> <006600660069>", 2));
+    doc.get_dictionary_mut(font).unwrap().set("ToUnicode", map);
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert_eq!(metrics.encode("ffi ").unwrap(), [32, 31]);
+    assert_eq!(
+        metrics.spaced_layout("ffi ", 1000., 1., 2.).unwrap().0,
+        1204.
+    );
+    assert_eq!(metrics.source_layout(b" ", 1000., 1., 2.).unwrap().1, 603.);
+    assert_eq!(metrics.source_layout(&[31], 1000., 1., 2.).unwrap().1, 601.);
+}

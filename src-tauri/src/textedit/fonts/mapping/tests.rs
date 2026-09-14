@@ -343,10 +343,38 @@ fn textedit_cff_unicode_mapping_stays_bounded_and_font_specific() {
         "1 beginbfchar <1a> <0080> endbfchar",
         "1 beginbfchar <1a> <0091> endbfchar",
         "1 beginbfchar <1a> <0092> endbfchar",
-        "1 beginbfchar <1a> <00660069> endbfchar",
+        "1 beginbfchar <1a> <00660066006c> endbfchar",
         "1 beginbfchar <1a> <fb01> endbfchar",
         "1 beginbfchar <001a> <2212> endbfchar",
     ] {
         assert!(parse_cff(&stream(&single_body(body))).is_err(), "{body}");
     }
+}
+
+#[test]
+fn textedit_cff_padded_header_keeps_single_byte_sources_and_exact_wrapper() {
+    let body = MAP.replace("<00> <FF>", "<0000> <FFFF>");
+    let good = stream(&body);
+    assert_eq!(parse_cff(&good).unwrap()[1], Some(b'A'));
+    assert_eq!(parse_cff(&good).unwrap()[2], Some(b'B'));
+    assert!(parse(&good).is_err());
+    assert!(parse_cid(&good).is_err()); // Identity-H still requires two-byte sources.
+    for (from, to) in [
+        ("<0000>", "<0001>"),
+        ("<FFFF>", "<00FF>"),
+        ("<0000>", "<000000>"),
+        ("<01>", "<0001>"),
+        ("<02>", "<0102>"),
+        ("2 beginbfchar", "1 beginbfchar"),
+        ("/CMapType 2", "/CMapType 1"),
+        ("endbfchar", "endbfchar pop"),
+    ] {
+        assert!(
+            parse_cff(&stream(&body.replace(from, to))).is_err(),
+            "{from} -> {to}"
+        );
+    }
+    let mut inherited = good;
+    inherited.dict.set("UseCMap", "Identity-H");
+    assert!(parse_cff(&inherited).is_err());
 }

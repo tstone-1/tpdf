@@ -136,6 +136,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-w3c":
     case "textedit-dash":
     case "textedit-cff-unicode":
+    case "textedit-cff-ligatures":
     case "textedit-agenda":
     case "textedit-agenda-page2":
     case "textedit-multipage":
@@ -146,14 +147,15 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const agendaPage2 = phase === "textedit-agenda-page2";
       const agenda = phase === "textedit-agenda" || agendaPage2;
       const dash = phase === "textedit-dash";
+      const cffLigatures = phase === "textedit-cff-ligatures";
       const cffUnicode = phase === "textedit-cff-unicode";
       const overhang = phase === "textedit-overhang";
       const w3c = phase === "textedit-w3c";
       const cidLatin1 = phase === "textedit-cid-latin1" || overhang;
       const wrapped = phase === "textedit-wrapped";
       const page = phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
-      const original = cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const original = cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");

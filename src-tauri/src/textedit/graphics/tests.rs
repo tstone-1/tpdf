@@ -220,7 +220,7 @@ fn textedit_stroke_setters_validate_values_without_enabling_stroke_text() {
     for body in [
         "0 G BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
         "0 0 0 RG 0 0 m 100 100 l W S",
-        "0 0 0 1 K /DeviceRGB CS",
+        "0 0 0 1 K /DeviceRGB CS 0 SC",
         "0 G BT /F1 12 Tf 40 180 Td (FIRST) Tj 0 G (SECOND) Tj ET",
     ] {
         assert!(
