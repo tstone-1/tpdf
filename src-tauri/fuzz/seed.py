@@ -226,9 +226,11 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
     })
 
 
-def editable_embedded(mac_roman: bool = False) -> bytes:
+def editable_embedded(mac_roman: bool = False, cff: str | None = None) -> bytes:
     """A built-in font seed: no fontTools install or generated corpus required."""
     font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
+    if cff:
+        font = (ROOT / "src-tauri/src/textedit/fonts/cff/fixtures" / f"{cff}.cff").read_bytes()
     if mac_roman:
         font = bytearray(font)
         font[:4] = b"true"
@@ -250,6 +252,12 @@ def editable_embedded(mac_roman: bool = False) -> bytes:
         7: b"<< /Length " + str(len(font)).encode() + b" >>\nstream\n" + font + b"\nendstream",
     }
 
+    if cff:
+        objects[4] = objects[4].replace(b"/TrueType", b"/Type1").replace(
+            b"/LastChar 89", b"/LastChar 126"
+        ).replace(b"600 " * 58, b"600 " * 95)
+        objects[6] = objects[6].replace(b"/FontFile2", b"/FontFile3")
+        objects[7] = objects[7].replace(b"<< /Length", b"<< /Subtype /Type1C /Length", 1)
     if mac_roman:
         objects[3] = objects[3].replace(b"/Resources <<", b"/Resources << /ColorSpace << /C [/ICCBased 8 0 R] >>")
         objects[4] = objects[4].replace(b"WinAnsiEncoding", b"MacRomanEncoding")
@@ -388,6 +396,9 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
                                  ("editable-translated", editable_text(translated=True)),
                                  ("editable-saved-state", editable_text(saved_state=True)),
                                  ("editable-empty", editable_text(empty=True)),
+                                 ("editable-cff", editable_embedded(cff="normal")),
+                                 ("cff-restricted", editable_embedded(cff="preview-only")),
+                                 ("cff-broken-space", editable_embedded(cff="broken-space")),
                                  ("editable-embedded", editable_embedded()),("editable-text", editable_text()),
                                  ("editable-multiline", editable_text(multiline=True)),
                                  ("editable-ascii85", editable_text(encoding="ascii85")),

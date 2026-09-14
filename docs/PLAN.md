@@ -13622,11 +13622,16 @@ validated default mapping, verified on macOS and Windows; see *Text editing with
 default Helvetica encoding*. The broader public-document survey then found zero
 editable pages across five unchanged PDFs (45 pages), despite the selected
 producer exports passing discovery. See `BUILD.md`, *Public-document text editing
-baseline*, and `testdata/textedit-public-corpus.json`. Next: take one public W-9
-instruction page through unchanged-input discovery, replacement and independent
-readback, first inventorying its CFF font and tagged-structure blockers. Further
-synthetic-only grammar additions are a lower priority. Wider Unicode, subset
-extension and paragraph reflow remain open.
+baseline*, and `testdata/textedit-public-corpus.json`. Bounded simple CFF/Type1C
+ASCII support is now implemented and verified on macOS with original geometric
+fonts; Windows verification remains pending. See `BUILD.md`, *Text editing with
+embedded CFF fonts*. The public sample remains 0/45 editable. The proposed W-9
+acceptance target was incorrect: its instruction-page fonts declare print/preview-only
+embedding permissions, so it must remain a refusal control under the existing
+policy. Next: find an unchanged public page whose font permissions permit editing,
+inventory all blockers, and take it through discovery, replacement and independent
+readback. Further synthetic-only grammar additions are a lower priority. Wider
+Unicode, subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 

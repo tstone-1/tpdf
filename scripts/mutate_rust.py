@@ -263,6 +263,14 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('CFF: omit font dispatch', 'src/textedit.rs', 'return fonts::cff(doc, font);', 'return Err("CFF disabled".into());', 'textedit_cff_maps_ascii_by_glyph_name_and_preserves_resources'),
+    Mutation('CFF: trust internal encoding', 'src/textedit/fonts/cff.rs', 'let Some(&glyph) = names.get(name) else {', 'let Some(glyph) = face.glyph_index(code as u8) else {', 'textedit_cff_maps_ascii_by_glyph_name_and_preserves_resources'),
+    Mutation('CFF: omit metadata validation', 'src/textedit/fonts/cff.rs', 'profile::validate(&bytes)?;', '// metadata unchecked', 'textedit_cff_refuses_unvalidated_program_semantics_and_permissions'),
+    Mutation('CFF: ignore embedding restrictions', 'src/textedit/fonts/cff/profile.rs', 'if rights & !0x108 != 0 {', 'if false {', 'textedit_cff_metadata_only_accepts_editable_literal_permissions'),
+    Mutation('CFF: ignore width disagreement', 'src/textedit/fonts/cff.rs', '|| (width - advance).abs() > 1.', '|| false', 'textedit_cff_requires_matching_pdf_font_contract'),
+    Mutation('CFF: trust width-only space', 'src/textedit/fonts/cff.rs', 'match super::outlines::cff_bounds(&face, glyph) {', 'match if code == 32 { Ok(None) } else { super::outlines::cff_bounds(&face, glyph) } {', 'textedit_cff_missing_glyph_and_malformed_space_are_not_offered'),
+    Mutation('CFF: drop ink overhang', 'src/textedit/fonts/cff.rs', 'overhangs[code] = [left.min(0.), (right - width).max(0.)];', 'overhangs[code] = [0., 0.];', 'textedit_cff_bounds_replacement_ink_and_preserves_failed_document'),
+    Mutation('CFF: allow duplicate metadata', 'src/textedit/fonts/cff/profile.rs', 'if !seen.insert(op) {', 'if !seen.insert(op) && false {', 'textedit_cff_metadata_rejects_ambiguous_partial_and_nondefault_dicts'),
     Mutation('nested tags: allow any leaf role', 'src/textedit/tagging.rs', 'if tag != b"NonStruct" {', 'if false {', 'textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically'),
     Mutation('nested tags: inherit an ancestor page', 'src/textedit/tagging.rs', 'let page = element(child, plain.id, pages)?;', 'let page = element(child, plain.id, pages)?.or(plain.page);', 'textedit_nested_optional_container_pages_and_scalar_children_are_explicit'),
     Mutation('nested tags: raise language limit', 'src/textedit/tagging.rs', 'bytes.len() > 63', 'bytes.len() > 64', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),

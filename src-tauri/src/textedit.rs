@@ -1,7 +1,8 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
-//! Supported text uses Helvetica with WinAnsi/default encoding or a validated TrueType subset, with explicit
-//! positioning between shows. Font/leading setup may precede a text block.
+//! Supported text uses Helvetica with WinAnsi/default encoding or validated
+//! embedded TrueType/CFF glyphs, with explicit positioning between shows.
+//! Font/leading setup may precede a text block.
 //! Complete painted rectangles and straight-line strokes are preserved. Other graphics,
 //! custom text state and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
@@ -86,6 +87,11 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     }
     if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"TrueType") {
         return fonts::embedded(doc, font);
+    }
+    if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type1")
+        && font.has(b"FontDescriptor")
+    {
+        return fonts::cff(doc, font);
     }
     for (key, expected) in [
         (b"Type".as_slice(), b"Font".as_slice()),
@@ -1435,7 +1441,13 @@ pub(crate) mod tests {
                 .find_map(|o| o.as_dict_mut().ok().filter(|d| d.has(b"BaseFont")))
                 .unwrap();
             font.set(key, Object::Null);
-            assert!(scan(&doc, 0).unwrap_err().contains("custom font"));
+            assert!(scan(&doc, 0)
+                .unwrap_err()
+                .contains(if key == "FontDescriptor" {
+                    "invalid text resources"
+                } else {
+                    "custom font"
+                }));
         }
     }
 
