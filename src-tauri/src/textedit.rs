@@ -2,7 +2,8 @@
 //!
 //! Supported text uses Helvetica/WinAnsi or a validated embedded TrueType subset, with explicit
 //! positioning between shows. Font/leading setup may precede a text block.
-//! Painted graphics, custom text state and implicit advances between shows are refused.
+//! Complete painted rectangles are preserved. Other graphics, custom text state
+//! and implicit advances between shows are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod clipping;
@@ -325,13 +326,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut leading = 0.0;
     let mut states = Vec::new();
     let mut clip = None;
-    let mut clip_until = 0;
+    let mut path_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut horizontal_bounds = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
-        if index < clip_until {
+        if index < path_until {
             continue;
         }
         match (op.operator.as_str(), op.operands.as_slice()) {
@@ -363,13 +364,23 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
-                clip = Some(clipping::apply(
-                    clip,
-                    &content.operations[index..],
-                    page_transform,
-                )?);
-                clip_until = index + 3;
+                if clipping::painted(&content.operations[index..], page_transform)? {
+                    if content.operations[index + 1].operator != "n" {
+                        tags.paint();
+                    }
+                    path_until = index + 2;
+                } else {
+                    clip = Some(clipping::apply(
+                        clip,
+                        &content.operations[index..],
+                        page_transform,
+                    )?);
+                    path_until = index + 3;
+                }
             }
+            // Every accepted path is consumed as a complete sequence, so an
+            // isolated n outside BT has no pending path or clip to apply.
+            ("n", []) if !inside => {}
             ("w", [value]) => clipping::line_width(value)?,
             ("cm", values) if !inside && values.len() == 6 => {
                 let mut next = [0.0; 6];

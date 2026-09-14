@@ -7490,3 +7490,49 @@ passes its live/dead control and all three native runs. The job completes in abo
 3.5 minutes including a fresh build, restores normal frontend assets with zero
 harness code, and leaves both source checkouts clean. The temporary scheduled
 task is removed; the isolated build cache is retained for subsequent checks.
+
+
+### Text editing around painted rectangles
+
+Fresh, unchanged Edge exports from `textedit-producer-rectangles.html` contain
+coloured backgrounds before and after text. The tagged export gives the first
+background its own MCID under the paragraph, alongside a NonStruct text item.
+ReportLab's `painted-rectangles.pdf` adds a filled background, a stroked border,
+and a filled/stroked rectangle, with ASCII85/Flate stream encoding. These cases
+previously failed before text discovery. Paths are now consumed as complete
+rectangle/paint pairs; clipping retains its separate validation. Tags need actual
+text or painting, so an empty or discarded path cannot satisfy a marked item.
+
+```sh
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' scratch/textedit-rectangles/browser --rectangles
+uv run --with reportlab testdata/make_textedit_reportlab.py scratch/textedit-rectangles/reportlab
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-rectangles/browser-worker scratch/textedit-rectangles/browser/browser-tagged.pdf
+uv run --with pypdf scripts/text_edit_browser_check.py scratch/textedit-rectangles/browser-worker/synthetic-before.pdf scratch/textedit-rectangles/browser-worker/synthetic-after.pdf --tagged --rectangles --controls
+swift scripts/text_edit_pdfkit.swift scratch/textedit-rectangles/browser-worker --browser
+uv run scripts/tabs_check.py 'src-tauri/target/debug/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf' scratch/textedit-rectangles/browser/browser-tagged.pdf --phase textedit --saved-copy scratch/textedit-rectangles/browser-ui.pdf
+python3 scripts/mutate_rust.py --only 'painted rectangles:'
+```
+
+Measured on macOS, 2026-09-14: tagged and untagged Edge worker saves and the
+ReportLab worker save pass independent parsing and PDFKit rendering. Only the
+edited text operand changes; fonts, tags and painted operators are preserved.
+PDFKit measures 2,421 changed pixels for each Edge save and 2,394 for ReportLab,
+all inside the edited line, with zero outside. All 20 tagged Edge corruption
+controls and 12 untagged controls are rejected, including moved, altered and
+removed rectangle painting. All six targeted Rust mutations are caught by their
+named tests, with a green full-suite control. A clipping mutation initially
+survived because `Q` restored the clip before the test drew text; the corrected
+test also draws text before restoration and without a saved graphics state.
+
+All 123 tests selected by `cargo test --lib textedit` pass. Both native workflows
+(tagged Edge and ReportLab) pass all 15 checks; their saved PDFs pass the same
+independent parser/PDFKit checks and pixel totals above. Type checking, Clippy
+for the library/tests, formatting and mutation anchors pass. The production build
+contains zero harness code. The new rectangle fuzz seed is independently offered
+as editable by the contained probe; the 20-second `textedit_scan` campaign completes
+25,152 inputs in 21 seconds without a finding, at 87 MiB peak RSS. This macOS run
+uses `--sanitizer=none` and is not address-sanitizer evidence.
+
+These are synthetic compatibility examples, not a success rate for arbitrary
+PDFs. Curves, compound paths and clipping combined with painting remain refused.
+Windows runtime verification of this increment is still pending.

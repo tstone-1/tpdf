@@ -774,3 +774,61 @@ fn textedit_tagged_requires_balanced_unique_markers_and_paragraph_text() {
         assert!(textedit::scan(&doc, 0).is_err(), "accepted {text}");
     }
 }
+
+#[test]
+fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items() {
+    for path in [
+        "0 0 20 20 re f",
+        "0 0 20 20 re S",
+        "0 0 20 20 re B*",
+        "0 0 20 20 re n",
+        "0 0 300 240 re W n",
+        "n",
+        "q Q",
+        ".5 g",
+        "",
+    ] {
+        let painted = matches!(
+            path,
+            "0 0 20 20 re f" | "0 0 20 20 re S" | "0 0 20 20 re B*"
+        );
+        // Paint outside the item must not make an empty marked item valid.
+        let body = format!("0 0 20 20 re f /Standard << /MCID 0 >> BDC {path} EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC");
+        let (mut doc, ids) = fixture(body.as_bytes());
+        let objects = doc.objects.clone();
+        let result = textedit::scan(&doc, 0);
+        assert_eq!(result.is_ok(), painted, "{path}: {result:?}");
+        if !painted {
+            assert_eq!(result.unwrap_err(), super::INVALID);
+            continue;
+        }
+        let before = result.unwrap();
+        assert_eq!(before.runs.len(), 1);
+        textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "SECOND".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+        for (id, object) in objects {
+            if id != ids[0] {
+                assert_eq!(doc.objects[&id], object);
+            }
+        }
+        let original = lopdf::content::Content::decode_strict(body.as_bytes()).unwrap();
+        let after = lopdf::content::Content::decode_strict(&doc.get_page_content(ids[0])).unwrap();
+        assert_eq!(original.operations.len(), after.operations.len());
+        for (a, b) in original.operations.iter().zip(after.operations) {
+            assert_eq!(a.operator, b.operator);
+            if a.operator != "Tj" {
+                assert_eq!(a.operands, b.operands);
+            }
+        }
+    }
+}

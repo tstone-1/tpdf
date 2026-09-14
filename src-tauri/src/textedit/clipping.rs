@@ -1,4 +1,4 @@
-//! Preserve a rectangle-only clipping path without editing partly hidden text.
+//! Consume complete rectangle paths while preserving their paint and clipping.
 //! Coordinates are in original page space, fixed when the path is constructed.
 
 use lopdf::{content::Operation, Object};
@@ -29,31 +29,7 @@ pub(super) fn apply(
     {
         return Err(invalid());
     }
-    let mut values = [0.; 4];
-    for (dest, value) in values.iter_mut().zip(&rect.operands) {
-        *dest = super::number(value)?;
-    }
-    let [x, y, width, height] = values;
-    if width <= 0. || height <= 0. {
-        return Err("empty or reversed text clip is not editable".into());
-    }
-    let mut next = [
-        x * ctm[0] + ctm[4],
-        y * ctm[3] + ctm[5],
-        (x + width) * ctm[0] + ctm[4],
-        (y + height) * ctm[3] + ctm[5],
-    ];
-    if next.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.) {
-        return Err("text clipping coordinates exceed their limit".into());
-    }
-    // A reflected CTM reverses corners, not the rectangle's interior. Normalize
-    // in page space before intersecting with the already established clip.
-    next = [
-        next[0].min(next[2]),
-        next[1].min(next[3]),
-        next[0].max(next[2]),
-        next[1].max(next[3]),
-    ];
+    let mut next = rectangle(rect, ctm)?;
     if let Some(old) = previous {
         next = [
             old[0].max(next[0]),
@@ -68,6 +44,57 @@ pub(super) fn apply(
     Ok(next)
 }
 
+// ISO 32000-1, 8.5.3: painting ends the current path. With no W/W*,
+// this complete pair changes pixels but cannot change a later text clip.
+// https://pdf-issues.pdfa.org/32000-2-2020/clause08.html#853-path-painting-operators
+pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<bool, String> {
+    let [rect, end, ..] = ops else {
+        return Ok(false);
+    };
+    if !matches!(
+        end.operator.as_str(),
+        "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n"
+    ) {
+        return Ok(false);
+    }
+    if !end.operands.is_empty() {
+        return Err("invalid rectangle paint operands".into());
+    }
+    rectangle(rect, ctm)?;
+    Ok(true)
+}
+
+fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
+    if rect.operator != "re" || rect.operands.len() != 4 {
+        return Err("invalid rectangle operands".into());
+    }
+    let mut values = [0.; 4];
+    for (dest, value) in values.iter_mut().zip(&rect.operands) {
+        *dest = super::number(value)?;
+    }
+    let [x, y, width, height] = values;
+    if width <= 0. || height <= 0. {
+        return Err("empty or reversed rectangle is not editable".into());
+    }
+    let next = [
+        x * ctm[0] + ctm[4],
+        y * ctm[3] + ctm[5],
+        (x + width) * ctm[0] + ctm[4],
+        (y + height) * ctm[3] + ctm[5],
+    ];
+    if next.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.) {
+        return Err("rectangle coordinates exceed their limit".into());
+    }
+    // A reflected CTM reverses corners, not the rectangle's interior. Normalize
+    // in page space before intersecting with the already established clip.
+    Ok([
+        next[0].min(next[2]),
+        next[1].min(next[3]),
+        next[0].max(next[2]),
+        next[1].max(next[3]),
+    ])
+}
+
 pub(super) fn contains(clip: Option<Rect>, text: Rect) -> Result<(), String> {
     if let Some(clip) = clip {
         if text[0] < clip[0] || text[1] < clip[1] || text[2] > clip[2] || text[3] > clip[3] {
@@ -78,8 +105,8 @@ pub(super) fn contains(clip: Option<Rect>, text: Rect) -> Result<(), String> {
 }
 
 pub(super) fn line_width(value: &Object) -> Result<(), String> {
-    // This setting cannot affect filled text: Tr is fixed at 0 and all stroking
-    // operators remain refused. Bound and preserve it without using its value.
+    // Tr is fixed at 0, so line width cannot affect the edited glyphs.
+    // Rectangle strokes retain this authored setting unchanged.
     if super::number(value)? < 0. {
         return Err("negative line width is not editable".into());
     }

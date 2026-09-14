@@ -99,9 +99,7 @@ fn textedit_clips_refuse_partial_compound_painted_and_unbounded_paths() {
     for prefix in [
         "0 0 300 240 re",
         "0 0 300 240 re W",
-        "0 0 300 240 re n",
         "W n",
-        "n",
         "0 0 300 240 re W S",
         "0 0 300 240 re W f",
         "0 0 300 240 re 1 W n",
@@ -127,7 +125,7 @@ fn textedit_clips_refuse_partial_compound_painted_and_unbounded_paths() {
         0
     )
     .is_err());
-    // A line-width setter does not enable any stroking or stroke text mode.
+    // A line-width setter does not enable arbitrary paths or stroke text.
     for body in [
         "0 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
         "1 w 0 0 m 100 100 l S",
@@ -171,5 +169,122 @@ fn textedit_clips_compare_original_page_coordinates_before_crop_and_rotation() {
         assert_eq!(clipped.matrix, plain.matrix);
         assert_eq!(clipped.display_rect, plain.display_rect);
         assert_eq!(clipped.advance, plain.advance);
+    }
+}
+
+#[test]
+fn textedit_painted_rectangles_preserve_paint_state_and_surrounding_operators() {
+    let plain = page(b"BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+    let geometry = textedit::scan(&plain, 0).unwrap();
+    for paint in ["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"] {
+        // This decoration is far from the text: treating it as a clip must fail
+        // the positive control. q/Q restores its colour and transform.
+        let body = format!("n q 0.3 0.6 0.9 rg 0.1 0.2 0.3 RG 2 w -2 0 0 2 100 0 cm 0 0 20 20 re {paint} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET 0.1 g 20 20 10 10 re {paint} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET n");
+        let mut doc = page(body.as_bytes());
+        let before = textedit::scan(&doc, 0).unwrap();
+        for (actual, expected) in before.runs.iter().zip(&geometry.runs) {
+            assert_eq!(actual.display_rect, expected.display_rect);
+            assert_eq!(actual.matrix, expected.matrix);
+        }
+        let id = crate::pagetree::ordered_pages(&doc)[0];
+        let objects = doc.objects.clone();
+        let operations = Content::decode_strict(&doc.get_page_content(id))
+            .unwrap()
+            .operations;
+        textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        let saved = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+        assert_eq!(saved.operations.len(), operations.len());
+        for (index, (old, new)) in operations.iter().zip(saved.operations).enumerate() {
+            assert_eq!(old.operator, new.operator);
+            if index != before.runs[0].operator as usize {
+                assert_eq!(old.operands, new.operands);
+            }
+        }
+        for (object_id, object) in objects {
+            if object_id != id {
+                assert_eq!(doc.objects[&object_id], object);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_painted_rectangles_do_not_replace_or_discard_clipping() {
+    for paint in ["S", "f", "B*", "n"] {
+        for (clip, accepted) in [("0 0 300 240", true), ("41 0 259 240", false)] {
+            for (open, before_text, after_text) in [("", "", ""), ("q", "Q", ""), ("q", "", "Q")] {
+                let body = format!(
+                    "{clip} re W n {open} 0 0 300 240 re {paint} {before_text} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {after_text}"
+                );
+                let doc = page(body.as_bytes());
+                let result = textedit::scan(&doc, 0);
+                assert_eq!(result.is_ok(), accepted, "{body}: {result:?}");
+                if !accepted {
+                    assert!(result.unwrap_err().contains("partly clipped"));
+                }
+            }
+        }
+        // Clipping combined with painting still needs its own implementation.
+        let doc = page(
+            format!("0 0 300 240 re W {paint} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes(),
+        );
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), paint == "n");
+    }
+}
+
+#[test]
+fn textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atomically() {
+    for path in [
+        "0 0 20 re f",
+        "0 0 20 20 20 re f",
+        "0 0 /bad 20 re f",
+        "0 0 -20 20 re f",
+        "0 0 20 0 re f",
+        "0 0 1000001 20 re f",
+        "1000000 0 20 20 re f",
+        "2 0 0 1 0 0 cm 0 0 600000 20 re f",
+        "0 0 20 20 re 1 f",
+        "0 0 20 20 re W f",
+        "0 0 20 20 re W S",
+        "0 0 20 20 re 0 0 10 10 re f",
+        "0 0 20 20 re q f Q",
+        "0 0 20 20 re h f",
+        "0 0 20 20 re 10 10 l f",
+        "0 0 20 20 re",
+        "f",
+        "S",
+        "1 n",
+        "BT 0 0 20 20 re f ET",
+        "BT n ET",
+    ] {
+        let bytes = format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {path}");
+        let mut doc = page(bytes.as_bytes());
+        let objects = doc.objects.clone();
+        assert!(textedit::scan(&doc, 0).is_err(), "accepted {path}");
+        assert!(textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: vec![],
+                operator: 3,
+                original: "FIRST".into(),
+                replacement: "IN".into()
+            }]
+        )
+        .is_err());
+        assert_eq!(doc.objects, objects);
     }
 }
