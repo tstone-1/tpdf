@@ -1,4 +1,4 @@
-//! Nonstroking colour state for text-only pages. Preserve authored colour data;
+//! Nonstroking colour state and image colour spaces. Preserve authored colour data;
 //! PDFium in the worker renders profiles. These checks bound their envelope and
 //! component count, not the colour transforms inside an ICC profile.
 
@@ -45,13 +45,18 @@ pub(super) fn named(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
         return Ok(components);
     }
     let invalid = || "unsupported text colour space or ICC profile header".to_string();
-    let value = crate::encoding::resolve(
+    space(
         doc,
         spaces
             .ok_or_else(invalid)?
             .get(name)
             .map_err(|_| invalid())?,
-    );
+    )
+}
+
+pub(super) fn space(doc: &Document, value: &Object) -> Result<usize, String> {
+    let invalid = || "unsupported text colour space or ICC profile header".to_string();
+    let value = crate::encoding::resolve(doc, value);
     if let Object::Name(name) = value {
         return device(name).ok_or_else(invalid);
     }

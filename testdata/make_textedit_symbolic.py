@@ -5,6 +5,7 @@ uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/
 Append --ranges to use Quartz-style scalar ToUnicode ranges.
 Append --spacing -0.005 to retain character spacing around the first line.
 Append --intent Perceptual to retain both ri and ExtGState RI settings.
+Append --image to retain an opaque RGB image alongside the text.
 Original geometric outlines, MIT like this repository; no installed font is read.
 """
 from io import BytesIO
@@ -29,6 +30,7 @@ def main():
     parser.add_argument("--ranges", action="store_true")
     parser.add_argument("--spacing", type=float, default=0.)
     parser.add_argument("--intent", choices=["AbsoluteColorimetric", "RelativeColorimetric", "Saturation", "Perceptual"])
+    parser.add_argument("--image", action="store_true")
     args = parser.parse_args()
     if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
         parser.error("spacing must be finite and within -3..3 for the 12pt fixture")
@@ -94,6 +96,19 @@ def main():
             })),
         })
         first = f"/{args.intent} ri q /IntentState gs {first} Q"
+    if args.image:
+        image = DecodedStreamObject()
+        image.update({NameObject(k): value for k, value in {
+            "/Type": NameObject("/XObject"), "/Subtype": NameObject("/Image"),
+            "/Width": NumberObject(841), "/Height": NumberObject(141),
+            "/ColorSpace": NameObject("/DeviceRGB"), "/BitsPerComponent": NumberObject(8),
+        }.items()})
+        image.set_data(bytes(channel for y in range(141) for x in range(841)
+                             for channel in (x % 256, y % 256, 90)))
+        page["/Resources"][NameObject("/XObject")] = DictionaryObject({
+            NameObject("/Image1"): writer._add_object(image.flate_encode()),
+        })
+        first = "q 168.2 0 0 28.2 40 40 cm /Image1 Do Q\n" + first
     content.set_data((first + "\n" +
                      f"BT /F1 12 Tf 40 140 Td {encoded('SYNTHETIC SECOND')} Tj ET").encode())
     page[NameObject("/Contents")] = writer._add_object(content)

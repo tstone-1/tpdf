@@ -182,7 +182,7 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
-def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False, rectangles: bool = False, strokes: bool = False, default_encoding: bool = False, spacing: float = 0.) -> bytes:
+def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False, rectangles: bool = False, strokes: bool = False, default_encoding: bool = False, spacing: float = 0., image: bool = False) -> bytes:
     """A supported seed reaches the text writer instead of only refusal paths."""
     content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
     if kerning:
@@ -212,6 +212,8 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
         content = content.replace(b"ACME SYNTHETIC TEXT", b"ACME \xa9 \xc1 \xa3 \xfb")
     if spacing:
         content = b"q " + str(spacing).encode() + b" Tc " + content + b" Q"
+    if image:
+        content = b"/Perceptual ri q 40 0 0 20 40 40 cm /Im Do Q " + content
     filters = b""
     if encoding != "plain":
         assert encoding in ("ascii85", "ascii85-flate")
@@ -219,13 +221,18 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
             content = zlib.compress(content)
         content = base64.a85encode(content) + b"~>"
         filters = b" /Filter [/ASCII85Decode" + (b" /FlateDecode" if encoding == "ascii85-flate" else b"") + b"]"
-    return pdf_objects({
+    objects = {
         1: b"<< /Type /Catalog /Pages 2 0 R >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         4: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica" + (b"" if default_encoding else b" /Encoding /WinAnsiEncoding") + b" >>",
         5: b"<< /Length " + str(len(content)).encode() + filters + b" >>\nstream\n" + content + b"\nendstream",
-    })
+    }
+    if image:
+        objects[3] = objects[3].replace(b"/Resources <<", b"/Resources << /XObject << /Im 6 0 R >>")
+        data = zlib.compress(bytes(range(48)))
+        objects[6] = b"<< /Subtype /Image /Width 4 /Height 4 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /FlateDecode /Length " + str(len(data)).encode() + b" >>\nstream\n" + data + b"\nendstream"
+    return pdf_objects(objects)
 
 
 def editable_embedded(mac_roman: bool = False, cff: str | None = None) -> bytes:
@@ -394,7 +401,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                   ("editable-positive-spacing", editable_text(kerning=True, spacing=1.)),
                                   ("editable-negative-spacing", editable_text(kerning=True, spacing=-1.)),
