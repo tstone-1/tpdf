@@ -8273,9 +8273,9 @@ Readback uses `synthetic-before.pdf` and `synthetic-after.pdf` in one directory.
 CFF readback now requires fontTools: pypdf otherwise warns about incomplete CFF
 decoding and continues. A control independently lacking fontTools is refused.
 
-On macOS, 2026-09-14: the 1,469-test clean Rust control passes, including 170 focused
-text-editor tests. All seven targeted mapping mutations are caught. Both worker
-variants and all 15 native checks pass; independent pypdf and PDFKit readback
+On macOS, 2026-09-14: the clean Rust mutation control passes, with 1,469 tests
+registered in its selection; the 170 focused text-editor tests pass. All seven
+targeted mapping mutations are caught. Both worker variants and all 15 native checks pass; independent pypdf and PDFKit readback
 confirm only the edited text operand changes, resources stay identical, and
 1,852 changed pixels lie inside the target with zero outside. A control adding a
 real remapped space is rejected by exact operand decoding, including without
@@ -8323,10 +8323,12 @@ worker and independent readers). All 14 pre-existing generator outputs remain
 byte-identical. PDFKit normalizes NBSP to space in extraction; the exact pypdf
 operand check separately rejects a control that replaces NBSP with a plain space.
 
-On macOS, 2026-09-14: 174 focused text-editor tests pass; the mutation controls
-pass 1,473 Rust and 1,494 frontend tests. All 11 selected Rust mutations and both
-frontend mutations are caught. Both worker variants and all 15 native checks
-pass. Independent pypdf readback preserves all font resources and other operands;
+On macOS, 2026-09-14: 174 focused text-editor tests and both mutation controls
+pass. The harnesses register 1,473 Rust and 1,494 frontend tests; those are
+registration counts, not pass totals. The full pre-push Rust gate passes 1,470
+tests with 3 ignored (two benchmarks and the explicit native-storage check).
+All 11 selected Rust mutations and both frontend mutations are caught. Both
+worker variants and all 15 native checks pass. Independent pypdf readback preserves all font resources and other operands;
 PDFKit reports 1,455 changed pixels within the target and zero outside for both
 worker and native output, and 593 within the target for the no-ToUnicode variant.
 The new `editable-cff-unicode` fuzz seed reaches one editable run. The seeded
