@@ -72,6 +72,15 @@ describe("existing text editing", () => {
     for (let code = 160; code <= 255; code++) expect(replacementError(String.fromCharCode(code))).toBeNull();
     for (const value of ["€", "a\u0308", "日本語", "\x80", "\x9f"]) expect(replacementError(value)).not.toBeNull();
   });
+  it("sends en dashes unchanged and keeps controls and other punctuation refused", async () => {
+    const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+    const { editor, field } = mount(write);
+    field.value = "A\u2013B"; editor.commit(); await editor.settle();
+    expect(write).toHaveBeenCalledExactlyOnceWith({ ...change, replacement: "A\u2013B" });
+    expect(replacementError("\u2013".repeat(4096))).toBeNull();
+    for (const value of ["\u2013".repeat(4097), "\u0096", "\u2012", "\u2014", "\u2019"])
+      expect(replacementError(value)).not.toBeNull();
+  });
   it("keeps invalid and refused drafts from passing the save drain", async () => {
     const write = vi.fn(async () => { throw new Error("replacement exceeds the original width"); });
     const { editor, field } = mount(write);

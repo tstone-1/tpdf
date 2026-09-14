@@ -137,6 +137,7 @@ fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .ok_or("usage: text-edit-probe <scratch-directory>")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut dash = false;
     let mut latin1 = false;
     let mut cid_latin1 = false;
     let mut overhang = false;
@@ -149,6 +150,8 @@ fn run() -> Result<(), String> {
             page = index.parse::<u32>().map_err(|_| "invalid page index")?;
         } else if option == "--default-encoding" {
             default_encoding = true;
+        } else if option == "--dash" {
+            dash = true;
         } else if option == "--latin1" {
             latin1 = true;
         } else if option == "--overhang" {
@@ -161,11 +164,12 @@ fn run() -> Result<(), String> {
             spacers = true;
         } else {
             return Err(
-                "expected --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers or --page=N after the fixture path".into(),
+                "expected --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers or --page=N after the fixture path".into(),
             );
         }
     }
     if [
+        dash,
         latin1,
         cid_latin1,
         overhang,
@@ -180,7 +184,9 @@ fn run() -> Result<(), String> {
     {
         return Err("choose one fixture text variant".into());
     }
-    let original = if default_encoding {
+    let original = if dash {
+        "SYNTHETIC\u{2013}FIRST"
+    } else if default_encoding {
         "SYNTHETIC ' ` £ ß"
     } else if cid_latin1 || overhang {
         "SYNTHETIC ÄÖÜ äöü ß"
@@ -189,7 +195,9 @@ fn run() -> Result<(), String> {
     } else {
         "SYNTHETIC FIRST"
     };
-    let replacement = if default_encoding {
+    let replacement = if dash {
+        "EDITED\u{2013}FIRST"
+    } else if default_encoding {
         "£ ' ` ß"
     } else if overhang {
         "ÖÄÜ äöü ß"
@@ -398,7 +406,7 @@ fn run() -> Result<(), String> {
     println!("[PASS] contained discovery and replacement; second text block preserved");
     let mut invalid_replacements = vec![
         ("S".repeat(80), "exceed the original"),
-        ("\u{03b1}".into(), "Latin-1 only"),
+        ("\u{03b1}".into(), "Latin-1 and en dash only"),
     ];
     if default_encoding {
         invalid_replacements.push(("Ä".into(), "no validated glyph"));

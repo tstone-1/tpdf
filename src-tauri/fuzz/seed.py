@@ -317,7 +317,7 @@ def editable_composite(reflected: bool = False, tight_clip: bool = False, browse
     })
 
 
-def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False, flowing: bool = False, indented: bool = False, nested: bool = False, ranges: bool = False) -> bytes:
+def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False, flowing: bool = False, indented: bool = False, nested: bool = False, ranges: bool = False, dash: bool = False) -> bytes:
     """Remap two synthetic glyphs through PDF bytes 1/2 and a ToUnicode map."""
     flowing = flowing or indented
     multipage = multipage or flowing
@@ -344,6 +344,8 @@ def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bo
     if ranges:
         mapping = mapping.replace(b"2 beginbfchar <01> <0041> <02> <0042> endbfchar",
                                   b"1 beginbfrange\n<01> <02> <0041>\nendbfrange")
+    if dash:
+        mapping = mapping.replace(b"<0042>", b"<2013>")
     def stream(data):
         return b"<< /Length " + str(len(data)).encode() + b" >>\nstream\n" + bytes(data) + b"\nendstream"
     objects = {
@@ -401,7 +403,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                   ("editable-positive-spacing", editable_text(kerning=True, spacing=1.)),
                                   ("editable-negative-spacing", editable_text(kerning=True, spacing=-1.)),

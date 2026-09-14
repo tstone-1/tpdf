@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--image"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--dash", "--image"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -30,21 +30,24 @@ let browser = variant == "--browser" || cidLatin1
 let browserFlow = variant == "--browser-flow"
 let defaultEncoding = variant == "--default-encoding"
 let w3c = variant == "--w3c-dummy"
-let original = w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
-let replacement = w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
+let agenda = variant == "--agenda"
+let dash = variant == "--dash"
+let original = dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
+let replacement = dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
       let after = PDFDocument(url: root.appendingPathComponent("synthetic-after.pdf")),
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount
 else { fail("invalid document or page count") }
-let width = w3c ? 1192 : 600, height = w3c ? 1684 : 480
+let width = w3c || agenda ? 1192 : 600, height = w3c || agenda ? 1684 : 480
+if agenda && (selected != 0 || before.pageCount != 2) { fail("expected two-page agenda") }
 if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C fixture") }
 // Fixed fixture regions, independent of the editor's reported run/hit box.
 // Edge's first baseline is y=189.75 (row 100.5), second y=148.5 (row 183).
 // The flow HTML has 40pt line height: its first baseline is 63.75pt from the top.
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
 // W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
-let targetRows = w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = w3c ? (330..<368) : (76..<520)
+let targetRows = agenda ? (156..<200) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
+let targetColumns = agenda ? (740..<880) : w3c ? (330..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
@@ -56,9 +59,16 @@ for pageIndex in 0..<before.pageCount {
 var pictures = [[UInt8]]()
 for (name, document) in [("before", before), ("after", after)] {
     let first = name == "after" && pageIndex == selected ? replacement : original
-    guard let page = document.page(at: pageIndex),
-          page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == first + (w3c ? "" : " SYNTHETIC SECOND")
-    else { fail("PDFKit text readback disagrees for \(name)") }
+    guard let page = document.page(at: pageIndex) else { fail("missing page") }
+    if agenda {
+        guard let sourceText = before.page(at: pageIndex)?.string else { fail("missing agenda text") }
+        if pageIndex == 0 && (sourceText.components(separatedBy: "REGULAR").count != 2 || sourceText.contains("ANNUAL")) { fail("wrong agenda source text") }
+        let expected = name == "after" && pageIndex == selected ? sourceText.replacingOccurrences(of: "REGULAR", with: "ANNUAL") : sourceText
+        guard page.string == expected else { fail("agenda text or adjacent content changed") }
+    } else {
+        guard page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == first + (w3c ? "" : " SYNTHETIC SECOND")
+        else { fail("PDFKit text readback disagrees for \(name)") }
+    }
     guard let old = before.page(at: pageIndex),
           sameBounds(old.bounds(for: .mediaBox), page.bounds(for: .mediaBox)),
           sameBounds(old.bounds(for: .cropBox), page.bounds(for: .cropBox)), old.rotation == page.rotation

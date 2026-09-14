@@ -31,7 +31,7 @@ pub(super) struct Metrics {
     // Measured excursions beyond each advance, in thousandths of an em.
     // Embedded fonts admit them; standard Helvetica retains zero slack.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
-    // PDF codes to Latin-1. Embedded single-byte maps still admit ASCII only.
+    // PDF codes to metric slots. Embedded single-byte maps admit ASCII and en dash.
     // None retains the WinAnsi/Latin-1 path.
     codes: Option<Codes>,
 }
@@ -117,7 +117,7 @@ impl Metrics {
                     codes
                         .get(&u16::from_be_bytes([pair[0], pair[1]]))
                         .copied()
-                        .map(char::from)
+                        .map(super::slot_character)
                         .ok_or_else(|| "text contains an unmapped font code".to_string())
                 })
                 .collect();
@@ -132,7 +132,7 @@ impl Metrics {
             .iter()
             .map(|&code| {
                 codes[code as usize]
-                    .map(char::from)
+                    .map(super::slot_character)
                     .ok_or_else(|| "text contains an unmapped font code".to_string())
             })
             .collect()
@@ -141,6 +141,9 @@ impl Metrics {
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
         let bytes = super::encode_text(text)?;
         let Some(codes) = &self.codes else {
+            // The unmapped font paths retain their existing Latin-1 repertoire.
+            // A mapped-only metric slot must never escape as a literal PDF code.
+            super::decode_text(&bytes)?;
             return Ok(bytes);
         };
         if let Codes::Double(codes) = codes {

@@ -4557,7 +4557,8 @@ Macintosh cmap and a strict single-byte `ToUnicode` map. This path separates gly
 codes from Unicode text and re-encodes replacements into the existing font codes.
 It accepts the measured standard CMap wrapper, one full-byte code space, and
 `bfchar` and scalar `bfrange` blocks of up to 100 entries, with a 16 KiB decoded
-stream limit. Every expanded range must stay in printable ASCII, and mappings
+stream limit. Every expanded range must stay in printable ASCII or U+2013
+(en dash), and mappings
 must be one-to-one across all blocks. Duplicate codes/Unicode values, inheritance,
 array-valued ranges, multibyte codes, ligatures and extra CMap operators are
 refused. The map states text semantics; the embedded cmap selects glyphs, whose widths and outlines
@@ -4569,11 +4570,14 @@ outlines beyond the bounded overhang limits, variable/colour fonts and
 non-editable embedding permissions are refused.
 The composite path additionally accepts only Adobe/Identity/0 CID collections,
 symbolic descriptor flags and OpenType-style TrueType programs. Its map is at
-most 16 KiB decoded and 191 unique printable Latin-1 characters; width tables are
+most 16 KiB decoded and 192 unique printable Latin-1/en-dash characters; width tables are
 sorted, non-overlapping and limited to 4,096 explicit CIDs. Each mapped CID must
 name a nonzero, in-range glyph; positive widths and vertical outlines retain the
 simple font path's bounds, with the bounded horizontal excursions described above. Vertical writing, nonidentity glyph maps, CFF descendants,
-Unicode beyond Latin-1 and font-subset extension remain refused.
+Unicode beyond Latin-1 and en dash, and font-subset extension remain refused.
+The en dash uses a reserved metric slot, never a substituted glyph: both mapped
+paths preserve its original PDF code, font program and ToUnicode entry. U+0096
+remains a refused control character; unmapped fonts retain their prior repertoire.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
 page transform and ASCII85/Flate content (including a single-filter array).
@@ -13664,18 +13668,23 @@ not establish broad document compatibility. Scalar single-byte character-map
 ranges now pass on macOS and Windows, removing the first font-map refusal in the unchanged
 Quartz agenda; both pages still refuse unsupported operators. See `BUILD.md`,
 *Single-byte character-map ranges*, for the checks and remaining blockers.
-The next milestone is a saved text replacement on page 1 of the **unchanged
-Wellington agenda**, verified through the native application and independent
-text/resource/pixel readback. Group its remaining admission work around that
-outcome: the en dash and any subsequent font/ink checks, with resources kept
-intact. Character spacing and standard rendering intents are verified on macOS
-and Windows. Bounded image preservation is verified on macOS, including the
-agenda's unchanged ICC image in a synthetic editing fixture; its Windows check
-is pending. Both unchanged agenda pages now reach a character-map refusal.
-See `BUILD.md` for these checks. Page 2's curves are a separate
-milestone; its content and resources must remain unchanged while page 1 is edited. `BUILD.md`
-records the per-page inventory and spacing requirements. Do not count another
-synthetic case or a later first-refusal reason as completing this milestone.
+**The unchanged Wellington agenda's first-page milestone passes on macOS
+(2026-09-14).** Character spacing, rendering intents and bounded image preservation
+are verified on both platforms. En-dash support removes the final admission
+blocker: the worker discovers 236 text runs on page 1. The native application
+changes `REGULAR` to `ANNUAL` in a disposable copy, saves and reopens it, with
+independent text/resource/pixel readback. Only that text operand changes, every
+font/image/colour resource is preserved, and page 2 remains byte-identical in its
+content and pixel-identical when rendered. See `BUILD.md`, *Mapped en dash and
+an unchanged practical page*. No source normalization was used to gain admission.
+The seven-document practical sample now has one editable page out of 48; this
+selected sample is not a representative success rate.
+
+Next: repeat the en-dash and unchanged-agenda native checks on Windows at the
+committed revision, then work on bounded curved-path preservation for page 2.
+Page 2 currently refuses its cubic curves; editing page 1 does not relax that
+refusal. Keep the practical-page save and independent readback as the acceptance
+criterion for the next increment.
 Wider Unicode, subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing

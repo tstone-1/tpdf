@@ -265,3 +265,44 @@ fn textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width() {
     large.compress().unwrap();
     assert!(parse_cid(&large).is_err());
 }
+
+#[test]
+fn textedit_mapped_dash_uses_unicode_targets_not_low_bytes() {
+    for code in 0..=255 {
+        for body in [
+            format!("1 beginbfchar <{code:02x}> <2013> endbfchar"),
+            format!("1 beginbfrange <{code:02x}> <{code:02x}> <2013> endbfrange"),
+        ] {
+            let map = parse(&stream(&single_body(&body))).unwrap();
+            assert_eq!(map[code], Some(0x96));
+            assert_eq!(map.iter().flatten().count(), 1);
+        }
+    }
+    for body in [
+        "1 beginbfrange <01> <02> <2013> endbfrange",
+        "1 beginbfrange <01> <02> <2012> endbfrange",
+        "1 beginbfrange <01> <02> <ffff> endbfrange",
+        "2 beginbfchar <01> <2013> <02> <2013> endbfchar",
+        "2 beginbfchar <01> <2013> <02> <0096> endbfchar",
+        "1 beginbfchar <01> <0113> endbfchar",
+        "1 beginbfchar <01> <20130041> endbfchar",
+    ] {
+        assert!(parse(&stream(&single_body(body))).is_err(), "{body}");
+    }
+    let cid = |body: &str| stream(&single_body(body).replace("<00> <FF>", "<0000> <FFFF>"));
+    for body in [
+        "1 beginbfchar <ffff> <2013> endbfchar",
+        "1 beginbfrange <ffff> <ffff> <2013> endbfrange",
+    ] {
+        assert_eq!(parse_cid(&cid(body)).unwrap().get(&65535), Some(&0x96));
+    }
+    for body in [
+        "1 beginbfchar <0001> <0096> endbfchar",
+        "1 beginbfrange <0001> <0002> <2013> endbfrange",
+        "1 beginbfrange <0001> <ffff> <0020> endbfrange",
+        "1 beginbfrange <0001> <0002> <ffff> endbfrange",
+        "2 beginbfchar <0001> <2013> <0002> <2013> endbfchar",
+    ] {
+        assert!(parse_cid(&cid(body)).is_err(), "{body}");
+    }
+}
