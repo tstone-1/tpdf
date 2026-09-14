@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Edit supported text on pages with rectangular backgrounds and borders,
+  preserving their colours, strokes, clipping and supported tagged structure.
+
 - Edit existing accented Latin-1 characters in supported composite TrueType fonts,
   including German umlauts and ß. Glyph availability, width, outline and clipping
   checks still apply; no font glyphs are added or substituted.

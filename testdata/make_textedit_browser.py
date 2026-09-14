@@ -6,7 +6,8 @@ Uses an isolated temporary profile and Page.printToPDF's generateTaggedPDF flag.
 The independent parser verifies both variants; no installed browser profile is used.
 Add --flow to export one ordinary paragraph wrapping across two pages.
 Use --latin1 --latin1-font Verdana for the existing-glyph accented control;
---latin1 alone retains the Arial overhang refusal.
+--latin1 alone exports Arial, whose leading overhang needs placement checks.
+Add --rectangles for unchanged text surrounded by painted backgrounds.
 https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
 """
 import argparse
@@ -21,12 +22,13 @@ from pypdf import PdfReader
 import websocket
 
 
-def export(browser, output, flow=False, latin1=False, latin1_font="Arial"):
+def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False):
     output.mkdir(parents=True, exist_ok=True)
     # A failed rerun must not leave yesterday's successful export as evidence.
     for name in ("browser-tagged.pdf", "browser-untagged.pdf"):
         (output / name).write_bytes(b"")
     source = Path(__file__).with_name(
+        "textedit-producer-rectangles.html" if rectangles else
         "textedit-producer-browser-flow.html" if flow else
         "textedit-producer-browser-latin1.html" if latin1 else "textedit-producer.html"
     ).resolve()
@@ -118,7 +120,7 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial"):
                                 assert nums[index * 2] == page["/StructParents"] == index, "wrong page parent key"
                                 assert list(nums[index * 2 + 1].get_object()) == [leaf.indirect_reference], "wrong reverse ownership"
                     print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True,
-                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1,
+                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles,
                                       "font": latin1_font if latin1 else "Arial"}))
                 finally:
                     connection.close()
@@ -136,10 +138,11 @@ if __name__ == "__main__":
     parser.add_argument("browser", type=Path)
     parser.add_argument("output", type=Path)
     variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--rectangles", action="store_true", help="export painted backgrounds around the text")
     variant.add_argument("--flow", action="store_true", help="export one naturally wrapped paragraph across two pages")
     variant.add_argument("--latin1", action="store_true", help="export accented letters using the browser's embedded font")
     parser.add_argument("--latin1-font", choices=("Arial", "Verdana"), default="Arial")
     args = parser.parse_args()
     if args.latin1_font != "Arial" and not args.latin1:
         parser.error("--latin1-font requires --latin1")
-    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font)
+    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles)

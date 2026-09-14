@@ -32,12 +32,16 @@ for mode, wrapped in (("separate", False), ("multiline", False),
                       ("separate-ascii85", True), ("multiline-ascii85", True),
                       ("saved-state-ascii85", True), ("translated-ascii85", True),
                       ("scaled-ascii85", True), ("defaults-ascii85", True),
-                      ("latin1", True)):
+                      ("latin1", True), ("painted-rectangles", True)):
     # True is ReportLab's normal wrapper for compressed page content; keep the
     # Flate-only layouts as controls over the extra decoding stage.
     rl_config.useA85 = wrapped
     canvas = Canvas(str(root / f"{mode}.pdf"), pagesize=(300, 240),
                     pageCompression=1, invariant=1)
+    if mode == "painted-rectangles":
+        canvas.setFillColorRGB(0.85, 0.93, 1)
+        canvas.rect(35, 175, 220, 20, stroke=0, fill=1)
+        canvas.setFillColorRGB(0, 0, 0)
     if mode == "scaled-ascii85":
         canvas.saveState()
         canvas.translate(20, 120)
@@ -80,5 +84,11 @@ for mode, wrapped in (("separate", False), ("multiline", False),
         text.textLine("SYNTHETIC ÄÖÜ ß" if mode == "latin1" else "SYNTHETIC FIRST")
         text.textLine("SYNTHETIC SECOND")
         canvas.drawText(text)
+    if mode == "painted-rectangles":
+        canvas.setStrokeColorRGB(0.1, 0.2, 0.6)
+        canvas.setLineWidth(2)
+        canvas.rect(30, 30, 200, 25, stroke=1, fill=0)
+        canvas.setFillColorRGB(0.6, 0.8, 0.4)
+        canvas.rect(30, 75, 200, 25, stroke=1, fill=1)
     canvas.save()
     print(f"[OK] wrote {mode}.pdf")

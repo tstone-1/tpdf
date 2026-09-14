@@ -176,7 +176,7 @@ pub(super) struct Tags {
     names: Vec<Vec<u8>>,
     seen: BTreeSet<usize>,
     active: Option<Option<usize>>, // None outside; Some(None) is an artifact.
-    shows: usize,
+    has_content: bool,
 }
 
 impl Tags {
@@ -397,23 +397,29 @@ impl Tags {
             None
         };
         self.active = Some(mcid);
-        self.shows = 0;
+        self.has_content = false;
         Ok(())
     }
 
     pub(super) fn end(&mut self) -> Result<(), String> {
         let active = self.active.take().ok_or(INVALID)?;
-        if active.is_some() && self.shows == 0 {
+        if active.is_some() && !self.has_content {
             return Err(INVALID.into());
         }
         Ok(())
+    }
+
+    // A tagged paragraph can own a painted background separately from its text.
+    // Path construction, clipping, and discarded paths do not supply content.
+    pub(super) fn paint(&mut self) {
+        self.has_content = true;
     }
 
     pub(super) fn text(&mut self) -> Result<(), String> {
         if !self.names.is_empty() && !matches!(self.active, Some(Some(_))) {
             return Err("text outside a tagged paragraph is not editable".into());
         }
-        self.shows += 1;
+        self.has_content = true;
         Ok(())
     }
 

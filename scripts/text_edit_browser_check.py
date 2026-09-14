@@ -23,7 +23,7 @@ def next_float32(value):
     return struct.unpack(">f", struct.pack(">I", bits + 1))[0]
 
 
-def controls(before, after, cid_latin1=False, overhang=False):
+def controls(before, after, cid_latin1=False, overhang=False, rectangles=False):
     from pypdf import PdfWriter
     from pypdf.generic import ContentStream, FloatObject, NameObject, NumberObject
 
@@ -37,8 +37,11 @@ def controls(before, after, cid_latin1=False, overhang=False):
         raise AssertionError("browser fixture no longer exercises decimal normalization")
     print("[PASS] exact comparison exposes browser decimal normalization")
     with tempfile.TemporaryDirectory(prefix="tpdf-browser-controls-") as directory:
-        for mode in ("alpha", "blend", "mask", "font-number", "font-bytes",
-                     "clip-shift", "clip-removed", "transform-number", "second-line"):
+        modes = ["alpha", "blend", "mask", "font-number", "font-bytes",
+                 "clip-shift", "clip-removed", "transform-number", "second-line"]
+        if rectangles:
+            modes += ["paint-geometry", "paint-operator", "paint-removed"]
+        for mode in modes:
             writer = PdfWriter(clone_from=after)
             page = writer.pages[0]
             resources = page["/Resources"]
@@ -67,8 +70,20 @@ def controls(before, after, cid_latin1=False, overhang=False):
             else:
                 content = ContentStream(page["/Contents"], writer)
                 expected = "expected exactly one changed operand"
-                if mode.startswith("clip"):
-                    index = next(i for i, (_, op) in enumerate(content.operations) if op == b"re")
+                if mode.startswith("paint"):
+                    index = next(i for i, (_, op) in enumerate(content.operations[:-1])
+                                 if op == b"re" and content.operations[i + 1][1] == b"f")
+                    if mode == "paint-geometry":
+                        values = content.operations[index][0]
+                        values[0] = FloatObject(float(values[0]) + 1)
+                    elif mode == "paint-operator":
+                        content.operations[index + 1] = ([], b"S")
+                    else:
+                        del content.operations[index:index + 2]
+                        expected = "operator count changed"
+                elif mode.startswith("clip"):
+                    index = next(i for i, (_, op) in enumerate(content.operations[:-2])
+                                 if op == b"re" and content.operations[i + 1][1] == b"W*")
                     if mode == "clip-shift":
                         values = content.operations[index][0]
                         values[0] = FloatObject(float(values[0]) + 1)
@@ -99,7 +114,7 @@ def controls(before, after, cid_latin1=False, overhang=False):
 
 def tagged_controls(before, after, cid_latin1=False, overhang=False):
     from pypdf import PdfWriter
-    from pypdf.generic import NameObject, NumberObject, TextStringObject
+    from pypdf.generic import ArrayObject, NameObject, NumberObject, TextStringObject
 
     with tempfile.TemporaryDirectory(prefix="tpdf-browser-tags-") as directory:
         for mode in ("parent", "reverse-parent", "mcid", "role", "language", "actual-text", "next-key", "removed-tree"):
@@ -108,13 +123,20 @@ def tagged_controls(before, after, cid_latin1=False, overhang=False):
             document = root["/K"]
             paragraph = document["/K"][0].get_object()
             leaf = paragraph["/K"]
+            if isinstance(leaf, ArrayObject):
+                # A shaded paragraph owns both a direct background MCID and
+                # the NonStruct text item. Corrupt the latter explicitly.
+                candidates = [item.get_object() for item in leaf
+                              if isinstance(item.get_object(), dict)]
+                assert len(candidates) == 1 and candidates[0]["/S"] == "/NonStruct"
+                leaf = candidates[0]
             if mode == "parent":
                 leaf[NameObject("/P")] = document.indirect_reference
             elif mode == "reverse-parent":
                 entries = root["/ParentTree"]["/Nums"][1].get_object()
                 entries[0], entries[1] = entries[1], entries[0]
             elif mode == "mcid":
-                leaf[NameObject("/K")] = NumberObject(1)
+                leaf[NameObject("/K")] = NumberObject(int(leaf["/K"]) + 1)
             elif mode == "role":
                 leaf[NameObject("/S")] = NameObject("/Span")
             elif mode == "language":
@@ -190,6 +212,7 @@ def main():
     parser.add_argument("--controls", action="store_true")
     parser.add_argument("--tagged", action="store_true")
     variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--rectangles", action="store_true", help="check painted decorations around the text")
     variant.add_argument("--latin1", action="store_true", help="check the browser accented-letter fixture")
     variant.add_argument("--overhang", action="store_true", help="check bounded Arial glyph overhangs")
     variant.add_argument("--flow", action="store_true", help="check the two-page naturally wrapped fixture")
@@ -201,12 +224,17 @@ def main():
         reader = PdfReader(path)
         assert len(reader.pages) == (2 if args.flow else 1), "wrong browser fixture page count"
         assert ("/StructTreeRoot" in reader.trailer["/Root"]) == args.tagged, "browser fixture tagging differs"
+        if args.rectangles:
+            from pypdf.generic import ContentStream
+            ops = ContentStream(reader.pages[0]["/Contents"], reader).operations
+            assert sum(op == b"re" and ops[i + 1][1] == b"f"
+                       for i, (_, op) in enumerate(ops[:-1])) >= 2, "missing painted decorations"
     check(args.before, args.after, page_index=args.page, float32=True, cid_latin1=args.latin1, overhang=args.overhang)
     if args.controls:
         if args.flow:
             flow_controls(args.before, args.after, args.page)
         else:
-            controls(args.before, args.after, cid_latin1=args.latin1, overhang=args.overhang)
+            controls(args.before, args.after, cid_latin1=args.latin1, overhang=args.overhang, rectangles=args.rectangles)
             if args.tagged:
                 tagged_controls(args.before, args.after, cid_latin1=args.latin1, overhang=args.overhang)
 

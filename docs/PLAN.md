@@ -4411,14 +4411,15 @@ their page and MCID. IDs may repeat on other pages; both
 directions of each structure reference must agree. Discovery checks the complete
 structure graph and the selected page's markers; untouched streams are preserved.
 All content items on the selected page must appear exactly once in its stream, and
-text may occur only inside a paragraph. The writer
+text may occur only inside a paragraph. Each item must contain text or a complete
+painted rectangle; path discards and graphics-state setters do not count. The writer
 preserves every marker and structure object. Unknown fields, alternate text
 (`ActualText`, `Alt`, `E`), inherited page references, class maps and ink bounds
 remain refused. Layout/Placement=Block may carry an authored EndIndent on a
 paragraph; its finite numeric value is preserved unchanged and bounded to an
 absolute value of 1,000,000, like text coordinates. Other layout attributes remain
 refused. Artifact markers may contain the existing supported graphics
-state operators but no text. This is bounded compatibility, not PDF/UA validation.
+state operators and painted rectangles but no text. This is bounded compatibility, not PDF/UA validation.
 
 **Multi-page tagged milestone completed:** a fresh two-page LibreOffice export
 passes worker edits to either page and all 19 native checks on macOS and Windows.
@@ -4484,7 +4485,7 @@ pixels outside the target. `BUILD.md` records the distinction.
 
 **Untagged browser export: worker and native round trips verified on both platforms.** The unchanged Edge
 export now retains its embedded font, reflected transforms, tight rectangular
-clip, opaque normal-blend ExtGState and stroke-colour setters. Stroke painting,
+clip, opaque normal-blend ExtGState and stroke-colour setters. Complete rectangular painting is supported by the later increment below;
 transparency, masks, font overrides and unknown graphics-state keys remain
 unsupported. Graphics-state names are bounded to 32 per page.
 
@@ -4598,9 +4599,13 @@ rotation. The vertical envelope contains every offered glyph, including baseline
 and curve controls. Replacement ink must also fit the source's horizontal envelope
 as well as its advance. Editing hit boxes retain their full-em height and include
 measured horizontal excursions. Standard Helvetica has only
-advance metrics here and is refused under an explicit clip. Partial, compound,
-painted, empty and reversed paths remain unsupported. A bounded nonnegative `w`
-setter is preserved; filled text cannot use it and stroking stays refused.
+advance metrics here and is refused under an explicit clip. Complete `re` rectangles
+followed immediately by `S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*` or `n` are
+preserved with the same coordinate bounds. Painting does not replace or discard
+an established clip. A standalone operand-free `n` outside text is a no-op because
+no accepted path remains pending. Compound paths, curves, zero/reversed rectangles
+and clipping combined with painting remain unsupported. A bounded nonnegative `w`
+setter is preserved; filled text cannot use it and rectangle strokes retain it.
 Nonzero diagonal page scaling and translations compose across `cm` operators
 and are restored by `Q`. Reflections in page and text matrices are accepted only
 when both final text axes are positive. Clip corners normalize after transformation,
@@ -13600,7 +13605,10 @@ Helvetica/Latin-1, bounded embedded TrueType/ASCII and Type0/Identity-H cases,
 worker preview, journal and native workflow. Naturally wrapped, multi-page browser
 exports are verified on macOS and Windows. Existing Latin-1 composite glyphs and
 bounded horizontal overhangs are implemented and verified on both platforms,
-unreleased. Wider Unicode, subset extension and paragraph reflow remain open.
+unreleased. Painted rectangular backgrounds and borders are now supported, including
+separately tagged background items in Edge exports; macOS checks are in `BUILD.md`,
+*Text editing around painted rectangles*. Wider Unicode, subset extension and
+paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 
