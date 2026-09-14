@@ -7535,4 +7535,19 @@ uses `--sanitizer=none` and is not address-sanitizer evidence.
 
 These are synthetic compatibility examples, not a success rate for arbitrary
 PDFs. Curves, compound paths and clipping combined with painting remain refused.
-Windows runtime verification of this increment is still pending.
+Windows x64 verification at `ecf4e51` on 2026-09-14 passes all 123 selected Rust
+tests, all three worker preview/save cases and 30 native checks (tagged Edge and
+ReportLab). Independent parsing on Windows rejects all 20 tagged and 12 untagged
+corruption controls. All five worker/native saves then pass parsing and PDFKit
+rendering on macOS with the same pixel totals above and zero changes outside the
+edited line. All 13 transferred PDFs match their Windows sizes and SHA-256 digests.
+The external worker-exit observer passes its live/dead control and both native runs.
+
+The cached Windows build completes the job in 67 seconds, including dependency
+installation and the checks-app rebuild. Normal frontend assets are restored with
+zero harness code; both source checkouts remain clean and the temporary task is
+removed. The isolated source/build cache is retained. If a reused checkout warns
+that commit-graph files are missing, `git -c core.commitGraph=true commit-graph
+write --reachable --split=replace` rebuilds that cache; follow with `git commit-graph
+verify` and require no warning output. Setting `core.commitGraph=false` also disables
+writing: that command returned zero while doing no repair in this run.

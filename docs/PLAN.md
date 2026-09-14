@@ -13606,9 +13606,9 @@ worker preview, journal and native workflow. Naturally wrapped, multi-page brows
 exports are verified on macOS and Windows. Existing Latin-1 composite glyphs and
 bounded horizontal overhangs are implemented and verified on both platforms,
 unreleased. Painted rectangular backgrounds and borders are now supported, including
-separately tagged background items in Edge exports; macOS checks are in `BUILD.md`,
-*Text editing around painted rectangles*. Wider Unicode, subset extension and
-paragraph reflow remain open.
+separately tagged background items in Edge exports, verified on macOS and Windows.
+Checks are in `BUILD.md`, *Text editing around painted rectangles*. Wider Unicode,
+subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 
