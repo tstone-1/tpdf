@@ -4433,7 +4433,8 @@ Worker edits to either page and all 19 native checks on macOS and Windows pass,
 preserving every structure reference and the other page's bytes and pixels.
 Independent corruption controls detect changed item order, missing items and
 wrong MCR ownership. Indirect MCRs, omitted
-MCR page references, external streams and nested children remain refused.
+MCR page references and external streams remain refused. The browser milestone
+below adds one bounded NonStruct child level.
 
 **Naturally wrapped paragraph milestone completed:** the measured
 LibreOffice export wraps ordinary spaces into lines and flows one paragraph
@@ -4453,9 +4454,10 @@ with independent parser and PDFKit readback showing zero changed pixels outside
 the target line. This is a local Word export measurement, not Windows Word or all
 Word documents. No application grammar change was required.
 
-Edge's independently verified tagged and untagged exports are both refused. The
-tagged variant has nested Document/P/NonStruct children; the untagged control
-first meets the reflected page-transform guard. Both also use Type0/Identity-H,
+At the producer-survey milestone, Edge's independently verified tagged and
+untagged exports were both refused. The tagged variant had nested
+Document/P/NonStruct children; the untagged control first met the reflected
+page-transform guard. The following milestones close those measured gaps. Both also use Type0/Identity-H,
 CIDFontType2, a two-byte ToUnicode map with ranges, and an ExtGState carrying
 normal blending and full opacity. Those additional unsupported constructs are
 independent inventory findings, not later worker verdicts reached by bypassing
@@ -4496,9 +4498,20 @@ float32 serialization, so independent readback compares their exact float32
 representations while retaining exact font stream bytes and exact content
 operands. `BUILD.md` records the commands and corruption controls.
 
-**Next compatibility milestone: nested tags in the original browser export.**
+**Tagged browser export: worker and native round trips verified on both platforms.** A paragraph may now own
+one level of NonStruct elements as well as direct content items. The bounded
+Document/P/NonStruct tree preserves authored node identities, language metadata,
+reading order and both directions of page/MCID ownership. Single children and
+indirect arrays are supported. Page references may be absent from containers;
+an integer MCID still requires Pg on its own element, not an ancestor. Semantic
+overrides, extra child levels and NonStruct layout attributes remain refused.
+
+**Next compatibility milestone: naturally wrapped, multi-page browser exports.**
+The present browser fixture contains two separately authored short paragraphs.
+Measure wrapping and page flow through the producer before widening the grammar
+again; a synthetic two-line round trip does not establish those cases.
 Alternate-text overrides, alignment and paragraph reflow require separate
-semantics; preserving graphics and a paragraph indent is not evidence for them.
+semantics, and replacements still fit the original line's advance.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from

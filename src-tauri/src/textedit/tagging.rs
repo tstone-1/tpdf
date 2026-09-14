@@ -1,9 +1,11 @@
-//! A bounded multi-page Document/P tree, preserved rather than regenerated.
+//! A bounded multi-page Document/P[/NonStruct] tree, preserved rather than regenerated.
 //! Reject semantic overrides and layout attributes that a shorter edit could stale.
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+mod nested_tests;
 #[cfg(test)]
 mod tests;
 
@@ -54,17 +56,32 @@ fn element(
     dict: &Dictionary,
     parent: ObjectId,
     pages: &BTreeSet<ObjectId>,
-) -> Result<ObjectId, String> {
+) -> Result<Option<ObjectId>, String> {
     // In particular: no ActualText, Alt, E, title, class, or attribute revision.
-    keys(dict, &[b"Type", b"S", b"P", b"Pg", b"K", b"A"])?;
-    let page = reference(get(dict, b"Pg")?)?;
+    keys(dict, &[b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang"])?;
+    let page = dict.get(b"Pg").ok().map(reference).transpose()?;
+    if let Ok(language) = dict.get(b"Lang") {
+        let bytes = language.as_str().map_err(|_| INVALID)?;
+        if bytes.is_empty()
+            || bytes.len() > 63
+            || !bytes[0].is_ascii_alphabetic()
+            || bytes.split(|&b| b == b'-').any(|part| {
+                part.is_empty() || part.len() > 8 || !part.iter().all(u8::is_ascii_alphanumeric)
+            })
+        {
+            return Err(INVALID.into());
+        }
+    }
     if name(get(dict, b"Type")?)? != b"StructElem"
         || reference(get(dict, b"P")?)? != parent
-        || !pages.contains(&page)
+        || page.is_some_and(|id| !pages.contains(&id))
     {
         return Err(INVALID.into());
     }
     if let Ok(attributes) = dict.get(b"A") {
+        if name(get(dict, b"S")?)? == b"NonStruct" {
+            return Err(INVALID.into());
+        }
         let attributes = attributes.as_dict().map_err(|_| INVALID)?;
         keys(attributes, &[b"O", b"Placement", b"EndIndent"])?;
         if name(get(attributes, b"O")?)? != b"Layout"
@@ -82,6 +99,75 @@ fn element(
         }
     }
     Ok(page)
+}
+
+// K may be a single child/item or an array. An indirect array is a container,
+// not a structure element; other indirect values retain their object identity.
+fn children<'a>(doc: &'a Document, value: &'a Object) -> Result<&'a [Object], String> {
+    let resolved = if let Object::Reference(id) = value {
+        doc.get_object(*id).map_err(|_| INVALID)?
+    } else {
+        value
+    };
+    Ok(match resolved {
+        Object::Array(values) => values.as_slice(),
+        _ => std::slice::from_ref(value),
+    })
+}
+
+struct Group<'a> {
+    id: ObjectId,
+    page: Option<ObjectId>,
+    tag: &'a [u8],
+    items: Vec<&'a Object>,
+}
+
+// Exactly one optional NonStruct level below a paragraph, never a recursive
+// tree walk. Every group must own content, and total owns the allocation bound.
+fn groups<'a>(
+    doc: &'a Document,
+    paragraph: Group<'a>,
+    pages: &BTreeSet<ObjectId>,
+    ids: &mut BTreeSet<ObjectId>,
+    total: usize,
+) -> Result<Vec<Group<'a>>, String> {
+    if paragraph.items.len() > total {
+        return Err(INVALID.into());
+    }
+    let mut plain = Group {
+        items: Vec::new(),
+        ..paragraph
+    };
+    let mut groups = Vec::new();
+    for item in paragraph.items {
+        if let Object::Reference(id) = item {
+            if !ids.insert(*id) {
+                return Err(INVALID.into());
+            }
+            let child = node(doc, *id)?;
+            let page = element(child, plain.id, pages)?;
+            let tag = name(get(child, b"S")?)?;
+            if tag != b"NonStruct" {
+                return Err(INVALID.into());
+            }
+            let items = children(doc, get(child, b"K")?)?;
+            if items.len() > total {
+                return Err(INVALID.into());
+            }
+            groups.push(Group {
+                id: *id,
+                page,
+                tag,
+                items: items.iter().collect(),
+            });
+        } else {
+            plain.items.push(item);
+        }
+    }
+    if !plain.items.is_empty() || groups.is_empty() {
+        groups.push(plain);
+    }
+    Ok(groups)
 }
 
 #[derive(Default)]
@@ -103,7 +189,7 @@ impl Tags {
             }
             return Ok(Self::default());
         };
-        // No recursive graph walk: this first grammar has exactly two levels.
+        // No recursive graph walk: Document/P with one optional NonStruct level.
         if pages.is_empty() || pages.len() > MAX_CONTENT_ITEMS {
             return Err(INVALID.into());
         }
@@ -113,7 +199,16 @@ impl Tags {
         }
         let root_id = reference(root)?;
         let root = node(doc, root_id)?;
-        keys(root, &[b"Type", b"K", b"ParentTree", b"RoleMap"])?;
+        keys(
+            root,
+            &[
+                b"Type",
+                b"K",
+                b"ParentTree",
+                b"RoleMap",
+                b"ParentTreeNextKey",
+            ],
+        )?;
         if name(get(root, b"Type")?)? != b"StructTreeRoot" {
             return Err(INVALID.into());
         }
@@ -130,13 +225,14 @@ impl Tags {
                         || key.len() > 127
                         || key == b"Document"
                         || key == b"P"
+                        || key == b"NonStruct"
                         || value.as_name().ok() != Some(b"P")
                 })
             {
                 return Err(INVALID.into());
             }
         }
-        let [document] = array(get(root, b"K")?)? else {
+        let [document] = children(doc, get(root, b"K")?)? else {
             return Err(INVALID.into());
         };
         let document_id = reference(document)?;
@@ -145,14 +241,20 @@ impl Tags {
         if name(get(document, b"S")?)? != b"Document" {
             return Err(INVALID.into());
         }
-        let children = array(get(document, b"K")?)?;
-        if children.is_empty() {
+        let paragraphs = children(doc, get(document, b"K")?)?;
+        if paragraphs.is_empty() {
             return Err(INVALID.into());
         }
         // ISO 32000-1 14.7.4.4: StructParents indexes the number tree; the MCID
         // indexes its array. Require both directions to agree, not just /K.
         let parent = node(doc, reference(get(root, b"ParentTree")?)?)?;
-        keys(parent, &[b"Nums"])?;
+        keys(parent, &[b"Type", b"Nums"])?;
+        if parent
+            .get(b"Type")
+            .is_ok_and(|value| value.as_name().ok() != Some(b"ParentTree"))
+        {
+            return Err(INVALID.into());
+        }
         let nums = array(get(parent, b"Nums")?)?;
         if nums.len() != pages.len() * 2 {
             return Err(INVALID.into());
@@ -178,20 +280,30 @@ impl Tags {
             }
             previous = key;
             let owner = page_keys.remove(&key).ok_or(INVALID)?;
-            let entries = array(&pair[1])?;
+            let entry = match &pair[1] {
+                Object::Reference(id) => doc.get_object(*id).map_err(|_| INVALID)?,
+                value => value,
+            };
+            let entries = array(entry)?;
             total += entries.len();
             if entries.is_empty() || total > MAX_CONTENT_ITEMS {
                 return Err(INVALID.into());
             }
             by_page.insert(owner, (entries, vec![Vec::new(); entries.len()]));
         }
-        if children.len() > total || !page_keys.is_empty() {
+        if let Ok(next) = root.get(b"ParentTreeNextKey") {
+            let next = integer(next)?;
+            if next <= previous || next > 1_000_001 {
+                return Err(INVALID.into());
+            }
+        }
+        if paragraphs.len() > total || !page_keys.is_empty() {
             return Err(INVALID.into());
         }
         let mut assigned = 0;
         let mut ids = page_ids.clone();
         ids.extend([root_id, document_id]);
-        for child in children {
+        for child in paragraphs {
             let id = reference(child)?;
             if !ids.insert(id) {
                 return Err(INVALID.into());
@@ -207,34 +319,48 @@ impl Tags {
             {
                 return Err(INVALID.into());
             }
-            let items = array(get(child, b"K")?)?;
-            assigned += items.len();
-            if items.is_empty() || assigned > total {
-                return Err(INVALID.into());
-            }
-            for item in items {
-                // ISO 32000-1 14.7.4.2: an integer uses the element's Pg;
-                // an MCR names a sequence on its own page. No external streams.
-                let (owner, mcid) = match item {
-                    Object::Integer(mcid) => (paragraph_page, *mcid),
-                    Object::Dictionary(mcr) => {
-                        keys(mcr, &[b"Type", b"Pg", b"MCID"])?;
-                        if name(get(mcr, b"Type")?)? != b"MCR" {
-                            return Err(INVALID.into());
-                        }
-                        (reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)
-                    }
-                    _ => return Err(INVALID.into()),
-                };
-                let (entries, names) = by_page.get_mut(&owner).ok_or(INVALID)?;
-                let mcid = usize::try_from(mcid).map_err(|_| INVALID)?;
-                if mcid >= names.len()
-                    || !names[mcid].is_empty()
-                    || reference(&entries[mcid])? != id
-                {
+            let items = children(doc, get(child, b"K")?)?;
+            let paragraph = Group {
+                id,
+                page: paragraph_page,
+                tag,
+                items: items.iter().collect(),
+            };
+            for Group {
+                id,
+                page: paragraph_page,
+                tag,
+                items,
+            } in groups(doc, paragraph, &page_ids, &mut ids, total)?
+            {
+                assigned += items.len();
+                if items.is_empty() || assigned > total {
                     return Err(INVALID.into());
                 }
-                names[mcid] = tag.to_vec();
+                for item in items {
+                    // ISO 32000-1 14.7.4.2: an integer uses the element's Pg;
+                    // an MCR names a sequence on its own page. No external streams.
+                    let (owner, mcid) = match item {
+                        Object::Integer(mcid) => (paragraph_page.ok_or(INVALID)?, *mcid),
+                        Object::Dictionary(mcr) => {
+                            keys(mcr, &[b"Type", b"Pg", b"MCID"])?;
+                            if name(get(mcr, b"Type")?)? != b"MCR" {
+                                return Err(INVALID.into());
+                            }
+                            (reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)
+                        }
+                        _ => return Err(INVALID.into()),
+                    };
+                    let (entries, names) = by_page.get_mut(&owner).ok_or(INVALID)?;
+                    let mcid = usize::try_from(mcid).map_err(|_| INVALID)?;
+                    if mcid >= names.len()
+                        || !names[mcid].is_empty()
+                        || reference(&entries[mcid])? != id
+                    {
+                        return Err(INVALID.into());
+                    }
+                    names[mcid] = tag.to_vec();
+                }
             }
         }
         if assigned != total {

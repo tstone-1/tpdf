@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent untagged browser fixture readback, with explicit float32 semantics.
+"""Independent browser fixture readback, with explicit float32 resource semantics.
 
 uv run --with pypdf scripts/text_edit_browser_check.py before.pdf after.pdf --controls
 Controls change graphics state, clipping, positioning and font data. Distinct
@@ -97,6 +97,47 @@ def controls(before, after):
             print("[PASS] independent browser corruption control:", mode)
 
 
+def tagged_controls(before, after):
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject, TextStringObject
+
+    with tempfile.TemporaryDirectory(prefix="tpdf-browser-tags-") as directory:
+        for mode in ("parent", "reverse-parent", "mcid", "role", "language", "actual-text", "next-key", "removed-tree"):
+            writer = PdfWriter(clone_from=after)
+            root = writer.root_object["/StructTreeRoot"]
+            document = root["/K"]
+            paragraph = document["/K"][0].get_object()
+            leaf = paragraph["/K"]
+            if mode == "parent":
+                leaf[NameObject("/P")] = document.indirect_reference
+            elif mode == "reverse-parent":
+                entries = root["/ParentTree"]["/Nums"][1].get_object()
+                entries[0], entries[1] = entries[1], entries[0]
+            elif mode == "mcid":
+                leaf[NameObject("/K")] = NumberObject(1)
+            elif mode == "role":
+                leaf[NameObject("/S")] = NameObject("/Span")
+            elif mode == "language":
+                document[NameObject("/Lang")] = TextStringObject("de")
+            elif mode == "actual-text":
+                leaf[NameObject("/ActualText")] = TextStringObject("OLD TEXT")
+            elif mode == "next-key":
+                root[NameObject("/ParentTreeNextKey")] = NumberObject(0)
+            else:
+                del writer.root_object["/StructTreeRoot"]
+            target = Path(directory) / (mode + ".pdf")
+            writer.write(target)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    check(before, target, float32=True)
+            except AssertionError as error:
+                expected = "tagged structure disappeared" if mode == "removed-tree" else "tagged structure or parent references changed"
+                assert str(error) == expected, (mode, str(error))
+            else:
+                raise AssertionError("tagged corruption control survived: " + mode)
+            print("[PASS] independent tagged browser corruption control:", mode)
+
+
 def main():
     from pypdf import PdfReader
 
@@ -104,14 +145,17 @@ def main():
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
     parser.add_argument("--controls", action="store_true")
+    parser.add_argument("--tagged", action="store_true")
     args = parser.parse_args()
     for path in (args.before, args.after):
         reader = PdfReader(path)
         assert len(reader.pages) == 1, "expected a single browser fixture page"
-        assert "/StructTreeRoot" not in reader.trailer["/Root"], "expected untagged browser fixture"
+        assert ("/StructTreeRoot" in reader.trailer["/Root"]) == args.tagged, "browser fixture tagging differs"
     check(args.before, args.after, float32=True)
     if args.controls:
         controls(args.before, args.after)
+        if args.tagged:
+            tagged_controls(args.before, args.after)
 
 
 if __name__ == "__main__":

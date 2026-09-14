@@ -1,9 +1,9 @@
 use crate::textedit::{self, Change};
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
-const CONTENT: &[u8] = b"/Artifact BMC q EMC /Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC Q";
+pub(super) const CONTENT: &[u8] = b"/Artifact BMC q EMC /Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC Q";
 
-fn multipage() -> (Document, [ObjectId; 9]) {
+pub(super) fn multipage() -> (Document, [ObjectId; 9]) {
     let (mut doc, ids) = fixture(CONTENT);
     let page = doc.add_object(doc.objects[&ids[0]].clone());
     doc.get_dictionary_mut(page)
@@ -527,7 +527,7 @@ fn textedit_tagged_multi_page_parent_keys_and_owners_must_agree() {
     assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
 }
 
-fn fixture(content: &[u8]) -> (Document, [ObjectId; 6]) {
+pub(super) fn fixture(content: &[u8]) -> (Document, [ObjectId; 6]) {
     let (mut doc, _, _, _) = textedit::fonts::tests::fixture();
     let page = crate::pagetree::ordered_pages(&doc)[0];
     let pages = doc

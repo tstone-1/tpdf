@@ -4425,6 +4425,9 @@ async function appCommandChecks(
   // selection, exactly as `find.inSelection` does, and a check that subtracted
   // a count would have absorbed it in silence.
   const NEEDS_MORE_THAN_A_DOCUMENT = [
+    // This fixture has automatic checking enabled, so only its disable command
+    // is offered. Opening a document does not change that preference.
+    "app.enableAutomaticUpdates",
     "app.installUpdate",
     "find.inSelection",
     "edit.highlightSelection",

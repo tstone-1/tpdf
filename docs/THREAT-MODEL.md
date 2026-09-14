@@ -1783,16 +1783,48 @@ invalidation in the normal UI, not the absence of incremental form updates or
 cryptographic validation. The existing writer can still invalidate signatures
 when a reader elects to continue.
 
+#### T6.18 — Editing existing text, added 2026-09-13
+
+Text discovery, embedded-font parsing, preview rewriting and saved rewriting run
+inside document workers. The coordinator retains bounded changes in the edit
+journal and sends them over the existing protocol; no new file-writing command
+or filesystem authority is added. Preview serialisation is limited to 64 MiB.
+The parser limits decoded page content to 1 MiB and 4,096 operations, with at most
+128 pending text changes. Embedded font streams use the same 1 MiB decode bound.
+
+Editing accepts a conservative grammar, not arbitrary PDF text. Font mappings,
+metrics and glyph outlines are validated before use. A replacement must fit the
+original line width and use the supported font's available characters. Supported
+tag trees are checked in both directions for page and MCID ownership, bounded
+to 128 content items, and preserved. Alternate text and unsupported structure
+semantics are refused. Untouched content operands retain their original bytes.
+
+A text change is not a redaction: duplicate text in metadata, annotations or
+other pages is not searched or removed. Pending text edits and redaction marks
+are mutually exclusive; save and reopen before marking redactions. Saving takes
+the existing full rewrite path, including encryption preservation and the normal
+signed-document warning. Independent parser and PDFKit readback cover structure,
+text and pixels outside the edited line on synthetic producer exports. These
+examples establish compatibility for those inputs, not all output of a producer.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
-including the PDFium binary itself, which is prebuilt from a third party.
+including the PDFium source, toolchain and resulting binary.
 
-**What stops it, and what does not yet.** Direct notarized distribution with a signed
-update payload is the intended shape, following `screenpick`. Two things are settled by
-policy rather than by code today: the PDFium build's provenance (pinned build, re-checked
-after every bump — see T2, and the `remove_probe` standing regression) and permissive-only
-licensing, which keeps the dependency set small enough to audit.
+**What stops it, and what does not yet.** The application ships through notarized
+macOS distribution and signed updater payloads. PDFium is built by the read-only
+`.github/workflows/pdfium.yml` from pinned source, dependency and packaging-patch
+revisions, with TPDF's RTL correction. Both platforms must pass the control/candidate
+differential and upstream text tests before an archive is emitted. Archives carry
+source/toolchain provenance and licences; `scripts/fetch_pdfium.py` pins their
+SHA-256 before extraction. The notices gate checks permissive licensing. Build
+artifacts do not publish themselves or update the production pin.
+
+These checks do not establish that a compiler or dependency is uncompromised, nor
+prove general PDFium correctness. Host SDK/CRT versions are recorded rather than
+hermetically supplied. Compatibility probes are rerun when the pin changes; the
+current source-build evidence and remaining RTL limitations are in `BUILD.md`.
 
 **Tested 2026-08-03, and this read "Untested" until then.** The signing and notarization
 path for a bundled dylib (§10 q7) was the open question here, and it bit `screenpick`'s

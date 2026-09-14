@@ -9,9 +9,82 @@ development build in `src-tauri/target/debug/`. It has a separate application id
 normal `npm run tauri build` excludes the frontend harness. Existing probe commands
 below refer to this checks executable when they drive the UI. Run
 `python3 scripts/check_bundle_share.py --checks` on its frontend output; the normal
-gate requires zero harness code and deliberately refuses a checks build. The build
+gate requires zero harness code and deliberately refuses a checks build.
+`scripts/mutate_viewer.py` also builds this explicit checks profile and launches
+its matching bundle; a normal build cannot supply its mutation observer.
+The content-completion mutation removes both strict decoding and the later
+complete token walk: removing only strict decoding is masked by the second
+validator. Separate stream-patch mutations cover that writer's boundary checks.
+The build
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
+
+**26.9.7 release verification (2026-09-14).** The PDFium compatibility blocker
+is closed by the verified `pdfium-8044-tpdf.1` dependency release. The final source
+snapshot passed all 24 gates on macOS and Windows. The macOS run took 590.8 seconds
+and passed 1,410 Rust tests, with three explicit ignores. Both platforms passed
+the text-heavy and vector-heavy viewer checks and all 15 tagged-browser text-edit
+checks, followed by independent saved-PDF readback and 17 corruption controls.
+The selected Rust mutations passed (293 plus two preview cases), as did all 218
+selected frontend mutations and the Windows cross-compiler check. All 93 native
+mutations also passed; that full run was over-scoped and is not a release requirement.
+
+Normal macOS bundle rendering, menu/save checks, Windows MSI extraction and NSIS
+upgrade checks passed with the development engine hidden. Workers mapped the
+packaged engine and the coordinator did not; hiding both engines produced the
+expected visible refusal. The Mac refusal appears in the interface, not its
+console log; the original smoke script's log assertion was corrected after
+reviewing the owned-window capture. Original installations and sessions were
+preserved. Windows printing passed 10/10. Its OCR sweep sampled 11,728 regions
+across 133 PDFs: 7,556 were read back, with zero still-readable text, 3,337 verified
+unreadable and 4,219 unverified. Unverified regions are not clean verdicts.
+Application artifact signing, publication and actual updater checks remain pending.
+
+The original failure was in the unmodified multilingual search baseline: PDFium
+8044 reversed Arabic word order and lost the mixed Arabic/Latin phrase. Upstream
+change [152910](https://pdfium-review.googlesource.com/c/pdfium/+/152910) disabled
+automatic whole-line reversal to preserve mixed English/Hebrew `/ActualText`.
+Our failing fixture has no `/ActualText`; PDFKit independently reads its authored
+word order. The expected text was kept unchanged. The report and reproducer are
+[PDFium issue 561066233](https://issues.chromium.org/issues/561066233).
+
+`scripts/pdfium_rtl.patch`, against PDFium
+`f91ca5a72358bb0b00b4da9481b21fe668157614` (8044), preserves `/ActualText` behavior
+and restores ordinary predominantly RTL lines when their first and last strong
+segments are RTL. The complete 11-fixture comparison restores seven regressions
+with unchanged pixels and character geometry; two pre-existing Latin/Hebrew
+limitations remain unchanged. This is compatibility evidence, not general bidi
+correctness. Removing each ActualText/first-strong/last-strong guard was shown
+to break its specific control in the source experiment.
+
+The [verified hosted build](https://github.com/tstone-1/tpdf/actions/runs/34815333188)
+used repository commit `e756da9ba83802f9a8d1b638f605a40623c2b419`. Both platforms
+passed the full differential. Control and candidate each passed 62 upstream
+text tests on macOS and 61 on Windows, where upstream disables
+`TextSearchLatinExtended`. The downloaded macOS library also passed multilingual
+search (68/68), encoding search (23/23), progressive vector/form rendering,
+character alignment and tagged reading order. The Windows library imports only
+KERNEL32, ADVAPI32, GDI32 and USER32; it requires no separate MSVC runtime DLL.
+
+The [dependency release](https://github.com/tstone-1/tpdf/releases/tag/pdfium-8044-tpdf.1)
+holds both engine archives, SHA-256 sidecars and the complete verification evidence.
+It is a prerelease with Latest disabled, leaving the application updater on the
+normal release channel. `scripts/fetch_pdfium.py` downloads these exact archives
+and verifies their hashes; do not replace a vendored library manually.
+
+The build is defined by `.github/workflows/pdfium.yml` and `scripts/build_pdfium.py`,
+with source/tool revisions in `scripts/pdfium_build.json`. It builds native
+mac-arm64 and win-x64 controls and candidates before emitting any archive.
+The supplier's license collector omits Dragonbox and HarfBuzz; the wrapper adds
+their permissive notices from the pinned sources, includes TPDF's patch licence,
+and refuses any other unknown library. Windows selects Git Bash explicitly and
+checks it before compiling: PATH can otherwise select the WSL launcher.
+Run its safeguards with `python3 -m unittest discover -s scripts -p test_pdfium_build.py`.
+Building locally needs full Xcode or VS with the pinned Windows SDK; use
+`python3 scripts/build_pdfium.py --help` for the disposable-directory invocation.
+Source/dependency revisions are pinned. Host SDK/CRT versions are recorded rather
+than hermetically supplied; no byte-identical compiler-output claim is made.
+A workflow artifact alone neither publishes a dependency release nor changes the pin.
 
 Plain Cargo and Tauri builds share the macOS deployment-target default in
 `.cargo/config.toml` and `src-tauri/tauri.conf.json`; the toolchain gate checks
@@ -59,7 +132,7 @@ scripts/fetch_pdfium.py
 
 `vendor/pdfium/` is gitignored --- a 7.7 MB binary does not belong in the object store --- so
 **a fresh clone has no PDFium and every binary fails to bind at runtime until the fetch
-script has run.** The script downloads the pinned upstream build, verifies its SHA256
+script has run.** The script downloads the pinned source-built archive, verifies its SHA256
 before extracting anything, and refuses a V8 asset.
 
 Verify an existing install without touching the network:
@@ -68,9 +141,9 @@ Verify an existing install without touching the network:
 scripts/fetch_pdfium.py --check
 ```
 
-The pin is `chromium/8044`; Phase 0 measurements in `AGENTS.md` and `docs/PLAN.md`
+The pin is `pdfium-8044-tpdf.1`; Phase 0 measurements in `AGENTS.md` and `docs/PLAN.md`
 used `chromium/7881`. Bumping it means editing `TAG` and the whole `PINS`
-table in `scripts/fetch_pdfium.py` together, then re-running the two checks that a digest
+table in `scripts/fetch_pdfium.py` together, then re-running the checks that a digest
 cannot stand in for:
 
 Run these from the repository root, after generating the fixtures below. Each exits
@@ -86,6 +159,14 @@ the destroy case is also rerun there.
 # `a` (destroy) ever stops crashing, the upstream bug is fixed.
 cargo run --release --manifest-path src-tauri/Cargo.toml --example remove-probe -- \
     testdata/text-truetype.pdf c
+
+# Extraction order and search must agree with the independently authored text.
+# The 7881 -> 8044 update changed Arabic word order; symbol and pixel probes
+# cannot see that regression. Generate both fixtures before running these.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example search-probe -- \
+    --file testdata/multilingual.pdf
+cargo run --release --manifest-path src-tauri/Cargo.toml --example search-probe -- \
+    --file testdata/encodings.pdf
 
 # The V8 and XFA symbol scan. This mode reads the library rather than binding it,
 # so --lib is required even though every other mode defaults it -- and the directory
@@ -5090,6 +5171,12 @@ starts at 0 and increments within the month.
    when a shared contract changes. Always run the full quality gates once, and
    the relevant native checks. Record the selected mutation count and any gaps.
 
+   **No full GUI mutation table is required for an ordinary release.** A dependency
+   pin, version bump or checks-profile/bundle-path correction does not by itself
+   justify every historical mutation. Check the affected behavior and prove the
+   affected observer with representative controls; expand only when a shared
+   behavior cannot be covered by a bounded selection.
+
    **Release scope, corrected 2026-09-10:** a new capability, a large diff, or a
    month elapsed does not by itself justify every historical mutation. Full
    tables are for a harness-wide change or a shared contract whose reach cannot
@@ -5503,6 +5590,11 @@ starts at 0 and increments within the month.
    `testdata/vector-heavy.pdf`. Keep the normal-bundle and checks-build results separate.
    On Windows also run `print-probe` (§8), which is the only check that reaches a real spooler.
 
+   Capture only the test process's own window: use its CGWindowID on macOS and
+   `PrintWindow` on Windows. For the Windows capture, verify that an overlapping
+   control window does not change the captured application content. A desktop-rectangle screenshot can
+   contain unrelated windows and is not valid application evidence.
+
    **One more on Windows, and it blocks the tag rather than decorating it.** This step is
    where a Windows-only mechanism gets exercised, and it lives here rather than in a step of
    its own on purpose: fifteen sentences across five files and `release.yml` name the steps of
@@ -5799,7 +5891,7 @@ starts at 0 and increments within the month.
 
 9. Commit as `Release vYY.M.MICRO: <summary>` and push it.
 
-10. **Rehearse on a throwaway tag, then tag for real.** This list ended at step 9 until
+10. **Rehearse changed release mechanics, then tag for real.** This list ended at step 9 until
     2026-08-03, which left the single riskiest action in the process written down nowhere
     but a comment in `release.yml` --- and it is the action that runs unreviewed code paths
     beside the signing key.
@@ -5810,7 +5902,10 @@ starts at 0 and increments within the month.
     git tag v26.8.0     && git push origin v26.8.0         # the real one
     ```
 
-    **The rehearsal is not optional the first time a workflow changes**, and the tag glob
+    **Rehearse changes to build, signing, notarization or publication mechanics.**
+    Release-note wording and dependency pins alone do not require a second build
+    under a throwaway tag. When those mechanics are unchanged, verify the real
+    release draft before publishing it. The tag glob
     `v[0-9][0-9].[0-9]*.[0-9]*` matches an `-rcN` suffix on purpose so it can be done at all.
     Cutting `26.8.0` took **three** rehearsal tags, and each found a real defect that no
     amount of reading had:
@@ -7184,3 +7279,72 @@ frontend contains zero harness code.
 The final macOS sweep passes all 24 gates (455.9 seconds summed gate time),
 including 1,404 Rust tests with three existing ignores and 1,667 frontend tests.
 Only this build record and the plan changed after the verified Windows snapshot.
+
+### Tagged browser exports with a bounded NonStruct level
+
+The original tagged Edge export now passes worker preview and saving without
+normalizing the source. Its SHA-256 is
+`1318bcf26d788bf653f88863731527c77e53b5a2da1397e87b3e86a366647c95`.
+The structure grammar is Document/P with one optional NonStruct level, bounded
+by the existing 128 content-item limit. It accepts scalar children and indirect
+arrays, preserves bounded ASCII language identifiers and checks an optional
+ParentTreeNextKey against the actual parent-tree keys. The browser's optional
+`/Type /ParentTree` is admitted with that exact name.
+
+ISO 32000-1 tables 322-324 and 333 define the relevant structure entries,
+content ownership and NonStruct semantics. Containers may omit Pg, but Pg is
+not inherited by a leaf from a structure ancestor: a local integer MCID needs
+its own element's Pg, while an explicit MCR identifies its own page. Tests
+reject an absent leaf Pg even when its paragraph or Document supplies one.
+ActualText, Alt, expansion text, titles, classes, additional child levels and
+NonStruct layout attributes remain refused. The authored tree is retained,
+including its reading order and parent links.
+
+```sh
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-browser-tagged/worker scratch/textedit-producers/browser-api/browser-tagged.pdf
+uv run --with pypdf scripts/text_edit_browser_check.py scratch/textedit-browser-tagged/worker/synthetic-before.pdf scratch/textedit-browser-tagged/worker/synthetic-after.pdf --tagged --controls
+swift scripts/text_edit_pdfkit.swift scratch/textedit-browser-tagged/worker --browser
+```
+
+The independent checker compares the complete structure graph, page parent
+keys, content operands and font stream bytes. Resource numbers retain the
+explicit float32 comparison established for the untagged browser fixture.
+Its eight new negative controls corrupt the forward/reverse parent links,
+MCID, role, language, ActualText, next parent key or whole tree; all are rejected,
+alongside the nine existing graphics/font/content controls. PDFKit reads the
+worker output with 2,421 changed pixels inside the target line and zero outside.
+
+All 114 focused editor tests pass on macOS and Windows, including multi-page ownership,
+mixed direct/nested paragraph items, scalar/array variants, the 128-item bound,
+missing ownership, cycles, duplicates, metadata and atomic refusal. The new
+`editable-nested` fuzz seed reaches discovery and deletion through a symbolic
+font, scalar NonStruct leaf and indirect parent array.
+
+All 33 targeted tag mutations are caught. The unsupported-role control changes
+both the structure role and the corresponding marked-content name together;
+changing only one had allowed the name-mismatch check to hide a removed role
+guard. The strengthened case also passes in the Windows follow-up run.
+
+All 15 native checks pass on macOS and Windows. Independent parser and PDFKit
+readback verify both platforms' worker and UI saves: the complete structure is
+preserved and each output changes 2,421 pixels inside the target, zero outside.
+Discovery still finds the expected runs in the unchanged Word, naturally wrapped
+LibreOffice, tagged LibreOffice and untagged Edge fixtures.
+
+The bounded fuzz run executed 30,519 inputs in 21 seconds without a finding,
+at 87 MiB peak RSS, using the existing sanitizer-free macOS configuration.
+The Windows archive SHA-256 is
+`baf066e978612c6483712e2edb1da3e79b2562e4cdc034e062a8fa7c3b6d097a`.
+Retrieved PDFs and manifests match. A follow-up updated only the isolated-role
+test; its final manifest matches all current source and tests. Both temporary
+tasks were removed, and the normal Windows checkout remains clean. The restored
+normal frontend contains zero harness code.
+
+The final full run passed all 24 gates in 622.2 seconds of summed gate time:
+1,410 Rust tests passed with three existing ignored tests, and all 1,667
+frontend tests passed. The normal bundle again contains zero harness code.
+
+For remote follow-up checks, transfer source files separately rather than
+embedding their base64 data in an EncodedCommand. Run Cargo through the same
+interactive scheduled-task environment as the main checks; the direct SSH/WSL
+invocation could not access this build directory.

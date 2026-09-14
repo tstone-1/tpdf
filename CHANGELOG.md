@@ -17,6 +17,26 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.7] - 2026-09-14
+
+- Edit existing PDF text from the command palette, preview the actual rendered
+  result, undo or redo changes, and save in place or to a copy.
+- Support bounded text layouts with Helvetica and validated embedded TrueType
+  fonts, including existing-glyph composite fonts, kerning, colours, translated
+  and scaled coordinates, and rectangular clips.
+- Preserve supported tagged paragraphs, page ownership and reading order while
+  editing. Verified examples include unchanged Word, LibreOffice and Edge exports.
+- Keep replacements within the original line width and available font characters;
+  unsupported pages are refused. Paragraph reflow is not supported. Text edits
+  must be saved before marking redactions.
+- Restore Arabic and Hebrew extraction/search affected by PDFium 8044, using
+  source-built engines verified on both platforms. Preserve upstream ActualText
+  behavior; two pre-existing mixed-direction limitations remain.
+- Add a preference to disable automatic update checks at launch; manual checking
+  remains available.
+- Extend fuzzing and independent PDF-reader checks for text editing, and align
+  macOS build settings to avoid unnecessary dependency rebuilds.
+
 ## [26.9.6] - 2026-09-12
 
 - Warn before writing signed or certified PDFs, including permitted form filling;
