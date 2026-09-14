@@ -7728,11 +7728,55 @@ in the research paper, and unembedded Arial plus tables/figures in the factsheet
 Relaxing graphics-state or tag checks alone would not demonstrate those documents
 are editable. The next increment should take one unchanged public page through
 discovery, replacement and independent saved-PDF readback, documenting every
-blocking construct first and reproducing it in small synthetic tests. The W-9
-instructions are the proposed bounded case: a conventional document with CFF fonts
-and tagged structure, separate from filling its form fields.
+blocking construct first and reproducing it in small synthetic tests. The initial
+W-9 acceptance target was wrong: all four embedded CFF fonts on instruction page
+index 1 declare `/FSType 4 def`. Under the editor's existing embedding policy,
+these print/preview-only fonts are refused. Keep this document as a refusal
+control; do not bypass its font restrictions to meet a compatibility target.
 
 Validation of the survey tool on macOS: its mixed-page/boundary controls pass,
 Clippy for `text-edit-probe` and formatting pass, and the public input page counts
 agree with the independent parser. Windows execution of the new all-pages mode
 remains pending. No production editing rules were relaxed by this increment.
+
+### Text editing with embedded CFF fonts
+
+Simple Type1 fonts carrying a Type1C program now support existing printable ASCII
+glyphs under explicit WinAnsi encoding. Glyph names select the outlines, independently
+of the program's internal encoding. PDF widths must agree with program advances,
+and complete outlines, including spaces, must validate within bounded ink limits.
+The existing replacement clip and line-width checks apply. Fonts and adjacent
+text are preserved; no glyphs are added or substituted.
+
+The worker bounds decoded font data, glyph counts and CFF metadata. Only the
+standard font matrix and filled Type 2 outlines are supported. CID CFF, custom
+encodings, ToUnicode overrides, arbitrary embedded PostScript, nonstandard paint
+semantics and restricted embedding permissions remain refused. Literal FSType
+declarations follow the same permission mask as the TrueType path. The CFF
+metadata check covers fields that the outline library intentionally skips.
+
+The fixtures contain original geometric outlines, generated without installed
+fonts. Regenerate their programs and the disposable PDF with:
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_cff.py scratch/textedit-cff --rust-fixtures
+cargo build --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe
+src-tauri/target/debug/examples/text-edit-probe scratch/textedit-cff/worker scratch/textedit-cff/synthetic.pdf
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-cff/worker/synthetic-before.pdf scratch/textedit-cff/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-cff/worker
+```
+
+On macOS, 136 focused Rust tests and all 15 native text-editing checks pass.
+Independent pypdf readback confirms only the target operand changed; PDFKit
+confirms text agreement and 988 changed pixels inside the target, zero outside.
+The native saved copy also passes independent readback. The unchanged public
+sample still has 0 editable pages out of 45; CFF support alone does not close its
+other layout and font blockers. Windows execution of this increment remains pending.
+
+All eight targeted `CFF:` mutations are caught by their named tests, after correcting
+one mutation that initially failed to compile. Their clean control passes 1,435
+Rust tests. The instrumented `textedit_scan` campaign executes 23,076 inputs in
+21 seconds without a finding, including original CFF and refusal seeds; macOS
+uses `--sanitizer=none`, so this is not an AddressSanitizer result. Clippy for all
+targets, formatting and notices pass. All 11 font programs regenerate byte-for-byte,
+and the final normal frontend bundle contains zero harness units.

@@ -1,4 +1,4 @@
-//! Worker-only validation of simple embedded TrueType fonts. No font bytes are
+//! Worker-only validation of embedded TrueType and simple CFF fonts. No font bytes are
 //! exported, substituted, repaired or extended. PDF widths control positioning.
 
 use super::{dictionary, filters, number};
@@ -11,7 +11,9 @@ pub(crate) mod tests;
 #[cfg(test)]
 pub(super) mod ink_tests;
 
+mod cff;
 mod composite;
+pub(super) use cff::embedded as cff;
 mod mapping;
 mod outlines;
 pub(super) use composite::embedded as composite;
@@ -27,7 +29,7 @@ pub(super) struct Metrics {
     pub(super) vertical_bounds: Option<[f64; 2]>,
     widths: Box<[Option<f64>; 256]>,
     // Measured excursions beyond each advance, in thousandths of an em.
-    // Only composite fonts currently admit them; other paths retain zero slack.
+    // Composite and CFF fonts admit them; other paths retain zero slack.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
     // PDF codes to Latin-1. Embedded single-byte maps still admit ASCII only.
     // None retains the WinAnsi/Latin-1 path.

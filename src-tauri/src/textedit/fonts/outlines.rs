@@ -50,6 +50,23 @@ pub(super) fn bounds(face: &Face<'_>, glyph: GlyphId) -> Option<[f64; 4]> {
     bounds.finite.then_some(bounds.rect).flatten()
 }
 
+// A width-only CFF parse can stop before a malformed suffix. Only a complete
+// outline parse ending in ZeroBBox with no points proves a blank space.
+pub(super) fn cff_bounds(
+    face: &ttf_parser::cff::Table<'_>,
+    glyph: GlyphId,
+) -> Result<Option<[f64; 4]>, String> {
+    let mut bounds = Bounds {
+        rect: None,
+        finite: true,
+    };
+    match face.outline(glyph, &mut bounds) {
+        Ok(_) if bounds.finite => Ok(bounds.rect),
+        Err(ttf_parser::CFFError::ZeroBBox) if bounds.finite && bounds.rect.is_none() => Ok(None),
+        _ => Err("invalid CFF glyph outline".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

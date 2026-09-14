@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Edit existing printable ASCII glyphs in supported embedded CFF/Type1C fonts,
+  validating encoding, widths, outlines and embedding permissions while preserving
+  the original font program.
+
 - Edit supported Helvetica text when the PDF omits its encoding entry, preserving
   the default character mapping and refusing unavailable replacement characters.
 
