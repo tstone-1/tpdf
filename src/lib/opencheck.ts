@@ -135,13 +135,15 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit":
     case "textedit-multipage":
     case "textedit-wrapped":
+    case "textedit-overhang":
     case "textedit-cid-latin1":
     case "textedit-latin1": {
-      const cidLatin1 = phase === "textedit-cid-latin1";
+      const overhang = phase === "textedit-overhang";
+      const cidLatin1 = phase === "textedit-cid-latin1" || overhang;
       const wrapped = phase === "textedit-wrapped";
       const page = phase === "textedit-multipage" || wrapped ? 1 : 0;
       const original = cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const replacement = overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
@@ -156,8 +158,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const originalTab = host.tabs().find((tab) => tab.path === first)!;
       const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
       const start = async () => {
+        const previous = document.querySelector(".text-edit-run");
         host.run("edit.editText");
-        if (!await settle(() => !!document.querySelector(".text-edit-run"), SETTLE_MS)) throw new Error("editable text targets did not appear");
+        // Discovery replaces the editor asynchronously. An old target can still
+        // be visible while the command waits for the worker's fresh reply.
+        if (!await settle(() => {
+          const target = document.querySelector<HTMLButtonElement>(".text-edit-run");
+          return !!target && target !== previous && !target.disabled;
+        }, SETTLE_MS)) throw new Error("fresh editable text targets did not appear");
         document.querySelector<HTMLButtonElement>(".text-edit-run")!.click();
         if (!await settle(() => !!field() && document.activeElement === field(), 3000)) throw new Error("text input did not receive focus");
       };
@@ -219,6 +227,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
       document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       await host.idle();
+      if (overhang) {
+        await start(); field()!.value = "ÄÖÜ äöü ß"; field()!.dispatchEvent(new Event("input", { bubbles: true }));
+        document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
+        let refusedInk = ""; try { await host.idle(); } catch (error) { refusedInk = String(error); }
+        check("a shorter draft whose ink escapes the left edge is refused", refusedInk.includes("replacement ink") && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
+        document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await host.idle();
+      }
       host.run("file.save"); await host.idle();
       if (!await settle(() => !host.edits()?.state.dirty, SETTLE_MS)) throw new Error("text save did not finish");
       check("saved and reopened text matches the unsaved revision", (await read()).includes(replacement));

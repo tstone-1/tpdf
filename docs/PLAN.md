@@ -4526,10 +4526,17 @@ gap, wider Unicode, duplicate mappings and missing glyphs remain refused.
 The unchanged Edge/Verdana export containing ÄÖÜ äöü ß passes worker and native
 editing on macOS, with independent parser and PDFKit readback. Font bytes,
 structure and surrounding content are preserved. Simple embedded fonts retain
-their ASCII-only scope. The unchanged Arial counterpart remains refused because
-Ä overhangs its advance; this change does not loosen outline or clipping guards.
-Horizontal overhangs are the next measured compatibility gap, requiring their
-own placement proof rather than a tolerance added to the existing guard.
+their ASCII-only scope.
+
+**Bounded composite overhangs implemented, unreleased (2026-09-14).** Actual
+horizontal excursions up to a quarter em per side are included in each source
+run's hit box and clipping check. Replacements must fit both the original advance
+and its unrounded horizontal envelope; vertical glyph bounds remain unchanged.
+The unchanged Arial export accepts `ÖÄÜ äöü ß`, with Ä inside the line, but refuses
+`ÄÖÜ äöü ß` because the leading Ä would cross its exact left boundary. The contained
+worker, all 16 native editing checks and independent parser/PDFKit readback pass
+on macOS. This expands supported placement
+without changing the authored clip, font program or character map.
 
 `textedit.rs` discovers and rewrites a conservative grammar using standard Helvetica,
 explicit WinAnsiEncoding and printable Latin-1. Latin-1 text is decoded from
@@ -4559,8 +4566,8 @@ The composite path additionally accepts only Adobe/Identity/0 CID collections,
 symbolic descriptor flags and OpenType-style TrueType programs. Its map is at
 most 16 KiB decoded and 191 unique printable Latin-1 characters; width tables are
 sorted, non-overlapping and limited to 4,096 explicit CIDs. Each mapped CID must
-name a nonzero, in-range glyph; outlines and positive widths retain the simple
-font path's bounds. Vertical writing, nonidentity glyph maps, CFF descendants,
+name a nonzero, in-range glyph; positive widths and vertical outlines retain the
+simple font path's bounds, with the bounded horizontal excursions described above. Vertical writing, nonidentity glyph maps, CFF descendants,
 Unicode beyond Latin-1 and font-subset extension remain refused.
 This is a bounded subset case, not general embedded-font or Unicode support. It accepts
 font/leading setup across text blocks, `Tm`/`Td` positioning and `T*` line moves, including ReportLab's identity
@@ -4585,11 +4592,12 @@ Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
 outside text blocks, with positive dimensions and coordinates bounded to one
 million after transformation. They intersect in original page space and restore
 through `q`/`Q`; later CTM changes do not move an existing clip. Every affected
-text run must have validated embedded glyph outlines. Its original advance and
+text run must have validated embedded glyph outlines. Its horizontal envelope and
 the font's measured vertical envelope must fit inside the clip before crop or
-rotation. The envelope contains every offered glyph, including baseline and
-curve controls, so it also contains any replacement that fits the original
-advance. Editing hit boxes retain their full-em geometry. Standard Helvetica has only
+rotation. The vertical envelope contains every offered glyph, including baseline
+and curve controls. Replacement ink must also fit the source's horizontal envelope
+as well as its advance. Editing hit boxes retain their full-em height and include
+measured horizontal excursions. Standard Helvetica has only
 advance metrics here and is refused under an explicit clip. Partial, compound,
 painted, empty and reversed paths remain unsupported. A bounded nonnegative `w`
 setter is preserved; filled text cannot use it and stroking stays refused.

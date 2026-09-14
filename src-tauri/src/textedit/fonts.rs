@@ -26,6 +26,9 @@ pub(super) struct Metrics {
     // Any width-fitting replacement is therefore covered by the same envelope.
     pub(super) vertical_bounds: Option<[f64; 2]>,
     widths: Box<[Option<f64>; 256]>,
+    // Measured excursions beyond each advance, in thousandths of an em.
+    // Only composite fonts currently admit them; other paths retain zero slack.
+    horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
     // PDF codes to Latin-1 (single-byte mapped fonts still admit ASCII only).
     // None retains the standard encoding path.
     codes: Option<Codes>,
@@ -43,6 +46,7 @@ impl Metrics {
         Self {
             vertical_bounds: None,
             widths,
+            horizontal_overhangs: None,
             codes: None,
         }
     }
@@ -119,13 +123,33 @@ impl Metrics {
             .collect()
     }
 
+    fn width(&self, byte: u8) -> Result<f64, String> {
+        Ok(self.widths[byte as usize]
+            .ok_or("the embedded font has no validated glyph for this character")?)
+    }
+
     pub(super) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
         let mut width = 0.;
         for byte in super::encode_text(text)? {
-            width += self.widths[byte as usize]
-                .ok_or("the embedded font has no validated glyph for this character")?;
+            width += self.width(byte)?;
         }
         Ok(width * size / 1000.)
+    }
+
+    pub(super) fn horizontal_bounds(&self, text: &str, size: f64) -> Result<[f64; 2], String> {
+        let mut bounds = [0_f64; 2];
+        let mut cursor = 0.;
+        for byte in super::encode_text(text)? {
+            let width = self.width(byte)?;
+            let [left, right] = self
+                .horizontal_overhangs
+                .as_ref()
+                .map_or([0.; 2], |values| values[byte as usize]);
+            bounds[0] = bounds[0].min(cursor + left);
+            cursor += width;
+            bounds[1] = bounds[1].max(cursor + right);
+        }
+        Ok(bounds.map(|value| value * size / 1000.))
     }
 }
 
@@ -315,6 +339,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     Ok(Metrics {
         vertical_bounds: Some(vertical_bounds),
         widths: result,
+        horizontal_overhangs: None,
         codes: codes.map(Codes::Single),
     })
 }

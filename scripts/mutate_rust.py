@@ -324,6 +324,11 @@ MUTATIONS = [
     Mutation('cid: expand beyond Latin-1', 'src/textedit/fonts/mapping.rs', 'last_target > 255', 'false', 'textedit_cid_mapping_latin1_boundaries_and_ranges'),
     Mutation('cid: admit Latin-1 control gap', 'src/textedit/fonts/mapping.rs', '!(target..=last_target as u16).all(|ch| super::super::text_byte(ch as u8))', 'false', 'textedit_cid_mapping_latin1_boundaries_and_ranges'),
     Mutation('cid: refuse existing Latin-1 glyphs', 'src/textedit/fonts/mapping.rs', 'super::super::text_byte(ch as u8)', '(32..=126).contains(&ch)', 'textedit_cid_mapping_latin1_boundaries_and_ranges'),
+    Mutation('overhang: omit replacement left boundary', 'src/textedit.rs', 'replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1]', 'replacement_bounds[1] > original[1]', 'textedit_composite_overhang_replacements_stay_inside_original_ink_atomically'),
+    Mutation('overhang: omit replacement right boundary', 'src/textedit.rs', 'replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1]', 'replacement_bounds[0] < original[0]', 'textedit_composite_overhang_replacements_stay_inside_original_ink_atomically'),
+    Mutation('overhang: discard measured excursions', 'src/textedit/fonts/composite.rs', '(left * unit).min(0.),\n                    (right * unit - width).max(0.),', '0., 0.,', 'textedit_composite_overhang_source_clips_follow_kerning_and_page_scale'),
+    Mutation('overhang: remove left quarter em bound', 'src/textedit/fonts/composite.rs', 'left * unit >= -250.', 'true', 'textedit_composite_overhang_quarter_em_limits_have_boundary_controls'),
+    Mutation('overhang: remove right quarter em bound', 'src/textedit/fonts/composite.rs', 'right * unit <= width + 250.', 'true', 'textedit_composite_overhang_quarter_em_limits_have_boundary_controls'),
     Mutation('cid: count kerning bytes as characters', 'src/textedit.rs', 'characters += fragment.chars().count();', 'characters += bytes.len();', 'textedit_composite_kerning_limit_counts_characters_across_strings'),
 
     Mutation('tagged indent: skip numeric validation', 'src/textedit/tagging.rs', 'super::number(indent)?;', '// unchecked indent', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
@@ -417,7 +422,7 @@ MUTATIONS = [
     Mutation("textedit: accept arbitrary page transforms", "src/textedit.rs", 'if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if false {', "textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices"),
 
     Mutation("textedit: compose page translations in reverse order", "src/textedit.rs", 'inner[4] * outer[0] + outer[4]', 'outer[4] * inner[0] + inner[4]', "textedit_page_scales_compose_restore_and_preserve_following_runs"),
-    Mutation("textedit: omit page scale from hitbox width", "src/textedit.rs", 'page_matrix[4] + advance * page_matrix[0]', 'page_matrix[4] + advance * matrix[0]', "textedit_scaled_hitboxes_match_absolute_matrices_after_crop_and_rotation"),
+    Mutation("textedit: omit page scale from hitbox width", "src/textedit.rs", 'page_matrix[4] + horizontal[1] * page_matrix[0]', 'page_matrix[4] + horizontal[1] * matrix[0]', "textedit_scaled_hitboxes_match_absolute_matrices_after_crop_and_rotation"),
     Mutation("textedit: omit page scale from hitbox height", "src/textedit.rs", 'page_matrix[5] + size * page_matrix[3]', 'page_matrix[5] + size * matrix[3]', "textedit_scaled_hitboxes_match_absolute_matrices_after_crop_and_rotation"),
     Mutation("textedit: allow unbounded composed scales", "src/textedit.rs", 'if result\n        .iter()\n        .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)', 'if false', "textedit_page_scales_bound_composed_scales_and_positions"),
 

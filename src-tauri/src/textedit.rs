@@ -236,6 +236,9 @@ struct Inspection {
     // The active Tf can precede a restored state, not just the last Tf in the
     // stream. Keep its address privately; display font names can be lossy UTF-8.
     font_operators: BTreeMap<u32, usize>,
+    // Unrounded horizontal bounds relative to the authored text origin.
+    // A replacement must stay within these as well as the original advance.
+    horizontal_bounds: BTreeMap<u32, [f64; 2]>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
@@ -246,7 +249,7 @@ fn array_text(
     values: &[Object],
     metrics: &fonts::Metrics,
     size: f64,
-) -> Result<(String, f64), String> {
+) -> Result<(String, f64, [f64; 2]), String> {
     if values.is_empty()
         || values.len() > MAX_TEXT
         || !matches!(values.first(), Some(Object::String(..)))
@@ -258,6 +261,7 @@ fn array_text(
     let mut characters = 0;
     let mut advance = 0.0;
     let mut furthest = 0.0;
+    let mut bounds = [0_f64; 2];
     for value in values {
         if let Object::String(bytes, _) = value {
             let fragment = metrics.decode(bytes)?;
@@ -265,6 +269,9 @@ fn array_text(
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
             }
+            let [left, right] = metrics.horizontal_bounds(&fragment, size)?;
+            bounds[0] = bounds[0].min(advance + left);
+            bounds[1] = bounds[1].max(advance + right);
             advance += metrics.advance(&fragment, size)?;
             if advance < furthest {
                 return Err("backtracking kerning text is not editable yet".into());
@@ -278,7 +285,7 @@ fn array_text(
             return Err("kerning position exceeds its limit".into());
         }
     }
-    Ok((text, advance))
+    Ok((text, advance, bounds))
 }
 
 fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
@@ -321,6 +328,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut clip_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
+    let mut horizontal_bounds = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < clip_until {
@@ -467,7 +475,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         positioned = false;
         let geometry = crate::pagetree::displayed_page(doc, id);
         let metrics = font_metrics.get(name).ok_or("missing text font")?;
-        let (text, advance) = if op.operator == "TJ" {
+        let (text, advance, horizontal) = if op.operator == "TJ" {
             array_text(
                 op.operands[0].as_array().map_err(|e| e.to_string())?,
                 metrics,
@@ -476,21 +484,22 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         } else {
             let text = metrics.decode(op.operands[0].as_str().map_err(|e| e.to_string())?)?;
             let advance = metrics.advance(&text, size)?;
-            (text, advance)
+            let horizontal = metrics.horizontal_bounds(&text, size)?;
+            (text, advance, horizontal)
         };
         let page_matrix = compose_diagonal(page_transform, matrix)?;
         if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {
             return Err("reflected text is not editable yet".into());
         }
         let bounds = [
-            page_matrix[4],
+            page_matrix[4] + horizontal[0] * page_matrix[0],
             page_matrix[5] - size * page_matrix[3] * 0.25,
-            page_matrix[4] + advance * page_matrix[0],
+            page_matrix[4] + horizontal[1] * page_matrix[0],
             page_matrix[5] + size * page_matrix[3],
         ];
-        // Keep the editing hit box stable. Clipping instead uses the measured
-        // vertical union of every offered glyph, so any width-fitting replacement
-        // remains contained, including glyphs not present in the source string.
+        // Include actual horizontal overhang in hit boxes and clipping. The
+        // vertical union covers every offered glyph. Writing additionally keeps
+        // replacement ink inside these unrounded original horizontal bounds.
         // Standard-font widths cannot prove substituted glyph ink bounds.
         if clip.is_some() {
             let [bottom, top] = metrics
@@ -516,6 +525,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             return Err("text bounds exceed the display range".into());
         }
         font_operators.insert(index as u32, font_operator);
+        horizontal_bounds.insert(index as u32, horizontal);
         result.runs.push(Run {
             display_rect,
             operator: index as u32,
@@ -540,6 +550,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         patched: BTreeSet::new(),
         runs: result,
         font_operators,
+        horizontal_bounds,
     })
 }
 
@@ -577,6 +588,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             content,
             runs,
             font_operators,
+            horizontal_bounds,
             patched,
             ..
         } = prepared.get_mut(&change.page).ok_or("missing text page")?;
@@ -599,6 +611,13 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         let metrics = font(doc, resources(doc, *id)?, name)?;
         if metrics.advance(&change.replacement, run.size)? > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
+        }
+        let original = horizontal_bounds
+            .get(&change.operator)
+            .ok_or("missing text ink bounds")?;
+        let replacement_bounds = metrics.horizontal_bounds(&change.replacement, run.size)?;
+        if replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1] {
+            return Err("replacement ink would exceed the original text bounds".into());
         }
         let replacement = metrics.encode(&change.replacement)?;
         patched.insert(change.operator as usize);
