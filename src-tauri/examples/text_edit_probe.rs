@@ -6,7 +6,8 @@
 //! Add `--spacers` when each line is followed by a separate single-space show.
 //! Every other page must remain unchanged; page indices are zero based.
 //! `--inspect <fixture.pdf>` only discovers first-page runs through the worker;
-//! it prints JSON without document text and never creates or saves a PDF.
+//! Add `--all-pages` to inspect every page (at most 128), including refusals.
+//! It prints JSON without document text and never creates or saves a PDF.
 //! Exit 0 means inspection completed (read `status`); infrastructure errors exit 1.
 //! Creates synthetic PDFs only. The example re-execs as its contained worker.
 
@@ -53,27 +54,56 @@ fn runs(worker: &mut Worker, page: u32) -> Result<textedit::PageRuns, String> {
     }
 }
 
-fn inspect(source: &std::path::Path) -> Result<(), String> {
-    let library = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vendor/pdfium")
-        .join(tpdf_lib::PDFIUM_SUBDIR);
-    let mut worker = Worker::spawn(source, &library)?;
+fn inspect_page(worker: &mut Worker, page: u32) -> Result<serde_json::Value, String> {
     let reply = worker.call(&Request::TextRuns {
-        page: 0,
+        page,
         changes: Vec::new(),
     })?;
-    let report = if !reply.ok {
-        serde_json::json!({"page": 0, "status": "refused", "reason": reply.error})
+    if !reply.ok {
+        Ok(serde_json::json!({"page": page, "status": "refused", "reason": reply.error}))
     } else if let Some(Reply::TextRuns(runs)) = reply.reply {
+        if runs.page != page {
+            return Err("text inspection returned a different page".into());
+        }
         let status = if runs.runs.is_empty() {
             "no_runs"
         } else {
             "editable"
         };
-        serde_json::json!({"page": 0, "status": status, "runs": runs.runs.len()})
+        Ok(serde_json::json!({"page": page, "status": status, "runs": runs.runs.len()}))
     } else {
-        return Err("unexpected text inspection reply".into());
+        Err("unexpected text inspection reply".into())
+    }
+}
+
+fn inspect(source: &std::path::Path, all_pages: bool) -> Result<(), String> {
+    let library = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../vendor/pdfium")
+        .join(tpdf_lib::PDFIUM_SUBDIR);
+    let mut worker = Worker::spawn(source, &library)?;
+    let report = if all_pages {
+        let opened = worker.call(&Request::Open {
+            lazy_geometry: true,
+        })?;
+        let Some(Reply::Open { page_count, .. }) = opened.reply.filter(|_| opened.ok) else {
+            return Err("could not read inspection page count".into());
+        };
+        let page_count = u32::try_from(page_count).map_err(|_| "page count exceeds u32")?;
+        if page_count == 0 || page_count > 128 {
+            return Err(
+                "all-pages inspection requires 1 to 128 pages; no partial report produced".into(),
+            );
+        }
+        let mut pages = Vec::with_capacity(page_count as usize);
+        for page in 0..page_count {
+            pages.push(inspect_page(&mut worker, page)?);
+        }
+        serde_json::json!({"page_count": page_count, "pages": pages})
+    } else {
+        inspect_page(&mut worker, 0)?
     };
+    // Publish only after every requested page was inspected. An interrupted
+    // worker must not leave a partial JSON report resembling a complete survey.
     println!("{report}");
     Ok(())
 }
@@ -81,10 +111,10 @@ fn inspect(source: &std::path::Path) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|arg| arg == "--inspect") {
-        if args.len() != 2 {
-            return Err("usage: text-edit-probe --inspect <fixture.pdf>".into());
+        if args.len() != 2 && !(args.len() == 3 && args[2] == "--all-pages") {
+            return Err("usage: text-edit-probe --inspect <fixture.pdf> [--all-pages]".into());
         }
-        return inspect(std::path::Path::new(&args[1]));
+        return inspect(std::path::Path::new(&args[1]), args.len() == 3);
     }
     let dir = std::env::args()
         .nth(1)
