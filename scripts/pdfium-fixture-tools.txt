@@ -1,0 +1,3 @@
+# Only the synthetic RTL fixture generator; no system fonts or user documents.
+fonttools==4.65.0
+arabic-reshaper==3.0.1

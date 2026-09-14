@@ -182,7 +182,9 @@ def subset_font(font_path: str, text: str, retain_gids: bool):
     from fontTools import subset
     from fontTools.ttLib import TTFont
 
-    font = TTFont(font_path, fontNumber=0)
+    # Keep the source font's timestamp: fixtures must not change just because
+    # they were regenerated at a different time.
+    font = TTFont(font_path, fontNumber=0, recalcTimestamp=False)
     options = subset.Options()
     options.retain_gids = retain_gids
     options.notdef_outline = True
