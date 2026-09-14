@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Preserve dotted and dashed lines, line caps, joins and miter limits during
+  in-place text edits, with bounded validation of their original settings.
+
 - Edit existing glyphs in CFF fonts with bounded custom encodings and matching
   ToUnicode maps, including minus, nonbreaking space, curly single quotes, en dash
   and pound signs. Original font codes, spacing and outlines are retained.

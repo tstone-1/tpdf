@@ -182,7 +182,7 @@ def planned(document: bytes) -> bytes:
     return len(document).to_bytes(4, "little") + document + tail
 
 
-def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False, rectangles: bool = False, strokes: bool = False, default_encoding: bool = False, spacing: float = 0., word_spacing: float = 0., image: bool = False, curves: bool = False, print_state: bool = False) -> bytes:
+def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool = False, empty: bool = False, saved_state: bool = False, translated: bool = False, scaled: bool = False, defaults: bool = False, kerning: bool = False, rectangles: bool = False, strokes: bool = False, default_encoding: bool = False, spacing: float = 0., word_spacing: float = 0., image: bool = False, curves: bool = False, print_state: bool = False, stroke_styles: bool = False) -> bytes:
     """A supported seed reaches the text writer instead of only refusal paths."""
     content = b"BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ET"
     if kerning:
@@ -208,6 +208,9 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
     if strokes:
         content = b"q 2 w .2 .3 .4 RG 30 160 m 260 160 l S Q " + content
         content += b" 30 30 m 80 50 l 130 30 l h S 30 75 m 80 95 l 130 75 l S"
+    if stroke_styles:
+        content = b"1 J 1 j 4 M [0 2.972] 0 d " + content
+        content += b" q 2 J 2 j [3 2 1] 2.5 d 30 30 m 80 100 l 130 30 l S Q 30 120 m 260 120 l S [] 0 d"
     if curves:
         content += b" q .2 .3 .4 rg 30 30 m 40 60 60 60 70 30 c 80 10 90 30 v 100 50 110 30 y h 120 30 m 140 30 l 130 50 l f Q"
     if default_encoding:
@@ -421,7 +424,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-cff-unicode", editable_embedded(cff="unicode", cff_mapping=True)), ("editable-cff-mapping", editable_embedded(cff="normal", cff_mapping=True)), ("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-stroke-styles", editable_text(strokes=True, stroke_styles=True)), ("editable-cff-unicode", editable_embedded(cff="unicode", cff_mapping=True)), ("editable-cff-mapping", editable_embedded(cff="normal", cff_mapping=True)), ("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                   ("editable-positive-word-spacing", editable_text(kerning=True, spacing=1., word_spacing=1.)),
                                   ("editable-negative-word-spacing", editable_text(kerning=True, spacing=-1., word_spacing=-1.)),

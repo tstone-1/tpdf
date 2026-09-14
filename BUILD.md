@@ -8341,3 +8341,42 @@ The unchanged passport guide remains refused on all 16 pages at its unsupported
 ligature names. No additional practical page is editable yet. Its CMap code-space
 mismatch and later stroke-state operators remain separate work. Windows
 verification of this increment is outstanding.
+
+### Line stroke styles during text editing
+
+The editor preserves `J`, `j`, `M` and `d` without rebuilding the surrounding
+paths. Caps and joins must be integers 0..2; miter limits must be at least 1.
+Dash arrays are limited to 32 entries, with nonnegative lengths and phase, and
+at least one positive length in a nonempty array. The existing finite-number
+bound of 1,000,000 applies. Empty arrays restore solid lines; zero-length dashes
+in an advancing pattern preserve dotted lines. Stroked and clipping text remain
+refused. These settings are retained through their original `q`/`Q` scopes.
+
+```sh
+uv run --with reportlab testdata/make_textedit_reportlab.py scratch/textedit-stroke-styles/reportlab
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-stroke-styles/worker scratch/textedit-stroke-styles/reportlab/stroke-styles.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-stroke-styles/worker/synthetic-before.pdf scratch/textedit-stroke-styles/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-stroke-styles/worker
+uv run scripts/tabs_check.py <checks-binary> scratch/textedit-stroke-styles/reportlab/stroke-styles.pdf --phase textedit --saved-copy <saved.pdf>
+python3 scripts/mutate_rust.py --only 'stroke styles:'
+uv run src-tauri/fuzz/run.py --target textedit_scan --seconds 20
+```
+
+Measured on macOS, 2026-09-14: three new Rust tests and all nine targeted
+mutations pass. The worker round trip and all 15 native checks pass. Independent
+pypdf readback finds only the selected text operand changed; PDFKit measures
+2,395 changed pixels inside the target and zero outside for both worker and
+native output. Changing a saved dash pattern to `[20 10]` is rejected by both
+readers; PDFKit detects 3,000 changed pixels outside the target. All 11 existing
+ReportLab outputs remain byte-identical. The new `editable-stroke-styles` fuzz
+seed reaches one editable run. The seeded fuzz run completes 13,968 executions
+in 21 seconds with 86 MiB peak RSS and no finding (`--sanitizer=none` on macOS).
+The seven-document practical survey remains at 2 editable and 46 refused pages.
+All 24 gates pass (263.4s total): 1,473 Rust tests pass with 3 ignored,
+1,668 frontend tests pass, and the normal bundle contains zero harness code.
+
+The unchanged passport guide's page 16 uses caps/joins 0 and 1, miter limit 4,
+and dotted patterns with a zero dash and a positive gap. Its source digest
+matches the public corpus manifest. Font ligatures and its CMap code-space
+mismatch remain separate blockers; this increment does not establish another
+editable practical page. Windows native verification remains outstanding.

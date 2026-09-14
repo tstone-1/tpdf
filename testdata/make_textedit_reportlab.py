@@ -32,7 +32,8 @@ for mode, wrapped in (("separate", False), ("multiline", False),
                       ("separate-ascii85", True), ("multiline-ascii85", True),
                       ("saved-state-ascii85", True), ("translated-ascii85", True),
                       ("scaled-ascii85", True), ("defaults-ascii85", True),
-                      ("latin1", True), ("painted-rectangles", True), ("stroked-lines", True)):
+                      ("latin1", True), ("painted-rectangles", True), ("stroked-lines", True),
+                      ("stroke-styles", True)):
     # True is ReportLab's normal wrapper for compressed page content; keep the
     # Flate-only layouts as controls over the extra decoding stage.
     rl_config.useA85 = wrapped
@@ -46,6 +47,26 @@ for mode, wrapped in (("separate", False), ("multiline", False),
         canvas.setStrokeColorRGB(0.1, 0.2, 0.6)
         canvas.setLineWidth(2)
         canvas.line(30, 160, 260, 160)
+    if mode == "stroke-styles":
+        # Dotted divider uses the same zero-length dash shape as the unchanged
+        # passport guide. ReportLab authors all operators; do not patch its PDF.
+        canvas.setStrokeColorRGB(0.1, 0.2, 0.6)
+        canvas.setLineWidth(1.5)
+        canvas.setLineCap(1)
+        canvas.setLineJoin(1)
+        canvas.setMiterLimit(4)
+        canvas.setDash([0, 2.972], 0)
+        canvas.line(30, 160, 260, 160)
+        canvas.saveState()
+        canvas.setLineCap(2)
+        canvas.setLineJoin(2)
+        canvas.setDash([3, 2, 1], 2.5)
+        path = canvas.beginPath()
+        path.moveTo(30, 30)
+        path.lineTo(80, 100)
+        path.lineTo(130, 30)
+        canvas.drawPath(path, stroke=1, fill=0)
+        canvas.restoreState()
     if mode == "scaled-ascii85":
         canvas.saveState()
         canvas.translate(20, 120)
@@ -103,5 +124,12 @@ for mode, wrapped in (("separate", False), ("multiline", False),
             if closed:
                 path.close()
             canvas.drawPath(path, stroke=1, fill=0)
+    if mode == "stroke-styles":
+        canvas.line(30, 120, 260, 120)  # restored dotted style after the text
+        canvas.setDash([], 0)
+        canvas.setLineCap(0)
+        canvas.setLineJoin(0)
+        canvas.setMiterLimit(1)
+        canvas.line(150, 30, 260, 100)
     canvas.save()
     print(f"[OK] wrote {mode}.pdf")

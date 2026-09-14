@@ -453,6 +453,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 tags.paint();
             }
             ("w", [value]) => clipping::line_width(value)?,
+            ("J" | "j" | "M" | "d", values) => graphics::stroke(&op.operator, values)?,
             ("cm", values) if !inside && values.len() == 6 => {
                 let mut next = [0.0; 6];
                 for (dest, value) in next.iter_mut().zip(values) {

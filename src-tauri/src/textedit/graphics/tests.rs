@@ -455,3 +455,117 @@ fn textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomicall
         }
     }
 }
+
+#[test]
+fn textedit_stroke_styles_preserve_scoped_operators_and_other_text() {
+    for style in [
+        "0 J 0 j 1 M [] 0 d",
+        "1 J 1 j 4 M [0 2.972] 0 d",
+        "2 J 2 j 10.5 M [3 2 1] 2.5 d",
+        "1 J 2 j 1000000 M [1000000 0] 1000000 d",
+        &format!("[{}] 0 d", "1 ".repeat(32)),
+    ] {
+        let body = format!("{style} 1.5 w 30 160 m 260 160 l S q 0 J 0 j 4 M [] 0 d BT /F1 12 Tf 40 180 Td (FIRST) Tj ET Q 30 30 m 80 50 l 130 30 l S BT {style} /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+        let mut doc = fixture(dictionary! {}.into(), &body);
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), 2);
+        let id = crate::pagetree::ordered_pages(&doc)[0];
+        let old = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+        let resources = textedit::resources(&doc, id).unwrap().clone();
+        let change = Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        textedit::write(&mut doc, std::slice::from_ref(&change)).unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        assert_eq!(textedit::resources(&doc, id).unwrap(), &resources);
+        let new = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+        assert_eq!(old.operations.len(), new.operations.len());
+        for (index, (a, b)) in old.operations.iter().zip(new.operations).enumerate() {
+            assert_eq!(a.operator, b.operator);
+            if index != change.operator as usize {
+                assert_eq!(a.operands, b.operands);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_stroke_styles_refuse_invalid_state_even_before_resets_atomically() {
+    for style in [
+        "-1 J",
+        "3 J",
+        "1.0 J",
+        "true J",
+        "J",
+        "0 1 J",
+        "-1 j",
+        "3 j",
+        "1.0 j",
+        "/Round j",
+        "j",
+        "0 1 j",
+        "0 M",
+        "0.99 M",
+        "-1 M",
+        "1000001 M",
+        "null M",
+        "M",
+        "1 2 M",
+        "[-1 2] 0 d",
+        "[1 -2] 0 d",
+        "[0] 0 d",
+        "[0 0] 1 d",
+        "[1] -1 d",
+        "[1000001] 0 d",
+        "[1] 1000001 d",
+        "[1 null] 0 d",
+        "[[]] 0 d",
+        "[] null d",
+        "1 0 d",
+        "[1] d",
+        "[] 0 1 d",
+        &format!("[{}] 0 d", "1 ".repeat(33)),
+        // Admitting stroke state must never admit stroked or clipping text.
+        "1 J 1 j [0 3] 0 d 1 Tr",
+        "2 Tr",
+        "4 Tr",
+        "7 Tr",
+    ] {
+        let mut doc = fixture(
+            dictionary! {}.into(),
+            &format!("{style} 0 J 0 j 10 M [] 0 d 0 Tr BT /F1 12 Tf 40 180 Td (FIRST) Tj ET"),
+        );
+        let objects = doc.objects.clone();
+        assert!(textedit::scan(&doc, 0).is_err(), "{style}");
+        assert!(
+            textedit::write(
+                &mut doc,
+                &[Change {
+                    page: 0,
+                    revision: vec![],
+                    operator: 0,
+                    original: "FIRST".into(),
+                    replacement: "IN".into(),
+                }]
+            )
+            .is_err(),
+            "{style}"
+        );
+        assert_eq!(doc.objects, objects, "{style}");
+    }
+}
+
+#[test]
+fn textedit_stroke_styles_refuse_nonfinite_values() {
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(stroke("M", &[Object::Real(value)]).is_err());
+        assert!(stroke("d", &[vec![Object::Real(value)].into(), 0.into()]).is_err());
+        assert!(stroke("d", &[vec![Object::Integer(1)].into(), Object::Real(value)]).is_err());
+    }
+}
