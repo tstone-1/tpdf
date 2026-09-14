@@ -91,7 +91,6 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
         (b"Type".as_slice(), b"Font".as_slice()),
         (b"Subtype", b"Type1"),
         (b"BaseFont", b"Helvetica"),
-        (b"Encoding", b"WinAnsiEncoding"),
     ] {
         if font.get(key).and_then(Object::as_name).ok() != Some(expected) {
             return Err(
@@ -108,7 +107,11 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     }) {
         return Err("custom font metrics or character mappings are not editable yet".into());
     }
-    Ok(fonts::Metrics::helvetica())
+    match font.get(b"Encoding").ok() {
+        None => Ok(fonts::Metrics::helvetica_default()),
+        Some(Object::Name(name)) if name == b"WinAnsiEncoding" => Ok(fonts::Metrics::helvetica()),
+        _ => Err("unsupported standard Helvetica encoding".into()),
+    }
 }
 
 fn number(value: &Object) -> Result<f64, String> {

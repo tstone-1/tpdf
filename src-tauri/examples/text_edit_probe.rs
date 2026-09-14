@@ -94,12 +94,15 @@ fn run() -> Result<(), String> {
     let mut latin1 = false;
     let mut cid_latin1 = false;
     let mut overhang = false;
+    let mut default_encoding = false;
     let mut wrapped = false;
     let mut spacers = false;
     let mut page = 0;
     for option in std::env::args().skip(3) {
         if let Some(index) = option.strip_prefix("--page=") {
             page = index.parse::<u32>().map_err(|_| "invalid page index")?;
+        } else if option == "--default-encoding" {
+            default_encoding = true;
         } else if option == "--latin1" {
             latin1 = true;
         } else if option == "--overhang" {
@@ -112,26 +115,37 @@ fn run() -> Result<(), String> {
             spacers = true;
         } else {
             return Err(
-                "expected --latin1, --cid-latin1, --overhang, --wrapped, --spacers or --page=N after the fixture path".into(),
+                "expected --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers or --page=N after the fixture path".into(),
             );
         }
     }
-    if [latin1, cid_latin1, overhang, wrapped, spacers]
-        .into_iter()
-        .filter(|v| *v)
-        .count()
+    if [
+        latin1,
+        cid_latin1,
+        overhang,
+        default_encoding,
+        wrapped,
+        spacers,
+    ]
+    .into_iter()
+    .filter(|v| *v)
+    .count()
         > 1
     {
         return Err("choose one fixture text variant".into());
     }
-    let original = if cid_latin1 || overhang {
+    let original = if default_encoding {
+        "SYNTHETIC ' ` £ ß"
+    } else if cid_latin1 || overhang {
         "SYNTHETIC ÄÖÜ äöü ß"
     } else if latin1 {
         "SYNTHETIC ÄÖÜ ß"
     } else {
         "SYNTHETIC FIRST"
     };
-    let replacement = if overhang {
+    let replacement = if default_encoding {
+        "£ ' ` ß"
+    } else if overhang {
         "ÖÄÜ äöü ß"
     } else if cid_latin1 {
         "ÄÖÜ äöü ß"
@@ -340,6 +354,9 @@ fn run() -> Result<(), String> {
         ("S".repeat(80), "exceed the original"),
         ("\u{03b1}".into(), "Latin-1 only"),
     ];
+    if default_encoding {
+        invalid_replacements.push(("Ä".into(), "no validated glyph"));
+    }
     if overhang {
         invalid_replacements.push(("ÄÖÜ äöü ß".into(), "replacement ink"));
     }

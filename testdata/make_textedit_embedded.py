@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -118,6 +118,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     # Let the independent parser apply the font's encoding and ToUnicode map.
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
     expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
+    if default_encoding:
+        expected_text = ("SYNTHETIC ' ` £ ß", "£ ' ` ß")
     for page, first in zip(pages, expected_text):
         assert " ".join(page.extract_text().split()) == first + " SYNTHETIC SECOND", "wrong decoded text"
     if float32:
@@ -200,19 +202,21 @@ def tagged_controls(before, after, page_index=0, wrapped=False):
 
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
-        page, wrapped, float32 = 0, False, False
+        page, wrapped, float32, default_encoding = 0, False, False, False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
             elif option == "--wrapped":
                 wrapped = True
+            elif option == "--default-encoding" and sys.argv[1] == "--check":
+                default_encoding = True
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped or --float32 (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32 or --default-encoding (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32:
-            check(*sys.argv[2:4], page, wrapped, float32=True)
+        if float32 or default_encoding:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return

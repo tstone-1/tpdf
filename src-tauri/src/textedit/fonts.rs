@@ -29,8 +29,8 @@ pub(super) struct Metrics {
     // Measured excursions beyond each advance, in thousandths of an em.
     // Only composite fonts currently admit them; other paths retain zero slack.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
-    // PDF codes to Latin-1 (single-byte mapped fonts still admit ASCII only).
-    // None retains the standard encoding path.
+    // PDF codes to Latin-1. Embedded single-byte maps still admit ASCII only.
+    // None retains the WinAnsi/Latin-1 path.
     codes: Option<Codes>,
 }
 
@@ -49,6 +49,56 @@ impl Metrics {
             horizontal_overhangs: None,
             codes: None,
         }
+    }
+
+    // Unembedded nonsymbolic Helvetica without Encoding uses Adobe's default,
+    // not WinAnsi: ISO 32000-1, 9.6.6 and Annex D.1. A name literally called
+    // StandardEncoding is not a predefined PDF encoding and stays refused.
+    // Only characters in our existing printable Latin-1 domain are offered.
+    pub(super) fn helvetica_default() -> Self {
+        let mut codes = Box::new([None; 256]);
+        for code in 32..=126 {
+            // These codes mean curly quotes, outside the supported domain.
+            if !matches!(code, 39 | 96) {
+                codes[code as usize] = Some(code);
+            }
+        }
+        for (code, ch) in [
+            (161, 161),
+            (162, 162),
+            (163, 163),
+            (165, 165),
+            (167, 167),
+            (168, 164),
+            (169, 39),
+            (171, 171),
+            (180, 183),
+            (182, 182),
+            (187, 187),
+            (191, 191),
+            (193, 96),
+            (194, 180),
+            (197, 175),
+            (200, 168),
+            (203, 184),
+            (225, 198),
+            (227, 170),
+            (233, 216),
+            (235, 186),
+            (241, 230),
+            (249, 248),
+            (251, 223),
+        ] {
+            codes[code] = Some(ch);
+        }
+        let mut metrics = Self::helvetica();
+        for (ch, width) in metrics.widths.iter_mut().enumerate() {
+            if !codes.contains(&Some(ch as u8)) {
+                *width = None;
+            }
+        }
+        metrics.codes = Some(Codes::Single(codes));
+        metrics
     }
 
     pub(super) fn decode(&self, bytes: &[u8]) -> Result<String, String> {
@@ -99,8 +149,7 @@ impl Metrics {
                         .iter()
                         .find(|(_, value)| **value == byte)
                         .ok_or_else(|| {
-                            "the embedded font has no validated glyph for this character"
-                                .to_string()
+                            "the font has no validated glyph for this character".to_string()
                         })?;
                 result.extend(code.to_be_bytes());
             }
@@ -116,16 +165,14 @@ impl Metrics {
                     .iter()
                     .position(|value| value.as_ref() == Some(byte))
                     .map(|code| code as u8)
-                    .ok_or_else(|| {
-                        "the embedded font has no validated glyph for this character".to_string()
-                    })
+                    .ok_or_else(|| "the font has no validated glyph for this character".to_string())
             })
             .collect()
     }
 
     fn width(&self, byte: u8) -> Result<f64, String> {
         Ok(self.widths[byte as usize]
-            .ok_or("the embedded font has no validated glyph for this character")?)
+            .ok_or("the font has no validated glyph for this character")?)
     }
 
     pub(super) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
