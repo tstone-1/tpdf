@@ -7,7 +7,7 @@ import tarfile
 import tempfile
 import unittest
 
-from build_pdfium import canonical_archive, check_upstream_report, complete_licenses, digest
+from build_pdfium import canonical_archive, check_upstream_report, complete_licenses, digest, windows_bash
 from pdfium_verify import CONTROLS, LIMITATIONS, REGRESSIONS, verify
 
 
@@ -86,6 +86,21 @@ class DifferentialTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_windows_bash_belongs_to_git_installation(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            shell = root / "Git/bin/bash.exe"
+            shell.parent.mkdir(parents=True)
+            shell.touch()
+            for relative in ("cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"):
+                self.assertEqual(windows_bash(root / "Git" / relative), shell.resolve())
+            shell.unlink()
+            other = root / "Windows/System32/bash.exe"
+            other.parent.mkdir(parents=True)
+            other.touch()
+            with self.assertRaisesRegex(ValueError, "Git Bash is absent"):
+                windows_bash(root / "Git/cmd/git.exe")
+
     def test_archive_is_identical_across_mtime_and_permission_changes(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
