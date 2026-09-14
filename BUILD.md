@@ -7736,8 +7736,9 @@ control; do not bypass its font restrictions to meet a compatibility target.
 
 Validation of the survey tool on macOS: its mixed-page/boundary controls pass,
 Clippy for `text-edit-probe` and formatting pass, and the public input page counts
-agree with the independent parser. Windows execution of the new all-pages mode
-remains pending. No production editing rules were relaxed by this increment.
+agree with the independent parser. Windows execution at `c43df81` also passes the
+mixed-page and boundary controls; all 45 public page verdicts and input digests
+agree with macOS. No production editing rules were relaxed by the survey increment.
 
 ### Text editing with embedded CFF fonts
 
@@ -7771,7 +7772,7 @@ Independent pypdf readback confirms only the target operand changed; PDFKit
 confirms text agreement and 988 changed pixels inside the target, zero outside.
 The native saved copy also passes independent readback. The unchanged public
 sample still has 0 editable pages out of 45; CFF support alone does not close its
-other layout and font blockers. Windows execution of this increment remains pending.
+other layout and font blockers.
 
 All eight targeted `CFF:` mutations are caught by their named tests, after correcting
 one mutation that initially failed to compile. Their clean control passes 1,435
@@ -7780,3 +7781,38 @@ Rust tests. The instrumented `textedit_scan` campaign executes 23,076 inputs in
 uses `--sanitizer=none`, so this is not an AddressSanitizer result. Clippy for all
 targets, formatting and notices pass. All 11 font programs regenerate byte-for-byte,
 and the final normal frontend bundle contains zero harness units.
+
+Windows x64 verification at `c43df81` on 2026-09-14 passes all 136 text-editor
+Rust tests and all 15 native checks. The contained worker and native saved copy
+both pass independent pypdf readback on Windows and macOS. PDFKit renders each
+Windows output with 988 changed pixels inside the target and zero outside.
+All five retrieved PDF sizes and SHA-256 digests match the Windows manifest.
+The run also passes the survey's all-pages controls and reproduces every verdict
+in the original 45-page public sample. Normal frontend assets are restored with
+zero harness units, the temporary task is removed, and the ordinary checkout
+remains clean. The isolated exact-commit source and build cache are retained.
+
+### Public target follow-up
+
+Two additional unchanged public documents were inspected on macOS, separately
+from the original five-document baseline. Their URLs and digests are in
+`testdata/textedit-public-corpus.json` under `followup_files`; use that list in
+the download recipe above to reproduce this separate sample. All three pages
+are refused, and their digests remain unchanged.
+
+- Wellington Parish Council's two-page April 2026 draft agenda is a Quartz
+  export. Both pages first refuse the single-byte character map. Its seven
+  embedded TrueType resources omit OS/2, a legacy case the existing font policy
+  can support, but also require additional mapping proof. The document also has
+  character spacing, a rendering intent, curves and an image invocation. It is
+  not a one-guard compatibility fix.
+- Adobe's one-page resignation letter template first refuses tagged structure.
+  Its regular fonts declare `/FSType 8 def`, but its bold heading font declares
+  `/FSType 4 def`. It also has CID CFF, custom encoding with a ligature, ToUnicode
+  overrides and additional text/graphics state. Its appearance as an editable
+  template does not make it a suitable whole-page acceptance control for the
+  current font policy.
+
+The next acceptance target remains open. Choose a document by its complete
+resource and content requirements before adding more grammar support; a first
+refusal alone repeatedly understated the work and the font-policy constraints.
