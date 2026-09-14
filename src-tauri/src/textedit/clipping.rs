@@ -64,47 +64,56 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<bool, String> 
     Ok(true)
 }
 
-// Only one straight-line subpath, completed before any state/text operator.
-// S/s paint it; n discards it. No W/W* means it cannot alter the text clip.
-// The caller already bounds the whole stream to MAX_OPERATIONS; each consumed
-// operation is skipped afterwards, keeping discovery linear in stream size.
-pub(super) fn stroked(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
-    let invalid = || "only complete straight-line strokes are editable".to_string();
-    let mut count = 0;
-    for op in ops {
-        let expected = if count == 0 { "m" } else { "l" };
-        if op.operator != expected {
-            break;
-        }
-        if op.operands.len() != 2 {
+// Complete line/Bezier subpaths, finished before any state or text operator.
+// Painting without W/W* cannot alter a later text clip. Keep every operand;
+// transformed control points bound each cubic's convex hull without flattening.
+// MAX_OPERATIONS bounds the entire stream, and the caller skips consumed ops.
+pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
+    let invalid = || "only complete bounded painted paths are editable".to_string();
+    let mut segments = 0;
+    let mut closed = false;
+    for (index, op) in ops.iter().enumerate() {
+        let coordinates = match op.operator.as_str() {
+            "m" if index == 0 || segments > 0 => {
+                segments = 0;
+                closed = false;
+                2
+            }
+            "l" | "c" | "v" | "y" if index > 0 && !closed => {
+                segments += 1;
+                match op.operator.as_str() {
+                    "l" => 2,
+                    "c" => 6,
+                    _ => 4,
+                }
+            }
+            "h" if segments > 0 && !closed && op.operands.is_empty() => {
+                closed = true;
+                continue;
+            }
+            "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n"
+                if segments > 0 && op.operands.is_empty() =>
+            {
+                return Ok(index + 1);
+            }
+            _ => return Err(invalid()),
+        };
+        if op.operands.len() != coordinates {
             return Err(invalid());
         }
-        let x = super::number(&op.operands[0])?;
-        let y = super::number(&op.operands[1])?;
-        let point = [x * ctm[0] + ctm[4], y * ctm[3] + ctm[5]];
-        if point
-            .iter()
-            .any(|value| !value.is_finite() || value.abs() > 1_000_000.)
-        {
-            return Err("stroke coordinates exceed their limit".into());
+        for pair in op.operands.chunks_exact(2) {
+            let x = super::number(&pair[0])?;
+            let y = super::number(&pair[1])?;
+            let point = [x * ctm[0] + ctm[4], y * ctm[3] + ctm[5]];
+            if point
+                .iter()
+                .any(|value| !value.is_finite() || value.abs() > 1_000_000.)
+            {
+                return Err("path coordinates exceed their limit".into());
+            }
         }
-        count += 1;
     }
-    // Require a move and at least one segment, not an empty current path.
-    if count < 2 {
-        return Err(invalid());
-    }
-    if ops
-        .get(count)
-        .is_some_and(|op| op.operator == "h" && op.operands.is_empty())
-    {
-        count += 1;
-    }
-    let end = ops.get(count).ok_or_else(invalid)?;
-    if !matches!(end.operator.as_str(), "S" | "s" | "n") || !end.operands.is_empty() {
-        return Err(invalid());
-    }
-    Ok(count + 1)
+    Err(invalid())
 }
 
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {

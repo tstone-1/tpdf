@@ -416,7 +416,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 }
             }
             ("m", _) if !inside => {
-                let consumed = clipping::stroked(&content.operations[index..], page_transform)?;
+                let consumed = clipping::path(&content.operations[index..], page_transform)?;
                 if content.operations[index + consumed - 1].operator != "n" {
                     tags.paint();
                 }

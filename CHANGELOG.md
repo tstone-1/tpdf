@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Preserve bounded filled and stroked curves during text editing, including
+  compound graphics made from multiple line and Bezier subpaths.
+
 - Support existing en-dash glyphs in mapped TrueType fonts, enabling text edits
   on compatible pages while retaining original font codes and resources.
 

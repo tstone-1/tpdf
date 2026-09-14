@@ -4629,12 +4629,15 @@ advance metrics here and is refused under an explicit clip. Complete `re` rectan
 followed immediately by `S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*` or `n` are
 preserved with the same coordinate bounds. Painting does not replace or discard
 an established clip. A standalone operand-free `n` outside text is a no-op because
-no accepted path remains pending. A single straight-line subpath (`m`, one or more
-`l`, optional `h`, then `S`, `s` or `n`) is also preserved. Every source and transformed
-point is bounded to one million per coordinate; the stream's 4,096-operator bound
-limits work, and completed paths are consumed once. No clip/state/text operator may
-interrupt a path. Compound paths, curves, nonrectangular fills, zero/reversed
-rectangles and clipping combined with painting remain unsupported. A bounded
+no accepted path remains pending. Complete line/Bezier paths are also preserved:
+`m` starts each subpath, `l`/`c`/`v`/`y` append segments, and optional `h` closes it.
+Each subpath must contain a segment; after `h`, only a new `m` or the final paint
+operator is accepted. The same paint endings as rectangles may finish the whole
+path. Every source and transformed point, including all cubic controls, is bounded
+to one million per coordinate. The stream's 4,096-operator bound limits work;
+completed paths are consumed once, with every operand preserved. No clip/state/text
+operator may interrupt a path. Mixed `re` subpaths, zero/reversed rectangles,
+nonrectangular clips and clipping combined with painting remain unsupported. A bounded
 nonnegative `w` setter is preserved; filled text cannot use it and supported strokes
 retain it.
 Nonzero diagonal page scaling and translations compose across `cm` operators
@@ -13677,14 +13680,22 @@ independent text/resource/pixel readback. Only that text operand changes, every
 font/image/colour resource is preserved, and page 2 remains byte-identical in its
 content and pixel-identical when rendered. See `BUILD.md`, *Mapped en dash and
 an unchanged practical page*. No source normalization was used to gain admission.
-The seven-document practical sample now has one editable page out of 48; this
-selected sample is not a representative success rate.
+Windows verification at `61239a2` passes the en-dash and unchanged first-page
+native workflows and independent readback of the saved Windows outputs.
 
-Next: repeat the en-dash and unchanged-agenda native checks on Windows at the
-committed revision, then work on bounded curved-path preservation for page 2.
-Page 2 currently refuses its cubic curves; editing page 1 does not relax that
-refusal. Keep the practical-page save and independent readback as the acceptance
-criterion for the next increment.
+**Page 2 now passes on macOS too (2026-09-14).** Its filled graphic contains seven
+subpaths and 147 cubic segments. Bounded path preservation admits its 85 text runs;
+the native application changes `Community Hub` to `Community`, saves and reopens
+it. Independent readers verify the exact mapped replacement, unchanged surrounding
+operators/resources and pixel-identical first page. See `BUILD.md`, *Text editing
+around curved paths*. Both pages are editable; the seven-document practical sample
+now has two editable pages out of 48, not a representative success rate.
+
+Next: verify curved-path editing on Windows at the committed revision. Then
+inventory the passport guide's external graphics-state refusal and subsequent
+blockers before selecting its unchanged page as the next compatibility target.
+Retain practical-page save and independent readback as the acceptance criterion;
+more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing

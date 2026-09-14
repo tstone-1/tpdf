@@ -105,14 +105,24 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     fonts = list(pages[0]["/Resources"]["/Font"].values())
     symbolic = [font.get_object() for font in fonts
                 if "/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object()]
-    if symbolic and not agenda:
-        assert len(fonts) == len(symbolic) == 1, "symbolic readback requires a single fixture font"
+    if agenda:
+        old_text, new_text = ("REGULAR", "ANNUAL") if page_index == 0 else ("Community Hub", "Community")
+    if symbolic:
+        if agenda:
+            changed_index = next(i for i, pair in enumerate(zip(*operations)) if pair[0] != pair[1])
+            font_name = [args[0] for args, op in operations[0][:changed_index] if op == b"Tf"][-1]
+            mapped_font = pages[0]["/Resources"]["/Font"][font_name]
+            expected_operands = [(old, old_text), (new, new_text)]
+        else:
+            assert len(fonts) == len(symbolic) == 1, "symbolic readback requires a single fixture font"
+            mapped_font = symbolic[0]
+            expected_operands = [(old, "le" if w3c else "SYNTHETIC\u2013FIRST" if dash else "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "ll" if w3c else "EDITED\u2013FIRST" if dash else "EDITED FIRST")]
         # extract_text() deliberately falls back to identity for unmapped codes.
         # Read pypdf's parsed map explicitly so fallback cannot pass this check.
         from pypdf._cmap import get_encoding
-        _, mapping = get_encoding(symbolic[0])
+        _, mapping = get_encoding(mapped_font)
         assert mapping and all(isinstance(k, str) and len(k) == len(v) == 1 for k, v in mapping.items()), "unexpected fixture map"
-        for operation, expected in [(old, "le" if w3c else "SYNTHETIC\u2013FIRST" if dash else "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "ll" if w3c else "EDITED\u2013FIRST" if dash else "EDITED FIRST")]:
+        for operation, expected in expected_operands:
             parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
             raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
                            for part in parts if isinstance(part, (str, bytes)))
@@ -129,10 +139,15 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         assert count == 1 and page_index == 0
         expected_text = ("Dummy PDF file", "Dummy PDF fill")
     if agenda:
-        assert count == 2 and page_index == 0, "wrong agenda page count"
+        assert count == 2 and page_index in (0, 1), "wrong agenda page count"
         original = pages[0].extract_text()
-        assert original.count("REGULAR") == 1 and "ANNUAL" not in original, "wrong agenda text"
-        assert pages[1].extract_text() == original.replace("REGULAR", "ANNUAL"), "wrong agenda replacement or adjacent text"
+        assert original.count(old_text) == 1, "wrong agenda text"
+        expected = original.replace(old_text, new_text)
+        actual = pages[1].extract_text()
+        # pypdf infers an extra space before the separately positioned trailing
+        # space on page 2 after shortening the heading. The mapped operands above
+        # are exact, and every other content operand/resource was already compared.
+        assert (actual.split() == expected.split() if page_index == 1 else actual == expected), "wrong agenda replacement or adjacent text"
     else:
         for page, first in zip(pages, expected_text):
             assert " ".join(page.extract_text().split()) == first + ("" if w3c else " SYNTHETIC SECOND"), "wrong decoded text"
