@@ -45,13 +45,14 @@ you do not need to have diagnosed it.
 - A redaction reported as **clean** that is not. A result of *not verified* is a correct
   answer, by design, and is not a vulnerability.
 - Document JavaScript or launch actions executing. Both are disabled by default.
-- Memory-safety defects in our own Rust reachable from document content.
+- Memory-safety defects in our Rust or PDFium modifications reachable from
+  document content.
 - Bypassing image-import bounds, protected signature-image storage, or the consent
   required before writes that can invalidate a document's digital signatures.
 
 **Out of scope**
 
-- Vulnerabilities in PDFium itself. Report those to
+- Vulnerabilities in unmodified upstream PDFium. Report those to
   [Chromium](https://issues.chromium.org/); they reach far more users through Chrome than
   through tpdf. If a PDFium fix needs a pin bump here, an issue is welcome.
 - The Windows build being unsigned. SmartScreen warns on first launch; this is a known and

@@ -4,7 +4,7 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: released for macOS and Windows, with annotations, page editing, redaction, form filling and visual signatures.**
+**Status: released for macOS and Windows, with annotations, page editing, redaction, form filling, visual signatures and bounded text editing.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
@@ -14,8 +14,8 @@ comment on it, move what you put there, erase any of it, rewrite, answer or dele
 somebody else left, and save --- over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and
-general text editing is the one that matters. An unreleased first editor supports simple Helvetica
-text runs with printable English characters and replacements within the original width.
+general text editing is the one that matters. The editor supports a bounded set of
+text layouts and fonts, with replacements that fit the original line width.
 Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
@@ -369,11 +369,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Apply previews the actual PDF rendering;
-save writes it. The unreleased editor supports simple Helvetica text with Latin-1
-characters, including umlauts and ß, and separate lines or multiline text blocks
-produced by ReportLab with its usual ASCII85/Flate encoding. Replacements must fit
-the original width. Unsupported pages are refused. Text edits support undo and redo
-and must be saved before marking redactions.
+save writes it. The editor supports Helvetica and validated embedded TrueType fonts,
+including existing-glyph composite fonts, bounded kerning, colours, page transforms
+and rectangular clips. Supported tagged paragraphs retain their structure and page
+ownership. Unchanged Word, LibreOffice and Edge exports are included in the verified
+examples; this does not mean every export from those applications is editable.
+Replacements must fit the original line width and use characters available in the
+font. Unsupported pages are refused. Text edits support undo and redo and must be
+saved before marking redactions.
 <!-- built: edit.editText -->
 
 ## Not built yet
@@ -409,7 +412,8 @@ unbuilt while they shipped.
   inside another block. A picture on the page itself is removed, bytes included.
 - Certificate-based digital signing and signature verification.
   <!-- not-built: edit.signDocument -->
-- General text editing: embedded fonts, non-ASCII text, paragraph reflow and complex content streams.
+- General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
+  paragraph reflow and unsupported complex content streams.
 
 ## What Phase 0 established
 

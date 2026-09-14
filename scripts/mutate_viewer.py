@@ -74,7 +74,7 @@ WINDOWS = sys.platform == "win32"
 APP = (
     ROOT / "src-tauri/target/release/tpdf.exe"
     if WINDOWS
-    else ROOT / "src-tauri/target/release/bundle/macos/tpdf.app/Contents/MacOS/tpdf"
+    else ROOT / "src-tauri/target/release/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf"
 )
 
 #: Where the vendored PDFium sits, which is not the same directory on both
@@ -1376,11 +1376,12 @@ def probe_exe(name: str) -> str:
     return f"{path}.exe" if WINDOWS else str(path)
 
 
-APP_BUILD = (
-    [npm(), "run", "tauri", "build", "--", "--no-bundle"]
-    if WINDOWS
-    else [npm(), "run", "tauri", "build", "--", "--bundles", "app"]
-)
+# Normal builds omit the harness. Keep its explicit profile and separately
+# identified macOS bundle together so these checks cannot launch a stale app.
+APP_BUILD = [
+    npm(), "run", "tauri", "build", "--",
+    "--config", "src-tauri/tauri.checks.conf.json",
+] + (["--no-bundle"] if WINDOWS else ["--bundles", "app"])
 
 
 #: How each runner is built and invoked. The structure probe needs no webview

@@ -81,9 +81,9 @@ and nothing says so.
 **The `cargo metadata` sweep this file has recommended since the beginning is real and
 structurally incomplete, and the gap is the whole product.** It sees every cargo package, and it
 is blind to the **C++ libraries compiled into libpdfium** --- FreeType, ICU, libjpeg-turbo,
-libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float, simdutf, llvm-libc ---
-because no cargo command can see inside a prebuilt blob, and that blob is the thing that
-actually parses PDFs. A sweep complete over cargo and silent about everything else passes
+libpng, libtiff, Little CMS, OpenJPEG, zlib, Abseil, AGG, fast_float, simdutf, llvm-libc,
+Dragonbox and HarfBuzz. Cargo enumerates the Rust dependency graph, leaving the engine's
+C++ dependencies outside that inventory. A sweep complete over cargo and silent about everything else passes
 exactly like one that covered everything, which is the consistency-versus-completeness trap
 arriving in the licensing constraint the entire project rests on. The gate enumerates
 `vendor/pdfium/licenses/` as a third population, so a new file appearing there is a finding.
@@ -91,7 +91,7 @@ arriving in the licensing constraint the entire project rests on. The gate enume
 Two GPL strings live in there and both are benign; they are allowlisted **by file and by
 mechanism** in the script, never inferred, and an entry naming a file that has gone produces
 a warning rather than silently excusing nothing. `icu.txt` covers ICU4C's autotools scripts
-under the Autoconf exception, which are build-time files of a library we consume prebuilt;
+under the Autoconf exception; those build-time scripts are not compiled into libpdfium.
 `llvm-libc.txt` is Apache-2.0 WITH LLVM-exception, whose GPLv2 clause *waives* Apache terms
 rather than imposing GPL ones. All three of the gate's failure modes were proved by mutation
 before it was trusted.
@@ -344,8 +344,15 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** --- reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
 | Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** --- reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building. PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
-The PDFium pin is `chromium/8044`, installed by `scripts/fetch_pdfium.py` and verified by
-digest. Phase 0 measurements used `chromium/7881`; they remain historical evidence.
+The PDFium pin is `pdfium-8044-tpdf.1`, installed by `scripts/fetch_pdfium.py` and
+verified by digest. TPDF builds the 8044 source with `scripts/pdfium_rtl.patch`
+through `.github/workflows/pdfium.yml`; archives carry source/toolchain provenance,
+the patch and licensing notices. The correction restores seven ordinary RTL
+extraction regressions while preserving upstream ActualText behavior; two known
+mixed-direction limitations remain. The report is PDFium issue 561066233.
+Only mac-arm64 and win-x64 are published. Engine releases are prereleases with
+Latest disabled so they do not replace the application updater's release.
+Phase 0 measurements used `chromium/7881`; they remain historical evidence.
 On a pin change, re-run the compatibility probes listed near the top of `BUILD.md`.
 
 `pdfium-render` 0.9.4 hides its bindings accessor. `progressive::bind` and

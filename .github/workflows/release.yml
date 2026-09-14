@@ -413,22 +413,25 @@ jobs:
           # current as the last person who read it, which is why the release
           # checklist says to re-read it at the point it matters.
           cat > release-notes.md <<'NOTES'
-          **What this is.** A PDF reader that has begun to edit: fast,
-          sandboxed — every document is parsed and rendered in worker processes
-          that cannot write anything, and on macOS cannot read a file or reach
-          the network either — with search, selection, an outline, thumbnails,
-          session restore and printing.
+          **What this is.** A lightweight PDF reader and editor with search,
+          selection, an outline, thumbnails, session restore and printing.
+          PDFium parsing and rendering run in worker processes. On macOS,
+          workers cannot read arbitrary user files or access the network;
+          Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** An assurance update for forms, signature
-          images and worker cleanup. Saving signed or certified PDFs now asks
-          for confirmation before a rewrite can invalidate their signatures.
-          Signature placement is explicitly labelled as an image, remembered
-          pixels use macOS Keychain or Windows DPAPI, and PNG/JPEG dimensions
-          are bounded before decoding. Normal builds exclude the native-check
-          harness. CI builds every fuzz target, including coverage for forms
-          and signature images. Windows workers join their cleanup job during
-          process creation, closing a race that could leave suspended workers
-          behind after application exit.
+          **New in this release.** Edit existing text from the command palette,
+          preview the actual PDF rendering, undo or redo changes, then save in
+          place or to a copy. The editor supports bounded layouts with Helvetica
+          and validated embedded TrueType fonts, including examples exported by
+          Word, LibreOffice and Edge. Supported tagged paragraphs retain their
+          structure and page ownership. Replacements must fit the original line
+          width and use characters available in the font; unsupported pages are
+          refused, and paragraph reflow is not supported. Save text edits before
+          marking redactions. Automatic update checks at launch can now be
+          disabled while manual checking remains available.
+          A verified PDFium compatibility build also restores Arabic and Hebrew
+          extraction/search regressions introduced by 8044, while preserving
+          upstream ActualText behavior.
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag

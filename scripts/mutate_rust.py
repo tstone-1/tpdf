@@ -120,6 +120,8 @@ HERE = "macos" if sys.platform == "darwin" else "windows" if sys.platform == "wi
 #: but only after `--`: `cargo test --lib a:: b::` is cargo's own argument error,
 #: which is worth knowing because it looks like the feature being unsupported.
 FILTERS = [
+    "textedit::",
+    "textview::",
     "forms::",
     "search::",
     "structure::",
@@ -261,6 +263,17 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('nested tags: allow any leaf role', 'src/textedit/tagging.rs', 'if tag != b"NonStruct" {', 'if false {', 'textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically'),
+    Mutation('nested tags: inherit an ancestor page', 'src/textedit/tagging.rs', 'let page = element(child, plain.id, pages)?;', 'let page = element(child, plain.id, pages)?.or(plain.page);', 'textedit_nested_optional_container_pages_and_scalar_children_are_explicit'),
+    Mutation('nested tags: raise language limit', 'src/textedit/tagging.rs', 'bytes.len() > 63', 'bytes.len() > 64', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
+    Mutation('nested tags: raise language component limit', 'src/textedit/tagging.rs', 'part.len() > 8', 'part.len() > 9', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
+    Mutation('nested tags: skip language character check', 'src/textedit/tagging.rs', '!part.iter().all(u8::is_ascii_alphanumeric)', 'false', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
+    Mutation('nested tags: allow stale next parent key', 'src/textedit/tagging.rs', 'next <= previous', 'next < previous', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
+    Mutation('nested tags: ignore parent tree type', 'src/textedit/tagging.rs', 'value.as_name().ok() != Some(b"ParentTree")', 'false', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
+    Mutation('nested tags: allow leaf layout attributes', 'src/textedit/tagging.rs', 'if name(get(dict, b"S")?)? == b"NonStruct" {', 'if false {', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
+    Mutation('nested tags: raise total leaf limit', 'src/textedit/tagging.rs', 'total > MAX_CONTENT_ITEMS', 'total > MAX_CONTENT_ITEMS + 1', 'textedit_nested_total_content_limit_covers_all_leaf_groups'),
+    Mutation('nested tags: discard direct paragraph content', 'src/textedit/tagging.rs', 'if !plain.items.is_empty() || groups.is_empty() {', 'if groups.is_empty() {', 'textedit_nested_mixed_leaf_ownership_keeps_each_authored_tag'),
+
     Mutation('stream patch: skip discovery boundary validation', 'src/textedit.rs', 'streams::rewrite(&bytes, &content, &BTreeSet::new())?;', '// discovery boundary unchecked', 'textedit_stream_discovery_refuses_unpatchable_nesting'),
     Mutation('stream patch: reserialize untouched operations', 'src/textedit.rs', 'streams::rewrite(&bytes, &content, &patched).map(|bytes| (id, bytes))', 'content.encode().map(|bytes| (id, bytes)).map_err(|e| e.to_string())', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
     Mutation('stream patch: ignore changed untouched operands', 'src/textedit/streams.rs', 'original.operations[0].operands != next.operands', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
@@ -315,7 +328,7 @@ MUTATIONS = [
     Mutation('tagged indent: accept document scope', 'src/textedit/tagging.rs', 'if name(get(dict, b"S")?)? == b"Document" {', 'if false {', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
     Mutation('tagged indent: trim stale source text', 'src/textedit.rs', 'change.original != run.text', 'change.original.trim_end() != run.text.trim_end()', 'textedit_tagged_end_indent_and_source_spaces_survive_a_fitting_edit'),
     Mutation('tagged flow: allow empty role names', 'src/textedit/tagging.rs', 'key.is_empty()', 'false', 'textedit_tagged_empty_role_name_cannot_hide_duplicate_items'),
-    Mutation('tagged flow: ignore explicit item page', 'src/textedit/tagging.rs', '(reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)', '(paragraph_page, integer(get(mcr, b"MCID")?)?)', 'textedit_tagged_flowing_paragraph_preserves_every_item_and_page'),
+    Mutation('tagged flow: ignore explicit item page', 'src/textedit/tagging.rs', '(reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)', '(paragraph_page.ok_or(INVALID)?, integer(get(mcr, b"MCID")?)?)', 'textedit_tagged_flowing_paragraph_preserves_every_item_and_page'),
     Mutation('tagged flow: ignore MCR type', 'src/textedit/tagging.rs', 'if name(get(mcr, b"Type")?)? != b"MCR" {', 'if false {', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
     Mutation('tagged flow: ignore MCR field whitelist', 'src/textedit/tagging.rs', 'keys(mcr, &[b"Type", b"Pg", b"MCID"])?;', '// fields unchecked', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
     Mutation('tagged flow: accept empty paragraph', 'src/textedit/tagging.rs', 'if items.is_empty() || assigned > total {', 'if assigned > total {', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),
@@ -380,7 +393,13 @@ MUTATIONS = [
     Mutation("textedit journal: accept a changed original", "src/docmodel.rs", "previous.revision != change.revision || previous.original != change.original", "previous.revision != change.revision", "textedit_journal_refuses_stale_or_unbounded_input_atomically"),
     Mutation("textedit: let print use the original bytes", "src/edits.rs", "pub fn is_identity(&self) -> bool {", "pub fn is_identity(&self) -> bool {\n        if !self.text_edits.is_empty() { return true; }", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: allow mixed edits to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() {", "textedit_reaches_save_copy_print_and_forbids_append"),
-    Mutation("textedit: accept a partially parsed content stream", "src/textedit.rs", "Content::decode_strict(&bytes)", "Content::decode(&bytes)", "textedit_rejects_partial_or_undecodable_content"),
+    Mutation("text preview: omit the worker rewrite", "src/textview.rs", "crate::textedit::write(&mut document, changes)?;", "let _ = changes;", "textview_rewrites_without_changing_the_original_and_bounds_output"),
+    Mutation("text preview: count retained bytes as free budget", "src/textview.rs", "MAX_PREVIEW_BYTES.saturating_sub(self.0.len())", "MAX_PREVIEW_BYTES.saturating_add(self.0.len())", "textview_rewrites_without_changing_the_original_and_bounds_output"),
+    # Both passes reject partial input: strict decoding and the byte-preserving
+    # writer's complete token walk. Weakening only the first is masked by the
+    # second. Remove both for this end-to-end completion property; the stream
+    # patch mutations separately exercise the writer's boundary checks.
+    Mutation("textedit: bypass both content completion checks", "src/textedit.rs", '    let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;\n    if content.operations.len() > MAX_OPERATIONS {\n        return Err("text operator count exceeds its limit".into());\n    }\n    // Discovery promises that deletion can use the byte-preserving writer too.\n    streams::rewrite(&bytes, &content, &BTreeSet::new())?;\n', '    let content = Content::decode(&bytes).map_err(|e| e.to_string())?;\n    if content.operations.len() > MAX_OPERATIONS {\n        return Err("text operator count exceeds its limit".into());\n    }\n    // Discovery promises that deletion can use the byte-preserving writer too.\n', "textedit_rejects_partial_or_undecodable_content"),
     Mutation("textedit: omit the writer call", "src/save.rs", "    crate::textedit::write(&mut doc, &plan.text_edits)?;", "    // text replacement omitted", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: keep unreachable old content", "src/save.rs", "        || !plan.text_edits.is_empty()", "        || false", "textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans"),
     Mutation("textedit: accept a stale content revision", "src/textedit.rs", "change.revision != runs.revision || change.original != run.text", "change.original != run.text", "textedit_rejects_invalid_batches_without_mutating_the_document"),

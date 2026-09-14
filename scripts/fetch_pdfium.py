@@ -15,9 +15,10 @@ aborts without touching `vendor/`. `docs/THREAT-MODEL.md` treats every PDF as
 hostile input, which is not a serious position if the parser itself arrives
 unverified over the network.
 
-**The asset must not be a V8 build.** `bblanchon/pdfium-binaries` publishes
-`pdfium-<platform>` and `pdfium-v8-<platform>` for every release, differing by
-one word in the URL. AGENTS.md records that the vendored build has zero `v8::`
+**The asset must not be a V8 build.** The source-build workflow disables V8
+and XFA and checks the engine's dependency graph. The asset-name check also
+remains: the former supplier distinguished V8 builds by one word in the URL.
+AGENTS.md records that the vendored macOS build has zero `v8::`
 symbols and zero `CXFA_` symbols, and `docs/THREAT-MODEL.md` promotes that from
 a policy ("document JavaScript is disabled") to a property of the binary
 ("there is no engine to disable"). That claim survives exactly as long as nobody
@@ -29,10 +30,10 @@ Usage:
     scripts/fetch_pdfium.py --force         # reinstall even if correct
     scripts/fetch_pdfium.py --platform win-x64 --dest vendor/pdfium-win
 
-Installing writes `VERSION.txt` (the upstream tag) and `SHA256.txt` beside the
-extracted tree, so an install can be checked later without the network. Note the
-archive itself carries neither -- it ships a `VERSION` file of
-MAJOR/MINOR/BUILD/PATCH lines -- which is why the two are written here.
+Installing writes `VERSION.txt` (the dependency release tag) and `SHA256.txt`
+beside the extracted tree, so an install can be checked later without the
+network. The archive includes `PROVENANCE.json`, source/dependency revisions
+and the patch; the installer adds the two local verification stamps.
 
 `SHA256.txt` has **two** lines, and the second is what makes `--check` a
 statement about the library rather than about the stamp:
@@ -56,10 +57,10 @@ or a swap, and it inherits its provenance from the archive check that admitted
 those bytes. A stamp on its own is still worth nothing.
 
 Bumping the pin means changing TAG and the whole PINS table together, then
-re-running the checks AGENTS.md attaches to a PDFium bump: `remove_probe` for
-the object-destroy segfault, and `worker_bench --mode engine` for the V8 and XFA
-symbol scan. A digest cannot tell you the new build still behaves; only those
-can.
+re-running BUILD.md's compatibility probes, including `search-probe` on both
+multilingual and encoding fixtures. PDFium 8044 changed Arabic word order;
+the object-destroy, symbol and rendering probes cannot detect that regression.
+A digest cannot tell you the new build still behaves.
 """
 
 import argparse
@@ -74,22 +75,20 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# The pinned upstream release. Re-run BUILD.md's compatibility probes on a bump;
+# The pinned source-built release. Re-run BUILD.md's compatibility probes on a bump;
 # historical Phase 0 measurements describe their original build, not this one.
-TAG = "chromium/8044"
+TAG = "pdfium-8044-tpdf.1"
 
 # asset name -> sha256 of the archive as published under TAG.
 #
-# Digests published with the upstream release assets. The installer verifies
-# downloaded bytes before extraction on every platform.
+# Verified artifacts from PDFium candidate run 34815333188, commit e756da9.
+# Only the architectures shipped by tpdf are built and published.
 PINS = {
-    "mac-arm64": "61424884d4a7f153b808deba6437848e4400834ce30aaf95d3050da44df8f420",
-    "mac-x64": "a93d44238e05de20028446561b951d50988b849efbbe56fe40c0d376c05b45e8",
-    "win-x64": "78a17d9a5f14467631c26a3ac8741b27a0471ecc05bd6a119b523598160a0537",
-    "win-arm64": "6c9ac0ddc69edd8a18d47b95098a5b843eaed5c5bbdcb9587a18c196457449f8",
+    "mac-arm64": "f9986b79201c1eeef1cb24a9e1d907f5ed71cc2ad41b2b80ac08dd29fe963418",
+    "win-x64": "40f8414bb698b2bb9cbef9baea277c4370194445c9e3025e1c071626ce27ded5",
 }
 
-RELEASE_URL = "https://github.com/bblanchon/pdfium-binaries/releases/download"
+RELEASE_URL = "https://github.com/tstone-1/tpdf/releases/download"
 
 
 def host_platform() -> str:
@@ -97,13 +96,14 @@ def host_platform() -> str:
     machine = platform.machine().lower()
     arm = machine in ("arm64", "aarch64")
 
-    if sys.platform == "darwin":
-        return "mac-arm64" if arm else "mac-x64"
-    if sys.platform in ("win32", "cygwin"):
-        return "win-arm64" if arm else "win-x64"
+    if sys.platform == "darwin" and arm:
+        return "mac-arm64"
+    if sys.platform in ("win32", "cygwin") and machine in ("amd64", "x86_64"):
+        return "win-x64"
 
     sys.exit(
-        f"[FAIL] tpdf targets macOS and Windows; this is {sys.platform}/{machine}.\n"
+        f"[FAIL] no PDFium archive for {sys.platform}/{machine}; "
+        f"supported targets: {', '.join(sorted(PINS))}.\n"
         f"       Pass --platform to install a cross-platform archive anyway."
     )
 

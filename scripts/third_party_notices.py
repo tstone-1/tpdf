@@ -93,8 +93,8 @@ ALLOWED_COPYLEFT = {
         "config.guess and install-sh -- each carrying the Autoconf special "
         "exception, and the file itself states the exception's condition is "
         "fulfilled because ICU4C ships a generated `configure`. None of the "
-        "three is compiled into libpdfium; they are build-time files of a "
-        "library we consume as a prebuilt binary."
+        "three is compiled into libpdfium; these build-time scripts are "
+        "excluded from the distributed library."
     ),
     "llvm-libc.txt": (
         "Apache-2.0 WITH LLVM-exception. The GPLv2 mention is part of the "
@@ -441,8 +441,10 @@ def render(
     add("## PDFium, and the libraries compiled into it")
     add("")
     add(
-        "PDFium is consumed as a prebuilt binary from `bblanchon/pdfium-binaries`, "
-        "pinned by digest. It statically contains the following libraries, none of "
+        "PDFium is built from pinned source by tpdf's PDFium candidate workflow, "
+        "using packaging patches from `bblanchon/pdfium-binaries`. The archives "
+        "are pinned by digest and carry source and toolchain provenance. "
+        "The engine statically contains the following libraries, none of "
         "which appears in `Cargo.lock` -- `cargo metadata` cannot see inside a "
         "compiled blob, which is why they are enumerated from the licence files that "
         "ship beside the library rather than from the dependency graph."
