@@ -103,8 +103,19 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     else:
         assert isinstance(new[0][0], (str, bytes)), "wrong replacement operand"
     fonts = list(pages[0]["/Resources"]["/Font"].values())
+    cff_fonts = [font.get_object() for font in fonts
+                 if font.get_object().get("/Subtype") == "/Type1" and
+                 "/FontDescriptor" in font.get_object() and
+                 "/FontFile3" in font.get_object()["/FontDescriptor"]]
+    if cff_fonts:
+        # pypdf otherwise warns and continues with incomplete CFF decoding.
+        try:
+            import fontTools.cffLib  # noqa: F401
+        except ImportError as error:
+            raise AssertionError("CFF readback requires fonttools; add --with fonttools") from error
     symbolic = [font.get_object() for font in fonts
-                if "/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object()]
+                if ("/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object())
+                or font.get_object() in cff_fonts]
     if agenda:
         old_text, new_text = ("REGULAR", "ANNUAL") if page_index == 0 else ("Community Hub", "Community")
     if symbolic:
@@ -120,7 +131,10 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         # extract_text() deliberately falls back to identity for unmapped codes.
         # Read pypdf's parsed map explicitly so fallback cannot pass this check.
         from pypdf._cmap import get_encoding
-        _, mapping = get_encoding(mapped_font)
+        encoding, mapping = get_encoding(mapped_font)
+        if mapped_font in cff_fonts and "/ToUnicode" not in mapped_font:
+            assert isinstance(encoding, dict), "expected explicit CFF glyph encoding"
+            mapping = {chr(code): text for code, text in encoding.items()}
         assert mapping and all(isinstance(k, str) and len(k) == len(v) == 1 for k, v in mapping.items()), "unexpected fixture map"
         for operation, expected in expected_operands:
             parts = operation[0][0] if operation[1] == b"TJ" else operation[0]

@@ -243,7 +243,7 @@ def editable_text(multiline: bool = False, encoding: str = "plain", latin1: bool
     return pdf_objects(objects)
 
 
-def editable_embedded(mac_roman: bool = False, cff: str | None = None) -> bytes:
+def editable_embedded(mac_roman: bool = False, cff: str | None = None, cff_mapping: bool = False) -> bytes:
     """A built-in font seed: no fontTools install or generated corpus required."""
     font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
     if cff:
@@ -275,6 +275,11 @@ def editable_embedded(mac_roman: bool = False, cff: str | None = None) -> bytes:
         ).replace(b"600 " * 58, b"600 " * 95)
         objects[6] = objects[6].replace(b"/FontFile2", b"/FontFile3")
         objects[7] = objects[7].replace(b"<< /Length", b"<< /Subtype /Type1C /Length", 1)
+    if cff_mapping:
+        assert cff
+        objects[4] = objects[4].replace(b"/Encoding /WinAnsiEncoding", b"/Encoding << /BaseEncoding /WinAnsiEncoding /Differences [65 /B /A] >> /ToUnicode 8 0 R")
+        mapping = b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <41> <0042> <42> <0041> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"
+        objects[8] = b"<< /Length " + str(len(mapping)).encode() + b" >>\nstream\n" + mapping + b"\nendstream"
     if mac_roman:
         objects[3] = objects[3].replace(b"/Resources <<", b"/Resources << /ColorSpace << /C [/ICCBased 8 0 R] >>")
         objects[4] = objects[4].replace(b"WinAnsiEncoding", b"MacRomanEncoding")
@@ -411,7 +416,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-cff-mapping", editable_embedded(cff="normal", cff_mapping=True)), ("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                   ("editable-positive-word-spacing", editable_text(kerning=True, spacing=1., word_spacing=1.)),
                                   ("editable-negative-word-spacing", editable_text(kerning=True, spacing=-1., word_spacing=-1.)),

@@ -1,4 +1,4 @@
-//! Existing named glyphs in single-font Type1C programs with WinAnsi encoding.
+//! Existing named glyphs in single-font Type1C programs with bounded WinAnsi encodings.
 //! PDF glyph names select outlines; the CFF's own byte encoding is irrelevant.
 
 use super::{dictionary, filters, number, Codes, Metrics};
@@ -6,6 +6,7 @@ use lopdf::{Dictionary, Document, Object};
 use std::collections::BTreeMap;
 use ttf_parser::{cff::Table, GlyphId};
 
+mod encoding;
 mod profile;
 #[cfg(test)]
 mod tests;
@@ -113,7 +114,6 @@ const ASCII_NAMES: [&str; 95] = [
 pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
         || font.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1")
-        || font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding")
         || font.get(b"BaseFont").and_then(Object::as_name).is_err()
         || font.iter().any(|(key, _)| {
             !matches!(
@@ -122,6 +122,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
                     | b"Subtype"
                     | b"BaseFont"
                     | b"Encoding"
+                    | b"ToUnicode"
                     | b"Name"
                     | b"FirstChar"
                     | b"LastChar"
@@ -190,12 +191,16 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     if widths.len() != (last - first + 1) as usize {
         return Err(INVALID.into());
     }
+    let encoding = encoding::slots(doc, font)?;
     let mut result = Box::new([None; 256]);
     let mut codes = Box::new([None; 256]);
     let mut vertical_bounds = [0_f64; 2];
     let mut overhangs = Box::new([[0_f64; 2]; 256]);
-    for (index, name) in ASCII_NAMES.iter().enumerate() {
-        let code = index + 32;
+    for (code, slot) in encoding.iter().enumerate() {
+        let Some(slot) = slot.map(usize::from) else {
+            continue;
+        };
+        let name = &ASCII_NAMES[slot - 32];
         if (code as i64) < first || (code as i64) > last {
             continue;
         }
@@ -216,13 +221,16 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom);
                 vertical_bounds[1] = vertical_bounds[1].max(top);
-                overhangs[code] = [left.min(0.), (right - width).max(0.)];
+                overhangs[slot] = [left.min(0.), (right - width).max(0.)];
             }
-            Ok(None) if code == 32 => {}
+            Ok(None) if slot == 32 => {}
             _ => continue,
         }
-        result[code] = Some(width);
-        codes[code] = Some(code as u8);
+        if result[slot].is_some() {
+            return Err("ambiguous duplicate CFF glyph encoding".into());
+        }
+        result[slot] = Some(width);
+        codes[code] = Some(slot as u8);
     }
     Ok(Metrics {
         widths: result,
