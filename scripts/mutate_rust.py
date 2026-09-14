@@ -465,6 +465,10 @@ MUTATIONS = [
     Mutation("textedit: accept hidden or clipping text modes", "src/textedit.rs", '("Tr", [Object::Integer(0)])', '("Tr", [_])', "textedit_default_setters_refuse_nondefault_and_malformed_operands"),
     Mutation("textedit: default setter positions a following show", "src/textedit.rs", '("Tw" | "Ts", [value]) if number(value)? == 0.0 => {}', '("Tw" | "Ts", [value]) if number(value)? == 0.0 => { positioned = true; }', "textedit_default_setters_do_not_position_a_following_show"),
 
+    Mutation('intent: skip direct intent validation', 'src/textedit.rs', '("ri", [Object::Name(name)]) => colors::intent(name)?,', '("ri", [Object::Name(_)]) => {},', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
+    Mutation('intent: skip graphics state intent validation', 'src/textedit/graphics.rs', '(b"RI", Object::Name(name)) => super::colors::intent(name)?,', '(b"RI", Object::Name(_)) => {},', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
+    Mutation('intent: setter positions a following show', 'src/textedit.rs', '("ri", [Object::Name(name)]) => colors::intent(name)?,', '("ri", [Object::Name(name)]) => { colors::intent(name)?; positioned = true; },', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
+
     Mutation('spacing: ignore nonzero character spacing', 'src/textedit/fonts.rs', 'if spacing == 0. {', 'if true {', 'textedit_spacing_measures_character_steps_and_tj_fragments'),
     Mutation('spacing: omit trailing character step', 'src/textedit/fonts.rs', 'cursor += step;', 'cursor += width;', 'textedit_spacing_measures_character_steps_and_tj_fragments'),
     Mutation('spacing: omit relative size limit', 'src/textedit/fonts.rs', 'spacing.abs() > size * 0.25', 'false', 'textedit_spacing_bounds_and_malformed_setters_remain_refused'),

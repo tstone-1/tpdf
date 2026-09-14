@@ -4600,6 +4600,10 @@ signatures, component counts and unit ranges. These are envelope checks, not
 validation of ICC transforms: the contained renderer interprets the unchanged
 profile. Pattern/spot/calibrated spaces and default-space substitutions remain
 refused.
+The four standard rendering intents are preserved through `ri` and ExtGState
+`/RI`. Unknown names and malformed values are refused; the original operators
+and state dictionaries retain colour-conversion settings during edits without
+changing geometry or independently positioning the next text show.
 Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
 outside text blocks, with positive dimensions and coordinates bounded to one
 million after transformation. They intersect in original page space and restore
@@ -13656,10 +13660,11 @@ Quartz agenda; both pages still refuse unsupported operators. See `BUILD.md`,
 The next milestone is a saved text replacement on page 1 of the **unchanged
 Wellington agenda**, verified through the native application and independent
 text/resource/pixel readback. Group its remaining admission work around that
-outcome: the en dash, `/Perceptual` and its image invocation, with the resource
-and ink checks kept intact. Character spacing is implemented and verified on
-macOS; see `BUILD.md`, *Character spacing in text edits*. Its Windows verification
-is pending. Page 2's curves are a separate
+outcome: the en dash and its image invocation, with the resource and ink checks
+kept intact. Character spacing is verified on macOS and Windows; see `BUILD.md`,
+*Character spacing in text edits*. Standard rendering intents, including
+`/Perceptual`, are implemented and verified on macOS; Windows verification of
+that increment is pending. Page 2's curves are a separate
 milestone; its content and resources must remain unchanged while page 1 is edited. `BUILD.md`
 records the per-page inventory and spacing requirements. Do not count another
 synthetic case or a later first-refusal reason as completing this milestone.

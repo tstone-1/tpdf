@@ -7974,3 +7974,32 @@ with 88 MiB peak RSS and no finding. This macOS run uses `--sanitizer=none`;
 it is not AddressSanitizer coverage.
 Normal frontend assets are restored; the bundle contains zero harness units,
 and the third-party notices check passes.
+
+Windows x64 verification at `7c15d42` on 2026-09-14 passes all 147 text-editor
+tests and both 15-check native workflows. Both worker and native saves pass
+independent pypdf readback on Windows and macOS. PDFKit finds 935 changed pixels
+inside the target, zero outside, for all four outputs; the glyph-position check
+also passes for both writing routes. All ten retrieved PDFs match their Windows
+sizes and SHA-256 digests. The first task was terminated with status `0xC000013A`
+after the tests; the retry completes with exit zero. Normal assets are restored,
+the temporary task is removed, and the ordinary checkout remains clean.
+
+### Rendering intents in text edits
+
+The four standard intents are accepted through `ri` and graphics-state `/RI`,
+with original operators and resource bytes retained. Unknown names, malformed
+values and implicit positioning between shows remain refused. Generate the
+combined spacing/intent fixture with:
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-intents/source.pdf --ranges --spacing -1 --intent Perceptual
+```
+
+On macOS, 149 focused Rust tests and the 15-check native workflow pass. Worker
+and native saves pass independent pypdf and PDFKit readback: only the target
+text operand changes, resources agree, and 935 pixels change inside the target
+with zero outside. All three targeted mutations are caught by their named tests;
+the clean control passes 1,448 Rust tests. Clippy, mutation anchors, normal bundle
+and notices checks pass. Windows verification of this increment is pending.
+The unchanged agenda still refuses both pages; image and en-dash support remain
+before its practical-page milestone can be demonstrated.

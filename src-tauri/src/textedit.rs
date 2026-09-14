@@ -431,6 +431,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("Tw" | "Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
             ("Tr", [Object::Integer(0)]) => {}
+            ("ri", [Object::Name(name)]) => colors::intent(name)?,
             ("gs", [Object::Name(name)]) => {
                 if !graphics_states.contains(name) {
                     if graphics_states.len() >= 32 {

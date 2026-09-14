@@ -4,6 +4,7 @@
 uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-symbolic/fixture.pdf
 Append --ranges to use Quartz-style scalar ToUnicode ranges.
 Append --spacing -0.005 to retain character spacing around the first line.
+Append --intent Perceptual to retain both ri and ExtGState RI settings.
 Original geometric outlines, MIT like this repository; no installed font is read.
 """
 from io import BytesIO
@@ -21,12 +22,13 @@ def main():
     from fontTools.ttLib import TTFont
     from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
     from pypdf import PdfReader, PdfWriter
-    from pypdf.generic import ArrayObject, DecodedStreamObject, NameObject, NumberObject
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--ranges", action="store_true")
     parser.add_argument("--spacing", type=float, default=0.)
+    parser.add_argument("--intent", choices=["AbsoluteColorimetric", "RelativeColorimetric", "Saturation", "Perceptual"])
     args = parser.parse_args()
     if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
         parser.error("spacing must be finite and within -3..3 for the 12pt fixture")
@@ -85,6 +87,13 @@ def main():
     first = f"BT /F1 12 Tf 40 180 Td [{encoded('SYNTHETIC ')} 20 {encoded('FIRST')}] TJ ET"
     if args.spacing:
         first = f"q {args.spacing:g} Tc {first} Q"
+    if args.intent:
+        page["/Resources"][NameObject("/ExtGState")] = DictionaryObject({
+            NameObject("/IntentState"): writer._add_object(DictionaryObject({
+                NameObject("/RI"): NameObject("/" + args.intent),
+            })),
+        })
+        first = f"/{args.intent} ri q /IntentState gs {first} Q"
     content.set_data((first + "\n" +
                      f"BT /F1 12 Tf 40 140 Td {encoded('SYNTHETIC SECOND')} Tj ET").encode())
     page[NameObject("/Contents")] = writer._add_object(content)

@@ -229,3 +229,101 @@ fn textedit_stroke_setters_validate_values_without_enabling_stroke_text() {
         );
     }
 }
+
+#[test]
+fn textedit_rendering_intents_preserve_operators_resources_and_geometry() {
+    for intent in [
+        "AbsoluteColorimetric",
+        "RelativeColorimetric",
+        "Saturation",
+        "Perceptual",
+    ] {
+        let body = format!("/{intent} ri q /G3 gs BT /F1 12 Tf /{intent} ri 40 180 Td (FIRST) Tj ET Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+        let mut doc = fixture(dictionary! { "RI" => intent }.into(), &body);
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), 2);
+        assert_eq!(before.runs[0].matrix, [1., 0., 0., 1., 40., 180.]);
+        let bytes = doc.get_page_content(page);
+        let objects = doc.objects.clone();
+        let change = Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        textedit::write(&mut doc, &[change]).unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        assert_eq!(
+            crate::encoding::resolve(
+                &doc,
+                doc.get_dictionary(page).unwrap().get(b"Contents").unwrap()
+            )
+            .as_stream()
+            .unwrap()
+            .content,
+            String::from_utf8(bytes)
+                .unwrap()
+                .replace("(FIRST)", "(IN)")
+                .into_bytes()
+        );
+        for (id, object) in objects {
+            if id != page {
+                assert_eq!(doc.objects[&id], object);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions() {
+    for body in [
+        "ri",
+        "1 ri",
+        "(Perceptual) ri",
+        "[ /Perceptual ] ri",
+        "null ri",
+        "/Perceptual /Saturation ri",
+        "/Unknown ri",
+        "/perceptual ri",
+        "/PerceptualExtra ri",
+    ] {
+        let body = format!("{body} /Perceptual ri BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+        let mut doc = fixture(dictionary! {}.into(), &body);
+        let objects = doc.objects.clone();
+        assert!(textedit::scan(&doc, 0).is_err(), "{body}");
+        assert!(textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: vec![],
+                operator: 0,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }]
+        )
+        .is_err());
+        assert_eq!(doc.objects, objects);
+    }
+    for value in [
+        Object::Name(b"Unknown".to_vec()),
+        Object::string_literal("Perceptual"),
+        Object::Integer(0),
+        Object::Null,
+        Object::Reference((9999, 0)),
+    ] {
+        let doc = fixture(
+            dictionary! { "RI" => value }.into(),
+            "/G3 gs /Perceptual ri BT /F1 12 Tf 40 180 Td (FIRST) Tj ET",
+        );
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+    for setter in ["/Perceptual ri", "/G3 gs"] {
+        let body = format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj {setter} (SECOND) Tj ET");
+        let doc = fixture(dictionary! { "RI" => "Perceptual" }.into(), &body);
+        assert!(textedit::scan(&doc, 0).is_err(), "{setter}");
+    }
+}
