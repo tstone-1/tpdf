@@ -7871,3 +7871,41 @@ with macOS for both documents and all six pages: one editable and five refused.
 Normal frontend assets are restored with zero harness units, the temporary task
 is removed, and the ordinary checkout remains clean. The isolated exact-commit
 source and build cache are retained.
+
+
+### Single-byte character-map ranges
+
+Symbolic TrueType editing now accepts scalar `bfrange` entries as well as
+`bfchar`, using the existing strict wrapper and 16 KiB decoded limit. Entire
+expansions must stay in printable ASCII, with unique source and Unicode values
+across all blocks. Reversed endpoints, mismatched counts, array targets and
+multibyte codes remain refused. No mapping or font program is rewritten.
+
+This addresses a measured blocker in the unchanged Wellington agenda: its
+Quartz fonts use single-byte ranges. Both pages now pass their first font-map
+check and stop at unsupported page operators. This does not establish page
+editability: the document also needs nonzero character spacing, an en dash,
+curves and an image invocation. The practical-document target remains open.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-ranges/source.pdf --ranges
+src-tauri/target/debug/examples/text-edit-probe scratch/textedit-ranges/worker scratch/textedit-ranges/source.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-ranges/worker/synthetic-before.pdf scratch/textedit-ranges/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/textedit-ranges/worker
+```
+
+The generator uses original geometric outlines and gives the edited letters
+codes inside multi-character ranges. Use this generated PDF for native and
+independent readback; the hand-built Rust font fixture is for unit assertions
+and did not pass PDFKit readback. On macOS, all 141 focused tests and the 15 native
+workflow checks pass. Worker and native saves preserve all resources under
+pypdf readback; PDFKit measures 935 changed pixels inside the line and zero
+outside for each. Unchanged-output and altered-mapping controls are rejected.
+All seven selected mapping mutations are caught, with 1,440 Rust tests passing
+in the clean control. Clippy and mutation-anchor checks pass.
+
+The instrumented `textedit_scan` run, including the new range-mapping seed,
+executes 27,962 inputs in 21 seconds without a finding, peaking at 88 MiB RSS.
+It uses `--sanitizer=none` on macOS. The existing `bfchar` generator output remains
+byte-identical. Normal frontend assets are restored with zero harness units.
+Windows verification of this increment remains pending.

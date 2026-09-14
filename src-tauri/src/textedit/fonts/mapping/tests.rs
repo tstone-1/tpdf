@@ -75,6 +75,91 @@ fn textedit_mapping_bounds_plain_and_compressed_streams() {
     assert!(parse(&large).is_err());
 }
 
+fn single_body(body: &str) -> String {
+    MAP.replace("2 beginbfchar\n<01> <0041>\n<02> <0042>\nendbfchar", body)
+}
+
+#[test]
+fn textedit_single_ranges_expand_exactly_and_mix_with_bfchar() {
+    // Every possible source byte is exercised, including a range ending at FF.
+    // Targets stay ASCII even when the font's source codes are not.
+    for first in 0_u16..=255 {
+        let length = 95.min(256 - first);
+        let last = first + length - 1;
+        let source = single_body(&format!(
+            "1 beginbfrange <{first:02x}> <{last:02x}> <0020> endbfrange"
+        ));
+        let codes = parse(&stream(&source)).unwrap();
+        for (code, &value) in codes.iter().enumerate() {
+            let expected = if (first..=last).contains(&(code as u16)) {
+                Some((32 + code as u16 - first) as u8)
+            } else {
+                None
+            };
+            assert_eq!(value, expected, "first={first}, code={code}");
+        }
+    }
+    let source = single_body(
+        "1 beginbfchar <ff> <007e> endbfchar
+         2 beginbfrange <00> <01> <0020> <a0> <a1> <0041> endbfrange
+         1 beginbfchar <02> <0043> endbfchar",
+    );
+    for compressed in [false, true] {
+        let mut input = stream(&source);
+        if compressed {
+            input.compress().unwrap();
+        }
+        let codes = parse(&input).unwrap();
+        assert_eq!(codes.iter().flatten().count(), 6);
+        for (code, ch) in [
+            (0, b' '),
+            (1, b'!'),
+            (2, b'C'),
+            (160, b'A'),
+            (161, b'B'),
+            (255, b'~'),
+        ] {
+            assert_eq!(codes[code], Some(ch));
+        }
+    }
+}
+
+#[test]
+fn textedit_single_ranges_reject_bad_endpoints_counts_and_overlap() {
+    for body in [
+        "1 beginbfrange <02> <01> <0041> endbfrange",
+        "1 beginbfrange <00> <ff> <0020> endbfrange",
+        "1 beginbfrange <01> <02> <007e> endbfrange",
+        "1 beginbfrange <01> <02> <001f> endbfrange",
+        "1 beginbfrange <01> <01> <0100> endbfrange",
+        "1 beginbfrange <01> <02> <d800> endbfrange",
+        "1 beginbfrange <01> <02> <00ff> endbfrange",
+        "1 beginbfrange <0001> <02> <0041> endbfrange",
+        "1 beginbfrange <01> <0002> <0041> endbfrange",
+        "1 beginbfrange <01> <02> <41> endbfrange",
+        "1 beginbfrange <01> <02> <00410042> endbfrange",
+        "1 beginbfrange <01> <02> [<0041> <0042>] endbfrange",
+        "1 beginbfrange 1 <02> <0041> endbfrange",
+        "1 beginbfrange <01> <02> /A endbfrange",
+        "1 beginbfrange <01> <02> <0041> endbfchar",
+        "1 beginbfchar <01> <0041> endbfrange",
+        "0 beginbfrange <01> <02> <0041> endbfrange",
+        "101 beginbfrange <01> <02> <0041> endbfrange",
+        "2 beginbfrange <01> <02> <0041> endbfrange",
+        "1 beginbfrange <01> <02> <0041> <03> <04> <0043> endbfrange",
+        "1 beginbfrange <01> <02> endbfrange",
+        "1 beginbfrange <01> <02> <0041> 1 endbfrange",
+        "1 beginbfrange <01> <02> <0041> endbfrange 1 beginbfchar <02> <0043> endbfchar",
+        "1 beginbfchar <02> <0043> endbfchar 1 beginbfrange <01> <02> <0041> endbfrange",
+        "1 beginbfrange <01> <02> <0041> endbfrange 1 beginbfchar <03> <0042> endbfchar",
+        "1 beginbfchar <03> <0042> endbfchar 1 beginbfrange <01> <02> <0041> endbfrange",
+        "2 beginbfrange <01> <02> <0041> <02> <03> <0043> endbfrange",
+        "2 beginbfrange <01> <02> <0041> <03> <04> <0042> endbfrange",
+    ] {
+        assert!(parse(&stream(&single_body(body))).is_err(), "{body}");
+    }
+}
+
 fn wide_map() -> String {
     MAP.replace("<00> <FF>", "<0000> <FFFF>")
         .replace("<01>", "<0101>")

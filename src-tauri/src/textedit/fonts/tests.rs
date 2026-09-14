@@ -500,6 +500,83 @@ pub(super) fn custom_fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
 }
 
 #[test]
+fn textedit_symbolic_ranges_roundtrip_preserves_mapping_and_other_pages() {
+    let (mut doc, font, _) = custom_fixture();
+    let map = doc
+        .get_dictionary(font)
+        .unwrap()
+        .get(b"ToUnicode")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let source = doc.get_object_mut(map).unwrap().as_stream_mut().unwrap();
+    // Same symbolic font, but Quartz-style scalar ranges. The last range
+    // covers A and B; each earlier entry has an explicitly separate endpoint.
+    source.content = b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap
+        /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+        /CMapName /Adobe-Identity-UCS def /CMapType 2 def
+        1 begincodespacerange <00> <FF> endcodespacerange
+        14 beginbfrange
+        <01><01><0053>
+        <02><02><0059>
+        <03><03><004e>
+        <04><04><0054>
+        <05><05><0048>
+        <06><06><0045>
+        <07><07><0049>
+        <08><08><0043>
+        <09><09><0020>
+        <0a><0a><0046>
+        <0b><0b><0052>
+        <0c><0c><004f>
+        <0d><0d><0044>
+        <0e><0f><0041>
+        endbfrange
+        endcmap CMapName currentdict /CMap defineresource pop end end"
+        .to_vec();
+    let before = doc.objects.clone();
+    let runs = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(runs.runs[0].text, "SYNTHETIC FIRST");
+    let other = textedit::scan(&doc, 1).unwrap();
+    for replacement in ["AB", "EDITED FIRST"] {
+        let mut edited = doc.clone();
+        let update = change(&edited, replacement);
+        textedit::write(&mut edited, &[update]).unwrap();
+        assert_eq!(
+            textedit::scan(&edited, 0).unwrap().runs[0].text,
+            replacement
+        );
+        assert_eq!(textedit::scan(&edited, 0).unwrap().runs[1], runs.runs[1]);
+        assert_eq!(textedit::scan(&edited, 1).unwrap().runs, other.runs);
+        let page = crate::pagetree::ordered_pages(&edited)[0];
+        let content =
+            lopdf::content::Content::decode_strict(&edited.get_page_content(page)).unwrap();
+        let bytes = content.operations[runs.runs[0].operator as usize].operands[0]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            &bytes[..2],
+            if replacement == "AB" {
+                &[14, 15]
+            } else {
+                &[6, 13]
+            }
+        );
+        // Every old object is immutable; only the edited page gets a new stream.
+        for (id, value) in &before {
+            if *id != page {
+                assert_eq!(edited.objects[id], *value, "changed object {id:?}");
+            }
+        }
+    }
+    let update = change(&doc, "Z");
+    assert!(textedit::write(&mut doc, &[update])
+        .unwrap_err()
+        .contains("no validated glyph"));
+    assert_eq!(doc.objects, before);
+}
+
+#[test]
 fn textedit_symbolic_codes_round_trip_without_changing_font_resources() {
     let (mut doc, font, program) = custom_fixture();
     let before = doc.objects.clone();
