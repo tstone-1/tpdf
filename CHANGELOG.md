@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Support scalar character-map ranges in symbolic TrueType fonts, preserving
+  the original mapping and refusing ambiguous or non-ASCII expansions.
+
 - Allow bounded glyph overhangs in simple embedded TrueType fonts, including
   symbolic and MacRoman mappings, while keeping replacement ink within the
   original line and clip.

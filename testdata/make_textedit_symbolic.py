@@ -2,6 +2,7 @@
 """Create a synthetic symbolic-font editing fixture with LibreOffice-style codes.
 
 uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-symbolic/fixture.pdf
+Append --ranges to use Quartz-style scalar ToUnicode ranges.
 Original geometric outlines, MIT like this repository; no installed font is read.
 """
 from io import BytesIO
@@ -19,15 +20,18 @@ def main():
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import ArrayObject, DecodedStreamObject, NameObject, NumberObject
 
-    if len(sys.argv) != 2:
-        raise SystemExit("expected output PDF path")
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--ranges"):
+        raise SystemExit("expected output PDF path [--ranges]")
+    ranges = len(sys.argv) == 3
     target = Path(sys.argv[1])
     target.parent.mkdir(parents=True, exist_ok=True)
     alphabet = "SYNTHEIC FRODAB"
     assert len(set(alphabet)) == len(alphabet)
     face = TTFont(BytesIO(make_font(characters=alphabet)))
     original = face.getBestCmap()
-    codes = {ch: index + 1 for index, ch in enumerate(alphabet)}
+    # Sorting the range variant makes the edited letters use expanded ranges,
+    # rather than exercising only singleton entries in the end-to-end check.
+    codes = {ch: index + 1 for index, ch in enumerate(sorted(alphabet) if ranges else alphabet)}
     cmap = CmapSubtable.newSubtable(0)
     cmap.platformID, cmap.platEncID, cmap.language = 1, 0, 0
     cmap.cmap = {code: original[ord(ch)] for ch, code in codes.items()}
@@ -46,13 +50,26 @@ def main():
     font[NameObject("/LastChar")] = NumberObject(len(codes))
     font[NameObject("/Widths")] = ArrayObject([NumberObject(0)] + [NumberObject(600)] * len(codes))
     font["/FontDescriptor"][NameObject("/Flags")] = NumberObject(4)
+    entries = [[code, code, ord(ch)] for ch, code in codes.items()]
+    if ranges:
+        grouped = []
+        for first, last, target_code in entries:
+            if grouped and first == grouped[-1][1] + 1 and target_code == grouped[-1][2] + first - grouped[-1][0]:
+                grouped[-1][1] = last
+            else:
+                grouped.append([first, last, target_code])
+        entries = grouped
+    kind = "bfrange" if ranges else "bfchar"
+    # Use one entry per line, as emitted by Quartz and read by PDFKit/pypdf.
+    body = "".join(f"<{first:02X}> " + (f"<{last:02X}> " if ranges else "") +
+                   f"<{target_code:04X}>\n" for first, last, target_code in entries)
     mapping = DecodedStreamObject()
     mapping.set_data(("/CIDInit/ProcSet findresource begin\n12 dict begin\nbegincmap\n"
         "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
         "/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n"
         "1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
-        f"{len(codes)} beginbfchar\n" + "".join(f"<{code:02X}> <{ord(ch):04X}>\n" for ch, code in codes.items()) +
-        "endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n").encode())
+        f"{len(entries)} begin{kind}\n" + body +
+        f"end{kind}\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n").encode())
     font[NameObject("/ToUnicode")] = writer._add_object(mapping)
     content = DecodedStreamObject()
     def encoded(text):

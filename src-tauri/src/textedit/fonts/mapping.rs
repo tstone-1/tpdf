@@ -9,9 +9,9 @@ use lopdf::{
 #[cfg(test)]
 mod tests;
 
-// Standard wrapper emitted by the measured LibreOffice export. Only bfchar
-// blocks vary. Other wrappers, ranges, inheritance and multi-character mappings
-// remain unsupported until their semantics have independent readback evidence.
+// Standard wrapper emitted by the measured LibreOffice and Quartz exports.
+// Only bfchar and scalar bfrange blocks vary. Other wrappers, array targets,
+// inheritance and multi-character mappings remain unsupported.
 const PREFIX: &[u8] = br"/CIDInit /ProcSet findresource begin
 12 dict begin begincmap
 /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
@@ -66,26 +66,43 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
         let [Object::Integer(count)] = block[0].operands.as_slice() else {
             return Err(invalid());
         };
-        if block[0].operator != "beginbfchar"
-            || !(1..=100).contains(count)
-            || block[1].operator != "endbfchar"
-            || block[1].operands.len() != *count as usize * 2
-        {
+        let stride = match (block[0].operator.as_str(), block[1].operator.as_str()) {
+            ("beginbfchar", "endbfchar") => 2,
+            ("beginbfrange", "endbfrange") => 3,
+            _ => return Err(invalid()),
+        };
+        if !(1..=100).contains(count) || block[1].operands.len() != *count as usize * stride {
             return Err(invalid());
         }
-        for pair in block[1].operands.chunks_exact(2) {
-            let (Object::String(code, _), Object::String(text, _)) = (&pair[0], &pair[1]) else {
+        let byte = |object: &Object| -> Result<u8, String> {
+            match object {
+                Object::String(bytes, _) if bytes.len() == 1 => Ok(bytes[0]),
+                _ => Err(invalid()),
+            }
+        };
+        for entry in block[1].operands.chunks_exact(stride) {
+            let first = byte(&entry[0])?;
+            let last = if stride == 3 { byte(&entry[1])? } else { first };
+            let Object::String(text, _) = &entry[stride - 1] else {
                 return Err(invalid());
             };
-            let ([code], [0, ch]) = (code.as_slice(), text.as_slice()) else {
+            let [0, target] = text.as_slice() else {
                 return Err(invalid());
             };
-            if !(32..=126).contains(ch) || result[*code as usize].is_some() || unicode[*ch as usize]
-            {
+            // Validate the entire expansion before adding or narrowing a value.
+            // Single-byte custom maps retain the existing printable ASCII limit.
+            let end_target = u16::from(*target) + u16::from(last.saturating_sub(first));
+            if last < first || *target < 32 || end_target > 126 {
                 return Err(invalid());
             }
-            result[*code as usize] = Some(*ch);
-            unicode[*ch as usize] = true;
+            for code in first..=last {
+                let ch = *target + (code - first);
+                if result[code as usize].is_some() || unicode[ch as usize] {
+                    return Err(invalid());
+                }
+                result[code as usize] = Some(ch);
+                unicode[ch as usize] = true;
+            }
         }
     }
     Ok(result)

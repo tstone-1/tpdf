@@ -4556,16 +4556,17 @@ treated as missing. A symbolic font with no `/Encoding` may instead use one
 Macintosh cmap and a strict single-byte `ToUnicode` map. This path separates glyph
 codes from Unicode text and re-encodes replacements into the existing font codes.
 It accepts the measured standard CMap wrapper, one full-byte code space, and
-`bfchar` blocks of up to 100 entries, with a 16 KiB decoded stream limit. Mappings
-must be one-to-one printable ASCII: duplicate codes/Unicode values, inheritance,
-ranges, multibyte codes, ligatures and extra CMap operators are refused. The map
-states text semantics; the embedded cmap selects glyphs, whose widths and outlines
+`bfchar` and scalar `bfrange` blocks of up to 100 entries, with a 16 KiB decoded
+stream limit. Every expanded range must stay in printable ASCII, and mappings
+must be one-to-one across all blocks. Duplicate codes/Unicode values, inheritance,
+array-valued ranges, multibyte codes, ligatures and extra CMap operators are
+refused. The map states text semantics; the embedded cmap selects glyphs, whose widths and outlines
 must still validate. No font program or mapping is rewritten.
 Apple `true` programs on the MacRoman or symbolic path may omit the optional
 `OS/2` table; present permissions flags are still enforced, and OpenType-style
 programs still require that table. Missing glyphs, other custom mappings,
-overhanging outlines, variable/colour fonts and non-editable embedding permissions
-are refused.
+outlines beyond the bounded overhang limits, variable/colour fonts and
+non-editable embedding permissions are refused.
 The composite path additionally accepts only Adobe/Identity/0 CID collections,
 symbolic descriptor flags and OpenType-style TrueType programs. Its map is at
 most 16 KiB decoded and 191 unique printable Latin-1 characters; width tables are
@@ -13641,8 +13642,12 @@ bounded-overhang handling to simple TrueType fonts. See `BUILD.md`, *Simple
 TrueType overhangs and an unchanged W3C fixture*. Both native workflows and
 independent readback of the Windows outputs pass. The practical-document target
 remains open, since an external test fixture does
-not establish broad document compatibility. Wider
-Unicode, subset extension and paragraph reflow remain open.
+not establish broad document compatibility. Scalar single-byte character-map
+ranges now pass on macOS, removing the first font-map refusal in the unchanged
+Quartz agenda; both pages still refuse unsupported operators. See `BUILD.md`,
+*Single-byte character-map ranges*, for the checks and remaining blockers.
+Windows verification of that increment is pending. Wider Unicode, subset
+extension and paragraph reflow remain open.
 
 ### Phase 6 — Cryptographic signing
 
