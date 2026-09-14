@@ -40,7 +40,7 @@ fn change(doc: &Document, replacement: &str) -> Change {
     }
 }
 
-fn mac_fixture(missing_os2: bool) -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
+pub(super) fn mac_fixture(missing_os2: bool) -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
     let (mut doc, font, _, program) = fixture();
     let face = Face::parse(SYNTHETIC, 0).unwrap();
     let mut cmap = vec![0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 12];
@@ -431,7 +431,7 @@ fn textedit_embedded_requires_unicode_cmaps_to_agree() {
         .contains("character mapping"));
 }
 
-fn custom_fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
+pub(super) fn custom_fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId) {
     let (mut doc, font, program) = mac_fixture(true);
     let face = Face::parse(SYNTHETIC, 0).unwrap();
     let alphabet = b"SYNTHEIC FR ODAB";

@@ -10,7 +10,10 @@ pub(in crate::textedit) fn program() -> Vec<u8> {
 }
 
 pub(in crate::textedit) fn component_program(components: [(char, i16, i16, i16); 2]) -> Vec<u8> {
-    let mut bytes = include_bytes!("../synthetic.ttf").to_vec();
+    with_components(include_bytes!("../synthetic.ttf").to_vec(), components)
+}
+
+fn with_components(mut bytes: Vec<u8>, components: [(char, i16, i16, i16); 2]) -> Vec<u8> {
     let table = |tag: &[u8]| {
         let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
         let record = bytes[12..12 + count * 16]
@@ -21,7 +24,9 @@ pub(in crate::textedit) fn component_program(components: [(char, i16, i16, i16);
     };
     let glyf = table(b"glyf");
     let loca = table(b"loca");
-    let face = Face::parse(&bytes, 0).unwrap();
+    // Fixture mappings may use symbolic bytes, but glyph order is shared with
+    // the original geometric program. Do not infer glyph IDs from PDF codes.
+    let face = Face::parse(include_bytes!("../synthetic.ttf"), 0).unwrap();
     assert_eq!(
         face.tables().head.index_to_location_format,
         ttf_parser::head::IndexToLocationFormat::Short
@@ -171,4 +176,104 @@ fn textedit_outline_bounds_preserve_fractional_components_and_ignore_header_boxe
         outlines::bounds(&face, glyph),
         Some([0., 0., 400., 700. * 18729. / 16384.])
     );
+}
+
+fn simple_overhang_fixture(kind: u8, left: i16, right: i16) -> (Document, ObjectId) {
+    let (mut doc, font, program) = match kind {
+        0 => {
+            let (doc, font, _, program) = tests::fixture();
+            (doc, font, program)
+        }
+        1 => tests::mac_fixture(true),
+        _ => tests::custom_fixture(),
+    };
+    let stream = doc
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    stream.content = with_components(
+        stream.content.clone(),
+        [('B', left, 0, 16384), ('D', right, 0, 16384)],
+    );
+    (doc, font)
+}
+
+#[test]
+fn textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources() {
+    for kind in 0..3 {
+        let (source, font) = simple_overhang_fixture(kind, -10, 250);
+        let metrics = embedded(&source, source.get_dictionary(font).unwrap()).unwrap();
+        assert_eq!(metrics.horizontal_bounds("B", 1000.).unwrap(), [-10., 600.]);
+        assert_eq!(metrics.horizontal_bounds("D", 1000.).unwrap(), [0., 650.]);
+        for (text, prefix, accepted) in [
+            ("BA", "40 170 30 20 re W n", false),
+            ("BA", "39 170 30 20 re W n", true),
+            ("AD", "40 170 14.4 20 re W n", false),
+            ("AD", "40 170 15.1 20 re W n", true),
+            ("AD", "80 170 28.8 20 re W n 2 0 0 1 0 0 cm", false),
+            ("AD", "80 170 30.1 20 re W n 2 0 0 1 0 0 cm", true),
+        ] {
+            let mut doc = source.clone();
+            set_content(&mut doc, prefix, &metrics.encode(text).unwrap());
+            assert_eq!(
+                textedit::scan(&doc, 0).is_ok(),
+                accepted,
+                "kind={kind} {text} {prefix}"
+            );
+        }
+        for (replacement, accepted) in [("BA", false), ("AAD", false), ("AD", true), ("ABA", true)]
+        {
+            let mut doc = source.clone();
+            set_content(
+                &mut doc,
+                "40 170 21.6 20 re W n",
+                &metrics.encode("AAA").unwrap(),
+            );
+            let scanned = textedit::scan(&doc, 0).unwrap();
+            let before = doc.objects.clone();
+            let result = textedit::write(
+                &mut doc,
+                &[Change {
+                    page: 0,
+                    revision: scanned.revision,
+                    operator: scanned.runs[0].operator,
+                    original: "AAA".into(),
+                    replacement: replacement.into(),
+                }],
+            );
+            assert_eq!(
+                result.is_ok(),
+                accepted,
+                "kind={kind} {replacement}: {result:?}"
+            );
+            if accepted {
+                assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, replacement);
+                let page = crate::pagetree::ordered_pages(&doc)[0];
+                for (id, value) in before {
+                    if id != page {
+                        assert_eq!(doc.objects[&id], value);
+                    }
+                }
+            } else {
+                assert_eq!(doc.objects, before);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_simple_overhang_quarter_em_boundaries() {
+    for kind in 0..3 {
+        for (left, right, valid_b, valid_d) in [
+            (-250, 450, true, true),
+            (-251, 450, false, true),
+            (-250, 451, true, false),
+        ] {
+            let (doc, font) = simple_overhang_fixture(kind, left, right);
+            let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+            assert_eq!(metrics.advance("B", 10.).is_ok(), valid_b);
+            assert_eq!(metrics.advance("D", 10.).is_ok(), valid_d);
+        }
+    }
 }

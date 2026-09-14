@@ -263,6 +263,10 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('simple overhang: omit measured bounds', 'src/textedit/fonts.rs', 'horizontal_overhangs: Some(horizontal_overhangs),', 'horizontal_overhangs: None,', 'textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources'),
+    Mutation('simple overhang: index by PDF code', 'src/textedit/fonts.rs', 'horizontal_overhangs[byte as usize]', 'horizontal_overhangs[code_byte as usize]', 'textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources'),
+    Mutation('simple overhang: omit left bound', 'src/textedit/fonts.rs', 'left * unit >= -250.', 'true', 'textedit_simple_overhang_quarter_em_boundaries'),
+    Mutation('simple overhang: omit right bound', 'src/textedit/fonts.rs', 'right * unit <= width + 250.', 'true', 'textedit_simple_overhang_quarter_em_boundaries'),
     Mutation('CFF: omit font dispatch', 'src/textedit.rs', 'return fonts::cff(doc, font);', 'return Err("CFF disabled".into());', 'textedit_cff_maps_ascii_by_glyph_name_and_preserves_resources'),
     Mutation('CFF: trust internal encoding', 'src/textedit/fonts/cff.rs', 'let Some(&glyph) = names.get(name) else {', 'let Some(glyph) = face.glyph_index(code as u8) else {', 'textedit_cff_maps_ascii_by_glyph_name_and_preserves_resources'),
     Mutation('CFF: omit metadata validation', 'src/textedit/fonts/cff.rs', 'profile::validate(&bytes)?;', '// metadata unchecked', 'textedit_cff_refuses_unvalidated_program_semantics_and_permissions'),
