@@ -8035,3 +8035,65 @@ the practical-page milestone remains open, and Windows image verification is pen
 The seeded fuzz run completes 27,742 executions in 21 seconds with 88 MiB peak
 RSS and no finding (`--sanitizer=none` on macOS). Clippy, mutation anchors,
 formatting, bundle and notices checks pass; normal frontend assets are restored.
+
+
+Windows x64 image verification at `11fe094` passes all 153 focused Rust tests,
+worker RGB/ICC cases and both 15-check native workflows. All ten retrieved PDFs
+match the Windows artifact sizes and SHA-256 digests. Independent pypdf and
+PDFKit checks of the four edited outputs preserve every resource and find 935
+changed pixels inside the text target, zero outside. Both image variants remain
+visibly painted. The temporary task is removed and the ordinary checkout is clean.
+
+### Mapped en dash and an unchanged practical page
+
+U+2013 is supported when an admitted single-byte symbolic TrueType or two-byte
+Identity-H font already maps it to a valid glyph. The font's original codes,
+widths, outlines and resources remain authoritative. No subset is extended.
+Unmapped fonts retain their prior character repertoire; U+0096 and neighboring
+unsupported punctuation remain refused. The 4,096-character limit still counts
+characters, including three-byte UTF-8 en dashes.
+
+```sh
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/textedit-dash/source.pdf --ranges --dash --spacing -1 --intent Perceptual
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/textedit-dash/worker scratch/textedit-dash/source.pdf --dash
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/textedit-dash/worker/synthetic-before.pdf scratch/textedit-dash/worker/synthetic-after.pdf --dash
+swift scripts/text_edit_pdfkit.swift scratch/textedit-dash/worker --dash
+```
+
+Build the separate checks application as described above. Use
+`tabs_check.py <checks-binary> <source.pdf> --phase textedit-dash --saved-copy <saved.pdf>`
+for the synthetic fixture, and `--phase textedit-agenda` for the unchanged Wellington
+agenda identified by `testdata/textedit-public-corpus.json`. The latter edits
+`REGULAR` to `ANNUAL` in the first heading, only in disposable copies. Preserve
+source and saved files as `synthetic-before.pdf` and `synthetic-after.pdf` in one
+readback directory (the existing tool filenames also serve external fixtures).
+Pass `--agenda` to both independent readers; the Python reader additionally pins
+the original download's SHA-256. Never normalize the input to gain admission.
+
+macOS verification on 2026-09-14 passes 157 focused Rust tests and ten frontend
+text-editor tests. Both native workflows pass 15 checks: draft draining on tab
+switch, extraction, selection, search, undo/redo and pixel restoration, overflow
+refusal, save/reopen and document isolation. The synthetic worker and native
+outputs have 939 changed pixels inside the first text region, zero outside.
+The unchanged agenda has 236 discovered runs on page 1. Its native output changes
+one text operand, with exact font/image/colour resource preservation and exact
+untouched-page content. PDFKit reads the replacement and adjacent text correctly:
+914 pixels change inside the heading region, zero outside; page 2 has zero changed
+pixels. Before/after Poppler renders were also inspected. The shorter replacement
+leaves subsequent text at its original position; this does not implement reflow.
+Negative controls reject the unedited input, changed font resource and changed
+second-page content for their respective reasons.
+
+The same seven unchanged practical PDFs now report 1 editable page and 47 refused
+pages. The agenda's second page still refuses curved graphics. This is a small
+selected compatibility sample, not a representative success rate. Windows en-dash
+and unchanged-agenda verification remains pending.
+
+All eleven selected Rust mutations are caught by their named tests, with 1,456
+passing tests in the clean control. The frontend en-dash mutation is caught too,
+with 1,494 passing tests in its control. The new `editable-dash` fuzz seed reaches
+editable text through the contained probe. The seeded run completes 26,298
+executions in 21 seconds, with 88 MiB peak RSS and no finding
+(`--sanitizer=none` on macOS). Type checking, Clippy, formatting,
+mutation anchors, notices and the normal bundle check pass; normal frontend
+assets are restored and contain zero harness code.

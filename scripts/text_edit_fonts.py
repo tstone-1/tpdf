@@ -30,14 +30,16 @@ def make_font(*, cff: bool = False, fs_type: int = 0, characters: str = "AB") ->
     from fontTools.pens.ttGlyphPen import TTGlyphPen
 
     builder = FontBuilder(1000, isTTF=not cff)
-    names = [".notdef", "space", *sorted(set(characters) - {" "})]
+    glyph_names = {ch: "endash" if ch == "\u2013" else ch for ch in sorted(set(characters) - {" "})}
+    names = [".notdef", "space", *glyph_names.values()]
     builder.setupGlyphOrder(names)
-    builder.setupCharacterMap({32: "space", **{ord(ch): ch for ch in names[2:]}})
+    builder.setupCharacterMap({32: "space", **{ord(ch): name for ch, name in glyph_names.items()}})
     glyphs = {}
     for name in names:
         pen = T2CharStringPen(600, None) if cff else TTGlyphPen(None)
         rectangles = {".notdef": [(0, 0, 100, 100)], "space": [],
                       "A": [(0, 0, 400, 700)],
+                      "endash": [(0, 250, 500, 330)],
                       "B": [(0, 0, 100, 700), (300, 0, 400, 700)]}.get(name, [(0, 0, 200 + ord(name[0]) % 200, 700)])
         for left, bottom, right, top in rectangles:
             pen.moveTo((left, bottom))

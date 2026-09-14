@@ -844,3 +844,62 @@ fn textedit_default_helvetica_refuses_explicit_or_custom_encodings() {
         .set("BaseFont", "Courier");
     assert!(textedit::scan(&doc, 0).is_err());
 }
+
+#[test]
+fn textedit_symbolic_dash_roundtrip_keeps_original_font_codes_and_ink() {
+    let (mut doc, font_id, _) = custom_fixture();
+    let mapping = doc
+        .get_dictionary(font_id)
+        .unwrap()
+        .get(b"ToUnicode")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    let source = String::from_utf8(stream.content.clone()).unwrap();
+    assert_eq!(source.matches("<0042>").count(), 1);
+    stream.content = source.replace("<0042>", "<2013>").into_bytes();
+    let metrics = embedded(&doc, doc.get_dictionary(font_id).unwrap()).unwrap();
+    let encoded = metrics.encode("\u{2013}A").unwrap();
+    assert_ne!(encoded[0], 0x96);
+    assert_eq!(metrics.decode(&encoded).unwrap(), "\u{2013}A");
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let mut body =
+        lopdf::content::Content::decode_strict(b"1 Tc BT /F1 10 Tf 40 180 Td (REPLACE) Tj ET")
+            .unwrap();
+    body.operations[4].operands[0] = Object::string_literal(encoded);
+    let content = doc.add_object(Stream::new(Dictionary::new(), body.encode().unwrap()));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    let before = doc.objects.clone();
+    let runs = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(runs.runs[0].text, "\u{2013}A");
+    assert_eq!(runs.runs[0].advance, 14.);
+    let change = Change {
+        page: 0,
+        revision: runs.revision,
+        operator: runs.runs[0].operator,
+        original: "\u{2013}A".into(),
+        replacement: "A\u{2013}".into(),
+    };
+    textedit::write(&mut doc, &[change]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "A\u{2013}");
+    let saved = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    assert_eq!(
+        saved.operations[4].operands[0].as_str().unwrap(),
+        metrics.encode("A\u{2013}").unwrap()
+    );
+    for (id, value) in before {
+        if id != page {
+            assert_eq!(doc.objects[&id], value);
+        }
+    }
+    assert!(metrics.advance("B", 10.).is_err());
+    assert!(Metrics::helvetica().advance("\u{2013}", 10.).is_err());
+    assert!(Metrics::helvetica().encode("\u{2013}").is_err());
+}

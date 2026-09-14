@@ -6,6 +6,7 @@ Append --ranges to use Quartz-style scalar ToUnicode ranges.
 Append --spacing -0.005 to retain character spacing around the first line.
 Append --intent Perceptual to retain both ri and ExtGState RI settings.
 Append --image to retain an opaque RGB image alongside the text.
+Append --dash to edit an en dash through its original font code.
 Original geometric outlines, MIT like this repository; no installed font is read.
 """
 from io import BytesIO
@@ -31,12 +32,13 @@ def main():
     parser.add_argument("--spacing", type=float, default=0.)
     parser.add_argument("--intent", choices=["AbsoluteColorimetric", "RelativeColorimetric", "Saturation", "Perceptual"])
     parser.add_argument("--image", action="store_true")
+    parser.add_argument("--dash", action="store_true")
     args = parser.parse_args()
     if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
         parser.error("spacing must be finite and within -3..3 for the 12pt fixture")
     ranges, target = args.ranges, args.output
     target.parent.mkdir(parents=True, exist_ok=True)
-    alphabet = "SYNTHEIC FRODAB"
+    alphabet = "SYNTHEIC FRODAB" + ("\u2013" if args.dash else "")
     assert len(set(alphabet)) == len(alphabet)
     face = TTFont(BytesIO(make_font(characters=alphabet)))
     original = face.getBestCmap()
@@ -86,7 +88,8 @@ def main():
     def encoded(text):
         return "<" + bytes(codes[ch] for ch in text).hex() + ">"
     # Mix Tj and TJ so both paths must decode and re-encode the symbolic codes.
-    first = f"BT /F1 12 Tf 40 180 Td [{encoded('SYNTHETIC ')} 20 {encoded('FIRST')}] TJ ET"
+    prefix = "SYNTHETIC" + ("\u2013" if args.dash else " ")
+    first = f"BT /F1 12 Tf 40 180 Td [{encoded(prefix)} 20 {encoded('FIRST')}] TJ ET"
     if args.spacing:
         first = f"q {args.spacing:g} Tc {first} Q"
     if args.intent:

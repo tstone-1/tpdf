@@ -140,6 +140,25 @@ fn text_byte(byte: u8) -> bool {
     (32..=126).contains(&byte) || byte >= 160
 }
 
+// Metric slots use Latin-1 indices plus the WinAnsi slot for the en dash.
+// A slot is not a PDF code in a custom font; its ToUnicode map supplies that.
+// In particular, U+0096 is a control character, never an alias for U+2013.
+fn character_slot(ch: char) -> Option<u8> {
+    if ch == '\u{2013}' {
+        Some(0x96)
+    } else {
+        u8::try_from(ch as u32).ok().filter(|&byte| text_byte(byte))
+    }
+}
+
+fn slot_character(slot: u8) -> char {
+    if slot == 0x96 {
+        '\u{2013}'
+    } else {
+        char::from(slot)
+    }
+}
+
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
     if bytes.len() > MAX_TEXT || !bytes.iter().all(|&byte| text_byte(byte)) {
         return Err("text editing currently supports printable Latin-1 only".into());
@@ -148,17 +167,16 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
 }
 
 fn encode_text(text: &str) -> Result<Vec<u8>, String> {
-    // Each supported character uses at most two UTF-8 bytes and one PDF byte.
-    if text.len() > MAX_TEXT * 2 {
+    // The en dash uses three UTF-8 bytes. This returns metric slots; a custom
+    // font maps them back to its own one- or two-byte PDF codes when writing.
+    if text.len() > MAX_TEXT * 3 {
         return Err("text replacement exceeds its limit".into());
     }
     let bytes = text
         .chars()
         .map(|ch| {
-            u8::try_from(ch as u32)
-                .ok()
-                .filter(|&byte| text_byte(byte))
-                .ok_or("text editing currently supports printable Latin-1 only")
+            character_slot(ch)
+                .ok_or("text editing currently supports printable Latin-1 and en dash only")
         })
         .collect::<Result<Vec<_>, _>>()?;
     if bytes.len() > MAX_TEXT {
@@ -878,6 +896,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn textedit_dash_slots_are_bijective_and_count_characters() {
+        let mut accepted = 0;
+        for value in 0..=0x10ffff {
+            let Some(ch) = char::from_u32(value) else {
+                continue;
+            };
+            let expected =
+                (32..=126).contains(&value) || (160..=255).contains(&value) || value == 0x2013;
+            let slot = character_slot(ch);
+            assert_eq!(slot.is_some(), expected, "U+{value:04X}");
+            if let Some(slot) = slot {
+                accepted += 1;
+                assert_eq!(slot_character(slot), ch);
+            }
+        }
+        assert_eq!(accepted, 192);
+        assert_eq!(
+            encode_text(&"\u{2013}".repeat(MAX_TEXT)).unwrap(),
+            vec![0x96; MAX_TEXT]
+        );
+        assert!(encode_text(&"\u{2013}".repeat(MAX_TEXT + 1)).is_err());
+        assert!(decode_text(&[0x96]).is_err());
+    }
+
+    #[test]
     fn textedit_latin1_width_refuses_sharp_s_and_accented_i_overflow() {
         for (original, replacement) in [("s", "ß"), ("i", "î"), ("o", "ø")] {
             let raw = format!("BT /F1 12 Tf 40 180 Td ({original}) Tj ET");
@@ -1403,7 +1446,7 @@ pub(crate) mod tests {
                     replacement: "\u{03b1}".into(),
                     ..valid.clone()
                 },
-                "Latin-1 only",
+                "Latin-1 and en dash only",
             ),
             (
                 Change {

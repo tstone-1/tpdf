@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.9.8] - Unreleased
 
+- Support existing en-dash glyphs in mapped TrueType fonts, enabling text edits
+  on compatible pages while retaining original font codes and resources.
+
 - Allow in-place text edits alongside bounded opaque images while preserving
   their original image and colour-profile data.
 

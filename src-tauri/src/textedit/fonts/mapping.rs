@@ -61,7 +61,7 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
     let ops = blocks(stream, false)?;
     let invalid = || "unsupported or ambiguous single-byte character map".to_string();
     let mut result = Box::new([None; 256]);
-    let mut unicode = [false; 128];
+    let mut unicode = [false; 256];
     for block in ops.chunks_exact(2) {
         let [Object::Integer(count)] = block[0].operands.as_slice() else {
             return Err(invalid());
@@ -86,17 +86,23 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
             let Object::String(text, _) = &entry[stride - 1] else {
                 return Err(invalid());
             };
-            let [0, target] = text.as_slice() else {
+            let [high, low] = text.as_slice() else {
                 return Err(invalid());
             };
-            // Validate the entire expansion before adding or narrowing a value.
-            // Single-byte custom maps retain the existing printable ASCII limit.
-            let end_target = u16::from(*target) + u16::from(last.saturating_sub(first));
-            if last < first || *target < 32 || end_target > 126 {
+            let target = u16::from_be_bytes([*high, *low]);
+            let end_target = u32::from(target) + u32::from(last.saturating_sub(first));
+            // A source range has at most 256 entries. Validate Unicode before
+            // narrowing to metric slots; a range cannot wrap into allowed text.
+            let allowed = |ch| (32..=126).contains(&ch) || ch == 0x2013;
+            if last < first || !(u32::from(target)..=end_target).all(allowed) {
                 return Err(invalid());
             }
             for code in first..=last {
-                let ch = *target + (code - first);
+                let ch = super::super::character_slot(
+                    char::from_u32(u32::from(target) + u32::from(code - first))
+                        .ok_or_else(invalid)?,
+                )
+                .ok_or_else(invalid)?;
                 if result[code as usize].is_some() || unicode[ch as usize] {
                     return Err(invalid());
                 }
@@ -109,7 +115,7 @@ pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
 }
 
 // Identity-H codes and UTF-16BE targets are exactly two bytes. A range expands
-// only into unique printable Latin-1, so at most 191 entries can be retained.
+// only into unique printable Latin-1 or en dash, at most 192 distinct characters.
 pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u16, u8>, String> {
     let invalid = || "unsupported or ambiguous two-byte character map".to_string();
     let word = |object: &Object| -> Result<u16, String> {
@@ -140,14 +146,12 @@ pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u1
             let last = if stride == 3 { word(&entry[1])? } else { first };
             let target = word(&entry[stride - 1])?;
             let last_target = u32::from(target) + u32::from(last.saturating_sub(first));
-            if last < first
-                || last_target > 255
-                || !(target..=last_target as u16).all(|ch| super::super::text_byte(ch as u8))
-            {
+            let slot = |ch| char::from_u32(ch).and_then(super::super::character_slot);
+            if last < first || !(u32::from(target)..=last_target).all(|ch| slot(ch).is_some()) {
                 return Err(invalid());
             }
             for code in first..=last {
-                let ch = (target + (code - first)) as u8;
+                let ch = slot(u32::from(target) + u32::from(code - first)).ok_or_else(invalid)?;
                 if result.insert(code, ch).is_some() || !unicode.insert(ch) {
                     return Err(invalid());
                 }

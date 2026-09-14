@@ -566,3 +566,37 @@ fn textedit_composite_overhang_quarter_em_limits_have_boundary_controls() {
         }
     }
 }
+
+#[test]
+fn textedit_cid_dash_keeps_two_byte_codes_and_font_data() {
+    let (mut doc, [font, child, descriptor, mapping]) = fixture();
+    let map = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    let text = String::from_utf8(map.content.clone()).unwrap();
+    assert_eq!(text.matches("<0042>").count(), 1);
+    map.content = text.replace("<0042>", "<2013>").into_bytes();
+    let objects = doc.objects.clone();
+    let edit = update(&doc, "EDITED\u{2013}FIRST");
+    textedit::write(&mut doc, &[edit]).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "EDITED\u{2013}FIRST");
+    assert_eq!(after.runs[1].text, "SYNTHETIC SECOND");
+    for id in [font, child, descriptor, mapping] {
+        assert_eq!(doc.objects[&id], objects[&id]);
+    }
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    let bytes = content
+        .operations
+        .iter()
+        .find(|op| op.operator == "Tj")
+        .unwrap()
+        .operands[0]
+        .as_str()
+        .unwrap();
+    assert_eq!(bytes.len(), 24);
+    assert_ne!(&bytes[12..14], &[0x20, 0x13]);
+}

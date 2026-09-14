@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -40,6 +40,9 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             return number
         return obj
 
+    if agenda:
+        import hashlib
+        assert hashlib.sha256(Path(before).read_bytes()).hexdigest() == "5aa6129722dd20b351cf99575142666ab2c26b84555a9cabe920dcb07a17dbcd", "expected unchanged public agenda"
     readers = [PdfReader(path) for path in (before, after)]
     count = len(readers[0].pages)
     assert 0 <= page_index < count <= 128 and len(readers[1].pages) == count, "wrong page count"
@@ -102,14 +105,14 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     fonts = list(pages[0]["/Resources"]["/Font"].values())
     symbolic = [font.get_object() for font in fonts
                 if "/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object()]
-    if symbolic:
+    if symbolic and not agenda:
         assert len(fonts) == len(symbolic) == 1, "symbolic readback requires a single fixture font"
         # extract_text() deliberately falls back to identity for unmapped codes.
         # Read pypdf's parsed map explicitly so fallback cannot pass this check.
         from pypdf._cmap import get_encoding
         _, mapping = get_encoding(symbolic[0])
         assert mapping and all(isinstance(k, str) and len(k) == len(v) == 1 for k, v in mapping.items()), "unexpected fixture map"
-        for operation, expected in [(old, "le" if w3c else "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "ll" if w3c else "EDITED FIRST")]:
+        for operation, expected in [(old, "le" if w3c else "SYNTHETIC\u2013FIRST" if dash else "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "ll" if w3c else "EDITED\u2013FIRST" if dash else "EDITED FIRST")]:
             parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
             raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
                            for part in parts if isinstance(part, (str, bytes)))
@@ -118,13 +121,21 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     # Let the independent parser apply the font's encoding and ToUnicode map.
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
     expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
+    if dash:
+        expected_text = ("SYNTHETIC\u2013FIRST", "EDITED\u2013FIRST")
     if default_encoding:
         expected_text = ("SYNTHETIC ' ` £ ß", "£ ' ` ß")
     if w3c:
         assert count == 1 and page_index == 0
         expected_text = ("Dummy PDF file", "Dummy PDF fill")
-    for page, first in zip(pages, expected_text):
-        assert " ".join(page.extract_text().split()) == first + ("" if w3c else " SYNTHETIC SECOND"), "wrong decoded text"
+    if agenda:
+        assert count == 2 and page_index == 0, "wrong agenda page count"
+        original = pages[0].extract_text()
+        assert original.count("REGULAR") == 1 and "ANNUAL" not in original, "wrong agenda text"
+        assert pages[1].extract_text() == original.replace("REGULAR", "ANNUAL"), "wrong agenda replacement or adjacent text"
+    else:
+        for page, first in zip(pages, expected_text):
+            assert " ".join(page.extract_text().split()) == first + ("" if w3c else " SYNTHETIC SECOND"), "wrong decoded text"
     if float32:
         print("[PASS] independent parser: only target text operand changed; resources agree at float32 precision with exact stream bytes")
     else:
@@ -206,7 +217,7 @@ def tagged_controls(before, after, page_index=0, wrapped=False):
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
         page, wrapped, float32, default_encoding = 0, False, False, False
-        w3c = False
+        w3c = dash = agenda = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -214,15 +225,19 @@ def main():
                 wrapped = True
             elif option == "--default-encoding" and sys.argv[1] == "--check":
                 default_encoding = True
+            elif option == "--agenda" and sys.argv[1] == "--check":
+                agenda = True
+            elif option == "--dash" and sys.argv[1] == "--check":
+                dash = True
             elif option == "--w3c-dummy" and sys.argv[1] == "--check":
                 w3c = True
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding or --w3c-dummy (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --dash, --agenda or --w3c-dummy (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c)
+        if float32 or default_encoding or w3c or dash or agenda:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return
