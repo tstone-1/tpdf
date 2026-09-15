@@ -330,6 +330,14 @@ standard supported names cannot be remapped. `--tagged-containers` on the
 symbolic generator covers aliases and metadata references. The browser generator's
 `--headings` exports an unchanged Document/Art/NonStruct tree with H1/P blocks;
 ordinary native textedit checks and PDFKit `--browser` read it back.
+Lists admit literal L/LI with Lbl, LBody or neutral NonStruct content leaves;
+LBody children that are themselves blocks and nested lists remain refused.
+List containers share the grouping bounds and may carry one List attribute
+object with a standard ListNumbering name, directly or in a singleton array;
+references are resolved without changing the saved graph. List-role aliases,
+leaf attributes and semantic overrides remain refused. The browser generator's
+`--list` fixture runs through the ordinary native textedit phase; independent
+parser/PDFKit readback both use `--list` (parser also `--float32`).
 
 Positive word spacing accepts values up to one million text-space units, with
 the combined advance bounded separately. Negative spacing retains its quarter-

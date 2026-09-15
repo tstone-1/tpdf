@@ -6766,6 +6766,32 @@ Container depth/count tests have accepting boundary controls at 8/128 and reject
 enter the work list. Standard-role remapping is tested on an unused name so a
 later shape refusal cannot mask a missing role-map check.
 
+Numbered browser lists use `L/LI` with separate `Lbl` and neutral `NonStruct`
+content. Literal `LBody` content leaves are supported as well. The existing
+container depth/count and total-content bounds apply; parent links and every
+MCID still have to agree in both directions. Only one `O=List` attribute object
+with a standard `ListNumbering` name is admitted, directly or in a singleton
+array, including references. List-role aliases, nested lists, blocks below
+LBody, revision arrays and leaf attributes remain refused.
+
+```sh
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py <browser-executable> scratch/tag-lists/browser --list
+uv run scripts/tabs_check.py <checks-binary> scratch/tag-lists/browser/browser-tagged.pdf --phase textedit --saved-copy scratch/tag-lists/native/synthetic-after.pdf
+cp scratch/tag-lists/browser/browser-tagged.pdf scratch/tag-lists/native/synthetic-before.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/tag-lists/native/synthetic-before.pdf scratch/tag-lists/native/synthetic-after.pdf --float32 --list
+swift scripts/text_edit_pdfkit.swift scratch/tag-lists/native --list
+```
+
+Measured on macOS: an unchanged Edge 153 numbered-list export passes all 15
+native checks. Independent readback preserves the complete structure and both
+list numbers; PDFKit finds 2,423 changed pixels inside the first item's body and
+zero outside. Its comparison region excludes the label. Moving the first label
+by three source units produces 170 changed pixels outside and fails; changing
+the numbering metadata or reversing the list items fails the independent graph
+comparison. The native harness selects the expected text by its accessible name
+because the first editable run can now be the list number. The earlier browser
+heading fixture remains a separate regression control.
+
 Use the unchanged tagged LibreOffice fixture from the producer survey:
 
 ```bash

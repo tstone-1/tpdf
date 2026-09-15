@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 mod container_tests;
 #[cfg(test)]
+mod list_tests;
+#[cfg(test)]
 mod nested_tests;
 #[cfg(test)]
 mod tests;
@@ -101,6 +103,36 @@ fn element(
         return Err(INVALID.into());
     }
     if let Ok(attributes) = dict.get(b"A") {
+        if name(get(dict, b"S")?)? == b"L" {
+            // A single List attribute dictionary, optionally wrapped as emitted
+            // by Chromium. Numbering describes labels; it is not an ink bound.
+            let attributes = crate::encoding::resolve(doc, attributes);
+            let attributes = match attributes {
+                Object::Array(items) if items.len() == 1 => {
+                    crate::encoding::resolve(doc, &items[0])
+                }
+                value => value,
+            };
+            let attributes = attributes.as_dict().map_err(|_| INVALID)?;
+            keys(attributes, &[b"O", b"ListNumbering"])?;
+            if name(get(attributes, b"O")?)? != b"List"
+                || !matches!(
+                    name(get(attributes, b"ListNumbering")?)?,
+                    b"None"
+                        | b"Disc"
+                        | b"Circle"
+                        | b"Square"
+                        | b"Decimal"
+                        | b"UpperRoman"
+                        | b"LowerRoman"
+                        | b"UpperAlpha"
+                        | b"LowerAlpha"
+                )
+            {
+                return Err(INVALID.into());
+            }
+            return Ok(page);
+        }
         if name(get(dict, b"S")?)? == b"NonStruct" {
             return Err(INVALID.into());
         }
@@ -171,7 +203,10 @@ fn groups<'a>(
             let child = node(doc, *id)?;
             let page = element(doc, child, plain.id, pages)?;
             let tag = name(get(child, b"S")?)?;
-            if tag != b"NonStruct" {
+            if tag != b"NonStruct" && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody")) {
+                return Err(INVALID.into());
+            }
+            if plain.tag == b"LI" && child.has(b"A") {
                 return Err(INVALID.into());
             }
             let items = children(doc, get(child, b"K")?)?;
@@ -251,6 +286,7 @@ impl Tags {
                         || text_block(key)
                         || container(key)
                         || key == b"NonStruct"
+                        || matches!(key.as_slice(), b"L" | b"LI" | b"Lbl" | b"LBody")
                         || !value
                             .as_name()
                             .is_ok_and(|tag| text_block(tag) || container(tag))
@@ -350,7 +386,7 @@ impl Tags {
                 .transpose()?
                 .unwrap_or(tag);
             let items = children(doc, get(child, b"K")?)?;
-            if container(role) || role == b"NonStruct" {
+            if container(role) || role == b"NonStruct" || role == b"L" {
                 containers += 1;
                 // Bound the work list before copying child references into it.
                 if items.len() + pending.len() > total {
@@ -359,16 +395,28 @@ impl Tags {
                 if depth >= MAX_CONTAINER_DEPTH
                     || containers > MAX_CONTAINERS
                     || items.is_empty()
-                    || child.has(b"A")
+                    || (role != b"L" && child.has(b"A"))
                 {
                     return Err(INVALID.into());
+                }
+                if role == b"L" {
+                    for item in items {
+                        if name(get(node(doc, reference(item)?)?, b"S")?)? != b"LI" {
+                            return Err(INVALID.into());
+                        }
+                    }
                 }
                 // Container Pg never supplies a descendant's page. Its own
                 // identity is the immediate parent checked on every child.
                 pending.extend(items.iter().rev().map(|item| (item, id, depth + 1)));
                 continue;
             }
-            if !text_block(role) {
+            if !text_block(role) && role != b"LI" {
+                return Err(INVALID.into());
+            }
+            if role == b"LI"
+                && (name(get(node(doc, parent_id)?, b"S")?)? != b"L" || child.has(b"A"))
+            {
                 return Err(INVALID.into());
             }
             let paragraph = Group {

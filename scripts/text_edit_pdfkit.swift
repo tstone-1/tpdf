@@ -1,5 +1,5 @@
 // Independent readback of text-edit-probe's synthetic or W3C output on macOS.
-// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1|--image|--wide-spacing]
+// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1|--image|--wide-spacing|--list]
 import Foundation
 import PDFKit
 import CoreGraphics
@@ -19,14 +19,14 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--list", "--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
 let latin1 = variant == "--latin1"
 let overhang = variant == "--browser-overhang"
 let cidLatin1 = variant == "--browser-latin1" || overhang
-let browser = variant == "--browser" || cidLatin1
+let browser = variant == "--browser" || variant == "--list" || cidLatin1
 let browserFlow = variant == "--browser-flow"
 let defaultEncoding = variant == "--default-encoding"
 let w3c = variant == "--w3c-dummy"
@@ -49,7 +49,7 @@ if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
 // W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
 let targetRows = passport ? (926..<1056) : agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = variant == "--wide-spacing" ? (76..<600) : ["--continued", "--inline"].contains(variant) ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
+let targetColumns = variant == "--list" ? (118..<520) : variant == "--wide-spacing" ? (76..<600) : ["--continued", "--inline"].contains(variant) ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
@@ -84,6 +84,8 @@ for (name, document) in [("before", before), ("after", after)] {
               source.components(separatedBy: original).count == 2 else { fail("missing original inline text") }
         let expected = name == "after" ? source.replacingOccurrences(of: original, with: replacement) : source
         guard page.string == expected else { fail("inline ActualText or surrounding text changed") }
+    } else if variant == "--list" {
+        guard page.string?.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ") == "1. " + first + " 2. SYNTHETIC SECOND" else { fail("list text or numbering changed") }
     } else if agenda || passport {
         guard let sourceText = before.page(at: pageIndex)?.string else { fail("missing agenda text") }
         let oldText = passport ? "ILB 53 (09.22)" : selected == 0 ? "REGULAR" : "Community Hub"

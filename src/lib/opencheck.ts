@@ -255,7 +255,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
       const target = () => {
         const targets = [...document.querySelectorAll<HTMLButtonElement>(".text-edit-run")];
-        return agenda || passport ? targets.find((button) => [original, replacement].some((text) => button.getAttribute("aria-label") === `Edit: ${text}`)) : targets[w3c ? 5 : 0];
+        // A list label may precede the item body; select the authored text.
+        return w3c ? targets[5] : targets.find((button) => [original + (wrapped ? " " : ""), replacement].some((text) => button.getAttribute("aria-label") === `Edit: ${text}`));
       };
       const start = async () => {
         const previous = target();
