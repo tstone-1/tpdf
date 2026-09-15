@@ -4303,8 +4303,13 @@ Passport page 2 also uses a negative-height rectangular clip. This is now
 accepted with the same interior as its positive-dimension equivalent; source
 operators stay unchanged. Independent rendering compares all four dimension-sign
 combinations under both winding rules, with an unclipped negative control.
-The page then reaches an unsupported DCT/JPEG image. Public admission remains
-1 of 45 pages; supporting these images is the next measured blocker on that page.
+The page then reached an unsupported DCT/JPEG image. Opaque grayscale/RGB JPEGs
+are now preserved with bounded framing and decoding, including progressive and
+ICCBased images. The same unchanged page now reaches the word-spacing limit;
+public admission remains 1 of 45 pages. Worker and independent pixel readback
+cover synthetic JPEGs and the public image with its original ICC profile, in a
+synthetic text fixture. This does not establish that the whole passport page is
+editable.
 
 Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 
@@ -4652,6 +4657,14 @@ distinct names and a shared 1 MiB decoded-image budget per page. Samples must
 exactly match dimensions and components. Forms, masks, external data, alternate
 images, optional content and custom decode mappings remain refused. Image and
 profile bytes remain unchanged; painted images also retain marked-content items.
+JPEG images additionally permit a single `DCTDecode` filter, with eight-bit
+grayscale or RGB samples (including ICCBased spaces). Encoded data is bounded
+to 2 MiB and 64 scans; complete marker framing and nonempty entropy scans are
+required before decoding under the declared dimensions and shared image budget.
+The decoder runs in strict mode, but that is not a proof that every entropy
+sample is valid; image bytes remain unchanged. Four-component/lossless JPEGs,
+custom decode parameters and combined image filters remain refused. The obsolete
+image `/Name` is preserved; `Do` resolves through the resource dictionary.
 Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
 outside text blocks, with nonzero signed dimensions and coordinates bounded to one
 million after transformation. Negative dimensions retain their authored winding;
