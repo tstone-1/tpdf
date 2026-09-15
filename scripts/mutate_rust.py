@@ -263,6 +263,16 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('tag containers: refuse neutral grouping', 'src/textedit/tagging.rs', ' || role == b"NonStruct"', '', 'textedit_containers_and_headings_preserve_roles_order_and_graph'),
+    Mutation('tag containers: omit depth bound', 'src/textedit/tagging.rs', 'depth >= MAX_CONTAINER_DEPTH', 'false', 'textedit_container_depth_is_bounded_with_a_valid_boundary'),
+    Mutation('tag containers: omit count bound', 'src/textedit/tagging.rs', 'containers > MAX_CONTAINERS', 'false', 'textedit_container_count_is_bounded_independently_of_depth_and_content'),
+    Mutation('tag containers: omit frontier bound', 'src/textedit/tagging.rs', 'items.len() + pending.len() > total', 'false', 'textedit_container_frontier_is_bounded_before_children_are_visited'),
+    Mutation('tag containers: accept layout attributes', 'src/textedit/tagging.rs', '|| child.has(b"A")', '|| false', 'textedit_containers_refuse_cycles_aliases_attributes_and_wrong_owners_atomically'),
+    Mutation('tag containers: discard immediate parent', 'src/textedit/tagging.rs', 'element(doc, child, parent_id, &page_ids)?', 'element(doc, child, document_id, &page_ids)?', 'textedit_containers_keep_interleaved_page_owners_and_nested_leaves'),
+    Mutation('tag containers: refuse grouping elements', 'src/textedit/tagging.rs', 'if container(role) || role == b"NonStruct" {', 'if false {', 'textedit_containers_and_headings_preserve_roles_order_and_graph'),
+    Mutation('tag containers: refuse level six headings', 'src/textedit/tagging.rs', 'b"H5" | b"H6"', 'b"H5"', 'textedit_containers_and_headings_preserve_roles_order_and_graph'),
+    Mutation('tag containers: permit standard grouping remaps', 'src/textedit/tagging.rs', '|| container(key)', '|| false', 'textedit_containers_refuse_cycles_aliases_attributes_and_wrong_owners_atomically'),
+    Mutation('tag containers: permit standard heading remaps', 'src/textedit/tagging.rs', '|| text_block(key)', '|| false', 'textedit_containers_refuse_cycles_aliases_attributes_and_wrong_owners_atomically'),
     Mutation('tag metadata: require explicit element type', 'src/textedit/tagging.rs', '.is_ok_and(|value| value.as_name().ok() != Some(b"StructElem"))', '.map_or(true, |value| value.as_name().ok() != Some(b"StructElem"))', 'textedit_tagged_metadata_representations_preserve_the_original_graph'),
     Mutation('tag metadata: ignore supplied element type', 'src/textedit/tagging.rs', '.is_ok_and(|value| value.as_name().ok() != Some(b"StructElem"))', '.is_ok_and(|_| false)', 'textedit_tagged_metadata_references_keep_validation_and_atomic_refusal'),
     Mutation('tag metadata: skip attribute resolution', 'src/textedit/tagging.rs', 'crate::encoding::resolve(doc, attributes)', 'attributes', 'textedit_tagged_metadata_representations_preserve_the_original_graph'),

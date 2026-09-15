@@ -8,6 +8,7 @@ Append --intent Perceptual to retain both ri and ExtGState RI settings.
 Append --image to retain an opaque RGB image alongside the text.
 Append --dash to edit an en dash through its original font code.
 Append --tagged-indirect for referenced tagging metadata and omitted element Type.
+Append --tagged-containers to add Part/Art/section/Div nesting and an aliased heading.
 Use --unit-font --word-code space --word-spacing 12.112 for a tab-sized gap;
 the font size is 1 and Tm supplies the 12pt scale. PDFKit readback uses --wide-spacing;
 the native fixture phase is textedit-wide-spacing (the gap forms geometric columns).
@@ -36,6 +37,7 @@ def main():
     parser.add_argument("--spacing", type=float, default=0.)
     parser.add_argument("--word-spacing", type=float, default=0.)
     parser.add_argument("--tagged-indirect", action="store_true")
+    parser.add_argument("--tagged-containers", action="store_true")
     parser.add_argument("--unit-font", action="store_true", help="use Tf=1 and a 12x text matrix")
     parser.add_argument("--word-code", choices=["space", "letter"],
                         help="map a space or S to PDF byte 32; default has no code 32")
@@ -148,7 +150,7 @@ def main():
         })
         first = "q 168.2 0 0 28.2 40 40 cm /Image1 Do Q\n" + first
     second = f"BT {position(140)} {encoded('SYNTHETIC SECOND')} Tj ET"
-    if args.tagged_indirect:
+    if args.tagged_indirect or args.tagged_containers:
         root, document = DictionaryObject(), DictionaryObject()
         root_ref, document_ref = writer._add_object(root), writer._add_object(document)
         attributes = writer._add_object(DictionaryObject({
@@ -176,7 +178,23 @@ def main():
         writer._root_object[NameObject("/StructTreeRoot")] = root_ref
         writer._root_object[NameObject("/MarkInfo")] = DictionaryObject({NameObject("/Marked"): BooleanObject(True)})
         page[NameObject("/StructParents")] = NumberObject(0)
-        first = f"/Standard << /MCID 0 >> BDC {first} EMC"
+        first_tag = "Standard"
+        if args.tagged_containers:
+            role_map = roles.get_object()
+            role_map[NameObject("/Story")] = NameObject("/Sect")
+            role_map[NameObject("/HeadingStyle")] = NameObject("/H1")
+            first_tag = "HeadingStyle"
+            paragraphs[0].get_object()[NameObject("/S")] = NameObject("/HeadingStyle")
+            owner, owner_ref = document, document_ref
+            for tag in ("Part", "Art", "Story", "Div", "NonStruct"):
+                group = DictionaryObject({NameObject("/S"): NameObject("/" + tag), NameObject("/P"): owner_ref})
+                group_ref = writer._add_object(group)
+                owner[NameObject("/K")] = group_ref
+                owner, owner_ref = group, group_ref
+            owner[NameObject("/K")] = paragraphs
+            for paragraph in paragraphs:
+                paragraph.get_object()[NameObject("/P")] = owner_ref
+        first = f"/{first_tag} << /MCID 0 >> BDC {first} EMC"
         second = f"/Standard << /MCID 1 >> BDC {second} EMC"
     content.set_data((first + "\n" + second).encode())
     page[NameObject("/Contents")] = writer._add_object(content)

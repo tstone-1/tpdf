@@ -4454,8 +4454,18 @@ and independent graph/pixel readback. The public tagged documents also carry
 unsupported roles, deeper trees or extra metadata, so these representation
 variants alone do not make those documents editable.
 
-The tagged grammar supports a two-level Document/paragraph tree with at most 128
-marked-content items across the document, each owned by exactly one paragraph.
+The tagged grammar keeps one Document root and permits up to eight levels of
+Part/Art/Sect/Div or neutral NonStruct containers before P/H/H1-H6 blocks.
+At most 128 containers and 128 marked-content items are admitted independently;
+each content item has exactly one text-block or NonStruct-leaf owner. The walk
+is iterative, bounds its pending children before allocation, rejects duplicate
+identities and verifies every immediate parent. Containers do not own content,
+carry layout attributes or supply inherited page references. Supported container
+and heading role aliases retain their authored names; remapping standard
+supported names and alias chains remain refused.
+An unchanged browser heading export now edits through its Document/Art/NonStruct
+hierarchy, retaining the H1/P blocks and their NonStruct leaves. Constructed
+fixtures separately cover the remaining grouping names, aliases and bounds.
 A paragraph can own several items, including items on other pages. A flat parent
 number tree has one nonempty array
 per page, with unique, sorted keys matching each page's StructParents. Direct
@@ -4464,7 +4474,7 @@ their page and MCID. IDs may repeat on other pages; both
 directions of each structure reference must agree. Discovery checks the complete
 structure graph and the selected page's markers; untouched streams are preserved.
 All content items on the selected page must appear exactly once in its stream, and
-text may occur only inside a paragraph. Each item must contain text or a complete
+text may occur only inside an owned text block. Each item must contain text or a complete
 painted rectangle or straight-line stroke; path discards and graphics-state setters do not count. The writer
 preserves every marker and structure object. Unknown fields, alternate text
 (`ActualText`, `Alt`, `E`), inherited page references, class maps and ink bounds

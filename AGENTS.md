@@ -320,7 +320,16 @@ values must be `/StructElem`. Reference resolution retains the existing bound,
 and every resolved value still passes the same grammar and ownership checks.
 `make_textedit_symbolic.py --tagged-indirect` generates the combined fixture for
 ordinary worker/native textedit checks and independent structure-graph readback.
-The supported Document/P/NonStruct hierarchy is unchanged.
+Below the single Document root, an iterative walk admits Part/Art/Sect/Div and
+neutral NonStruct containers, then P/H/H1-H6 blocks with the existing optional
+NonStruct content leaves. It allows at most eight container levels and 128
+containers, independently of the 128-item content bound. Containers own child
+elements, never marked content or layout attributes; their Pg is not inherited.
+Role aliases may target supported grouping/heading types but not NonStruct;
+standard supported names cannot be remapped. `--tagged-containers` on the
+symbolic generator covers aliases and metadata references. The browser generator's
+`--headings` exports an unchanged Document/Art/NonStruct tree with H1/P blocks;
+ordinary native textedit checks and PDFKit `--browser` read it back.
 
 Positive word spacing accepts values up to one million text-space units, with
 the combined advance bounded separately. Negative spacing retains its quarter-
