@@ -79,6 +79,9 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation('rotation fit: infer the sheet after reordering pages', 'src/lib/viewer.ts', 'this.applyFit(false, landing);', 'this.applyFit();', 'fits the retained sheet after its page order changes'),
+    Mutation('rotation fit: infer the sheet after rotating the layout', 'src/lib/viewer.ts', 'this.applyFit(false, page);\n\n    this.scrollTop = Math.max(', 'this.applyFit();\n\n    this.scrollTop = Math.max(', 'keeps fitting the visible sheet through every view turn in a mixed-size document'),
+    Mutation('rotation fit: infer the sheet after turning a preceding page', 'src/lib/viewer.ts', 'this.applyFit(false, anchor);', 'this.applyFit();', 'keeps fitting the reading page when a preceding page is rotated'),
     Mutation('restoration: discard pending absolute point', 'src/lib/viewer.ts', 'const pending = this.restoredPoint;', 'const pending = null;', 'restores an absolute point after the remembered page size arrives'),
     Mutation('restoration: fit the first page', 'src/lib/viewer.ts', 'this.applyFit();\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', 'this.applyFit(false, 0);\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', "restores fit using the remembered page rather than the new viewer's first page"),
     Mutation('restoration: fit the top anchor instead of the visible sheet', 'src/lib/viewer.ts', 'this.applyFit();\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', 'this.applyFit(false, page);\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', 'restores a fitted last page when the viewport starts on the previous sheet'),

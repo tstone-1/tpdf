@@ -971,6 +971,68 @@ describe("Viewer geometry on a mixed-size document", () => {
     viewer.destroy();
   });
 
+  it("keeps fitting the visible sheet through every view turn in a mixed-size document", () => {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1, pageCount: 3, pages: [
+        { width_pt: 600, height_pt: 800 },
+        { width_pt: 1200, height_pt: 400 },
+        { width_pt: 600, height_pt: 800 },
+      ],
+    });
+    viewer.goToPage(2); viewer.setFit("page"); viewer.goToPage(2);
+    const original = viewer.position;
+    const zoom = viewer.currentZoom;
+    expect(original.page).toBe(2);
+    for (let turn = 1; turn <= 4; turn++) {
+      viewer.rotateBy(1);
+      expect(viewer.currentZoom).toBeCloseTo(turn % 2 ? 1.05 : zoom, 6);
+      // Fit-page may expose the preceding gap above a short final sheet.
+      const centre = viewer.screenPoint(2, turn % 2 ? 400 : 300, turn % 2 ? 300 : 400);
+      expect(centre.y).toBeGreaterThan(0);
+      expect(centre.y).toBeLessThan(700);
+    }
+    viewer.destroy();
+  });
+
+  it("keeps fitting the reading page when a preceding page is rotated", () => {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1, pageCount: 3, pages: [
+        { width_pt: 600, height_pt: 800 },
+        { width_pt: 1200, height_pt: 400 },
+        { width_pt: 600, height_pt: 800 },
+      ],
+    });
+    viewer.goToPage(2); viewer.setFit("page"); viewer.goToPage(2);
+    const original = viewer.position;
+    const zoom = viewer.currentZoom;
+    expect(original.page).toBe(2);
+    viewer.setPageTurns(1, 1);
+    expect(viewer.currentZoom).toBeCloseTo(zoom, 6);
+    expect(viewer.position).toEqual(original);
+    viewer.setPageTurns(1, 0);
+    expect(viewer.currentZoom).toBeCloseTo(zoom, 6);
+    expect(viewer.position).toEqual(original);
+    viewer.destroy();
+  });
+
+  it("fits the retained sheet after its page order changes", () => {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1, pageCount: 3, pages: [
+        { width_pt: 600, height_pt: 800 },
+        { width_pt: 1200, height_pt: 400 },
+        { width_pt: 600, height_pt: 800 },
+      ],
+    });
+    viewer.goToPage(2); viewer.setFit("page"); viewer.goToPage(2);
+    const zoom = viewer.currentZoom;
+    const [first, middle, last] = viewer.pageOrder;
+    expect(viewer.position.page).toBe(2);
+    expect(viewer.setPages([last!, first!, middle!])).toBe(true);
+    expect(viewer.currentZoom).toBeCloseTo(zoom, 6);
+    expect(viewer.position).toEqual({ page: 0, top: 0 });
+    viewer.destroy();
+  });
+
   it("fits the page being read rather than page 1", async () => {
     // Mutation: `displayedPage()` reading `this.opts.pages[0]` instead of the
     // scroller's size for the current page. Every fit then follows page 1 and

@@ -111,6 +111,46 @@ function sidebars(): number {
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "tabs-rotation": {
+      const [first] = expected.split("|");
+      if (!first) throw new Error("a disposable fixture path is required");
+      await host.open(first); await host.idle();
+      const viewer = host.viewer()!;
+      const page = host.edits()!.state.pages.length - 1;
+      if (page < 2) throw new Error("rotation check needs at least three pages");
+      const quiet = async () => {
+        if (!await settle(() => viewer.idle, SETTLE_MS)) throw new Error("rotation did not settle");
+        await pause(100);
+      };
+      // Learn the unequal preceding sheets before changing their layout.
+      for (let index = 0; index <= page; index++) {
+        viewer.goToPage(index); await quiet();
+      }
+      for (const fit of ["page", "width"] as const) {
+        viewer.goToPage(page); viewer.setFit(fit); viewer.goToPage(page); await quiet();
+        for (let turn = 1; turn <= 4; turn++) {
+          host.run("view.rotateClockwise"); await host.idle(); await quiet();
+          const rotated = viewer.currentZoom;
+          // A reader can explicitly return to the target and refit it. The
+          // rotation itself must choose that same scale without this correction.
+          viewer.goToPage(page); viewer.setFit(fit); viewer.goToPage(page); await quiet();
+          report.check(`rotation keeps ${fit} on the last sheet, turn ${turn}`,
+            Math.abs(rotated - viewer.currentZoom) < 0.001,
+            JSON.stringify({ rotated, refitted: viewer.currentZoom }));
+        }
+      }
+      viewer.goToPage(page); viewer.setFit("page"); viewer.goToPage(page); await quiet();
+      const fitted = viewer.currentZoom;
+      const retained = host.edits()!.state.pages[page]!.id;
+      for (let slot = page - 1; slot >= 0; slot--) {
+        host.run("edit.movePageUp"); await host.idle(); await quiet();
+        report.check(`moving the reading sheet to slot ${slot} keeps its fit`,
+          host.edits()!.state.pages[slot]?.id === retained &&
+          viewer.pageOrder[slot]?.id === retained && Math.abs(viewer.currentZoom - fitted) < 0.001,
+          JSON.stringify({ fitted, moved: viewer.currentZoom }));
+      }
+      break;
+    }
     case "tabs-position": {
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable fixture paths required");
@@ -256,13 +296,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.activate(originalTab.id); await host.idle();
       check("tab switching commits the typed replacement", host.edits()!.state.text_edits?.[0]?.replacement === replacement);
       const pixels = async () => {
-        // This phase measures replacement ink, not restoration of a tab's
-        // scroll offset. Navigate after page sizes settle on the remounted viewer.
         if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text tiles did not settle");
-        if (passport) {
-          host.viewer()!.goToPage(page);
-          if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text sample navigation did not settle");
-        }
         await pause(100);
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
