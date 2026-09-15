@@ -287,6 +287,21 @@ spacing/font changes, orthogonal axes and line resets. Generate fixtures and
 check independent saved geometry with `scripts/text_continuation_check.py`;
 `text-edit-probe` and `text_edit_pdfkit.swift` accept `--continued` for them.
 
+Inline `/Span` sequences carrying only `ActualText` tab or U+0007 separators
+are preserved, with one optional `Tm`/`Td` and one space-only `Tj`/`TJ`. They
+remain subject to normal font, coordinate and clipping validation; their shows
+are excluded from editable runs. Nested sequences, state changes, visible text,
+extra semantic properties and more than 32 separators are refused. The byte
+patcher preserves the entire sequence, and preceding edits retain its origin.
+`textedit/spacers.rs` owns these checks; generate independent fixtures with
+`scripts/text_continuation_check.py --generate <path> --inline tab|bell|tabs`.
+Use `text-edit-probe --continued` and `text_edit_pdfkit.swift --inline` for readback.
+
+Composite font discovery resolves an indirect `/DescendantFonts` array through
+`encoding::resolve`, retaining the original array and font resources on save.
+The composite-font regression covers matching direct/indirect geometry, saved
+text and cyclic or non-array references.
+
 `textedit/refusal.rs` explains unsupported operation contexts using fixed PDF
 keywords; it never echoes operand values or unknown document tokens.
 `scripts/textedit_survey.py` reports `refusal_totals`, counting only the first

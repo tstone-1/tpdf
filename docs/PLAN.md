@@ -4283,6 +4283,14 @@ three by images and one by a rectangle. These are first blockers per page;
 removing one may reveal another. The 12 inline markers carry `ActualText`: ten
 contain a tab and two contain U+0007. Inline marked content is the next measured
 text-state obstacle, rather than consecutive text positioning.
+The bounded separator case is now preserved while surrounding text remains
+editable: one optional position and one space-only show, with the original
+`ActualText` and every sequence byte retained. These sequences are never edit
+targets. The same survey passes their former refusal point on all 12 pages and
+then encounters a composite-font array stored by reference. Resolving that array
+fixes a reader defect; the next refusal is its two-byte character map. Admission
+remains at 1 of 45 pages. This does not establish that every later separator on
+those pages is supported; discovery stops at the next font refusal.
 
 Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 

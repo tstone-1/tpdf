@@ -14,6 +14,7 @@ mod fonts;
 mod graphics;
 mod images;
 mod refusal;
+mod spacers;
 mod streams;
 mod tagging;
 
@@ -398,6 +399,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut positioned = false;
     let mut cursor = 0.0;
     let mut previous_show = None;
+    let mut spacer: Option<spacers::Spacer> = None;
     let mut continued = BTreeSet::new();
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
@@ -417,7 +419,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         if index < path_until {
             continue;
         }
+        if let Some(spacer) = &mut spacer {
+            spacer.step(&op.operator)?;
+        }
         match (op.operator.as_str(), op.operands.as_slice()) {
+            ("BDC", [tag, properties]) if inside => {
+                spacer = Some(spacers::Spacer::new(tag, properties)?);
+            }
+            ("EMC", []) if inside && spacer.is_some() => {
+                spacer = None;
+            }
             ("BMC", [tag]) if !inside => tags.begin(tag, None)?,
             ("BDC", [tag, properties]) if !inside => tags.begin(tag, Some(properties))?,
             ("EMC", []) if !inside => tags.end()?,
@@ -682,6 +693,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         );
         if display_rect.iter().any(|v| !v.is_finite()) {
             return Err("text bounds exceed the display range".into());
+        }
+        if let Some(spacer) = &spacer {
+            spacer.text(&text)?;
+            continue;
         }
         font_operators.insert(index as u32, font_operator);
         horizontal_bounds.insert(index as u32, horizontal);
