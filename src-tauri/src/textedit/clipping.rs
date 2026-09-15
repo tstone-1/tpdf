@@ -62,7 +62,7 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>,
         return Err("invalid rectangle paint operands".into());
     }
     for rect in &ops[..count] {
-        rectangle_bounds(rect, ctm, false)?;
+        rectangle(rect, ctm)?;
     }
     Ok(Some(count + 1))
 }
@@ -120,10 +120,6 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
 }
 
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
-    rectangle_bounds(rect, ctm, true)
-}
-
-fn rectangle_bounds(rect: &Operation, ctm: [f64; 6], clipping: bool) -> Result<Rect, String> {
     if rect.operator != "re" || rect.operands.len() != 4 {
         return Err("invalid rectangle operands".into());
     }
@@ -132,10 +128,11 @@ fn rectangle_bounds(rect: &Operation, ctm: [f64; 6], clipping: bool) -> Result<R
         *dest = super::number(value)?;
     }
     let [x, y, width, height] = values;
-    // A reversed painted rectangle retains its winding and all authored
-    // operators. Clipping keeps its independently validated positive subset.
-    if width == 0. || height == 0. || (clipping && (width < 0. || height < 0.)) {
-        return Err("empty or reversed rectangle is not editable".into());
+    // re uses x + width and y + height as its opposite corner (PDF 1.6,
+    // Table 4.9). A single reversed rectangle has the same clipping interior;
+    // retain its winding and all authored operators in the saved stream.
+    if width == 0. || height == 0. {
+        return Err("empty rectangle is not editable".into());
     }
     let next = [
         x * ctm[0] + ctm[4],

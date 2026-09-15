@@ -263,6 +263,9 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('reversed clips: reject signed dimensions', 'src/textedit/clipping.rs', 'if width == 0. || height == 0. {', 'if width <= 0. || height <= 0. {', 'textedit_reversed_clips_preserve_geometry_and_authored_bytes'),
+    Mutation('reversed clips: leave horizontal corners unsorted', 'src/textedit/clipping.rs', 'next[0].min(next[2])', 'next[0]', 'textedit_reversed_clip_bounds_normalize_every_corner_after_transform'),
+    Mutation('reversed clips: leave vertical corners unsorted', 'src/textedit/clipping.rs', 'next[1].min(next[3])', 'next[1]', 'textedit_reversed_clip_bounds_normalize_every_corner_after_transform'),
     Mutation('CID ligatures: refuse declared sequences', 'src/textedit/fonts/mapping.rs', 'let slot = super::ligatures::target(bytes).ok_or_else(invalid)?;', 'let slot = super::ligatures::target(&[]).ok_or_else(invalid)?;', 'textedit_cid_ligature_mapping_accepts_only_unique_exact_sequences'),
     Mutation('CID ligatures: accept duplicate source', 'src/textedit/fonts/mapping.rs', 'result.insert(first, slot).is_some() || !unicode.insert(slot)', '{ result.insert(first, slot); false } || !unicode.insert(slot)', 'textedit_cid_ligature_mapping_accepts_only_unique_exact_sequences'),
     Mutation('CID ligatures: accept duplicate target', 'src/textedit/fonts/mapping.rs', 'result.insert(first, slot).is_some() || !unicode.insert(slot)', 'result.insert(first, slot).is_some() || { unicode.insert(slot); false }', 'textedit_cid_ligature_mapping_accepts_only_unique_exact_sequences'),
@@ -293,7 +296,7 @@ MUTATIONS = [
     Mutation('ligature: named map permits semantic disagreement', 'src/textedit/fonts/mapping.rs', '!(32..=126).contains(&code) || usize::from(slot) != code', '!(32..=126).contains(&code)', 'textedit_named_unicode_requires_identity_and_agreeing_legacy_glyphs'),
     Mutation('ligature: discard stroke component state', 'src/textedit.rs', 'let mut stroke_components = 1;', 'let mut stroke_components = 3;', 'textedit_stroke_colours_restore_independent_state_and_preserve_operators'),
     Mutation('ligature: skip later rectangle validation', 'src/textedit/clipping.rs', 'for rect in &ops[..count] {', 'for rect in &ops[..1] {', 'textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atomically'),
-    Mutation('ligature: reject reversed paint rectangles', 'src/textedit/clipping.rs', 'rectangle_bounds(rect, ctm, false)?;', 'rectangle_bounds(rect, ctm, true)?;', 'textedit_painted_rectangles_preserve_paint_state_and_surrounding_operators'),
+    Mutation('ligature: reject reversed paint rectangles', 'src/textedit/clipping.rs', 'if width == 0. || height == 0. {', 'if width <= 0. || height <= 0. {', 'textedit_painted_rectangles_preserve_paint_state_and_surrounding_operators'),
 
     Mutation('simple overhang: omit measured bounds', 'src/textedit/fonts.rs', 'horizontal_overhangs: Some(horizontal_overhangs),', 'horizontal_overhangs: None,', 'textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources'),
     Mutation('simple overhang: index by PDF code', 'src/textedit/fonts.rs', 'horizontal_overhangs[byte as usize]', 'horizontal_overhangs[code_byte as usize]', 'textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources'),
@@ -403,7 +406,7 @@ MUTATIONS = [
     Mutation('curves: consume following operator', 'src/textedit/clipping.rs', 'return Ok(index + 1);', 'return Ok(index + 2);', 'textedit_curves_preserve_complete_subpaths_and_following_text'),
     Mutation('stroked lines: count discard as tagged content', 'src/textedit.rs', 'if content.operations[index + consumed - 1].operator != "n" {', 'if true {', 'textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items'),
     Mutation('curves: accept empty subpath', 'src/textedit/clipping.rs', 'if segments > 0 && op.operands.is_empty() =>', 'if op.operands.is_empty() =>', 'textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically'),
-    Mutation('painted rectangles: skip geometry validation', 'src/textedit/clipping.rs', '        rectangle_bounds(rect, ctm, false)?;', '    let _ = (rect, ctm);', 'textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atomically'),
+    Mutation('painted rectangles: skip geometry validation', 'src/textedit/clipping.rs', '        rectangle(rect, ctm)?;', '    let _ = (rect, ctm);', 'textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atomically'),
     Mutation('painted rectangles: accept paint operands', 'src/textedit/clipping.rs', 'if !end.operands.is_empty() {', 'if false {', 'textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atomically'),
     Mutation('painted rectangles: discard an established clip', 'src/textedit.rs', 'path_until = index + rectangles_consumed;', 'path_until = index + rectangles_consumed; clip = None;', 'textedit_painted_rectangles_do_not_replace_or_discard_clipping'),
     Mutation('painted rectangles: consume a following operator', 'src/textedit.rs', 'path_until = index + rectangles_consumed;', 'path_until = index + rectangles_consumed + 1;', 'textedit_painted_rectangles_preserve_paint_state_and_surrounding_operators'),

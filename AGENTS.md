@@ -297,6 +297,12 @@ patcher preserves the entire sequence, and preceding edits retain its origin.
 `scripts/text_continuation_check.py --generate <path> --inline tab|bell|tabs`.
 Use `text-edit-probe --continued` and `text_edit_pdfkit.swift --inline` for readback.
 
+Single rectangular clips accept nonzero signed width and height, normalizing
+transformed corners before intersection. The saved `re W/W* n` bytes remain
+unchanged. Empty, compound, painted and partly clipped text cases remain refused.
+Generate equivalent clip fixtures with `make_textedit_composite.py <path> --clip-direction
+positive|x|y|both --clip-rule W|W*`; the background makes a missing clip visible.
+
 Composite font discovery resolves an indirect `/DescendantFonts` array through
 `encoding::resolve`, retaining the original array and font resources on save.
 The composite-font regression covers matching direct/indirect geometry, saved

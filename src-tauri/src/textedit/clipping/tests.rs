@@ -511,3 +511,103 @@ fn textedit_curves_preserve_clip_and_validate_transformed_boundary() {
         }
     }
 }
+
+#[test]
+fn textedit_reversed_clips_preserve_geometry_and_authored_bytes() {
+    let text = "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 40 140 Td (SECOND) Tj ET";
+    for rule in ["W", "W*"] {
+        for transform in ["", "-1 0 0 -1 300 240 cm"] {
+            let control =
+                page(format!("{transform} q 30 120 200 80 re {rule} n {text} Q").as_bytes());
+            let expected = textedit::scan(&control, 0).unwrap();
+            for rect in ["230 120 -200 80", "30 200 200 -80", "230 200 -200 -80"] {
+                let prefix = format!("{transform} q {rect} re {rule} n ");
+                let mut doc = page(format!("{prefix}{text} Q").as_bytes());
+                let before = textedit::scan(&doc, 0).unwrap();
+                assert_eq!(before.runs, expected.runs);
+                let id = crate::pagetree::ordered_pages(&doc)[0];
+                let objects = doc.objects.clone();
+                textedit::write(
+                    &mut doc,
+                    &[Change {
+                        page: 0,
+                        revision: before.revision,
+                        operator: before.runs[0].operator,
+                        original: "FIRST".into(),
+                        replacement: "IN".into(),
+                    }],
+                )
+                .unwrap();
+                let after = textedit::scan(&doc, 0).unwrap();
+                assert_eq!(after.runs[0].text, "IN");
+                assert_eq!(after.runs[1], before.runs[1]);
+                assert!(doc.get_page_content(id).starts_with(prefix.as_bytes()));
+                for (object_id, object) in objects {
+                    if object_id != id {
+                        assert_eq!(doc.objects[&object_id], object);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_reversed_clips_still_reject_partial_empty_and_unbounded_regions() {
+    for rule in ["W", "W*"] {
+        for rect in [
+            "241 200 -200 -100",
+            "300 231 -300 -50",
+            "50 200 -50 -100",
+            "300 188 -300 -88",
+        ] {
+            let body = format!("{rect} re {rule} n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+            assert!(
+                textedit::scan(&page(body.as_bytes()), 0)
+                    .unwrap_err()
+                    .contains("partly clipped"),
+                "{body}"
+            );
+        }
+        for rect in [
+            "0 0 0 -240",
+            "0 0 -300 0",
+            "-1000000 0 -1 240",
+            "0 -1000000 300 -1",
+            "2 0 0 2 0 0 cm 0 0 -500001 240",
+        ] {
+            let body = format!("{rect} re {rule} n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+            assert!(textedit::scan(&page(body.as_bytes()), 0).is_err(), "{body}");
+        }
+        let body = format!("50 240 -50 -240 re {rule} n 300 240 -300 -240 re {rule} n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+        assert!(textedit::scan(&page(body.as_bytes()), 0)
+            .unwrap_err()
+            .contains("partly clipped"));
+        let body = format!("10 10 -10 -10 re {rule} n 30 30 -10 -10 re {rule} n");
+        assert!(textedit::scan(&page(body.as_bytes()), 0)
+            .unwrap_err()
+            .contains("empty text clipping intersection"));
+    }
+}
+
+#[test]
+fn textedit_reversed_clip_bounds_normalize_every_corner_after_transform() {
+    for (ctm, expected) in [
+        ([1., 0., 0., 1., 0., 0.], [30., 120., 230., 200.]),
+        ([-1., 0., 0., 1., 300., 0.], [70., 120., 270., 200.]),
+        ([1., 0., 0., -1., 0., 240.], [30., 40., 230., 120.]),
+        ([-2., 0., 0., -2., 600., 480.], [140., 80., 540., 240.]),
+    ] {
+        for rect in [
+            "30 120 200 80",
+            "230 120 -200 80",
+            "30 200 200 -80",
+            "230 200 -200 -80",
+        ] {
+            for rule in ["W", "W*"] {
+                let ops = Content::decode_strict(format!("{rect} re {rule} n").as_bytes()).unwrap();
+                assert_eq!(super::apply(None, &ops.operations, ctm).unwrap(), expected);
+            }
+        }
+    }
+}
