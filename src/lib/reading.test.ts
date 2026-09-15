@@ -32,7 +32,7 @@ import {
   textOfRanges,
   usableRuns,
 } from "./reading";
-import { touchedIndices, turnedView, type PageText, type TaggedRun } from "./text";
+import { caretAt, linesOf, runsFor, touchedIndices, turnedView, type PageText, type TaggedRun } from "./text";
 
 /** Builds a page from `(character, [left, top, right, bottom])` pairs. */
 function page(
@@ -927,5 +927,79 @@ describe("coveredText", () => {
     // `links.test.ts` and green here.
     const withGap = page([...word("hi", 0, 0), ["x", null]]);
     expect(coveredText(withGap, [0, 0, 20, 12])).toBe("hi");
+  });
+});
+
+
+describe("mixed text directions", () => {
+  function mixed(turns: number): PageText {
+    const label = turnedView(page([...word("ALPHA", 0, 0), ["\n", null], ...word("BETA", 0, 25)]), turns);
+    const chars = (from: number, to: number): [string, [number, number, number, number] | null][] =>
+      label.codes.slice(from, to).map((code, offset) => {
+        const at = (from + offset) * 4;
+        const box = label.boxes.slice(at, at + 4);
+        return [String.fromCodePoint(code), code === 10 ? null :
+          [box[0]! + 300, box[1]! + 200, box[2]! + 300, box[3]! + 200]];
+      });
+    // Producer order interleaves body and label, so regrouping must restore
+    // original character indices after partitioning the directions.
+    const result = page([...word("BODY", 10, 10), ["\n", null], ...chars(0, 6),
+      ...word("TEXT", 10, 35), ["\n", null], ...chars(6, 10)]);
+    result.char_turns = [...Array<number>(5).fill(0), ...Array<number>(6).fill(turns),
+      ...Array<number>(5).fill(0), ...Array<number>(4).fill(turns)];
+    return result;
+  }
+
+  it("keeps mixed orthogonal lines whole and copy order invariant under every view turn", () => {
+    for (const turns of [1, 2, 3]) {
+      const source = mixed(turns);
+      const expected = "BODY\nTEXT\nALPHA\nBETA";
+      for (const view of [0, 1, 2, 3]) {
+        const text = turnedView(source, view);
+        expect(readsAs(text), `text=${turns}, view=${view}`).toBe(expected);
+        expect(linesAs(text)).toEqual(["BODY\n", "TEXT\n", "ALPHA\n", "BETA"]);
+        expect([...readingOrder(text)].sort((a, b) => a - b)).toEqual(text.codes.map((_, index) => index));
+        expect(readingTextOf(text, 5, 11)).toBe("ALPHA\n");
+        expect(runsFor(text, 5, 11)).toHaveLength(1);
+        expect(linesOf(text)).toContainEqual({ from: 5, to: 11 });
+      }
+    }
+  });
+
+  it("retains character direction when tagged ownership splits a fragment", () => {
+    const interleaved = mixed(3);
+    const order = [0, 1, 2, 3, 4, 11, 12, 13, 14, 15, 5, 6, 7, 8, 9, 10, 16, 17, 18, 19];
+    const source: PageText = {
+      ...interleaved,
+      codes: order.map((index) => interleaved.codes[index]!),
+      boxes: order.flatMap((index) => interleaved.boxes.slice(index * 4, index * 4 + 4)),
+      char_turns: order.map((index) => interleaved.char_turns![index]!),
+      runs: [
+        { tag: "P", path: [], start: 0, end: 10 },
+        { tag: "Note", path: [], start: 10, end: 20 },
+      ],
+    };
+    for (const view of [0, 1, 2, 3]) {
+      const text = turnedView(source, view);
+      expect(usableRuns(text)).not.toBeNull();
+      expect(linesAs(text)).toEqual(["BODY\n", "TEXT\n", "ALPHA\n", "BETA"]);
+      expect(readingBlocks(text).map((block) => block.tag)).toEqual(["P", "Note"]);
+    }
+  });
+
+  it("places the caret before and after a glyph in its own displayed direction", () => {
+    for (const turns of [0, 1, 2, 3]) {
+      const shape = turnedView(page(word("AB", 10, 20)), turns);
+      const source = { ...shape, quarter_turns: 0, char_turns: [turns, turns] };
+      for (const view of [0, 1, 2, 3]) {
+        const text = turnedView(source, view);
+        const [left, top, right, bottom] = text.boxes;
+        const x = (left! + right!) / 2, y = (top! + bottom!) / 2;
+        const direction = (turns + view) % 4;
+        const dx = [2, 0, -2, 0][direction]!, dy = [0, 2, 0, -2][direction]!;
+        expect(caretAt(text, x - dx, y - dy)).toBe(0);
+        expect(caretAt(text, x + dx, y + dy)).toBe(1);
+      }
+    }
   });
 });

@@ -79,6 +79,14 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation('direction: discard character directions', 'src/lib/text.ts', 'text.char_turns?.[index] ?? 0', '0', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
+    Mutation('direction: drop directions when rotating cached text', 'src/lib/text.ts', 'if (text.char_turns) view.char_turns = text.char_turns;', '/* direction omitted */', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
+    Mutation('direction: reverse negative caret direction', 'src/lib/text.ts', 'turns >= 2 ? position < middle : position > middle', 'turns >= 2 ? position > middle : position > middle', 'places the caret before and after a glyph in its own displayed direction'),
+    Mutation('direction: skip orientation partition', 'src/lib/reading.ts', 'if (!text.char_turns?.length) return alignedFragments(text, axes, gap);', 'return alignedFragments(text, axes, gap);', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
+    Mutation('direction: lose original indices after partition', 'src/lib/reading.ts', 'original.push(indices[index]!)', 'original.push(index)', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
+    Mutation('direction: band every direction as upright', 'src/lib/reading.ts', 'const ownAxes = axesFor(turns);\n    for (const fragment', 'const ownAxes = axesFor(0);\n    for (const fragment', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
+    Mutation('direction: cut reversed paragraphs in page frame', 'src/lib/reading.ts', 'if (text.char_turns?.length) {', 'if (false) {', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
+    Mutation('direction: drop direction at tag ownership', 'src/lib/reading.ts', 'if (fragment.turns !== undefined) part.turns = fragment.turns;', '/* direction omitted */', 'retains character direction when tagged ownership splits a fragment'),
     Mutation('text editor: refuse mapped en dash', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013\\u2018\\u2019\\u2212]/', '/[^\\x20-\\x7e\\xa0-\\xff\\u2018\\u2019\\u2212]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
     Mutation('text editor: refuse mapped CFF punctuation', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013\\u2018\\u2019\\u2212]/', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
     Mutation('text editor: scroll overlay on input focus', "src/lib/textedit.ts", 'this.input.focus({ preventScroll: true });', 'this.input.focus();', "focuses targets and the input without scrolling their overlay"),
@@ -1762,22 +1770,18 @@ MUTATIONS = [
         "measures the gap from the last click, not from the first",
     ),
     Mutation(
-        # Predicted against the upright test first, which was simply wrong:
-        # this replaces the *sideways* branch, and the sideways test is what
-        # went red. Being wrong about which test notices is a result, not a
-        # nuisance -- the pair below now covers both branches, where one
-        # mutation covered one branch and claimed the other.
-        "caret: on a turned page, never place it after the character",
+        # The along-line coordinate and its midpoint must use the same axis.
+        "caret: use the horizontal coordinate on a turned page",
         "src/lib/text.ts",
-        "  return sideways\n    ? y > (quad.top + quad.bottom) / 2",
-        "  return sideways\n    ? false",
+        "const position = turns % 2 ? y : x;",
+        "const position = x;",
         "splits on the reading axis when the page is turned",
     ),
     Mutation(
         "caret: on an upright page, never place it after the character",
         "src/lib/text.ts",
-        "    : x > (quad.left + quad.right) / 2",
-        "    : false",
+        "turns >= 2 ? position < middle : position > middle",
+        "turns >= 2 ? position < middle : false",
         "puts the caret after a character the pointer is past the middle of",
     ),
     Mutation(

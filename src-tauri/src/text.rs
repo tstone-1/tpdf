@@ -105,6 +105,17 @@ impl<'page> RawTextPage<'page> {
         }
     }
 
+    /// Clockwise text turns in unrotated page space. PDFium reports the
+    /// passport guide's `0 8 -8 0 ... Tm` as 3*pi/2, independently of /Rotate.
+    pub fn char_turn(&self, index: u32) -> u8 {
+        // SAFETY: the text page is live; PDFium bounds-checks the index.
+        let angle = unsafe {
+            self.bindings
+                .FPDFText_GetCharAngle(self.handle, index as c_int)
+        };
+        orthogonal_turn(angle)
+    }
+
     /// The tight box of a character, in page space: `[left, bottom, right, top]`.
     ///
     /// `None` when PDFium declines, which it does for characters that occupy no
@@ -169,6 +180,11 @@ pub struct PageText {
     /// character per line on a page read top-to-bottom, which is what `/Rotate
     /// 90` produces. See `src/lib/text.ts`.
     pub quarter_turns: u8,
+    /// One clockwise orientation per scalar, relative to the unrotated page.
+    /// Empty when every character is upright. View/page turns are added by
+    /// consumers, so rotating cached boxes does not rewrite this array.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub char_turns: Vec<u8>,
     /// Time spent inside PDFium extracting this, in milliseconds.
     pub extract_ms: f64,
     /// What the document's own tags say the reading order is, where it has them.
@@ -187,6 +203,16 @@ pub struct PageText {
     /// that decision at two call sites and left one of them to be forgotten.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runs: Vec<crate::structure::TaggedRun>,
+}
+
+fn orthogonal_turn(angle: f32) -> u8 {
+    let turns = angle / std::f32::consts::FRAC_PI_2;
+    // Tolerate only PDFium's float rounding, not arbitrary angled baselines.
+    if angle.is_finite() && angle >= 0. && (turns - turns.round()).abs() < 0.0001 {
+        turns.round().rem_euclid(4.) as u8
+    } else {
+        0
+    }
 }
 
 impl PageText {
@@ -388,6 +414,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
 
     let mut codes = Vec::with_capacity(count as usize);
     let mut boxes = Vec::with_capacity(count as usize * 4);
+    let mut char_turns = Vec::with_capacity(count as usize);
     // PDFium's character index to ours. One entry longer than the character
     // count, so an exclusive end index has somewhere to land.
     let mut ours = Vec::with_capacity(count as usize + 1);
@@ -402,6 +429,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
             ours.push(codes.len() as u32);
         }
         codes.push(scalar);
+        char_turns.push(text.char_turn(index));
 
         let mut quad = text.char_box(index);
         if units == 2 {
@@ -452,6 +480,9 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     // on a page nobody asked about.
     let mut runs = structure::read_using(page, &text)?.complete_runs();
     retarget(&mut runs, &ours, codes.len());
+    if char_turns.iter().all(|turn| *turn == 0) {
+        char_turns.clear();
+    }
 
     Ok(PageText {
         codes,
@@ -459,6 +490,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         height_pt,
         width_pt,
         quarter_turns: turns,
+        char_turns,
         extract_ms: started.elapsed().as_secs_f64() * 1000.0,
         runs,
     })
@@ -468,6 +500,18 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
 mod tests {
     use super::{from_device, retarget, scalar_of, to_device, turn_device};
     use crate::structure::TaggedRun;
+
+    #[test]
+    fn text_character_turns_accept_float_quarters_without_promoting_skew() {
+        for turns in 0..=4 {
+            let angle = turns as f32 * std::f32::consts::FRAC_PI_2;
+            assert_eq!(super::orthogonal_turn(angle), turns % 4);
+            assert_eq!(super::orthogonal_turn(angle + 0.00001), turns % 4);
+        }
+        for angle in [-1., f32::NAN, f32::INFINITY, 0.3, 1.5, 3.2, 4.8] {
+            assert_eq!(super::orthogonal_turn(angle), 0);
+        }
+    }
 
     /// A run over PDFium's indices, which is what `structure.rs` returns.
     fn run(start: u32, end: u32) -> TaggedRun {

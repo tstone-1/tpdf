@@ -220,6 +220,7 @@ const SCHEMA = {
     height_pt: ["number"],
     width_pt: ["number"],
     quarter_turns: ["number"],
+    char_turns: ["array"],
     extract_ms: ["number"],
     runs: ["array"],
   } satisfies Shape<PageText>,

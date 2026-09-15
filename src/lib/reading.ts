@@ -62,6 +62,7 @@
 import { quarterTurns } from "./pages";
 import {
   charQuad,
+  characterTurns,
   coveredIndices,
   touchedIndices,
   type IndexRange,
@@ -89,6 +90,8 @@ export interface Fragment {
   ranges: IndexRange[];
   /** The bounding box of every character in it. */
   box: Quad;
+  /** Displayed character direction, when the page mixes text orientations. */
+  turns?: number;
 }
 
 /** One line of the page, in reading order. */
@@ -389,6 +392,39 @@ function combining(code: number): boolean {
  * degenerate box; {@link blocksOf} then leaves it where it is.
  */
 export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[] {
+  if (!text.char_turns?.length) return alignedFragments(text, axes, gap);
+
+  // Band each direction separately: the height of a vertical label is its
+  // line length, not a band into which nearby horizontal body text may merge.
+  const groups = new Map<number, number[]>();
+  let direction = text.quarter_turns;
+  for (let index = 0; index < text.codes.length; index++) {
+    if (placed(charQuad(text, index))) direction = characterTurns(text, index);
+    const indices = groups.get(direction) ?? [];
+    indices.push(index);
+    groups.set(direction, indices);
+  }
+  const fragments: Fragment[] = [];
+  for (const [turns, indices] of groups) {
+    const group: PageText = {
+      codes: indices.map((index) => text.codes[index] ?? 0),
+      boxes: indices.flatMap((index) => text.boxes.slice(index * 4, index * 4 + 4)),
+      width_pt: text.width_pt, height_pt: text.height_pt,
+      quarter_turns: turns, extract_ms: 0,
+    };
+    const ownAxes = axesFor(turns);
+    for (const fragment of alignedFragments(group, ownAxes, cutWidth(group, ownAxes))) {
+      const original: number[] = [];
+      for (const range of fragment.ranges) {
+        for (let index = range.from; index < range.to; index++) original.push(indices[index]!);
+      }
+      fragments.push({ ranges: rangesOf(original), box: fragment.box, turns });
+    }
+  }
+  return fragments;
+}
+
+function alignedFragments(text: PageText, axes: Axes, gap: number): Fragment[] {
   const items: Placed[] = [];
   // Read before the loop rather than folded into it: {@link sliver} asks whether
   // a box is thin *for this page*, and a running statistic would answer
@@ -664,10 +700,42 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
       lines: linesOf(within(text, fragments, owned), axes),
     }));
   }
+  if (text.char_turns?.length) {
+    return directionGroups(fragments, axes).flatMap(({ turns, fragments }) => {
+      const ownAxes = axesFor(turns);
+      return blocksOf(fragments, ownAxes, gap).map((block) => ({
+        tag: null, lines: linesOf(block, ownAxes),
+      }));
+    });
+  }
   return blocksOf(fragments, axes, gap).map((block) => ({
     tag: null,
     lines: linesOf(block, axes),
   }));
+}
+
+/** Keep a direction's paragraphs ordered in their own frame before placing
+ * that region amongst the page's other directions. A page-frame XY-cut first
+ * would reverse the paragraph order of upside-down text. */
+function directionGroups(block: readonly Fragment[], axes: Axes): { turns: number; fragments: Fragment[] }[] {
+  const groups = new Map<number, Fragment[]>();
+  for (const fragment of block) {
+    const turns = fragment.turns ?? 0;
+    const group = groups.get(turns) ?? [];
+    group.push({ ranges: fragment.ranges, box: fragment.box });
+    groups.set(turns, group);
+  }
+  // A group is positioned in the page's frame; its own lines are ordered
+  // separately. Comparing some pairs by page axes and others by text axes
+  // would make the comparator non-transitive.
+  return [...groups].map(([turns, fragments]) => {
+    const box = { ...fragments[0]!.box };
+    for (const fragment of fragments) absorb(box, fragment.box);
+    return { turns, fragments, box };
+  }).sort((a, b) => {
+    const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];
+    return ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
+  });
 }
 
 /**
@@ -680,6 +748,9 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
  * two lines.
  */
 function linesOf(block: readonly Fragment[], axes: Axes): ReadingLine[] {
+  if (block.some((fragment) => fragment.turns !== undefined)) {
+    return directionGroups(block, axes).flatMap(({ turns, fragments }) => linesOf(fragments, axesFor(turns)));
+  }
   const ordered = [...block].sort((a, b) => {
     const [ea, eb] = [extentsOf(a.box, axes), extentsOf(b.box, axes)];
     return ea.crossStart - eb.crossStart || ea.alongStart - eb.alongStart;
@@ -834,7 +905,9 @@ function within(
     // Every character of this piece unplaced: it carries text and no geometry,
     // so it keeps its place in the run and takes a degenerate box, exactly as
     // `fragmentsOf` does for the same case.
-    out.push({ ranges: rangesOf(indices), box: box ?? emptyBox() });
+    const part: Fragment = { ranges: rangesOf(indices), box: box ?? emptyBox() };
+    if (fragment.turns !== undefined) part.turns = fragment.turns;
+    out.push(part);
   }
   // Ordered along the run's own index range, so that a block whose fragments
   // came out of the page-wide banding in a different order reads in the order

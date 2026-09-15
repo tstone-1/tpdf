@@ -13743,13 +13743,17 @@ page resources and untouched content remain identical. PDFKit finds 404 changed
 pixels inside the label, zero outside, with the other 15 pages pixel-identical.
 The original input is digest-verified and never normalized for admission.
 
-This closes the page's editing/save target, with a separate viewer limitation:
-whole-page selection still groups a rotated run in the wrong reading order.
-The native phase explicitly skips that assertion; extraction, search, preview,
-undo/redo, overflow refusal and save/reopen pass. Input focus also now preserves
-the editor overlay's scroll position, which previously displaced low hit targets.
-Next: fix selection ordering for orthogonal text runs. Windows native verification
-of this increment remains outstanding.
+This closes the page's editing/save target. Per-character orientation now keeps
+whole-page selection and copying in reading order for the vertical label, including
+all four view turns; the native selection assertion is enabled. Mixed-direction
+unit cases cover tagged ownership, paragraphs, partial copy, highlights and caret
+edges. A real-extraction probe checks all 16 text/page turn combinations.
+Input focus also preserves the editor overlay's scroll position, which previously
+displaced low hit targets.
+The public-fixture phase navigates back to page 16 before sampling pixels; it does
+not verify mixed-size tab-position restoration. One reactivation left the label
+below the viewport, so that restoration path needs a separate regression check.
+Windows native verification of these increments remains outstanding.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.

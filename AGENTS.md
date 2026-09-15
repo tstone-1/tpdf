@@ -264,9 +264,16 @@ every edge, bounded replacements and preserved positioning.
 the unchanged passport guide in `testdata/textedit-public-corpus.json`.
 Independent readers accept `--passport --page=15` with the usual before/after
 filenames (`testdata/make_textedit_embedded.py --check` and
-`scripts/text_edit_pdfkit.swift`). Whole-page selection still groups rotated runs
-incorrectly; this phase explicitly skips that check and verifies extraction and
-search separately. `TextEditor` focuses with `preventScroll: true`: ordinary
+`scripts/text_edit_pdfkit.swift`). Selection reads the edited vertical label and
+retains its order through every view turn. `PageText.char_turns` carries PDFium's
+per-scalar clockwise directions relative to the unrotated page, omitted when all
+are zero. Reading groups directions separately before ordering their lines;
+caret placement and selection highlights use those same character directions.
+Arbitrary skew retains the existing upright fallback. Mixed untagged directions
+are treated as separate regions; author-defined tags still decide block order.
+`uv run --with pypdf scripts/text_direction_check.py <text-probe>` verifies all
+16 text/page rotation combinations through real extraction (`--mode json`).
+`TextEditor` focuses with `preventScroll: true`: ordinary
 focus can scroll an overflow-hidden overlay and displace every hit target.
 
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on

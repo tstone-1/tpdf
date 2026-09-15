@@ -1104,6 +1104,7 @@ mod tests {
             height_pt: 800.0,
             width_pt: 600.0,
             quarter_turns: 0,
+            char_turns: Vec::new(),
             extract_ms: 0.0,
             runs: Vec::new(),
         }
