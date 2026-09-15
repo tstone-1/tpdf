@@ -315,7 +315,7 @@ def editable_embedded(mac_roman: bool = False, cff: str | None = None, cff_mappi
 
 
 
-def editable_composite(reflected: bool = False, tight_clip: bool = False, browser_state: bool = False, latin1: bool = False) -> bytes:
+def editable_composite(reflected: bool = False, tight_clip: bool = False, browser_state: bool = False, latin1: bool = False, ligatures: bool = False) -> bytes:
     """Identity-H glyph IDs 2/3 are A/B in the original geometric test font."""
     font = (ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes()
     content = b"BT /F1 12 Tf 40 180 Td <00020003> Tj ET"
@@ -332,6 +332,8 @@ def editable_composite(reflected: bool = False, tight_clip: bool = False, browse
             b"1 begincodespacerange <0000> <FFFF> endcodespacerange "
             b"1 beginbfrange <0002> <0003> <0041> endbfrange "
             b"endcmap CMapName currentdict /CMap defineresource pop end end")
+    if ligatures:
+        cmap = cmap.replace(b"1 beginbfrange <0002> <0003> <0041> endbfrange", b"2 beginbfchar <0002> <006600660069> <0003> <0066> endbfchar")
     if latin1:
         # Existing synthetic glyphs, with two distinct Latin-1 text mappings.
         cmap = cmap.replace(b"<0041>", b"<00e4>")
@@ -436,7 +438,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "lopdf_load": docs + bombs,
         "annots_scan": docs,
         "forms_scan": docs,
-        "textedit_scan": docs + [("editable-inline", editable_text(inline=True))] + [("editable-continued", editable_text(continued=True))] + [(f"editable-rotation-{turn}", editable_text(rotation=turn)) for turn in (90, 180, 270)] + [("editable-ligatures", editable_embedded(cff="ligatures", cff_mapping=True)), ("editable-stroke-styles", editable_text(strokes=True, stroke_styles=True)), ("editable-cff-unicode", editable_embedded(cff="unicode", cff_mapping=True)), ("editable-cff-mapping", editable_embedded(cff="normal", cff_mapping=True)), ("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
+        "textedit_scan": docs + [("editable-cid-ligatures", editable_composite(ligatures=True))] + [("editable-inline", editable_text(inline=True))] + [("editable-continued", editable_text(continued=True))] + [(f"editable-rotation-{turn}", editable_text(rotation=turn)) for turn in (90, 180, 270)] + [("editable-ligatures", editable_embedded(cff="ligatures", cff_mapping=True)), ("editable-stroke-styles", editable_text(strokes=True, stroke_styles=True)), ("editable-cff-unicode", editable_embedded(cff="unicode", cff_mapping=True)), ("editable-cff-mapping", editable_embedded(cff="normal", cff_mapping=True)), ("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                   ("editable-positive-word-spacing", editable_text(kerning=True, spacing=1., word_spacing=1.)),
                                   ("editable-negative-word-spacing", editable_text(kerning=True, spacing=-1., word_spacing=-1.)),

@@ -1,4 +1,4 @@
-//! Strict single-byte ToUnicode subset for symbolic TrueType text. This is a
+//! Strict bounded ToUnicode subset for symbolic TrueType text. This is a
 //! data grammar, never a PostScript interpreter. Reject every extra operation.
 
 use lopdf::{
@@ -11,8 +11,8 @@ mod tests;
 
 // Standard wrapper emitted by the measured LibreOffice and Quartz exports.
 // Only bfchar and scalar bfrange blocks vary. Other wrappers, array targets,
-// inheritance and general multi-character mappings remain unsupported. CFF
-// admits only the exact sequences enumerated in ligatures.rs.
+// inheritance and general multi-character mappings remain unsupported. CFF and
+// Identity-H admit only the exact sequences enumerated in ligatures.rs.
 const PREFIX: &[u8] = br"/CIDInit /ProcSet findresource begin
 12 dict begin begincmap
 /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
@@ -169,8 +169,9 @@ fn parse_single(
     Ok(result)
 }
 
-// Identity-H codes and UTF-16BE targets are exactly two bytes. A range expands
-// only into unique printable Latin-1 or en dash, at most 192 distinct characters.
+// Identity-H codes and scalar UTF-16BE targets are two bytes. A range expands
+// only into unique printable Latin-1 or en dash. Individual bfchar entries may
+// also name the four exact ligature sequences; ranges cannot expand sequences.
 pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u16, u8>, String> {
     let invalid = || "unsupported or ambiguous two-byte character map".to_string();
     let word = |object: &Object| -> Result<u16, String> {
@@ -199,6 +200,16 @@ pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u1
         for entry in block[1].operands.chunks_exact(stride) {
             let first = word(&entry[0])?;
             let last = if stride == 3 { word(&entry[1])? } else { first };
+            if stride == 2 {
+                let bytes = entry[1].as_str().map_err(|_| invalid())?;
+                if bytes.len() > 2 {
+                    let slot = super::ligatures::target(bytes).ok_or_else(invalid)?;
+                    if result.insert(first, slot).is_some() || !unicode.insert(slot) {
+                        return Err(invalid());
+                    }
+                    continue;
+                }
+            }
             let target = word(&entry[stride - 1])?;
             let last_target = u32::from(target) + u32::from(last.saturating_sub(first));
             let slot = |ch| {

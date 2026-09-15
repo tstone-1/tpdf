@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--continued", "--inline", "--image"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -33,8 +33,8 @@ let w3c = variant == "--w3c-dummy"
 let passport = variant == "--passport"
 let agenda = variant == "--agenda"
 let dash = variant == "--dash"
-let original = variant == "--cff-ligatures" ? "SYNTHETIC ffi ffi fi fl ff" : variant == "--cff-unicode" ? "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£" : dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
-let replacement = variant == "--cff-ligatures" ? "EDITED ffi fi fl ff" : variant == "--cff-unicode" ? "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}" : dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
+let original = ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "SYNTHETIC ffi ffi fi fl ff" : variant == "--cff-unicode" ? "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£" : dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
+let replacement = ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "EDITED ffi fi fl ff" : variant == "--cff-unicode" ? "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}" : dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
       let after = PDFDocument(url: root.appendingPathComponent("synthetic-after.pdf")),
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount

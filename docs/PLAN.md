@@ -4291,6 +4291,14 @@ then encounters a composite-font array stored by reference. Resolving that array
 fixes a reader defect; the next refusal is its two-byte character map. Admission
 remains at 1 of 45 pages. This does not establish that every later separator on
 those pages is supported; discovery stops at the next font refusal.
+The next map refusal is justified: the font used on all 12 pages explicitly
+maps a displayed glyph to U+009F. It remains refused, with no inferred character.
+Nearby two-byte maps also contain genuine multi-character ligatures. The exact
+`ff`, `fi`, `fl` and `ffi` sequences are now supported for Identity-H TrueType,
+with original CID boundaries retained when measuring source text. Synthetic
+worker round trips check mixed separate letters and ligatures; this increment
+does not remove the earlier control-character or tagged-structure refusals in
+the unchanged public survey.
 
 Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 

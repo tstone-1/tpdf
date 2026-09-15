@@ -1,4 +1,4 @@
-//! Exact CFF glyph names and Unicode sequences. These low metric slots are
+//! Exact ligature Unicode sequences and their CFF glyph names. These low metric slots are
 //! private: no control character is accepted as input or emitted as PDF text.
 
 // Longest sequence first gives replacement encoding a deterministic choice.

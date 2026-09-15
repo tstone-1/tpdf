@@ -153,7 +153,7 @@ fn run() -> Result<(), String> {
             page = index.parse::<u32>().map_err(|_| "invalid page index")?;
         } else if option == "--default-encoding" {
             default_encoding = true;
-        } else if option == "--cff-ligatures" {
+        } else if option == "--cff-ligatures" || option == "--cid-ligatures" {
             cff_ligatures = true;
         } else if option == "--cff-unicode" {
             cff_unicode = true;
@@ -173,7 +173,7 @@ fn run() -> Result<(), String> {
             spacers = true;
         } else {
             return Err(
-                "expected --cff-ligatures, --cff-unicode, --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers, --continued or --page=N after the fixture path".into(),
+                "expected --cff-ligatures, --cid-ligatures, --cff-unicode, --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers, --continued or --page=N after the fixture path".into(),
             );
         }
     }

@@ -631,3 +631,135 @@ fn textedit_composite_indirect_descendants_preserve_resources_and_refuse_cycles(
     doc.objects.insert(array, Object::Null);
     assert!(textedit::scan(&doc, 0).is_err());
 }
+
+// Re-label our original geometric glyphs, not an installed font. Identity CID
+// mapping uses the original glyph IDs and metrics, independently of cmap names.
+fn ligature_fixture() -> (Document, ObjectId, BTreeMap<char, u16>) {
+    let (mut doc, [font, _, _, mapping]) = fixture();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let Some(Codes::Double(codes)) = metrics.codes else {
+        panic!("expected CID codes")
+    };
+    let source = codes
+        .iter()
+        .map(|(&code, &ch)| (char::from(ch), code))
+        .collect();
+    let stream = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    let mut map = String::from_utf8(stream.content.clone()).unwrap();
+    for (from, to) in [
+        ("0041", "006600660069"),
+        ("0042", "00660066"),
+        ("0043", "00660069"),
+        ("0044", "0066006c"),
+        ("0046", "0066"),
+        ("0049", "0069"),
+        ("004c", "006c"),
+    ] {
+        map = map.replace(&format!("> <{from}>"), &format!("> <{to}>"));
+    }
+    stream.content = map.into_bytes();
+    (doc, font, source)
+}
+
+#[test]
+fn textedit_cid_ligatures_measure_source_glyphs_and_bound_expansion() {
+    let (doc, font, codes) = ligature_fixture();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let raw = |text: &str| {
+        text.chars()
+            .flat_map(|ch| codes[&ch].to_be_bytes())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(metrics.decode(&raw("A B C D")).unwrap(), "ffi ff fi fl");
+    assert_eq!(metrics.encode("ffi ff fi fl").unwrap(), raw("A B C D"));
+    assert_eq!(metrics.encode("fffi").unwrap(), raw("BC"));
+    assert_eq!(
+        metrics.spaced_layout("ffi", 1000., 2., 3.).unwrap(),
+        (602., [0., 600.])
+    );
+    assert_eq!(
+        metrics.source_layout(&raw("FFI"), 1000., 2., 3.).unwrap(),
+        ("ffi".into(), 1806., [0., 1804.])
+    );
+    assert_eq!(
+        metrics.source_layout(&raw("A"), 1000., 2., 3.).unwrap(),
+        ("ffi".into(), 602., [0., 600.])
+    );
+    assert_eq!(
+        metrics.source_layout(&raw("A A"), 1000., 0., 3.).unwrap().1,
+        1800.
+    ); // Tw never applies to two-byte code 32.
+    let count = textedit::MAX_TEXT / 3;
+    assert_eq!(
+        metrics.decode(&raw(&"A".repeat(count))).unwrap().len(),
+        count * 3
+    );
+    assert!(metrics.decode(&raw(&"A".repeat(count + 1))).is_err());
+    assert!(metrics.decode(&[0]).is_err());
+    assert!(metrics.decode(&[255, 255]).is_err());
+    for text in ["\u{1}", "\u{9f}", "\u{fb01}", "\u{fb03}"] {
+        assert!(metrics.encode(text).is_err());
+    }
+}
+
+#[test]
+fn textedit_cid_ligatures_preserve_fragments_followers_and_resources() {
+    let (mut doc, _, codes) = ligature_fixture();
+    let raw = |text: &str| {
+        text.chars()
+            .flat_map(|ch| codes[&ch].to_be_bytes())
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let source = format!(
+        "1 Tc 2 Tw BT /F1 12 Tf 40 180 Td [<{}> 0 <{}> 0 <{}>] TJ (<INVALID>) Tj ET",
+        raw("F"),
+        raw("FI"),
+        raw("A")
+    );
+    let source = source.replace("(<INVALID>)", &format!("<{}>", raw("SECOND")));
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let stream = doc.add_object(Stream::new(Dictionary::new(), source.into_bytes()));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(before.runs[0].text, "ffiffi");
+    assert!((before.runs[0].advance - 32.8).abs() < 1e-6);
+    let objects = doc.objects.clone();
+    let edit = Change {
+        page: 0,
+        revision: before.revision.clone(),
+        operator: before.runs[0].operator,
+        original: "ffiffi".into(),
+        replacement: "ffi fi".into(),
+    };
+    textedit::write(&mut doc, &[edit]).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "ffi fi");
+    assert_eq!(after.runs[1].text, before.runs[1].text);
+    assert_eq!(after.runs[1].advance, before.runs[1].advance);
+    assert_eq!(after.runs[1].display_rect, before.runs[1].display_rect);
+    for (old, new) in before.runs[1].matrix.iter().zip(after.runs[1].matrix) {
+        assert!((old - new).abs() < 1e-6);
+    }
+    for (id, object) in objects {
+        if id != page {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+    let snapshot = doc.objects.clone();
+    let edit = Change {
+        page: 0,
+        revision: after.revision,
+        operator: after.runs[0].operator,
+        original: "ffi fi".into(),
+        replacement: "ffi fi ffi fi".into(),
+    };
+    assert!(textedit::write(&mut doc, &[edit]).is_err());
+    assert_eq!(doc.objects, snapshot);
+}
