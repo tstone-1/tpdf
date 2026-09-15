@@ -28,7 +28,7 @@
 //!   every page, and those are very different budgets.
 //!
 //! Usage:
-//!   text-probe <file.pdf> [--page N] [--scale F] [--mode align|extract|order]
+//!   text-probe <file.pdf> [--page N] [--scale F] [--mode align|extract|order|json]
 //!              [--view-turns 0|1|2|3] [--rounds N] [--lib DIR]
 
 use std::path::{Path, PathBuf};
@@ -43,6 +43,7 @@ enum Mode {
     Align,
     Extract,
     Order,
+    Json,
 }
 
 struct Args {
@@ -99,6 +100,7 @@ fn parse_args() -> Result<Args, String> {
                     "align" => Mode::Align,
                     "extract" => Mode::Extract,
                     "order" => Mode::Order,
+                    "json" => Mode::Json,
                     other => return Err(format!("unknown mode: {other}")),
                 }
             }
@@ -135,6 +137,14 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Align => align(args, &document, bindings),
         Mode::Extract => extract(args, &document),
         Mode::Order => order(args, &document),
+        Mode::Json => {
+            let extracted = text::extract(&document.page(args.page)?)?;
+            println!(
+                "{}",
+                serde_json::to_string(&extracted).map_err(|e| e.to_string())?
+            );
+            Ok(true)
+        }
     }
 }
 
@@ -282,6 +292,7 @@ fn remapped(page: &RawPage<'_>, turns: u8) -> Result<text::PageText, String> {
         height_pt,
         width_pt,
         quarter_turns: turns,
+        char_turns: Vec::new(),
         extract_ms: 0.0,
         // Geometry is this probe's subject; the tags are `structure-probe`'s.
         runs: Vec::new(),
@@ -334,6 +345,7 @@ fn viewed(extracted: &text::PageText, view_turns: u8) -> text::PageText {
         width_pt: if swapped { height } else { width },
         height_pt: if swapped { width } else { height },
         quarter_turns: (extracted.quarter_turns + view_turns) % 4,
+        char_turns: extracted.char_turns.clone(),
         extract_ms: 0.0,
         // Carried through a turn unchanged, which is the point of runs being
         // character indices: rotating the view moves every box and no index.

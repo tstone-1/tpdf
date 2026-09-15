@@ -217,7 +217,13 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.activate(originalTab.id); await host.idle();
       check("tab switching commits the typed replacement", host.edits()!.state.text_edits?.[0]?.replacement === replacement);
       const pixels = async () => {
+        // This phase measures replacement ink, not restoration of a tab's
+        // scroll offset. Navigate after page sizes settle on the remounted viewer.
         if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text tiles did not settle");
+        if (passport) {
+          host.viewer()!.goToPage(page);
+          if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text sample navigation did not settle");
+        }
         await pause(100);
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
@@ -236,12 +242,19 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("editing page two preserves page one before saving", (await read(0)) === untouched);
       }
       const editedPixels = await pixels();
+      host.viewer()!.selectPage();
+      if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
+      check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
       if (passport) {
-        report.skip("whole-page selection reads the vertical label", "selection grouping does not support rotated runs; extraction and search are checked separately");
-      } else {
-        host.viewer()!.selectPage();
-        if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
-        check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
+        const selected = host.viewer()!.selectedText;
+        for (let turn = 0; turn < 4; turn++) {
+          const expectedRotation = (host.viewer()!.rotation + 1) % 4;
+          host.run("view.rotateClockwise"); await host.idle();
+          if (host.viewer()!.rotation !== expectedRotation) throw new Error("the requested view rotation did not apply");
+          host.viewer()!.selectPage();
+          if (!await settle(() => host.viewer()!.selectedText === selected, SETTLE_MS)) throw new Error("rotating the view changed mixed-direction selection order");
+        }
+        check("mixed-direction selection survives every view turn", true);
       }
       const edited = await read();
       check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(passport ? "Your passport" : agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
@@ -252,10 +265,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const originalPixels = await pixels();
       check("undo repaints the original text on screen", originalPixels.length === editedPixels.length && originalPixels.some((value, index) => value !== editedPixels[index]));
       check("undo clears the stale selection", !host.viewer()!.selectedText);
-      if (!passport) {
-        host.viewer()!.selectPage();
-        if (!await settle(() => host.viewer()!.selectedText.includes(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
-      }
+      host.viewer()!.selectPage();
+      if (!await settle(() => host.viewer()!.selectedText.includes(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
       host.run("edit.redo"); await host.idle();
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();

@@ -263,6 +263,8 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('text direction: reverse angle', 'src/text.rs', 'turns.round().rem_euclid(4.) as u8', '(-turns.round()).rem_euclid(4.) as u8', 'text_character_turns_accept_float_quarters_without_promoting_skew'),
+    Mutation('text direction: round arbitrary skew', 'src/text.rs', '(turns - turns.round()).abs() < 0.0001', 'true', 'text_character_turns_accept_float_quarters_without_promoting_skew'),
     Mutation('ligature: measure source using re-encoding', 'src/textedit/fonts.rs', 'self.spaced_slots(&slots, size, spacing, word_spacing)?', 'self.spaced_layout(&text, size, spacing, word_spacing)?', 'textedit_ligatures_measure_original_glyphs_and_encode_longest_existing_match'),
     Mutation('ligature: truncate expanded text limit', 'src/textedit/fonts.rs', 'characters += sequence.len();', 'characters += 1;', 'textedit_ligatures_refuse_overflow_expansion_and_stale_edits_atomically'),
     Mutation('ligature: drop exact target sequence', 'src/textedit/fonts/ligatures.rs', '.eq(text.bytes().flat_map(|ch| [0, ch]))', '.eq(text.bytes().take(2).flat_map(|ch| [0, ch]))', 'textedit_ligatures_require_matching_maps_and_existing_outlines'),

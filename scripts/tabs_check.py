@@ -25,6 +25,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
     args = parser.parse_args()
+    if args.saved_copy:
+        args.saved_copy.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tpdf-tabs-") as directory:
         room = Path(directory)
         first, second = room / "first.pdf", room / "second.pdf"

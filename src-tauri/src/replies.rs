@@ -626,6 +626,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             height_pt: 842.0,
             width_pt: 595.0,
             quarter_turns: 1,
+            char_turns: vec![0, 3, 3],
             extract_ms: 3.5,
             runs: vec![structure::TaggedRun {
                 tag: "H1".into(),

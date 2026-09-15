@@ -54,6 +54,8 @@ export interface PageText {
    * A screen reader then reads the page letter by letter, which is what it did.
    */
   quarter_turns: number;
+  /** Clockwise text turns relative to the unrotated page; omitted if all zero. */
+  char_turns?: number[];
   extract_ms: number;
   /**
    * The document's own reading order, where it says one.
@@ -70,6 +72,11 @@ export interface PageText {
 /** Whether lines on this page are separated horizontally rather than vertically. */
 export function linesRunSideways(text: PageText): boolean {
   return text.quarter_turns % 2 === 1;
+}
+
+/** The displayed direction of one character, including page and view turns. */
+export function characterTurns(text: PageText, index: number): number {
+  return quarterTurns(text.quarter_turns + (text.char_turns?.[index] ?? 0));
 }
 
 /**
@@ -129,6 +136,7 @@ export function turnedView(text: PageText, turns: number): PageText {
   // Assigned rather than spread because the field is absent on most pages and
   // `exactOptionalPropertyTypes` distinguishes absent from `undefined`.
   if (text.runs) view.runs = text.runs;
+  if (text.char_turns) view.char_turns = text.char_turns;
   return view;
 }
 
@@ -876,20 +884,16 @@ function isPlaced(quad: Quad): boolean {
  */
 export function caretAt(text: PageText, x: number, y: number): number {
   const best = nearestChar(text, x, y);
-  const sideways = linesRunSideways(text);
 
   if (best < 0) return 0;
+  const turns = characterTurns(text, best);
   const quad = charQuad(text, best);
   // Past the middle of the glyph, along the direction the text reads, means the
   // caret belongs after it --- which is what makes a drag include the character
   // under the pointer.
-  return sideways
-    ? y > (quad.top + quad.bottom) / 2
-      ? best + 1
-      : best
-    : x > (quad.left + quad.right) / 2
-      ? best + 1
-      : best;
+  const position = turns % 2 ? y : x;
+  const middle = turns % 2 ? (quad.top + quad.bottom) / 2 : (quad.left + quad.right) / 2;
+  return (turns >= 2 ? position < middle : position > middle) ? best + 1 : best;
 }
 
 /**
@@ -910,15 +914,13 @@ export function nearestChar(text: PageText, x: number, y: number): number {
   // rotated page those are different axes, and weighting the wrong one makes a
   // click in the margin land a line away --- the same failure the weight exists
   // to prevent, moved ninety degrees.
-  const sideways = linesRunSideways(text);
-
   for (let index = 0; index < text.codes.length; index++) {
     const quad = charQuad(text, index);
     if (!isPlaced(quad)) continue;
 
     const dx = Math.max(quad.left - x, 0, x - quad.right);
     const dy = Math.max(quad.top - y, 0, y - quad.bottom);
-    const [along, across] = sideways ? [dy, dx] : [dx, dy];
+    const [along, across] = characterTurns(text, index) % 2 ? [dy, dx] : [dx, dy];
     const distance = along * along + (across * ACROSS_LINE_WEIGHT) ** 2;
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -952,13 +954,14 @@ const ACROSS_LINE_WEIGHT = 8;
 export function runsFor(text: PageText, from: number, to: number): Quad[] {
   const runs: Quad[] = [];
   let current: Quad | null = null;
-  const sideways = linesRunSideways(text);
+  let currentTurns = -1;
 
   for (let index = Math.max(0, from); index < Math.min(to, text.codes.length); index++) {
     const quad = charQuad(text, index);
     if (!isPlaced(quad)) continue;
 
-    if (current && onSameLine(current, quad, sideways)) {
+    const turns = characterTurns(text, index);
+    if (current && currentTurns === turns && onSameLine(current, quad, turns % 2 === 1)) {
       current.left = Math.min(current.left, quad.left);
       current.right = Math.max(current.right, quad.right);
       current.top = Math.min(current.top, quad.top);
@@ -966,6 +969,7 @@ export function runsFor(text: PageText, from: number, to: number): Quad[] {
       continue;
     }
     current = { ...quad };
+    currentTurns = turns;
     runs.push(current);
   }
 
@@ -987,7 +991,7 @@ export function runsFor(text: PageText, from: number, to: number): Quad[] {
 export function linesOf(text: PageText): { from: number; to: number }[] {
   const lines: { from: number; to: number }[] = [];
   let current: Quad | null = null;
-  const sideways = linesRunSideways(text);
+  let currentTurns = -1;
 
   for (let index = 0; index < text.codes.length; index++) {
     const quad = charQuad(text, index);
@@ -999,7 +1003,8 @@ export function linesOf(text: PageText): { from: number; to: number }[] {
       continue;
     }
 
-    if (current && last && onSameLine(current, quad, sideways)) {
+    const turns = characterTurns(text, index);
+    if (current && last && currentTurns === turns && onSameLine(current, quad, turns % 2 === 1)) {
       current.top = Math.min(current.top, quad.top);
       current.bottom = Math.max(current.bottom, quad.bottom);
       current.left = Math.min(current.left, quad.left);
@@ -1008,6 +1013,7 @@ export function linesOf(text: PageText): { from: number; to: number }[] {
       continue;
     }
     current = { ...quad };
+    currentTurns = turns;
     lines.push({ from: index, to: index + 1 });
   }
 
@@ -1017,11 +1023,7 @@ export function linesOf(text: PageText): { from: number; to: number }[] {
 /**
  * Whether two boxes share most of their extent across the lines, i.e. are on one.
  *
- * `sideways` picks the axis. It is the page's rotation rather than anything
- * inferred from the boxes, which is a real limitation and worth stating: a
- * *rotated run* inside an otherwise upright page --- a sideways table header ---
- * is still split character by character. That was true before and is unchanged;
- * what is fixed is the whole-page case, which is what a scanner produces.
+ * `sideways` follows the character's own direction composed with the page/view.
  */
 function onSameLine(a: Quad, b: Quad, sideways: boolean): boolean {
   const [aStart, aEnd, bStart, bEnd] = sideways
