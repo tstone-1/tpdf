@@ -2,7 +2,7 @@ use super::tests::{fixture, CONTENT};
 use crate::textedit::{self, Change};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 
-fn list() -> (Document, [ObjectId; 6], ObjectId, Vec<ObjectId>) {
+pub(super) fn list() -> (Document, [ObjectId; 6], ObjectId, Vec<ObjectId>) {
     let (mut doc, ids) = fixture(CONTENT);
     let font = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding" });
     doc.get_dictionary_mut(ids[0]).unwrap().set(
@@ -39,7 +39,7 @@ fn list() -> (Document, [ObjectId; 6], ObjectId, Vec<ObjectId>) {
     (doc, ids, list, owners)
 }
 
-fn change(doc: &Document) -> Change {
+pub(super) fn change(doc: &Document) -> Change {
     let runs = textedit::scan(doc, 0).unwrap();
     assert_eq!(
         runs.runs
@@ -57,7 +57,7 @@ fn change(doc: &Document) -> Change {
     }
 }
 
-fn refused(mut doc: Document) {
+pub(super) fn refused(mut doc: Document) {
     let before = doc.objects.clone();
     assert!(textedit::scan(&doc, 0).is_err());
     assert!(textedit::write(

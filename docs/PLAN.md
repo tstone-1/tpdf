@@ -4469,8 +4469,10 @@ fixtures separately cover the remaining grouping names, aliases and bounds.
 Literal L/LI lists now preserve separately owned Lbl/LBody/NonStruct content and
 one bounded ListNumbering attribute object. An unchanged numbered browser export
 passes native editing and independent graph/text/pixel readback, preserving its
-labels. Nested lists, block children below LBody and list-role aliases remain
-refused; the public 45-page survey is still a separate compatibility measure.
+labels. Direct nested L children of LI now use the same bounded iterative walk.
+Both parent and nested-child edits pass native and independent readback; each
+item must still own content. Block children below LBody and list-role aliases
+remain refused; the public 45-page survey is still a separate compatibility measure.
 A paragraph can own several items, including items on other pages. A flat parent
 number tree has one nonempty array
 per page, with unique, sorted keys matching each page's StructParents. Direct

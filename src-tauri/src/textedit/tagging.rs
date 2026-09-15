@@ -9,6 +9,8 @@ mod container_tests;
 #[cfg(test)]
 mod list_tests;
 #[cfg(test)]
+mod nested_list_tests;
+#[cfg(test)]
 mod nested_tests;
 #[cfg(test)]
 mod tests;
@@ -419,11 +421,31 @@ impl Tags {
             {
                 return Err(INVALID.into());
             }
+            let mut content_items = Vec::new();
+            if role == b"LI" {
+                // Nested lists use the same iterative walk and container bounds.
+                // LI itself owns content; it does not add a container level.
+                if items.len() + pending.len() > total {
+                    return Err("tagged list frontier exceeds its limit".into());
+                }
+                for item in items.iter().rev() {
+                    if matches!(item, Object::Reference(_))
+                        && name(get(node(doc, reference(item)?)?, b"S")?)? == b"L"
+                    {
+                        pending.push((item, id, depth));
+                    } else {
+                        content_items.push(item);
+                    }
+                }
+                content_items.reverse();
+            } else {
+                content_items.extend(items);
+            }
             let paragraph = Group {
                 id,
                 page: paragraph_page,
                 tag,
-                items: items.iter().collect(),
+                items: content_items,
             };
             for Group {
                 id,

@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False, cid_ligatures=False, numbered_list=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False, cid_ligatures=False, numbered_list=False, nested_list=False, list_child=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -136,6 +136,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             assert len(fonts) == len(symbolic) == 1, "symbolic readback requires a single fixture font"
             mapped_font = symbolic[0]
             expected_operands = [(old, "le" if w3c else "SYNTHETIC\u2013FIRST" if dash else "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "ll" if w3c else "EDITED\u2013FIRST" if dash else "EDITED FIRST")]
+        if list_child:
+            expected_operands = [(old, "SYNTHETIC SECOND"), (new, "EDITED SECOND")]
         # extract_text() deliberately falls back to identity for unmapped codes.
         # Read pypdf's parsed map explicitly so fallback cannot pass this check.
         from pypdf._cmap import get_encoding
@@ -169,6 +171,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     # Let the independent parser apply the font's encoding and ToUnicode map.
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
     expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
+    if list_child:
+        expected_text = ("SYNTHETIC SECOND", "EDITED SECOND")
     if cff_unicode:
         expected_text = ("SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£", "EDITED £\u2013\u2019\u2018\u00a0\u2212")
     if cff_ligatures or cid_ligatures:
@@ -192,8 +196,12 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         assert (actual.split() == expected.split() if page_index == 1 else actual == expected), "wrong public fixture replacement or adjacent text"
     else:
         for page, first in zip(pages, expected_text):
-            if numbered_list:
-                assert " ".join(page.extract_text().split()) == "1. " + first + " 2. SYNTHETIC SECOND", "list text or labels changed"
+            if list_child:
+                assert " ".join(page.extract_text().split()) == "1. SYNTHETIC FIRST 1. " + first, "nested child text or labels changed"
+                continue
+            if numbered_list or nested_list:
+                label = "1." if nested_list else "2."
+                assert " ".join(page.extract_text().split()) == "1. " + first + " " + label + " SYNTHETIC SECOND", "list text or labels changed"
                 continue
             assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND")).split()), "wrong decoded text"
     if float32:
@@ -309,7 +317,7 @@ def main():
         return
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
         page, wrapped, float32, default_encoding = 0, False, False, False
-        w3c = dash = agenda = cff_unicode = cff_ligatures = passport = cid_ligatures = numbered_list = False
+        w3c = dash = agenda = cff_unicode = cff_ligatures = passport = cid_ligatures = numbered_list = nested_list = list_child = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -317,6 +325,10 @@ def main():
                 wrapped = True
             elif option == "--default-encoding" and sys.argv[1] == "--check":
                 default_encoding = True
+            elif option == "--nested-list-child" and sys.argv[1] == "--check":
+                list_child = True
+            elif option == "--nested-list" and sys.argv[1] == "--check":
+                nested_list = True
             elif option == "--list" and sys.argv[1] == "--check":
                 numbered_list = True
             elif option == "--passport" and sys.argv[1] == "--check":
@@ -336,10 +348,10 @@ def main():
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --cid-ligatures, --dash, --agenda, --passport, --list or --w3c-dummy (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --cid-ligatures, --dash, --agenda, --passport, --list, --nested-list, --nested-list-child or --w3c-dummy (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport or cid_ligatures or numbered_list:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list)
+        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport or cid_ligatures or numbered_list or nested_list or list_child:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list, nested_list=nested_list, list_child=list_child)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return
