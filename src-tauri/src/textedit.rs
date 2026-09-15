@@ -13,6 +13,7 @@ mod filters;
 mod fonts;
 mod graphics;
 mod images;
+mod refusal;
 mod streams;
 mod tagging;
 
@@ -602,7 +603,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             {
                 tags.text()?
             }
-            _ => return Err("unsupported text state or positioning between shows".into()),
+            _ => {
+                return Err(refusal::operation(
+                    &op.operator,
+                    &op.operands,
+                    inside,
+                    positioned || previous_show.is_some(),
+                ))
+            }
         }
         if !matches!(op.operator.as_str(), "Tj" | "TJ") {
             continue;

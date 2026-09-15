@@ -263,6 +263,8 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('refusals: drop inline tag identity', 'src/textedit/refusal.rs', 'return format!("inline {name} marked content is not editable yet");', 'return "inline marked content is not editable yet".into();', 'textedit_refusals_distinguish_operator_context_without_echoing_values'),
+    Mutation('refusals: echo unrecognized document token', 'src/textedit/refusal.rs', '_ => "unrecognized content operator is not editable yet",', '_ => name,', 'textedit_refusals_distinguish_operator_context_without_echoing_values'),
     Mutation('continued: discard the text cursor', 'src/textedit.rs', 'cursor += advance;', 'cursor = 0.;', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),
     Mutation('continued: discard dependent show tracking', 'src/textedit.rs', 'continued.insert(previous_show.ok_or("text has no preceding position")?);', 'let _ = previous_show;', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),
     Mutation('continued: omit spacing compensation', 'src/textedit.rs', '((replacement_advance - run.advance) * 1000. / run.size) as f32', '0_f32', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),

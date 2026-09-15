@@ -68,19 +68,26 @@ def self_test(probe):
                 page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'):
                     DictionaryObject({NameObject('/F1'): writer._add_object(font)})})
                 stream = DecodedStreamObject()
-                stream.set_data(b'' if index == 2 else b'BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET')
+                stream.set_data(b'' if index == 2 else
+                    b'BT /Span << /ActualText (SYNTHETIC SECRET) >> BDC ET' if index == 3 else
+                    b'BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET')
                 page[NameObject('/Contents')] = writer._add_object(stream)
             path = root / name
             writer.write(path)
             return path
 
-        source = fixture('mixed.pdf', 4)
+        source = fixture('mixed.pdf', 5)
         original = digest(source)
         first = subprocess.run([str(probe), '--inspect', str(source)],
                                capture_output=True, text=True, encoding='utf-8', check=True, timeout=60)
         assert json.loads(first.stdout) == {'page': 0, 'status': 'editable', 'runs': 1}
         report = inspect(probe, source)
-        assert [p['status'] for p in report['pages']] == ['editable', 'refused', 'no_runs', 'editable']
+        assert [p['status'] for p in report['pages']] == ['editable', 'refused', 'no_runs', 'refused', 'editable']
+        assert report['pages'][3]['reason'] == 'inline BDC marked content is not editable yet'
+        assert 'SECRET' not in json.dumps(report)
+        totals = refusal_totals([report, report])
+        assert sum(totals.values()) == 4 and totals[report['pages'][3]['reason']] == 2
+        assert refusal_totals([]) == {}
         assert digest(source) == original
         assert len(list(root.iterdir())) == 1, 'inspection wrote extra files'
         assert len(inspect(probe, fixture('boundary.pdf', 128))['pages']) == 128
@@ -106,6 +113,17 @@ def self_test(probe):
     print('[PASS] later-page refusal, empty page, continued discovery, page bound and incomplete-report controls')
 
 
+def refusal_totals(records):
+    # These count the first refusal on each page, not every unsupported construct.
+    totals = {}
+    for record in records:
+        for page in record['pages']:
+            if page['status'] == 'refused':
+                reason = page['reason']
+                totals[reason] = totals.get(reason, 0) + 1
+    return dict(sorted(totals.items(), key=lambda item: (-item[1], item[0])))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('probe', type=Path)
@@ -129,7 +147,8 @@ def main():
     states = ['editable', 'refused', 'no_runs']
     counts = {state: sum(page['status'] == state for r in records for page in r['pages'])
               for state in states}
-    output = {'probe_sha256': digest(probe), 'documents': records, 'page_totals': counts}
+    output = {'probe_sha256': digest(probe), 'documents': records, 'page_totals': counts,
+              'refusal_totals': refusal_totals(records)}
     # No partial report on a missing file, worker failure or malformed reply.
     args.output.write_text(json.dumps(output, indent=2) + '\n', encoding='utf-8')
     print(f'[PASS] {len(records)} documents, {sum(counts.values())} pages: {counts}')
