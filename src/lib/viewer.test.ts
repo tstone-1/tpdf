@@ -871,6 +871,106 @@ describe("Viewer geometry on a mixed-size document", () => {
     dom.restore();
   });
 
+  it("restores an absolute point after the remembered page size arrives", async () => {
+    sizes.set(1, { width_pt: 600, height_pt: 1600 });
+    held.set(1, () => {});
+    const viewer = build3();
+    viewer.restore({ page: 1, top_pt: 240, zoom: 1, fit: "none", turns: 0 });
+    await pump();
+    expect(viewer.position).toEqual({ page: 1, top: 240 });
+    expect(viewer.knowsPageSize(1)).toBe(false);
+    held.get(1)?.();
+    await pump();
+    expect(viewer.knowsPageSize(1)).toBe(true);
+    expect(viewer.position.page).toBe(1);
+    expect(viewer.position.top).toBeCloseTo(240, 6);
+    viewer.destroy();
+  });
+
+  it("restores fit using the remembered page rather than the new viewer's first page", async () => {
+    const pages: [{ width_pt: number; height_pt: number }, ...{ width_pt: number; height_pt: number }[]] = [
+      { width_pt: 600, height_pt: 800 },
+      { width_pt: 1200, height_pt: 800 },
+      { width_pt: 600, height_pt: 800 },
+    ];
+    const source = new Viewer(dom.root as unknown as HTMLElement, { doc: 1, pageCount: 3, pages });
+    source.goToPage(1); source.setFit("width"); source.goToPage(1);
+    const zoom = source.currentZoom;
+    const place = { page: 1, top_pt: 100, zoom, fit: "width" as const, turns: 0 };
+    source.destroy();
+    const restored = new Viewer(dom.root as unknown as HTMLElement, { doc: 1, pageCount: 3, pages });
+    restored.restore(place);
+    expect(restored.currentZoom).toBeCloseTo(zoom, 6);
+    expect(restored.position.page).toBe(1);
+    expect(restored.position.top).toBeCloseTo(100, 6);
+    restored.destroy();
+  });
+
+  it("restores a fitted last page when the viewport starts on the previous sheet", () => {
+    const pages = [
+      { width_pt: 600, height_pt: 800 }, { width_pt: 1200, height_pt: 800 },
+      { width_pt: 600, height_pt: 400 },
+    ] as [{ width_pt: number; height_pt: number }, ...{ width_pt: number; height_pt: number }[]];
+    const source = new Viewer(dom.root as unknown as HTMLElement, { doc: 1, pageCount: 3, pages });
+    source.goToPage(2); source.setFit("page"); source.goToPage(2);
+    const point = source.position;
+    expect(point.page).toBe(1);
+    const zoom = source.currentZoom;
+    const screen = source.screenPoint(2, 50, 50);
+    source.destroy();
+    const restored = new Viewer(dom.root as unknown as HTMLElement, { doc: 1, pageCount: 3, pages });
+    restored.restore({ page: point.page, top_pt: point.top, zoom, fit: "page", turns: 0 });
+    expect(restored.currentZoom).toBeCloseTo(zoom, 6);
+    expect(restored.position.page).toBe(point.page);
+    expect(restored.position.top).toBeCloseTo(point.top, 6);
+    expect(restored.screenPoint(2, 50, 50)).toEqual(screen);
+    restored.destroy();
+  });
+
+  it("refits a restored page after its delayed width arrives without moving the saved point", async () => {
+    sizes.set(1, { width_pt: 1200, height_pt: 1600 });
+    held.set(1, () => {});
+    const viewer = build3();
+    viewer.restore({ page: 1, top_pt: 240, zoom: 0.7, fit: "width", turns: 0 });
+    await pump();
+    expect(viewer.knowsPageSize(1)).toBe(false);
+    held.get(1)?.();
+    await pump();
+    expect(viewer.knowsPageSize(1)).toBe(true);
+    expect(viewer.currentZoom).toBeCloseTo(0.7, 6);
+    expect(viewer.fitMode).toBe("width");
+    expect(viewer.position.page).toBe(1);
+    expect(viewer.position.top).toBeCloseTo(240, 6);
+    viewer.destroy();
+  });
+
+  it("loads a restored page even when the saved offset exceeds its estimated height", async () => {
+    sizes.set(1, { width_pt: 600, height_pt: 2400 });
+    held.set(1, () => {});
+    const viewer = build3();
+    viewer.restore({ page: 1, top_pt: 1500, zoom: 1, fit: "none", turns: 0 });
+    await pump();
+    expect(asked).toContain(1);
+    held.get(1)?.();
+    await pump();
+    expect(viewer.position.page).toBe(1);
+    expect(viewer.position.top).toBeCloseTo(1500, 6);
+    viewer.destroy();
+  });
+
+  it("does not replay a pending restore after the reader navigates elsewhere", async () => {
+    sizes.set(1, { width_pt: 600, height_pt: 1600 });
+    held.set(1, () => {});
+    const viewer = build3();
+    viewer.restore({ page: 1, top_pt: 240, zoom: 1, fit: "none", turns: 0 });
+    await pump();
+    viewer.goToPage(0);
+    held.get(1)?.();
+    await pump();
+    expect(viewer.position).toEqual({ page: 0, top: 0 });
+    viewer.destroy();
+  });
+
   it("fits the page being read rather than page 1", async () => {
     // Mutation: `displayedPage()` reading `this.opts.pages[0]` instead of the
     // scroller's size for the current page. Every fit then follows page 1 and

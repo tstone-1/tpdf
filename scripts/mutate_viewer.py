@@ -932,8 +932,8 @@ MUTATIONS = [
         # all, which is what makes it evidence that the phase reaches it.
         "placement: turn every rectangle a quarter too far",
         "src/lib/viewer.ts",
-        "      turns: this.scroller.effectiveTurns(page),",
-        "      turns: this.scroller.effectiveTurns(page) + 1,",
+        "      turns: this.scroller.effectiveTurns(page),\n      width_pt: size.width_pt,",
+        "      turns: this.scroller.effectiveTurns(page) + 1,\n      width_pt: size.width_pt,",
         "a press on the reader's own mark opens its note",
         "viewer",
     ),

@@ -13750,9 +13750,16 @@ unit cases cover tagged ownership, paragraphs, partial copy, highlights and care
 edges. A real-extraction probe checks all 16 text/page turn combinations.
 Input focus also preserves the editor overlay's scroll position, which previously
 displaced low hit targets.
-The public-fixture phase navigates back to page 16 before sampling pixels; it does
-not verify mixed-size tab-position restoration. One reactivation left the label
-below the viewport, so that restoration path needs a separate regression check.
+The public-fixture edit phase still navigates back to page 16 before sampling
+pixels. A separate `tabs-position` phase now checks repeated restoration at nonzero
+offsets and the final page under all three zoom modes. On a synthetic document
+with mixed widths and heights, the previous implementation failed 6 of 12 checks;
+the correction passes all 12, as does the unchanged passport guide. Saved points
+remain absolute while lazy geometry arrives, and fitting follows the visible sheet
+rather than the first page or the preceding sheet at the viewport's top. Delayed
+replies cannot replay a saved point after navigation. Five regression mutations
+are caught by their named tests. The earlier intermittent offscreen label during
+the edit lifecycle has not been independently reproduced by this position check.
 Windows native verification of these increments remains outstanding.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.

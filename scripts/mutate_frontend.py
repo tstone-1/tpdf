@@ -79,6 +79,11 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation('restoration: discard pending absolute point', 'src/lib/viewer.ts', 'const pending = this.restoredPoint;', 'const pending = null;', 'restores an absolute point after the remembered page size arrives'),
+    Mutation('restoration: fit the first page', 'src/lib/viewer.ts', 'this.applyFit();\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', 'this.applyFit(false, 0);\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', "restores fit using the remembered page rather than the new viewer's first page"),
+    Mutation('restoration: fit the top anchor instead of the visible sheet', 'src/lib/viewer.ts', 'this.applyFit();\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', 'this.applyFit(false, page);\n    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);', 'restores a fitted last page when the viewport starts on the previous sheet'),
+    Mutation('restoration: replay after navigation', 'src/lib/viewer.ts', 'pending.scroll === this.scrollTop &&', 'true &&', 'does not replay a pending restore after the reader navigates elsewhere'),
+    Mutation('restoration: omit offscreen geometry request', 'src/lib/viewer.ts', 'if (this.restoredPoint) this.requestText(page);', '', 'loads a restored page even when the saved offset exceeds its estimated height'),
     Mutation('direction: discard character directions', 'src/lib/text.ts', 'text.char_turns?.[index] ?? 0', '0', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
     Mutation('direction: drop directions when rotating cached text', 'src/lib/text.ts', 'if (text.char_turns) view.char_turns = text.char_turns;', '/* direction omitted */', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
     Mutation('direction: reverse negative caret direction', 'src/lib/text.ts', 'turns >= 2 ? position < middle : position > middle', 'turns >= 2 ? position > middle : position > middle', 'places the caret before and after a glyph in its own displayed direction'),
@@ -3296,8 +3301,8 @@ MUTATIONS = [
         # checks before `viewQuadsOf` was routed through here and two after.
         "viewer: place a page's rectangles under the view's turn alone",
         "src/lib/viewer.ts",
-        "      turns: this.scroller.effectiveTurns(page),",
-        "      turns: this.turns,",
+        "      turns: this.scroller.effectiveTurns(page),\n      width_pt: size.width_pt,",
+        "      turns: this.turns,\n      width_pt: size.width_pt,",
         "puts the rectangle somewhere else once the page is turned",
     ),
     Mutation(
@@ -3348,8 +3353,8 @@ MUTATIONS = [
         # off the bottom of a page the turn made 600 pt tall.
         "viewer: turn every rectangle a quarter too far",
         "src/lib/viewer.ts",
-        "      turns: this.scroller.effectiveTurns(page),",
-        "      turns: this.scroller.effectiveTurns(page) + 1,",
+        "      turns: this.scroller.effectiveTurns(page),\n      width_pt: size.width_pt,",
+        "      turns: this.scroller.effectiveTurns(page) + 1,\n      width_pt: size.width_pt,",
         "places a comment where a mark with the same rectangle is, at 1 turns",
     ),
     Mutation(
