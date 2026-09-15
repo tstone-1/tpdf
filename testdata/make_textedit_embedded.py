@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -41,6 +41,10 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             return number
         return obj
 
+    if passport:
+        import hashlib
+        assert hashlib.sha256(Path(before).read_bytes()).hexdigest() == "0c70c5f7df62185cbd779ab506a4e61ae77abb8ffba1f1a134fdf3c7b56c4f21", "expected unchanged passport guide"
+        assert page_index == 15, "expected passport page 16"
     if agenda:
         import hashlib
         assert hashlib.sha256(Path(before).read_bytes()).hexdigest() == "5aa6129722dd20b351cf99575142666ab2c26b84555a9cabe920dcb07a17dbcd", "expected unchanged public agenda"
@@ -117,10 +121,12 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     symbolic = [font.get_object() for font in fonts
                 if ("/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object())
                 or font.get_object() in cff_fonts]
+    if passport:
+        old_text, new_text = "ILB 53 (09.22)", "ILB 53"
     if agenda:
         old_text, new_text = ("REGULAR", "ANNUAL") if page_index == 0 else ("Community Hub", "Community")
     if symbolic:
-        if agenda:
+        if agenda or passport:
             changed_index = next(i for i, pair in enumerate(zip(*operations)) if pair[0] != pair[1])
             font_name = [args[0] for args, op in operations[0][:changed_index] if op == b"Tf"][-1]
             mapped_font = pages[0]["/Resources"]["/Font"][font_name]
@@ -165,16 +171,16 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     if w3c:
         assert count == 1 and page_index == 0
         expected_text = ("Dummy PDF file", "Dummy PDF fill")
-    if agenda:
-        assert count == 2 and page_index in (0, 1), "wrong agenda page count"
+    if agenda or passport:
+        assert (count == 16 and page_index == 15) if passport else (count == 2 and page_index in (0, 1)), "wrong public fixture page count"
         original = pages[0].extract_text()
-        assert original.count(old_text) == 1, "wrong agenda text"
+        assert original.count(old_text) == 1, "wrong public fixture text"
         expected = original.replace(old_text, new_text)
         actual = pages[1].extract_text()
         # pypdf infers an extra space before the separately positioned trailing
         # space on page 2 after shortening the heading. The mapped operands above
         # are exact, and every other content operand/resource was already compared.
-        assert (actual.split() == expected.split() if page_index == 1 else actual == expected), "wrong agenda replacement or adjacent text"
+        assert (actual.split() == expected.split() if page_index == 1 else actual == expected), "wrong public fixture replacement or adjacent text"
     else:
         for page, first in zip(pages, expected_text):
             assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND")).split()), "wrong decoded text"
@@ -291,7 +297,7 @@ def main():
         return
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
         page, wrapped, float32, default_encoding = 0, False, False, False
-        w3c = dash = agenda = cff_unicode = cff_ligatures = False
+        w3c = dash = agenda = cff_unicode = cff_ligatures = passport = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -299,6 +305,8 @@ def main():
                 wrapped = True
             elif option == "--default-encoding" and sys.argv[1] == "--check":
                 default_encoding = True
+            elif option == "--passport" and sys.argv[1] == "--check":
+                passport = True
             elif option == "--agenda" and sys.argv[1] == "--check":
                 agenda = True
             elif option == "--cff-ligatures" and sys.argv[1] == "--check":
@@ -312,10 +320,10 @@ def main():
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --dash, --agenda or --w3c-dummy (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --dash, --agenda, --passport or --w3c-dummy (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures)
+        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return

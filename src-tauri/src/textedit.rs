@@ -225,10 +225,14 @@ fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
 }
 
 // Td/T* translate the line matrix, not the text matrix advanced by Tj.
-// Only diagonal matrices reach here; reject accumulated positions outside the
+// Orthogonal text axes reach here; reject accumulated positions outside the
 // same bound used for authored coordinates.
 fn move_line(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
-    shift_position(matrix, x * matrix[0], y * matrix[3])
+    shift_position(
+        matrix,
+        x * matrix[0] + y * matrix[2],
+        x * matrix[1] + y * matrix[3],
+    )
 }
 
 // The same position bound applies to authored and accumulated line positions.
@@ -244,16 +248,21 @@ fn shift_position(matrix: &mut [f64; 6], x: f64, y: f64) -> Result<(), String> {
     Ok(())
 }
 
-// ISO 32000-1, 8.3.4: a new matrix acts before the existing CTM. Both inputs
-// have already been restricted to nonzero diagonal scales and translations.
-// Reflections may cancel between page and text matrices. Require upright axes
-// only at a text show, after composing both, before constructing its bounds.
-// In particular, the existing scale acts on a new translation, not vice versa.
-fn compose_diagonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
+// Exactly axis-aligned text axes, including quarter turns. No epsilon admits
+// near-orthogonal skew: bounding and replacement containment rely on this shape.
+fn orthogonal(matrix: [f64; 6]) -> bool {
+    (matrix[1] == 0. && matrix[2] == 0. && matrix[0] != 0. && matrix[3] != 0.)
+        || (matrix[0] == 0. && matrix[3] == 0. && matrix[1] != 0. && matrix[2] != 0.)
+}
+
+// ISO 32000-1, 8.3.4: a new matrix acts before the existing CTM. The
+// page CTM stays diagonal; only text matrices may exchange the two axes.
+// Reflections may cancel; orientation is checked after composing at each show.
+fn compose_orthogonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
     let result = [
         inner[0] * outer[0],
-        0.0,
-        0.0,
+        inner[1] * outer[3],
+        inner[2] * outer[0],
         inner[3] * outer[3],
         inner[4] * outer[0] + outer[4],
         inner[5] * outer[3] + outer[5],
@@ -261,12 +270,28 @@ fn compose_diagonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String
     if result
         .iter()
         .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
-        || result[0] == 0.0
-        || result[3] == 0.0
+        || !orthogonal(result)
     {
         return Err("composed text transform exceeds its limit".into());
     }
     Ok(result)
+}
+
+// Transform the entire text-space envelope, not just its baseline/advance.
+// Corner extrema also cover the negative axes of 90/180/270-degree text.
+fn text_bounds(matrix: [f64; 6], rect: [f64; 4]) -> [f64; 4] {
+    let [a, b, c, d, e, f] = matrix;
+    let [left, bottom, right, top] = rect;
+    let xs = [left * a, right * a];
+    let ys = [bottom * c, top * c];
+    let xb = [left * b, right * b];
+    let yd = [bottom * d, top * d];
+    [
+        e + xs[0].min(xs[1]) + ys[0].min(ys[1]),
+        f + xb[0].min(xb[1]) + yd[0].min(yd[1]),
+        e + xs[0].max(xs[1]) + ys[0].max(ys[1]),
+        f + xb[0].max(xb[1]) + yd[0].max(yd[1]),
+    ]
 }
 
 struct Inspection {
@@ -468,7 +493,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                         "collapsed, rotated or skewed page content is not editable yet".into(),
                     );
                 }
-                page_transform = compose_diagonal(page_transform, next)?;
+                page_transform = compose_orthogonal(page_transform, next)?;
             }
             ("BT", []) if !inside => {
                 inside = true;
@@ -548,8 +573,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 for (dest, value) in matrix.iter_mut().zip(values) {
                     *dest = number(value)?;
                 }
-                if matrix[0] == 0.0 || matrix[3] == 0.0 || matrix[1] != 0.0 || matrix[2] != 0.0 {
-                    return Err("rotated or skewed text is not editable yet".into());
+                if !orthogonal(matrix) {
+                    return Err("collapsed or skewed text is not editable yet".into());
                 }
                 positioned = true;
             }
@@ -587,16 +612,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 word_spacing,
             )?
         };
-        let page_matrix = compose_diagonal(page_transform, matrix)?;
-        if page_matrix[0] <= 0.0 || page_matrix[3] <= 0.0 {
+        let page_matrix = compose_orthogonal(page_transform, matrix)?;
+        if page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0 {
             return Err("reflected text is not editable yet".into());
         }
-        let bounds = [
-            page_matrix[4] + horizontal[0] * page_matrix[0],
-            page_matrix[5] - size * page_matrix[3] * 0.25,
-            page_matrix[4] + horizontal[1] * page_matrix[0],
-            page_matrix[5] + size * page_matrix[3],
-        ];
+        let bounds = text_bounds(
+            page_matrix,
+            [horizontal[0], -size * 0.25, horizontal[1], size],
+        );
         // Include actual horizontal overhang in hit boxes and clipping. The
         // vertical union covers every offered glyph. Writing additionally keeps
         // replacement ink inside these unrounded original horizontal bounds.
@@ -605,12 +628,15 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             let [bottom, top] = metrics
                 .vertical_bounds
                 .ok_or("clipped text requires validated embedded glyph outlines")?;
-            let ink_bounds = [
-                bounds[0],
-                page_matrix[5] + bottom * size / 1000. * page_matrix[3],
-                bounds[2],
-                page_matrix[5] + top * size / 1000. * page_matrix[3],
-            ];
+            let ink_bounds = text_bounds(
+                page_matrix,
+                [
+                    horizontal[0],
+                    bottom * size / 1000.,
+                    horizontal[1],
+                    top * size / 1000.,
+                ],
+            );
             clipping::contains(clip, ink_bounds)?;
         }
         let [left, bottom, right, top] = bounds;
@@ -759,6 +785,9 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod rotation_tests;
 
 #[cfg(test)]
 mod reflected_tests;
@@ -1517,7 +1546,6 @@ pub(crate) mod tests {
             "BT /F1 12 Tf 40 180 Td (ONE) Tj (TWO) Tj ET",
             "3 Tr BT /F1 12 Tf 40 180 Td (HIDDEN) Tj ET",
             "-2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (REFLECTED) Tj ET",
-            "BT /F1 12 Tf 0 1 -1 0 40 180 Tm (ROTATED) Tj ET",
             "/Span << /ActualText (OTHER) >> BDC BT /F1 12 Tf 40 180 Td (TEXT) Tj ET EMC",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj",
             "BT BT /F1 12 Tf 40 180 Td (TEXT) Tj ET ET",

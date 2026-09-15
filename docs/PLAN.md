@@ -4636,20 +4636,22 @@ operator is accepted. The same paint endings as rectangles may finish the whole
 path. Every source and transformed point, including all cubic controls, is bounded
 to one million per coordinate. The stream's 4,096-operator bound limits work;
 completed paths are consumed once, with every operand preserved. No clip/state/text
-operator may interrupt a path. Mixed `re` subpaths, zero/reversed rectangles,
-nonrectangular clips and clipping combined with painting remain unsupported. A bounded
+operator may interrupt a path. Mixed `re`/curve subpaths, zero-size rectangles,
+reversed clipping rectangles, nonrectangular clips and clipping combined with painting remain unsupported. A bounded
 nonnegative `w` setter is preserved; filled text cannot use it and supported strokes
 retain it.
 Nonzero diagonal page scaling and translations compose across `cm` operators
 and are restored by `Q`. Reflections in page and text matrices are accepted only
-when both final text axes are positive. Clip corners normalize after transformation,
-before intersection; this does not admit reversed authored rectangle dimensions. The reported matrix and hit box combine the text matrix with
+when the final text orientation is positive. Exact quarter-turn text matrices
+are supported; line movement and glyph envelopes follow those axes. Clip corners
+normalize after transformation, before intersection; reversed authored clipping
+rectangles remain refused. The reported matrix and hit box combine the text matrix with
 the page transform before crop and rotation. An existing page scale acts on a
 subsequent translation; the text matrix does not scale the page offset. Authored,
 accumulated and composed positions and scale factors are bounded to one million
 per coordinate or axis, and a scale that collapses to zero is refused. Saves inside
-text blocks, rotation, skew and text whose combined axes remain reflected are
-unsupported. Each
+text blocks, rotated page CTMs, skew and text whose combined axes remain reflected
+are unsupported. Each
 `Tj` or `TJ` must have positioning
 independent of the previous show's advance; adjacent implicit-advance shows and
 other graphics/text operators remain refused. A `TJ` array becomes one run with
@@ -13732,12 +13734,22 @@ WinAnsi TrueType maps must preserve ASCII identity and agree across font cmaps.
 Named stroke colours and bounded groups of reversed painted rectangles are also
 preserved. See `BUILD.md`, *Ligatures and matching simple-font maps*.
 
-The unchanged guide's page 16 now reaches its final text matrix:
-`0 8 -8 0 382.6772 31.0394 Tm`, a 90-degree vertical label. It is still refused,
-so this increment does not add an editable practical page. Next: support this
-orthogonal text rotation with proven hit boxes, glyph bounds, clipping and
-replacement placement. Do not bypass unsupported states or normalize the source
-to admit it.
+The unchanged guide's page 16 passes discovery, native replacement/save and
+independent readback on macOS (2026-09-15). Exact quarter-turn text matrices are
+supported, including its `0 8 -8 0 382.6772 31.0394 Tm` label. The worker finds
+37 runs; the application shortens the vertical label from `ILB 53 (09.22)` to
+`ILB 53`. Independent parsing confirms only that text operand changes and all
+page resources and untouched content remain identical. PDFKit finds 404 changed
+pixels inside the label, zero outside, with the other 15 pages pixel-identical.
+The original input is digest-verified and never normalized for admission.
+
+This closes the page's editing/save target, with a separate viewer limitation:
+whole-page selection still groups a rotated run in the wrong reading order.
+The native phase explicitly skips that assertion; extraction, search, preview,
+undo/redo, overflow refusal and save/reopen pass. Input focus also now preserves
+the editor overlay's scroll position, which previously displaced low hit targets.
+Next: fix selection ordering for orthogonal text runs. Windows native verification
+of this increment remains outstanding.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.

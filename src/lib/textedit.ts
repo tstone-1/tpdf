@@ -92,7 +92,7 @@ export class TextEditor {
       this.buttons.push(button); this.root.append(button);
     }
     this.root.append(this.toolbar, this.popup); host.append(this.root); this.layout();
-    this.buttons[0]?.focus();
+    this.buttons[0]?.focus({ preventScroll: true });
   }
 
   private button(title: string, action: () => void): HTMLButtonElement {
@@ -110,7 +110,9 @@ export class TextEditor {
     }
     this.active = run; this.accepted = this.value(run); this.input.value = this.accepted;
     this.failure = null; this.message.textContent = ""; this.popup.hidden = false;
-    this.layout(); this.input.focus(); this.input.select();
+    // Focusing a low target must not scroll the overflow-hidden overlay away
+    // from the PDF surface; viewer geometry owns its position.
+    this.layout(); this.input.focus({ preventScroll: true }); this.input.select();
   }
   private cancel(): void {
     if (this.saving) return;

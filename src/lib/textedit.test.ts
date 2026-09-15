@@ -37,6 +37,12 @@ function mount(write: (change: TextChange) => Promise<EditState> = async (value)
 }
 
 describe("existing text editing", () => {
+  it("focuses targets and the input without scrolling their overlay", () => {
+    const focus = vi.spyOn(FakeElement.prototype, "focus");
+    mount();
+    expect(focus.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (const args of focus.mock.calls) expect(args).toEqual([{ preventScroll: true }]);
+  });
   it("invalidates added, changed and undone pages without invalidating reordered changes", () => {
     expect(changedTextPages([], [change])).toEqual([0]);
     expect(changedTextPages([change], [])).toEqual([0]);

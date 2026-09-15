@@ -255,6 +255,20 @@ Svelte checker supports the new compiler API; a plain TypeScript 7 replacement
 cannot supply the API that checker imports. See Microsoft's
 [side-by-side migration guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
 
+Existing-text editing admits exact 90/180/270-degree text matrices with positive
+orientation after composition; page CTMs remain diagonal. Line movement and both
+hit/ink envelopes use the transformed text axes. Skew and mirrored final text
+remain refused. `textedit/rotation_tests.rs` checks crop/page turns, clipping on
+every edge, bounded replacements and preserved positioning.
+`tabs_check.py --phase textedit-passport` edits the vertical label on page 16 of
+the unchanged passport guide in `testdata/textedit-public-corpus.json`.
+Independent readers accept `--passport --page=15` with the usual before/after
+filenames (`testdata/make_textedit_embedded.py --check` and
+`scripts/text_edit_pdfkit.swift`). Whole-page selection still groups rotated runs
+incorrectly; this phase explicitly skips that check and verifies extraction and
+search separately. `TextEditor` focuses with `preventScroll: true`: ordinary
+focus can scroll an overflow-hidden overlay and displace every hit target.
+
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
 `Arc` in the journal, limited to 512x256 pixels (including rotated equivalents)
