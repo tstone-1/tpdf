@@ -856,3 +856,39 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
         }
     }
 }
+
+#[test]
+fn textedit_inline_separators_retain_tagged_paragraph_ownership() {
+    let span = "/Span << /ActualText <FEFF0009> >> BDC ( ) Tj EMC";
+    let source = std::str::from_utf8(CONTENT)
+        .unwrap()
+        .replace("(FIRST) Tj", &format!("(FIRST) Tj {span}"));
+    let (mut doc, ids) = fixture(source.as_bytes());
+    let original: Vec<_> = ids[1..].iter().map(|id| doc.objects[id].clone()).collect();
+    let runs = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(runs.runs.len(), 2);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "FI".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(
+        ids[1..]
+            .iter()
+            .map(|id| doc.objects[id].clone())
+            .collect::<Vec<_>>(),
+        original
+    );
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
+    // Preserving an inline separator must not let text escape its parent paragraph.
+    let source = source
+        .replace("/Standard << /MCID 0 >> BDC", "")
+        .replacen("ET EMC", "ET", 1);
+    assert!(textedit::scan(&fixture(source.as_bytes()).0, 0).is_err());
+}

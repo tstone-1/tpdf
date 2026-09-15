@@ -600,3 +600,34 @@ fn textedit_cid_dash_keeps_two_byte_codes_and_font_data() {
     assert_eq!(bytes.len(), 24);
     assert_ne!(&bytes[12..14], &[0x20, 0x13]);
 }
+
+#[test]
+fn textedit_composite_indirect_descendants_preserve_resources_and_refuse_cycles() {
+    let (mut doc, ids) = fixture();
+    let before = textedit::scan(&doc, 0).unwrap();
+    let children = doc
+        .get_dictionary(ids[0])
+        .unwrap()
+        .get(b"DescendantFonts")
+        .unwrap()
+        .clone();
+    let array = doc.add_object(children);
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("DescendantFonts", array);
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs, before.runs);
+    let original = doc.objects.clone();
+    let edit = update(&doc, "EDITED FIRST");
+    textedit::write(&mut doc, &[edit]).unwrap();
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap().runs[0].text,
+        "EDITED FIRST"
+    );
+    for id in ids.into_iter().chain([array]) {
+        assert_eq!(doc.objects[&id], original[&id]);
+    }
+    doc.objects.insert(array, Object::Reference(array));
+    assert!(textedit::scan(&doc, 0).is_err());
+    doc.objects.insert(array, Object::Null);
+    assert!(textedit::scan(&doc, 0).is_err());
+}

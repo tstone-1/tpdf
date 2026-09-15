@@ -110,10 +110,10 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         .get(b"BaseFont")
         .and_then(Object::as_name)
         .map_err(|_| INVALID)?;
-    let children = font
-        .get(b"DescendantFonts")
-        .and_then(Object::as_array)
-        .map_err(|_| INVALID)?;
+    let children =
+        crate::encoding::resolve(doc, font.get(b"DescendantFonts").map_err(|_| INVALID)?)
+            .as_array()
+            .map_err(|_| INVALID)?;
     let [child] = children.as_slice() else {
         return Err(INVALID.into());
     };

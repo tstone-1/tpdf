@@ -263,6 +263,13 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('composite: ignore indirect descendant arrays', 'src/textedit/fonts/composite.rs', 'crate::encoding::resolve(doc, font.get(b"DescendantFonts").map_err(|_| INVALID)?)', 'font.get(b"DescendantFonts").map_err(|_| INVALID)?', 'textedit_composite_indirect_descendants_preserve_resources_and_refuse_cycles'),
+    Mutation('inline separators: offer protected text for editing', 'src/textedit.rs', 'spacer.text(&text)?;\n            continue;', 'spacer.text(&text)?;', 'textedit_inline_separators_preserve_bytes_and_positions_without_edit_targets'),
+    Mutation('inline separators: skip sequence validation', 'src/textedit.rs', 'spacer.step(&op.operator)?;', 'let _ = spacer;', 'textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences'),
+    Mutation('inline separators: skip space validation', 'src/textedit.rs', 'spacer.text(&text)?;', 'let _ = spacer;', 'textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences'),
+    Mutation('inline separators: allow semantic properties', 'src/textedit/spacers.rs', '|| dict.len() != 1', '|| false', 'textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences'),
+    Mutation('inline separators: remove count bound', 'src/textedit/spacers.rs', 'if !(1..=32).contains(&count) {', 'if false {', 'textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences'),
+    Mutation('inline separators: accept other Unicode controls', 'src/textedit/spacers.rs', 'matches!(unit[1], 7 | 9)', 'true', 'textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences'),
     Mutation('refusals: drop inline tag identity', 'src/textedit/refusal.rs', 'return format!("inline {name} marked content is not editable yet");', 'return "inline marked content is not editable yet".into();', 'textedit_refusals_distinguish_operator_context_without_echoing_values'),
     Mutation('refusals: echo unrecognized document token', 'src/textedit/refusal.rs', '_ => "unrecognized content operator is not editable yet",', '_ => name,', 'textedit_refusals_distinguish_operator_context_without_echoing_values'),
     Mutation('continued: discard the text cursor', 'src/textedit.rs', 'cursor += advance;', 'cursor = 0.;', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),
