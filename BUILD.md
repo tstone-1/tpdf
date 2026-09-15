@@ -8168,11 +8168,27 @@ Normal frontend assets are restored, with zero harness code.
 ### Word spacing and the next practical target
 
 `Tw` joins `Tc` in the saved graphics state and per-run replacement geometry.
-Each is bounded to one quarter of the active font size; combined glyph steps
-must remain positive. Original operators, font mappings and resources survive.
+`Tc` and negative `Tw` are bounded to one quarter of the active font size.
+Positive `Tw` accepts up to one million text-space units; combined glyph steps
+must remain positive and total advances stay within one million. Original
+operators, font mappings and resources survive.
 ISO 32000-1 section 9.3.3 applies word spacing to single-byte PDF code 32,
 regardless of its mapped character. A mapped Unicode space at another code and
 all Identity-H two-byte codes receive no word spacing.
+
+For a tab-sized positive gap under `Tf=1` and a scaled text matrix:
+`uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py <source.pdf>
+--unit-font --word-code space --word-spacing 12.112`. Use ordinary worker and
+native `tabs_check.py --phase textedit-wide-spacing` readback, then
+`swift scripts/text_edit_pdfkit.swift <readback-directory>
+--wide-spacing`; it checks the absolute position of FIRST and requires zero
+pixel changes outside the first-line region. Setting `Tw` to zero in the before
+and after files must fail that check. The native phase asserts the geometric
+column order caused by this untagged gap, rather than assuming line order.
+`textedit_continued_discovery_requires_representable_deletion` covers the fuzz
+regression where discovery offered a continued run that deletion could not
+compensate within one millionth of a page point. The writer retains its separate
+check because shortening can require a less representable value than deletion.
 
 Generate the native fixture in both directions (`1` and `-1`):
 

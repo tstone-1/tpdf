@@ -718,6 +718,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         return Err("unterminated graphics-state save".into());
     }
     tags.finish()?;
+    // Discovery promises that every offered run can be deleted. Check the
+    // actual f32 TJ compensation before offering implicit-advance text.
+    for run in &result.runs {
+        if continued.contains(&run.operator) {
+            continuation_adjustment(run, 0.)?;
+        }
+    }
     Ok(Inspection {
         id,
         content,
@@ -729,6 +736,17 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         text_spacing,
         continued,
     })
+}
+
+fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<f32, String> {
+    let adjustment = ((replacement_advance - run.advance) * 1000. / run.size) as f32;
+    number(&Object::Real(adjustment))?;
+    let saved_advance = replacement_advance - f64::from(adjustment) * run.size / 1000.;
+    let drift = (saved_advance - run.advance).abs() * run.matrix[0].abs().max(run.matrix[1].abs());
+    if adjustment > 0. || drift > 0.000_001 {
+        return Err("cannot preserve following text at PDF number precision".into());
+    }
+    Ok(adjustment)
 }
 
 /// Discover a complete supported page, or explain why it cannot be edited yet.
@@ -809,14 +827,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         show.operands[0] = if continued.contains(&change.operator) {
             // TJ offsets are subtracted in thousandths of text space. Keep
             // following shows fixed, including after deletion of this string.
-            let adjustment = ((replacement_advance - run.advance) * 1000. / run.size) as f32;
-            number(&Object::Real(adjustment))?;
-            let saved_advance = replacement_advance - f64::from(adjustment) * run.size / 1000.;
-            let drift =
-                (saved_advance - run.advance).abs() * run.matrix[0].abs().max(run.matrix[1].abs());
-            if adjustment > 0. || drift > 0.000_001 {
-                return Err("cannot preserve following text at PDF number precision".into());
-            }
+            let adjustment = continuation_adjustment(run, replacement_advance)?;
             show.operator = "TJ".into();
             Object::Array(vec![replacement, Object::Real(adjustment)])
         } else if show.operator == "TJ" {

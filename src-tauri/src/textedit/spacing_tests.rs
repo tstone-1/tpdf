@@ -199,6 +199,70 @@ fn textedit_spacing_bounds_and_malformed_setters_remain_refused() {
 }
 
 #[test]
+fn textedit_large_word_spacing_preserves_scaled_continuations_and_ink_bounds() {
+    let mut doc = embedded(b"12 Tw BT /F1 1 Tf 8 0 0 8 40 180 Tm (A B ) Tj (C) Tj ET");
+    let before = inspect(&doc, 0).unwrap();
+    let first = &before.runs.runs[0];
+    close(first.advance, 26.4);
+    close(before.horizontal_bounds[&first.operator][1], 14.4);
+    close(before.runs.runs[1].matrix[4], 251.2);
+    let resources = resources(&doc, before.id).unwrap().clone();
+    let change = Change {
+        replacement: "B ".into(),
+        ..tests::change(&doc)
+    };
+    write(&mut doc, &[change]).unwrap();
+    let after = inspect(&doc, 0).unwrap();
+    assert_eq!(after.runs.runs[0].text, "B ");
+    assert_eq!(after.runs.runs[1], before.runs.runs[1]);
+    assert_eq!(*super::resources(&doc, before.id).unwrap(), resources);
+    assert_eq!(
+        after.content.operations[0].operator,
+        before.content.operations[0].operator
+    );
+    assert_eq!(
+        after.content.operations[0].operands,
+        before.content.operations[0].operands
+    );
+
+    // A second space has little ink but exceeds the source advance. Removing
+    // a space fits that advance yet can move replacement ink past its envelope.
+    for (source, replacement, reason) in [
+        ("A B", "A  B", "original text advance"),
+        ("A ", "ABC", "original text bounds"),
+    ] {
+        let mut doc =
+            embedded(format!("12 Tw BT /F1 1 Tf 8 0 0 8 40 180 Tm ({source}) Tj ET").as_bytes());
+        let objects = doc.objects.clone();
+        let change = Change {
+            replacement: replacement.into(),
+            ..tests::change(&doc)
+        };
+        assert!(write(&mut doc, &[change]).unwrap_err().contains(reason));
+        assert_eq!(doc.objects, objects);
+    }
+}
+
+#[test]
+fn textedit_large_word_spacing_bounds_cursor_and_restores_inactive_spacing() {
+    for (value, source, accepted) in [
+        ("999999", " ", true),
+        ("1000000", " ", false),
+        ("1000000", "AB", true),
+        ("500000", "  ", false),
+    ] {
+        let body = format!("{value} Tw BT /F1 1 Tf 40 180 Td ({source}) Tj ET");
+        let result = scan(&embedded(body.as_bytes()), 0);
+        assert_eq!(result.is_ok(), accepted, "{value} {source:?}: {result:?}");
+    }
+    let doc = embedded(b"12 Tw BT /F1 1 Tf 40 180 Td (A B) Tj ET q 0 Tw BT 40 140 Td (A B) Tj ET Q BT 40 100 Td (A B) Tj ET");
+    let runs = scan(&doc, 0).unwrap().runs;
+    close(runs[0].advance, 13.8);
+    close(runs[1].advance, 1.8);
+    close(runs[2].advance, 13.8);
+}
+
+#[test]
 fn textedit_word_spacing_measures_combined_steps_and_kerning_fragments() {
     for word in [-2, 0, 2] {
         for (show, adjustment) in [("(A B ) Tj", 0.), ("[(A ) 100 (B )] TJ", 1.)] {
@@ -290,7 +354,8 @@ fn textedit_word_spacing_bounds_combined_backtracking_and_positioning() {
     for (value, accepted) in [
         ("2.5", true),
         ("-2.5", true),
-        ("2.5001", false),
+        ("2.5001", true),
+        ("12.112", true),
         ("-2.5001", false),
     ] {
         let bytes = format!("{value} Tw BT /F1 10 Tf 40 180 Td (A B) Tj ET");

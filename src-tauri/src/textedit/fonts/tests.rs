@@ -957,6 +957,61 @@ fn textedit_word_spacing_uses_pdf_code_32_not_unicode_space() {
 }
 
 #[test]
+fn textedit_large_word_spacing_keeps_original_code_semantics_and_finite_limits() {
+    for (codes, spaced, ink) in [
+        (None, true, 0.945),
+        (
+            Some(Codes::Single({
+                let mut codes = Box::new([None; 256]);
+                codes[32] = Some(b'A');
+                codes[1] = Some(b' ');
+                codes
+            })),
+            true,
+            12.945,
+        ),
+        (
+            Some(Codes::Single({
+                let mut codes = Box::new([None; 256]);
+                codes[2] = Some(b'A');
+                codes[1] = Some(b' ');
+                codes
+            })),
+            false,
+            0.945,
+        ),
+        (
+            Some(Codes::Double([(32, b'A'), (256, b' ')].into())),
+            false,
+            0.945,
+        ),
+    ] {
+        let mut metrics = Metrics::helvetica();
+        metrics.codes = codes;
+        let bytes = metrics.encode("A ").unwrap();
+        let (text, advance, bounds) = metrics.source_layout(&bytes, 1., 0., 12.).unwrap();
+        assert_eq!(text, "A ");
+        let expected = 0.945 + if spaced { 12. } else { 0. };
+        assert!((advance - expected).abs() < 0.000001);
+        assert!((bounds[1] - ink).abs() < 0.000001);
+        assert_eq!(
+            metrics.spaced_layout(&text, 1., 0., 12.).unwrap(),
+            (advance, bounds)
+        );
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1_000_001.] {
+            // No affected code means the cursor cannot mask the value bound.
+            assert!(metrics.spaced_layout("", 1., 0., value).is_err());
+        }
+        if spaced {
+            assert!(metrics
+                .spaced_layout("A ", 1., 0., 1_000_000.)
+                .unwrap_err()
+                .contains("advance exceeds"));
+        }
+    }
+}
+
+#[test]
 fn textedit_named_unicode_requires_identity_and_agreeing_legacy_glyphs() {
     let (mut doc, font, _, program) = fixture();
     let face = Face::parse(SYNTHETIC, 0).unwrap();
