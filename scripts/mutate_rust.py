@@ -263,6 +263,13 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('JPEG: omit preserved image validation', 'src/textedit/images.rs', 'jpeg::check(&image.content, width, height, components)?;', 'let _ = components;', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
+    Mutation('JPEG: omit framing validation', 'src/textedit/images/jpeg.rs', 'framing(input)?;', 'let _ = input;', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
+    Mutation('JPEG: permit empty entropy scans', 'src/textedit/images/jpeg.rs', 'if !samples {', 'if false && !samples {', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
+    Mutation('JPEG: raise encoded byte ceiling', 'src/textedit/images/jpeg.rs', 'input.len() > 2 * super::super::MAX_CONTENT', 'input.len() > 4 * super::super::MAX_CONTENT', 'textedit_jpeg_bounds_valid_encoded_metadata_and_refuses_lossless_headers'),
+    Mutation('JPEG: omit progressive scan ceiling', 'src/textedit/images/jpeg.rs', 'if scans > 64 {', 'if false {', 'textedit_jpeg_framing_bounds_scans_and_requires_complete_marker_segments'),
+    Mutation('JPEG: return after headers alone', 'src/textedit/images/jpeg.rs', 'let mut pixels = vec![0; bytes];', 'if true { return Ok(()); }\n    let mut pixels = vec![0; bytes];', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
+    Mutation('JPEG: forget shared image cost', 'src/textedit/images.rs', 'return Ok(bytes);', 'return Ok(0);', 'textedit_jpeg_consumes_shared_image_budget_before_decoding'),
     Mutation('reversed clips: reject signed dimensions', 'src/textedit/clipping.rs', 'if width == 0. || height == 0. {', 'if width <= 0. || height <= 0. {', 'textedit_reversed_clips_preserve_geometry_and_authored_bytes'),
     Mutation('reversed clips: leave horizontal corners unsorted', 'src/textedit/clipping.rs', 'next[0].min(next[2])', 'next[0]', 'textedit_reversed_clip_bounds_normalize_every_corner_after_transform'),
     Mutation('reversed clips: leave vertical corners unsorted', 'src/textedit/clipping.rs', 'next[1].min(next[3])', 'next[1]', 'textedit_reversed_clip_bounds_normalize_every_corner_after_transform'),

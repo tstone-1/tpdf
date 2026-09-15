@@ -5,6 +5,7 @@
 use super::{colors, dictionary, filters};
 use lopdf::{Dictionary, Document, Object};
 
+mod jpeg;
 #[cfg(test)]
 mod tests;
 
@@ -26,6 +27,8 @@ pub(super) fn check(
             (b"ImageMask", Object::Boolean(false)) => {}
             (b"Interpolate", Object::Boolean(_)) => {}
             (b"Intent", Object::Name(name)) => colors::intent(name)?,
+            // Obsolete image identifier; the resource dictionary resolves Do.
+            (b"Name", Object::Name(name)) if !name.is_empty() && name.len() <= 127 => {}
             (
                 b"Width" | b"Height" | b"BitsPerComponent" | b"ColorSpace" | b"Length" | b"Filter",
                 _,
@@ -67,6 +70,17 @@ pub(super) fn check(
     let bytes = width * height * components;
     if bytes > remaining {
         return Err("decoded images exceed the editable page budget".into());
+    }
+    let dct = match image.dict.get(b"Filter") {
+        Ok(Object::Name(name)) => name == b"DCTDecode",
+        Ok(Object::Array(names)) => {
+            matches!(names.as_slice(), [Object::Name(name)] if name == b"DCTDecode")
+        }
+        _ => false,
+    };
+    if dct {
+        jpeg::check(&image.content, width, height, components)?;
+        return Ok(bytes);
     }
     let decoded = filters::decode(image, bytes)?;
     if decoded.len() != bytes {

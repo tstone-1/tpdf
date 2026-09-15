@@ -37,6 +37,10 @@ sha2 = "0.11"
 # Strict, bounded zlib decoding for editable content. Already used by lopdf;
 # its recovery-oriented decoder accepts partial streams. MIT OR Apache-2.0.
 flate2 = "1"
+# Bounded JPEG decoding for preserved images during text editing. Both are
+# already in the image/PDFium dependency graph. MIT OR Apache-2.0 OR Zlib.
+zune-core = "0.5"
+zune-jpeg = "0.5"
 
 # PDF rendering and text extraction. Settled 2026-07-27 by spikes 0.1, 0.3 and 0.5:
 # it renders, extracts and sandboxes correctly, and is not usable for redaction

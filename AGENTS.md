@@ -303,6 +303,17 @@ unchanged. Empty, compound, painted and partly clipped text cases remain refused
 Generate equivalent clip fixtures with `make_textedit_composite.py <path> --clip-direction
 positive|x|y|both --clip-rule W|W*`; the background makes a missing clip visible.
 
+Opaque eight-bit grayscale/RGB JPEG image XObjects survive text edits unchanged,
+including progressive and ICCBased images. `textedit/images/jpeg.rs` bounds
+encoded bytes, marker framing, scan count and decoded dimensions before pixel
+allocation; the shared page image budget still applies. Decoder success does not
+certify every entropy sample: even strict mode recovers some malformed input.
+The explicit framing check rejects empty scans, missing ends and trailing images;
+no image sample is rewritten. Four-component JPEGs, masks and custom decode
+parameters remain refused. Generate synthetic cases with
+`uv run --with pillow --with fonttools --with pypdf testdata/make_textedit_jpeg.py <directory>`;
+use ordinary `text-edit-probe`/native textedit checks and PDFKit `--image` readback.
+
 Composite font discovery resolves an indirect `/DescendantFonts` array through
 `encoding::resolve`, retaining the original array and font resources on save.
 The composite-font regression covers matching direct/indirect geometry, saved
