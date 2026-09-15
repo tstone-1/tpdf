@@ -335,6 +335,11 @@ tab closure releases its handle, and window closure checks all tabs for unsaved 
 copies. On Windows, run an isolated build (`TAURI_CONFIG` with a distinct `identifier`)
 when the installed app is running, since single-instance forwarding otherwise absorbs it.
 The restart session still restores the most recent document, not the full tab list.
+Restoration keeps the saved absolute point until the target page's lazy geometry
+arrives; ordinary scrolling over estimated pages still keeps its relative position.
+Fit uses the visible sheet, which can differ from the page at the viewport's top.
+`tabs_check.py --phase tabs-position` checks repeated tab switches at nonzero offsets
+and at the final page under fit-page, fit-width and fixed zoom.
 
 Windows workers join their cleanup job during process creation through
 `PROC_THREAD_ATTRIBUTE_JOB_LIST`. Do not restore a separate post-creation

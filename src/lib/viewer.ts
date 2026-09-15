@@ -1360,6 +1360,12 @@ export class Viewer {
    * {@link setPages} when the model answers, never edited --- see `pages.ts`.
    */
   private pages: PageMap;
+  /** A saved absolute point awaiting real geometry. The view snapshot keeps a
+   * late reply from overriding navigation, zoom, rotation or a page edit. */
+  private restoredPoint: {
+    page: number; top: number; scroll: number; zoom: number;
+    fit: FitMode; turns: number; pages: PageMap;
+  } | null = null;
 
   private lastStatus = "";
   private readonly observer: ResizeObserver;
@@ -2039,7 +2045,13 @@ export class Viewer {
    * {@link rotateBy} preserves them across a change of proportions.
    */
   private learnGeometry(): void {
-    const anchor = this.scroller.pageAt(this.scrollTop);
+    const pending = this.restoredPoint;
+    const restored = pending && pending.scroll === this.scrollTop &&
+      pending.zoom === this.zoom && pending.fit === this.fit && pending.pages === this.pages &&
+      pending.turns === this.scroller.effectiveTurns(pending.page) ? pending : null;
+    this.restoredPoint = null;
+    const readingPage = this.currentPage();
+    const anchor = restored?.page ?? this.scroller.pageAt(this.scrollTop);
     const pitch = this.scroller.pagePitchOf(anchor);
     const through =
       pitch > 0
@@ -2050,7 +2062,11 @@ export class Viewer {
     // document out, and on the frames after a lazy open there is a screenful of
     // them --- every one but the last undone before anything was drawn.
     const learnt: { page: number; size: PageSize }[] = [];
-    for (const page of this.scroller.visiblePages()) {
+    const visible = this.scroller.visiblePages();
+    // An absolute offset can lie beyond the estimated page height, so the
+    // remembered page may not be in the provisional viewport at all.
+    if (restored && !visible.includes(restored.page)) visible.push(restored.page);
+    for (const page of visible) {
       if (this.scroller.knowsPageSize(page)) continue;
       const text = this.textOn(page);
       if (!text) continue;
@@ -2068,21 +2084,29 @@ export class Viewer {
         size: displayedSize(shown, -this.scroller.effectiveTurns(page)),
       });
     }
-    if (!this.scroller.notePageSizes(learnt)) return;
+    if (!this.scroller.notePageSizes(learnt)) {
+      if (restored) this.rememberRestoredPoint(restored.page, restored.top);
+      return;
+    }
 
     // The fit follows the page being read, so a page that has just turned out to
     // be A3 is refitted rather than left at the previous page's scale. Before
     // the re-anchor: a fit changes the zoom, which changes the pitch the
     // fraction below is resolved against.
-    this.applyFit();
+    // A restored point is absolute, unlike an ordinary provisional scroll.
+    // Put it against the corrected layout before asking which page fills the
+    // viewport: its top edge may still belong to the preceding page's gap.
+    if (restored) this.scrollTop = this.scroller.pageTopOf(anchor) + restored.top * this.zoom;
+    this.applyFit(false, restored ? this.currentPage() : readingPage);
     this.scrollTop = Math.max(
       0,
       Math.min(
         this.scroller.pageTopOf(anchor) +
-          through * this.scroller.pagePitchOf(anchor),
+          (restored ? restored.top * this.zoom : through * this.scroller.pagePitchOf(anchor)),
         this.scroller.maxScroll,
       ),
     );
+    if (restored) this.rememberRestoredPoint(restored.page, restored.top);
     this.wake();
   }
 
@@ -2231,8 +2255,7 @@ export class Viewer {
    * and fitting every page to page 1's width leaves the wide one overflowing the
    * window with no way to see its edge.
    */
-  private displayedPage(): PageSize {
-    const page = this.currentPage();
+  private displayedPage(page = this.currentPage()): PageSize {
     // Both turns, for the reason `Scroller.effectiveTurns` gives: a fit is about
     // the sheet in front of the reader, and a page an edit has turned is a
     // different shape from the one the file describes. Through that method
@@ -2266,8 +2289,8 @@ export class Viewer {
   }
 
   /** The zoom `mode` asks for, against the viewport and page as they are now. */
-  private zoomFor(mode: Fitted): number {
-    return fitZoom(mode, this.viewportSize(), this.displayedPage());
+  private zoomFor(mode: Fitted, page?: number): number {
+    return fitZoom(mode, this.viewportSize(), this.displayedPage(page));
   }
 
   /**
@@ -2283,9 +2306,9 @@ export class Viewer {
    * computed themselves, so the anchoring is discarded there rather than
    * fighting them, and they need no separate path.
    */
-  private applyFit(settle = false): void {
+  private applyFit(settle = false, page?: number): void {
     if (this.fit === "none") return;
-    this.setZoom(this.zoomFor(this.fit), settle);
+    this.setZoom(this.zoomFor(this.fit, page), settle);
   }
 
   private scrollBy(delta: number): void {
@@ -2675,20 +2698,29 @@ export class Viewer {
     fit: FitMode;
     turns: number;
   }): void {
+    const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
     this.applyTurns(quarterTurns(place.turns));
 
     this.fit = place.fit;
-    // The remembered zoom is used only when nothing was being followed. Under a
-    // fit it is stale by construction --- it was computed against the window
-    // the reader had last time, and this one is a different size.
-    if (this.fit === "none") this.setZoom(place.zoom);
-    else this.applyFit();
-
-    const page = Math.max(0, Math.min(place.page, this.opts.pageCount - 1));
     const offset =
       this.scroller.effectiveTurns(page) === 0 ? Math.max(0, place.top_pt) : 0;
+    // First locate the remembered viewport. The anchor at its top can belong
+    // to the previous page; fitting that page would choose the wrong sheet.
+    // Then recompute the fit for this window and replay the absolute point.
+    this.setZoom(place.zoom);
     this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
+    this.applyFit();
+    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
+    this.rememberRestoredPoint(page, offset);
+    if (this.restoredPoint) this.requestText(page);
     this.wake();
+  }
+
+  private rememberRestoredPoint(page: number, top: number): void {
+    this.restoredPoint = this.scroller.knowsPageSize(page) ? null : {
+      page, top, scroll: this.scrollTop, zoom: this.zoom, fit: this.fit,
+      turns: this.scroller.effectiveTurns(page), pages: this.pages,
+    };
   }
 
   /**

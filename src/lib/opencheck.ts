@@ -25,6 +25,7 @@
 
 import { call } from "./ipc";
 import { filePage } from "./pages";
+import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
 
 import { pause, Report, settle } from "./checkreport";
@@ -110,6 +111,44 @@ function sidebars(): number {
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "tabs-position": {
+      const [first, second] = expected.split("|");
+      if (!first || !second) throw new Error("two disposable fixture paths required");
+      await host.open(first); await host.idle();
+      const firstTab = host.tabs().find((tab) => tab.path === first)!;
+      const lastPage = host.edits()!.state.pages.length - 1;
+      if (lastPage < 2) throw new Error("position check needs at least three pages");
+      const quiet = async () => {
+        if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("position did not settle");
+        await pause(100);
+      };
+      for (const page of [1, lastPage]) {
+        for (const fit of ["page", "width", "none"] as const) {
+          const before = host.viewer()!;
+          before.goToPage(page); await quiet();
+          if (fit === "none") before.setZoomFixed(1.25);
+          else before.setFit(fit);
+          if (page === 1) before.goToDestination(page, 240 + DESTINATION_MARGIN_PT);
+          else before.goToPage(page);
+          await quiet();
+          const saved = { ...before.position, zoom: before.currentZoom, fit: before.fitMode };
+          const point = before.screenPoint(page, 50, 50);
+          for (let round = 0; round < 2; round++) {
+            await host.open(second); await host.idle();
+            await host.activate(firstTab.id); await host.idle(); await quiet();
+            const after = host.viewer()!;
+            const actual = { ...after.position, zoom: after.currentZoom, fit: after.fitMode };
+            const returned = after.screenPoint(page, 50, 50);
+            report.check(`tab position page ${page + 1}, ${fit}, round ${round + 1}`,
+              actual.page === saved.page && Math.abs(actual.top - saved.top) < 1 &&
+              Math.abs(actual.zoom - saved.zoom) < 0.001 && actual.fit === saved.fit &&
+              Math.abs(point.x - returned.x) < 1 && Math.abs(point.y - returned.y) < 1,
+              JSON.stringify({ saved, actual, point, returned }));
+          }
+        }
+      }
+      break;
+    }
     case "signed-save-cancel":
     case "signed-save-accept": {
       await host.open(expected); await host.idle();
