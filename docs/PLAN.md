@@ -4305,8 +4305,11 @@ operators stay unchanged. Independent rendering compares all four dimension-sign
 combinations under both winding rules, with an unclipped negative control.
 The page then reached an unsupported DCT/JPEG image. Opaque grayscale/RGB JPEGs
 are now preserved with bounded framing and decoding, including progressive and
-ICCBased images. The same unchanged page now reaches the word-spacing limit;
-public admission remains 1 of 45 pages. Worker and independent pixel readback
+ICCBased images. The same unchanged page then reached the word-spacing limit.
+Positive word spacing now admits its tab-sized gap, retaining the negative limit
+and independent cursor/ink bounds. The next refusal is the Helvetica Neue LT Pro
+subsets' `/FSType 4` permission; their embedded rights are preserved. Public
+admission remains 1 of 45 pages. Worker and independent pixel readback
 cover synthetic JPEGs and the public image with its original ICC profile, in a
 synthetic text fixture. This does not establish that the whole passport page is
 editable.
@@ -4635,8 +4638,13 @@ character must advance positively, and the accumulated advance is bounded to one
 million text-space units. Discovery and replacement validation share the same
 spacing-aware advances and outline bounds. Spacing applies after the last
 character too, while trailing spacing does not extend that character's ink.
-Nondefault word spacing, horizontal text scaling, rise, stroke/hidden/clipping
-modes and malformed operands remain refused, including an unsupported setter
+`Tw` persists with the same state and applies only to single-byte PDF code 32,
+regardless of the mapped Unicode character. Positive values are bounded to one
+million text-space units and negative values to one quarter of the font size;
+combined steps must remain positive and total advances stay within one million.
+This permits tab-sized gaps authored with `Tf=1` and a scaled text matrix.
+Horizontal text scaling, rise, stroke/hidden/clipping modes and malformed operands
+remain refused, including an unsupported setter
 followed by a reset.
 Nonstroking device Gray/RGB/CMYK and bounded ICCBased colour spaces are preserved
 through `cs`, `sc`/`scn`, `g`/`rg`/`k` and `q`/`Q`. Components must be in [0, 1]

@@ -314,6 +314,18 @@ parameters remain refused. Generate synthetic cases with
 `uv run --with pillow --with fonttools --with pypdf testdata/make_textedit_jpeg.py <directory>`;
 use ordinary `text-edit-probe`/native textedit checks and PDFKit `--image` readback.
 
+Positive word spacing accepts values up to one million text-space units, with
+the combined advance bounded separately. Negative spacing retains its quarter-
+font-size limit. Single-byte PDF code 32 receives `Tw`; mapped spaces at other
+codes and two-byte codes do not. Replacement ink, advance and continuation checks
+still apply. `make_textedit_symbolic.py --unit-font --word-code space --word-spacing
+12.112` generates the `Tf=1`, scaled-matrix case; PDFKit `--wide-spacing` checks
+the gap's absolute position as well as unchanged pixels outside the edit.
+The native `textedit-wide-spacing` phase checks the geometric column order that
+this untagged gap produces, including selection refresh and undo. Discovery also
+requires deletion compensation to fit PDF number precision for every continued
+run; replacement-specific compensation is checked again by the writer.
+
 Composite font discovery resolves an indirect `/DescendantFonts` array through
 `encoding::resolve`, retaining the original array and font resources on save.
 The composite-font regression covers matching direct/indirect geometry, saved

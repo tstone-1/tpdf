@@ -220,6 +220,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-agenda":
     case "textedit-agenda-page2":
     case "textedit-multipage":
+    case "textedit-wide-spacing":
     case "textedit-wrapped":
     case "textedit-overhang":
     case "textedit-cid-latin1":
@@ -234,6 +235,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const w3c = phase === "textedit-w3c";
       const cidLatin1 = phase === "textedit-cid-latin1" || overhang;
       const wrapped = phase === "textedit-wrapped";
+      const wideSpacing = phase === "textedit-wide-spacing";
       const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
       const original = passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
       const replacement = passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
@@ -314,9 +316,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("the edit belongs to the second page", host.edits()!.state.text_edits?.[0]?.page === 1);
         check("editing page two preserves page one before saving", (await read(0)) === untouched);
       }
+      // The wide gap separates two geometric columns in this untagged fixture.
+      // Check the same reading order before/after undo, with fresh edited text.
+      const selectedContains = (text: string) => wideSpacing
+        ? host.viewer()!.selectedText.trim() === `${text.split(" ")[0]} SYNTHETIC SECONDFIRST`
+        : host.viewer()!.selectedText.includes(text);
       const editedPixels = await pixels();
       host.viewer()!.selectPage();
-      if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
+      if (!await settle(() => selectedContains(replacement), SETTLE_MS)) throw new Error(`selection does not contain the replacement: ${JSON.stringify(host.viewer()!.selectedText)}`);
       check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
       if (passport) {
         const selected = host.viewer()!.selectedText;
@@ -339,7 +346,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("undo repaints the original text on screen", originalPixels.length === editedPixels.length && originalPixels.some((value, index) => value !== editedPixels[index]));
       check("undo clears the stale selection", !host.viewer()!.selectedText);
       host.viewer()!.selectPage();
-      if (!await settle(() => host.viewer()!.selectedText.includes(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
+      if (!await settle(() => selectedContains(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
       host.run("edit.redo"); await host.idle();
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();

@@ -263,6 +263,10 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('continued: omit discovery deletion check', 'src/textedit.rs', 'continuation_adjustment(run, 0.)?;', 'let _ = run;', 'textedit_continued_discovery_requires_representable_deletion'),
+    Mutation('large word spacing: restore positive relative ceiling', 'src/textedit/fonts.rs', 'word_spacing > 1_000_000.', 'word_spacing > size * 0.25', 'textedit_large_word_spacing_preserves_scaled_continuations_and_ink_bounds'),
+    Mutation('large word spacing: omit positive value ceiling', 'src/textedit/fonts.rs', 'word_spacing > 1_000_000.', 'false', 'textedit_large_word_spacing_keeps_original_code_semantics_and_finite_limits'),
+    Mutation('large word spacing: omit combined cursor ceiling', 'src/textedit/fonts.rs', 'cursor > 1_000_000.', 'false', 'textedit_large_word_spacing_keeps_original_code_semantics_and_finite_limits'),
     Mutation('JPEG: omit preserved image validation', 'src/textedit/images.rs', 'jpeg::check(&image.content, width, height, components)?;', 'let _ = components;', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
     Mutation('JPEG: omit framing validation', 'src/textedit/images/jpeg.rs', 'framing(input)?;', 'let _ = input;', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
     Mutation('JPEG: permit empty entropy scans', 'src/textedit/images/jpeg.rs', 'if !samples {', 'if false && !samples {', 'textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically'),
@@ -577,7 +581,7 @@ MUTATIONS = [
     Mutation('print state: accept active soft mask dictionaries', 'src/textedit/graphics.rs', '(b"SMask", Object::Name(name)) if name == b"None"', '(b"SMask", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
     Mutation('print state: accept nondefault alpha source', 'src/textedit/graphics.rs', '(b"AIS", Object::Boolean(false))', '(b"AIS", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
 
-    Mutation('word spacing: omit relative size limit', 'src/textedit/fonts.rs', 'word_spacing.abs() > size * 0.25', 'false', 'textedit_word_spacing_bounds_combined_backtracking_and_positioning'),
+    Mutation('word spacing: omit negative relative size limit', 'src/textedit/fonts.rs', 'word_spacing < -size * 0.25', 'false', 'textedit_word_spacing_bounds_combined_backtracking_and_positioning'),
     Mutation('word spacing: use Unicode space for custom codes', 'src/textedit/fonts.rs', 'Some(Codes::Single(codes)) => codes[32],', 'Some(Codes::Single(_)) => Some(32),', 'textedit_word_spacing_uses_pdf_code_32_not_unicode_space'),
     Mutation('word spacing: apply to two-byte code 32', 'src/textedit/fonts.rs', 'Some(Codes::Double(_)) => None,', 'Some(Codes::Double(codes)) => codes.get(&32).copied(),', 'textedit_word_spacing_uses_pdf_code_32_not_unicode_space'),
     Mutation('word spacing: ignore kerning fragment spacing', 'src/textedit.rs', 'metrics.source_layout(bytes, size, spacing, word_spacing)?', 'metrics.source_layout(bytes, size, spacing, 0.)?', 'textedit_word_spacing_measures_combined_steps_and_kerning_fragments'),

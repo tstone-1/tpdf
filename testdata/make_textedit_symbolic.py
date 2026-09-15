@@ -7,6 +7,9 @@ Append --spacing -0.005 to retain character spacing around the first line.
 Append --intent Perceptual to retain both ri and ExtGState RI settings.
 Append --image to retain an opaque RGB image alongside the text.
 Append --dash to edit an en dash through its original font code.
+Use --unit-font --word-code space --word-spacing 12.112 for a tab-sized gap;
+the font size is 1 and Tm supplies the 12pt scale. PDFKit readback uses --wide-spacing;
+the native fixture phase is textedit-wide-spacing (the gap forms geometric columns).
 Original geometric outlines, MIT like this repository; no installed font is read.
 """
 from io import BytesIO
@@ -31,6 +34,7 @@ def main():
     parser.add_argument("--ranges", action="store_true")
     parser.add_argument("--spacing", type=float, default=0.)
     parser.add_argument("--word-spacing", type=float, default=0.)
+    parser.add_argument("--unit-font", action="store_true", help="use Tf=1 and a 12x text matrix")
     parser.add_argument("--word-code", choices=["space", "letter"],
                         help="map a space or S to PDF byte 32; default has no code 32")
     parser.add_argument("--intent", choices=["AbsoluteColorimetric", "RelativeColorimetric", "Saturation", "Perceptual"])
@@ -38,10 +42,11 @@ def main():
     parser.add_argument("--print-state", action="store_true", help="preserve explicit mask defaults and scoped overprint settings")
     parser.add_argument("--dash", action="store_true")
     args = parser.parse_args()
-    if not math.isfinite(args.spacing) or abs(args.spacing) > 3:
-        parser.error("spacing must be finite and within -3..3 for the 12pt fixture")
-    if not math.isfinite(args.word_spacing) or abs(args.word_spacing) > 3:
-        parser.error("word spacing must be finite and within -3..3")
+    small_spacing = 0.25 if args.unit_font else 3
+    if not math.isfinite(args.spacing) or abs(args.spacing) > small_spacing:
+        parser.error(f"spacing must be finite and within {-small_spacing}..{small_spacing}")
+    if not math.isfinite(args.word_spacing) or not -small_spacing <= args.word_spacing <= 12.5:
+        parser.error(f"word spacing must be finite and within {-small_spacing}..12.5")
     ranges, target = args.ranges, args.output
     target.parent.mkdir(parents=True, exist_ok=True)
     alphabet = "SYNTHEIC FRODAB" + ("\u2013" if args.dash else "")
@@ -98,7 +103,9 @@ def main():
         return "<" + bytes(codes[ch] for ch in text).hex() + ">"
     # Mix Tj and TJ so both paths must decode and re-encode the symbolic codes.
     prefix = "SYNTHETIC" + ("\u2013" if args.dash else " ")
-    first = f"BT /F1 12 Tf 40 180 Td [{encoded(prefix)} 20 {encoded('FIRST')}] TJ ET"
+    def position(y):
+        return f"/F1 1 Tf 12 0 0 12 40 {y} Tm" if args.unit_font else f"/F1 12 Tf 40 {y} Td"
+    first = f"BT {position(180)} [{encoded(prefix)} 20 {encoded('FIRST')}] TJ ET"
     if args.word_spacing:
         first = f"q {args.word_spacing:g} Tw {first} Q"
     if args.spacing:
@@ -139,7 +146,7 @@ def main():
         })
         first = "q 168.2 0 0 28.2 40 40 cm /Image1 Do Q\n" + first
     content.set_data((first + "\n" +
-                     f"BT /F1 12 Tf 40 140 Td {encoded('SYNTHETIC SECOND')} Tj ET").encode())
+                     f"BT {position(140)} {encoded('SYNTHETIC SECOND')} Tj ET").encode())
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(target)
     print("[PASS] generated symbolic TrueType fixture with distinct PDF and Unicode codes")

@@ -1,5 +1,5 @@
 // Independent readback of text-edit-probe's synthetic or W3C output on macOS.
-// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1|--image]
+// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1|--image|--wide-spacing]
 import Foundation
 import PDFKit
 import CoreGraphics
@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -49,7 +49,7 @@ if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
 // W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
 let targetRows = passport ? (926..<1056) : agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = ["--continued", "--inline"].contains(variant) ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
+let targetColumns = variant == "--wide-spacing" ? (76..<600) : ["--continued", "--inline"].contains(variant) ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
@@ -71,6 +71,14 @@ var pictures = [[UInt8]]()
 for (name, document) in [("before", before), ("after", after)] {
     let first = name == "after" && pageIndex == selected ? replacement : original
     guard let page = document.page(at: pageIndex) else { fail("missing page") }
+    if variant == "--wide-spacing" {
+        // Independent positions for the Tf=1, Tm=12 fixture: ten source
+        // glyphs then 12*Tw minus .24pt TJ; seven replacement glyphs then Tw.
+        let matches = document.findString("FIRST", withOptions: [])
+        let expectedX = name == "before" ? 257.104 : 235.744
+        guard matches.count == 1, abs(matches[0].bounds(for: page).minX - expectedX) < 0.02
+        else { fail("wide word gap has the wrong position for \(name)") }
+    }
     if variant == "--inline" {
         guard let source = before.page(at: pageIndex)?.string,
               source.components(separatedBy: original).count == 2 else { fail("missing original inline text") }

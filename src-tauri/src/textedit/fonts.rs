@@ -307,8 +307,11 @@ impl Metrics {
         if !spacing.is_finite() || spacing.abs() > size * 0.25 {
             return Err("character spacing exceeds a quarter of the font size".into());
         }
-        if !word_spacing.is_finite() || word_spacing.abs() > size * 0.25 {
-            return Err("word spacing exceeds a quarter of the font size".into());
+        // Positive Tw can encode a tab-sized gap with Tf=1 and a scaled Tm.
+        // Bound its value and the resulting cursor separately. Keep the
+        // existing negative-spacing subset and positive per-glyph steps.
+        if !word_spacing.is_finite() || word_spacing < -size * 0.25 || word_spacing > 1_000_000. {
+            return Err("word spacing exceeds editable limits".into());
         }
         // ISO 32000-1, 9.3.3: Tw applies to single-byte PDF code 32,
         // regardless of its Unicode mapping. Identity-H has no such code.

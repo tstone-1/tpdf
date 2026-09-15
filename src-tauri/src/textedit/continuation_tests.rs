@@ -2,17 +2,16 @@ use super::*;
 
 #[test]
 fn textedit_continued_precision_and_accumulated_bounds_fail_atomically() {
-    let mut doc = tests::with_content(
-        b"BT /F1 12 Tf 0.1234567 Tc 1000 0 0 1000 0 0 Tm (FIRST) Tj (SECOND) Tj ET",
-    );
+    let mut doc =
+        tests::with_content(b"BT /F1 12 Tf 0.125 Tc 1000 0 0 1000 0 0 Tm (AAA) Tj (SECOND) Tj ET");
     let runs = scan(&doc, 0).unwrap();
     let original = doc.objects.clone();
     let edit = Change {
         page: 0,
         revision: runs.revision,
         operator: runs.runs[0].operator,
-        original: "FIRST".into(),
-        replacement: "FI".into(),
+        original: "AAA".into(),
+        replacement: "A".into(),
     };
     assert!(write(&mut doc, &[edit])
         .unwrap_err()
@@ -32,6 +31,37 @@ fn textedit_continued_precision_and_accumulated_bounds_fail_atomically() {
     )
     .unwrap_err()
     .contains("position exceeds"));
+}
+
+#[test]
+fn textedit_continued_discovery_requires_representable_deletion() {
+    for body in [
+        "BT /F1 12 Tf 0.1234567 Tc 1000 0 0 1000 0 0 Tm (FIRST) Tj (SECOND) Tj ET",
+        "q 12.112 Tw BT /F1 12 Tf 30 TL 40 180 Td (ACME SYNTHETIC TEXT) Tj [( SECOND) -125] TJ ( THIRD) Tj T* (NEXT LINE) Tj ET Q",
+    ] {
+        let doc = tests::with_content(body.as_bytes());
+        assert!(scan(&doc, 0).unwrap_err().contains("PDF number precision"));
+    }
+    for body in [
+        "BT /F1 12 Tf 0.125 Tc 1000 0 0 1000 0 0 Tm (AAA) Tj (SECOND) Tj ET",
+        "q 12 Tw BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ( SECOND) Tj ET Q",
+    ] {
+        let mut doc = tests::with_content(body.as_bytes());
+        let runs = scan(&doc, 0).unwrap();
+        let change = Change {
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: runs.runs[0].text.clone(),
+            replacement: String::new(),
+        };
+        write(&mut doc, &[change]).unwrap();
+        let after = scan(&doc, 0).unwrap();
+        assert!(after.runs[0].text.is_empty());
+        for (actual, expected) in after.runs[1].matrix.iter().zip(runs.runs[1].matrix) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+    }
 }
 
 #[test]
