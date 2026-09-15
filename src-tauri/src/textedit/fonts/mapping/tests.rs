@@ -378,3 +378,48 @@ fn textedit_cff_padded_header_keeps_single_byte_sources_and_exact_wrapper() {
     inherited.dict.set("UseCMap", "Identity-H");
     assert!(parse_cff(&inherited).is_err());
 }
+
+#[test]
+fn textedit_cid_ligature_mapping_accepts_only_unique_exact_sequences() {
+    let body = |entries: &str| {
+        wide_map().replace(
+            "2 beginbfchar\n<0101> <0041>\n<0102> <0042>\nendbfchar",
+            entries,
+        )
+    };
+    for (target, slot) in [
+        ("006600660069", 1),
+        ("00660066", 2),
+        ("00660069", 3),
+        ("0066006c", 4),
+    ] {
+        let map = body(&format!(
+            "2 beginbfchar <0101> <{target}> <0102> <0066> endbfchar"
+        ));
+        let parsed = parse_cid(&stream(&map)).unwrap();
+        assert_eq!(parsed[&257], slot);
+        assert_eq!(parsed[&258], b'f');
+        for invalid in [
+            format!("2 beginbfchar <0101> <{target}> <0101> <{target}> endbfchar"),
+            format!("2 beginbfchar <0101> <0066> <0101> <{target}> endbfchar"),
+            format!("2 beginbfchar <0101> <{target}> <0102> <{target}> endbfchar"),
+            format!("1 beginbfrange <0101> <0102> <{target}> endbfrange"),
+        ] {
+            assert!(parse_cid(&stream(&body(&invalid))).is_err());
+        }
+    }
+    for target in [
+        "",
+        "006600",
+        "00660066006c",
+        "00410042",
+        "fb01",
+        "fb03",
+        "0001",
+        "009f",
+        "d800dc00",
+    ] {
+        let map = body(&format!("1 beginbfchar <0101> <{target}> endbfchar"));
+        assert!(parse_cid(&stream(&map)).is_err(), "{target}");
+    }
+}

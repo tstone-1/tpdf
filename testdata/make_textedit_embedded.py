@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False):
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False, cid_ligatures=False):
     """Independent parser: one changed operand, identical fonts and colour data."""
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
@@ -120,7 +120,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             raise AssertionError("CFF readback requires fonttools; add --with fonttools") from error
     symbolic = [font.get_object() for font in fonts
                 if ("/Encoding" not in font.get_object() and "/ToUnicode" in font.get_object())
-                or font.get_object() in cff_fonts]
+                or font.get_object() in cff_fonts
+                or (cid_ligatures and font.get_object().get("/Encoding") == "/Identity-H")]
     if passport:
         old_text, new_text = "ILB 53 (09.22)", "ILB 53"
     if agenda:
@@ -141,28 +142,36 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         if cff_unicode:
             expected_operands = [(old, "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£"),
                                  (new, "EDITED £\u2013\u2019\u2018\u00a0\u2212")]
-        if cff_ligatures:
+        if cff_ligatures or cid_ligatures:
             expected_operands = [(old, "SYNTHETIC ffi ffi fi fl ff"), (new, "EDITED ffi fi fl ff")]
         encoding, mapping = get_encoding(mapped_font)
         if mapped_font in cff_fonts and "/ToUnicode" not in mapped_font:
             assert isinstance(encoding, dict), "expected explicit CFF glyph encoding"
             mapping = {chr(code): text for code, text in encoding.items()}
-        assert mapping and all(isinstance(k, str) and len(k) == 1 and (len(v) == 1 or (cff_ligatures and v in ("ffi", "ff", "fi", "fl"))) for k, v in mapping.items()), "unexpected fixture map"
+        assert mapping and all(isinstance(k, str) and len(k) == 1 and (len(v) == 1 or ((cff_ligatures or cid_ligatures) and v in ("ffi", "ff", "fi", "fl"))) for k, v in mapping.items()), "unexpected fixture map"
         for operation, expected in expected_operands:
             parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
             raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
                            for part in parts if isinstance(part, (str, bytes)))
-            if cff_ligatures:
+            if cff_ligatures or cid_ligatures:
                 expected_codes = b"SYNTHETIC ffi \x1f \x1e \x1c \x1d" if operation is old else b"EDITED \x1f \x1e \x1c \x1d"
+                if cid_ligatures:
+                    inverse = {text: code for code, text in mapping.items()}
+                    assert len(inverse) == len(mapping), "ambiguous CID targets"
+                    parts = [*"SYNTHETIC ffi ", "ffi", " ", "fi", " ", "fl", " ", "ff"] if operation is old else [*"EDITED ", "ffi", " ", "fi", " ", "fl", " ", "ff"]
+                    expected_codes = b"".join(ord(inverse[text]).to_bytes(2, "big") for text in parts)
                 assert raw == expected_codes, "ligature glyph codes changed"
-            assert all(chr(code) in mapping for code in raw), "unmapped symbolic code"
-            assert "".join(mapping[chr(code)] for code in raw) == expected, "wrong mapped operand"
+            stride = 2 if cid_ligatures else 1
+            assert len(raw) % stride == 0, "partial mapped code"
+            codes = [int.from_bytes(raw[i:i+stride], "big") for i in range(0, len(raw), stride)]
+            assert all(chr(code) in mapping for code in codes), "unmapped symbolic code"
+            assert "".join(mapping[chr(code)] for code in codes) == expected, "wrong mapped operand"
     # Let the independent parser apply the font's encoding and ToUnicode map.
     # Comparing raw operand bytes to ASCII cannot verify symbolic font codes.
     expected_text = ("SYNTHETIC ÄÖÜ äöü ß", "ÖÄÜ äöü ß" if overhang else "ÄÖÜ äöü ß") if cid_latin1 or overhang else ("SYNTHETIC FIRST", "EDITED FIRST")
     if cff_unicode:
         expected_text = ("SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£", "EDITED £\u2013\u2019\u2018\u00a0\u2212")
-    if cff_ligatures:
+    if cff_ligatures or cid_ligatures:
         expected_text = ("SYNTHETIC ffi ffi fi fl ff", "EDITED ffi fi fl ff")
     if dash:
         expected_text = ("SYNTHETIC\u2013FIRST", "EDITED\u2013FIRST")
@@ -297,7 +306,7 @@ def main():
         return
     if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
         page, wrapped, float32, default_encoding = 0, False, False, False
-        w3c = dash = agenda = cff_unicode = cff_ligatures = passport = False
+        w3c = dash = agenda = cff_unicode = cff_ligatures = passport = cid_ligatures = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -309,6 +318,8 @@ def main():
                 passport = True
             elif option == "--agenda" and sys.argv[1] == "--check":
                 agenda = True
+            elif option == "--cid-ligatures" and sys.argv[1] == "--check":
+                cid_ligatures = True
             elif option == "--cff-ligatures" and sys.argv[1] == "--check":
                 cff_ligatures = True
             elif option == "--cff-unicode" and sys.argv[1] == "--check":
@@ -320,10 +331,10 @@ def main():
             elif option == "--float32" and sys.argv[1] == "--check":
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --dash, --agenda, --passport or --w3c-dummy (--check only)")
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --cid-ligatures, --dash, --agenda, --passport or --w3c-dummy (--check only)")
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport)
+        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport or cid_ligatures:
+            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return

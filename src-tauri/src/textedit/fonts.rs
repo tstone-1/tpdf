@@ -136,16 +136,24 @@ impl Metrics {
             if bytes.len() % 2 != 0 || bytes.len() / 2 > super::MAX_TEXT {
                 return Err("invalid or oversized two-byte text".into());
             }
-            return bytes
-                .chunks_exact(2)
-                .map(|pair| {
-                    codes
-                        .get(&u16::from_be_bytes([pair[0], pair[1]]))
-                        .copied()
-                        .map(super::slot_character)
-                        .ok_or_else(|| "text contains an unmapped font code".to_string())
-                })
-                .collect();
+            let mut text = String::new();
+            let mut characters = 0;
+            for pair in bytes.chunks_exact(2) {
+                let slot = *codes
+                    .get(&u16::from_be_bytes([pair[0], pair[1]]))
+                    .ok_or("text contains an unmapped font code")?;
+                if let Some(sequence) = ligatures::text(slot) {
+                    text.push_str(sequence);
+                    characters += sequence.len();
+                } else {
+                    text.push(super::slot_character(slot));
+                    characters += 1;
+                }
+                if characters > super::MAX_TEXT {
+                    return Err("expanded two-byte text exceeds its limit".into());
+                }
+            }
+            return Ok(text);
         }
         let Codes::Single(codes) = codes else {
             unreachable!()
@@ -274,6 +282,14 @@ impl Metrics {
                         .ok_or_else(|| "text contains an unmapped font code".to_string())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            self.spaced_slots(&slots, size, spacing, word_spacing)?
+        } else if let Some(Codes::Double(codes)) = &self.codes {
+            // Keep original glyph boundaries even when their Unicode text could
+            // be re-encoded as a different combination of letters and ligatures.
+            let slots = bytes
+                .chunks_exact(2)
+                .map(|pair| codes[&u16::from_be_bytes([pair[0], pair[1]])])
+                .collect::<Vec<_>>();
             self.spaced_slots(&slots, size, spacing, word_spacing)?
         } else {
             self.spaced_layout(&text, size, spacing, word_spacing)?

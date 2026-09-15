@@ -301,6 +301,15 @@ Composite font discovery resolves an indirect `/DescendantFonts` array through
 `encoding::resolve`, retaining the original array and font resources on save.
 The composite-font regression covers matching direct/indirect geometry, saved
 text and cyclic or non-array references.
+Identity-H TrueType fonts also admit the exact `ff`, `fi`, `fl` and `ffi`
+ToUnicode sequences already supported by CFF. Source measurements retain original
+CID boundaries; replacement encoding chooses the longest available ligature.
+Controls, compatibility characters, arbitrary sequences, duplicate targets and
+sequence ranges remain refused. Expanded text retains the normal character bound.
+Generate with `testdata/make_textedit_composite.py <path> --ligatures`;
+`text-edit-probe`, `make_textedit_embedded.py --check` and
+`text_edit_pdfkit.swift` accept `--cid-ligatures`. The native check reuses
+`tabs_check.py --phase textedit-cff-ligatures` because its text workflow is shared.
 
 `textedit/refusal.rs` explains unsupported operation contexts using fixed PDF
 keywords; it never echoes operand values or unknown document tokens.
