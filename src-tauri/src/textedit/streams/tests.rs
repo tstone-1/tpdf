@@ -3,6 +3,22 @@ use crate::textedit;
 use lopdf::{Dictionary, Object, Stream};
 
 #[test]
+fn textedit_stream_conversion_is_limited_to_patched_text_shows() {
+    let bytes = b"BT (FIRST) Tj (SECOND) Tj ET";
+    let mut content = Content::decode_strict(bytes).unwrap();
+    content.operations[1].operator = "TJ".into();
+    content.operations[1].operands = vec![Object::Array(vec![
+        Object::string_literal("FI"),
+        (-100).into(),
+    ])];
+    assert!(rewrite(bytes, &content, &BTreeSet::new()).is_err());
+    let saved = rewrite(bytes, &content, &BTreeSet::from([1])).unwrap();
+    assert!(saved.ends_with(b" (SECOND) Tj ET"));
+    content.operations[1].operator = "q".into();
+    assert!(rewrite(bytes, &content, &BTreeSet::from([1])).is_err());
+}
+
+#[test]
 fn textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes() {
     let source = b"% untouched decimals\r\n.23999999 0 0 .23999999 0 0 cm\nBT /F1 12 Tf 1 0 0 1 40 180 Tm\n(SYNTHETIC FIRST) Tj\n1 0 0 1 40 140.000001 Tm [(SECOND) 0 ( LINE)] TJ ET % tail";
     let mut doc = textedit::tests::fixture();

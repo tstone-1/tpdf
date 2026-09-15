@@ -276,6 +276,17 @@ are treated as separate regions; author-defined tags still decide block order.
 `TextEditor` focuses with `preventScroll: true`: ordinary
 focus can scroll an overflow-hidden overlay and displace every hit target.
 
+Consecutive `Tj`/`TJ` text shows keep a separate text cursor and line matrix.
+When an edit precedes another show without a position reset, the writer adds a
+trailing `TJ` adjustment to preserve the original advance. It refuses an edit
+whose PDF number precision would move following text by more than 0.000001 page
+points. `Tm`, `Td` and `T*` reset the cursor; a new `BT` still requires explicit
+positioning. Only edited `Tj` operators may become `TJ`; all untouched stream
+bytes remain unchanged. `textedit/continuation_tests.rs` covers deletion,
+spacing/font changes, orthogonal axes and line resets. Generate fixtures and
+check independent saved geometry with `scripts/text_continuation_check.py`;
+`text-edit-probe` and `text_edit_pdfkit.swift` accept `--continued` for them.
+
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
 `Arc` in the journal, limited to 512x256 pixels (including rotated equivalents)

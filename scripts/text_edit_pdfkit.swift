@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--image"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--continued", "--image"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -49,13 +49,22 @@ if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
 // W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
 let targetRows = passport ? (926..<1056) : agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
+let targetColumns = variant == "--continued" ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
     // rather than rejecting an unchanged box for decimal serialization rounding.
     [left.minX, left.minY, left.maxX, left.maxY].map(Float.init)
         == [right.minX, right.minY, right.maxX, right.maxY].map(Float.init)
+}
+if variant == "--continued" {
+    let old = before.findString("SYNTHETIC SECOND", withOptions: [])
+    let new = after.findString("SYNTHETIC SECOND", withOptions: [])
+    guard old.count == 1, new.count == 1, let oldPage = before.page(at: 0), let newPage = after.page(at: 0) else { fail("missing continuation") }
+    let a = old[0].bounds(for: oldPage), b = new[0].bounds(for: newPage)
+    guard abs(a.minX-b.minX) < 0.0001, abs(a.minY-b.minY) < 0.0001,
+          abs(a.width-b.width) < 0.0001, abs(a.height-b.height) < 0.0001 else { fail("following text moved") }
+    print("[PASS] PDFKit: following text retains its position and bounds")
 }
 for pageIndex in 0..<before.pageCount {
 var pictures = [[UInt8]]()

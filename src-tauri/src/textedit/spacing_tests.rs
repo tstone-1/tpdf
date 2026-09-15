@@ -192,7 +192,7 @@ fn textedit_spacing_bounds_and_malformed_setters_remain_refused() {
         .contains("spaced text advance exceeds"));
     for bytes in [
         b"2 Tc BT /F1 10 Tf (AB) Tj ET".as_slice(),
-        b"BT /F1 10 Tf 40 180 Td (AB) Tj 2 Tc (AB) Tj ET",
+        b"BT /F1 10 Tf 2 Tc (AB) Tj ET",
     ] {
         assert!(scan(&embedded(bytes), 0).is_err());
     }
@@ -316,7 +316,7 @@ fn textedit_word_spacing_bounds_combined_backtracking_and_positioning() {
         .contains("backtracking character"));
     for bytes in [
         b"2 Tw BT /F1 10 Tf (A B) Tj ET".as_slice(),
-        b"BT /F1 10 Tf 40 180 Td (A B) Tj 2 Tw (A B) Tj ET",
+        b"BT /F1 10 Tf 2 Tw (A B) Tj ET",
     ] {
         assert!(scan(&embedded(bytes), 0).is_err());
     }
