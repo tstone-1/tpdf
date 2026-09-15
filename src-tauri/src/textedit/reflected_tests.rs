@@ -128,7 +128,6 @@ fn textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atom
     for body in [
         "1 0 0 -1 0 240 cm BT /F1 12 Tf 40 60 Td (FIRST) Tj ET",
         "-1 0 0 1 300 0 cm BT /F1 12 Tf 260 180 Td (FIRST) Tj ET",
-        "BT /F1 12 Tf -1 0 0 -1 40 180 Tm (FIRST) Tj ET",
         "1 0 0 -1 0 240 cm BT /F1 12 Tf 1 0.1 0 -1 40 60 Tm (FIRST) Tj ET",
         "1 0 0 -1 0 240 cm BT /F1 12 Tf 1 0 0.1 -1 40 60 Tm (FIRST) Tj ET",
         "1 0.1 0 -1 0 240 cm BT /F1 12 Tf 1 0 0 -1 40 60 Tm (FIRST) Tj ET",
@@ -164,10 +163,10 @@ fn textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atom
         outer[axis] = -1e-300;
         inner[axis] = -1e-300;
         assert!(
-            compose_diagonal(outer, inner).is_err(),
+            compose_orthogonal(outer, inner).is_err(),
             "underflow axis {axis}"
         );
         inner[axis] = f64::INFINITY;
-        assert!(compose_diagonal(outer, inner).is_err());
+        assert!(compose_orthogonal(outer, inner).is_err());
     }
 }

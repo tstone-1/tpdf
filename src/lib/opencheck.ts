@@ -137,6 +137,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-dash":
     case "textedit-cff-unicode":
     case "textedit-cff-ligatures":
+    case "textedit-passport":
     case "textedit-agenda":
     case "textedit-agenda-page2":
     case "textedit-multipage":
@@ -144,6 +145,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-overhang":
     case "textedit-cid-latin1":
     case "textedit-latin1": {
+      const passport = phase === "textedit-passport";
       const agendaPage2 = phase === "textedit-agenda-page2";
       const agenda = phase === "textedit-agenda" || agendaPage2;
       const dash = phase === "textedit-dash";
@@ -153,13 +155,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const w3c = phase === "textedit-w3c";
       const cidLatin1 = phase === "textedit-cid-latin1" || overhang;
       const wrapped = phase === "textedit-wrapped";
-      const page = phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
-      const original = cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
+      const original = passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
       await host.open(first); await host.idle();
+      if (passport) host.run("view.fitPage");
       host.viewer()!.goToPage(page); await host.idle();
       // idle() drains edits, not viewer frames. The edit command uses the page
       // reported by the viewer, so wait for the same page the reader sees.
@@ -171,7 +174,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
       const target = () => {
         const targets = [...document.querySelectorAll<HTMLButtonElement>(".text-edit-run")];
-        return agenda ? targets.find((button) => [original, replacement].some((text) => button.getAttribute("aria-label") === `Edit: ${text}`)) : targets[w3c ? 5 : 0];
+        return agenda || passport ? targets.find((button) => [original, replacement].some((text) => button.getAttribute("aria-label") === `Edit: ${text}`)) : targets[w3c ? 5 : 0];
       };
       const start = async () => {
         const previous = target();
@@ -190,8 +193,22 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (page === 1) check("both source pages have their original text", untouched.includes(agenda ? "REGULAR" : original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
+      if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text target layout did not settle");
+      await pause(100);
       const hit = target()!.getBoundingClientRect();
-      check("the text target is visible and has area", hit.width > (w3c || agenda ? 5 : 50) && hit.height > 5 && hit.top >= 0);
+      check("the text target is visible and has area", hit.width > (w3c || agenda || passport ? 5 : 50) && hit.height > 5 && hit.top >= 0);
+      if (passport) {
+        // Independent source matrix: 0 8 -8 0 382.6772 31.0394, on a
+        // 555.591pt sheet. The source ink occupies this narrow vertical band.
+        const viewer = host.viewer()!;
+        const a = viewer.screenPoint(page, 374.6772, 473.8556), b = viewer.screenPoint(page, 384.6772, 524.5516);
+        const editorRoot = document.querySelector<HTMLElement>(".text-editor")!;
+        const editorBox = editorRoot.getBoundingClientRect();
+        check("focusing the low label does not scroll the editor overlay", editorRoot.scrollTop === 0);
+        check("the vertical target follows the authored text matrix", hit.height > hit.width * 2 &&
+          hit.left >= editorBox.left + a.x - 5 && hit.right <= editorBox.left + b.x + 5 &&
+          hit.top >= editorBox.top + a.y - 10 && hit.bottom <= editorBox.top + b.y + 5);
+      }
       field()!.value = replacement; field()!.dispatchEvent(new Event("input", { bubbles: true }));
       // No Apply: switching tabs must drain the draft into its original document.
       await host.open(second); await host.idle();
@@ -205,10 +222,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
         if (!canvas || !context) throw new Error("text check needs a readable composited surface");
-        const a = viewer.screenPoint(page, agendaPage2 ? 110 : agenda ? 370 : w3c ? 160 : 35, agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
+        const a = viewer.screenPoint(page, passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 160 : 35, passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
         const left = Math.round(a.x*dpr), top = Math.round(a.y*dpr);
         const width = Math.round((b.x-a.x)*dpr), height = Math.round((b.y-a.y)*dpr);
-        if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error("text pixel sample is off screen");
+        if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error(`text pixel sample is off screen: ${JSON.stringify({left,top,width,height,canvasWidth:canvas.width,canvasHeight:canvas.height})}`);
         const data = context.getImageData(left, top, width, height).data;
         if (!data.some((value, index) => index % 4 === 0 && value < 100)) throw new Error("text pixel sample contains no ink");
         return data;
@@ -219,11 +236,15 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("editing page two preserves page one before saving", (await read(0)) === untouched);
       }
       const editedPixels = await pixels();
-      host.viewer()!.selectPage();
-      if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
-      check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
+      if (passport) {
+        report.skip("whole-page selection reads the vertical label", "selection grouping does not support rotated runs; extraction and search are checked separately");
+      } else {
+        host.viewer()!.selectPage();
+        if (!await settle(() => host.viewer()!.selectedText.includes(replacement), SETTLE_MS)) throw new Error("selection retained source text after editing");
+        check("selection reads the unsaved replacement", !host.viewer()!.selectedText.includes(original));
+      }
       const edited = await read();
-      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
+      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(passport ? "Your passport" : agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
       const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(page), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
       check("unsaved search finds the replacement", matches.matches.length === 1);
       host.run("edit.undo"); await host.idle();
@@ -231,14 +252,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const originalPixels = await pixels();
       check("undo repaints the original text on screen", originalPixels.length === editedPixels.length && originalPixels.some((value, index) => value !== editedPixels[index]));
       check("undo clears the stale selection", !host.viewer()!.selectedText);
-      host.viewer()!.selectPage();
-      if (!await settle(() => host.viewer()!.selectedText.includes(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
+      if (!passport) {
+        host.viewer()!.selectPage();
+        if (!await settle(() => host.viewer()!.selectedText.includes(original), SETTLE_MS)) throw new Error("selection did not return to source text after undo");
+      }
       host.run("edit.redo"); await host.idle();
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();
       check("redo restores exactly the edited pixels", redoPixels.length === editedPixels.length && redoPixels.every((value, index) => value === editedPixels[index]));
       // Use a source glyph: S in synthetic lines, l in the W3C subset.
-      await start(); field()!.value = (agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : "S").repeat(80);
+      await start(); field()!.value = (passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : "S").repeat(80);
       document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
       let refused = false; try { await host.idle(); } catch { refused = true; }
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);

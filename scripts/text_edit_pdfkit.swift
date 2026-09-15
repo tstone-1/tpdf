@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--dash", "--cff-unicode", "--cff-ligatures", "--image"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--image"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -30,6 +30,7 @@ let browser = variant == "--browser" || cidLatin1
 let browserFlow = variant == "--browser-flow"
 let defaultEncoding = variant == "--default-encoding"
 let w3c = variant == "--w3c-dummy"
+let passport = variant == "--passport"
 let agenda = variant == "--agenda"
 let dash = variant == "--dash"
 let original = variant == "--cff-ligatures" ? "SYNTHETIC ffi ffi fi fl ff" : variant == "--cff-unicode" ? "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£" : dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
@@ -38,7 +39,8 @@ guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-befor
       let after = PDFDocument(url: root.appendingPathComponent("synthetic-after.pdf")),
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount
 else { fail("invalid document or page count") }
-let width = w3c || agenda ? 1192 : 600, height = w3c || agenda ? 1684 : 480
+let width = passport ? 828 : w3c || agenda ? 1192 : 600, height = passport ? 1112 : w3c || agenda ? 1684 : 480
+if passport && (selected != 15 || before.pageCount != 16) { fail("expected passport page 16") }
 if agenda && (selected > 1 || before.pageCount != 2) { fail("expected two-page agenda") }
 if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C fixture") }
 // Fixed fixture regions, independent of the editor's reported run/hit box.
@@ -46,8 +48,8 @@ if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C
 // The flow HTML has 40pt line height: its first baseline is 63.75pt from the top.
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
 // W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
-let targetRows = agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
+let targetRows = passport ? (926..<1056) : agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
+let targetColumns = passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation
@@ -60,10 +62,10 @@ var pictures = [[UInt8]]()
 for (name, document) in [("before", before), ("after", after)] {
     let first = name == "after" && pageIndex == selected ? replacement : original
     guard let page = document.page(at: pageIndex) else { fail("missing page") }
-    if agenda {
+    if agenda || passport {
         guard let sourceText = before.page(at: pageIndex)?.string else { fail("missing agenda text") }
-        let oldText = selected == 0 ? "REGULAR" : "Community Hub"
-        let newText = selected == 0 ? "ANNUAL" : "Community"
+        let oldText = passport ? "ILB 53 (09.22)" : selected == 0 ? "REGULAR" : "Community Hub"
+        let newText = passport ? "ILB 53" : selected == 0 ? "ANNUAL" : "Community"
         if pageIndex == selected && sourceText.components(separatedBy: oldText).count != 2 { fail("wrong agenda source text") }
         let expected = name == "after" && pageIndex == selected ? sourceText.replacingOccurrences(of: oldText, with: newText) : sourceText
         guard page.string == expected else { fail("agenda text or adjacent content changed") }
