@@ -340,6 +340,9 @@ arrives; ordinary scrolling over estimated pages still keeps its relative positi
 Fit uses the visible sheet, which can differ from the page at the viewport's top.
 `tabs_check.py --phase tabs-position` checks repeated tab switches at nonzero offsets
 and at the final page under fit-page, fit-width and fixed zoom.
+View/page rotations and page reordering retain the fit target across layout changes;
+`tabs_check.py --phase tabs-rotation` checks the native view-rotation commands
+against an explicit return to the same sheet and refit.
 
 Windows workers join their cleanup job during process creation through
 `PROC_THREAD_ATTRIBUTE_JOB_LIST`. Do not restore a separate post-creation

@@ -6,6 +6,8 @@ Requires a visible, unlocked desktop. The check edits and saves only its copies.
 Use --phase tabs-position with a three-page-or-longer PDF to check nonzero scroll
 restoration and the final page in all zoom modes. A mixed-size regression input
 can be generated with pypdf: add_blank_page for (600, 800), (1200, 1600), (600, 400).
+For --phase tabs-rotation, use (600, 800), (1200, 400), (600, 800) to expose a
+preceding sheet expanding under the old scroll offset.
 """
 
 import argparse
@@ -24,7 +26,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped"), default="tabs")
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
     args = parser.parse_args()

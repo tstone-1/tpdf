@@ -2492,7 +2492,9 @@ export class Viewer {
     // turning a sheet of paper rather than cropping one --- and under fit-page
     // it is the difference between seeing the turned page and seeing a third of
     // it, since a landscape page fitted upright is far too tall.
-    this.applyFit();
+    // The old scroll offset now points into a different layout. Keep fitting
+    // the sheet captured before the turn, then restore its relative position.
+    this.applyFit(false, page);
 
     this.scrollTop = Math.max(
       0,
@@ -2560,7 +2562,8 @@ export class Viewer {
     const source = this.pages.sourceOf(page);
     if (source !== undefined) this.text.setPageTurns(source, turns);
     this.scroller.setPageTurns(page, turns);
-    this.applyFit();
+    // Earlier sheets can have changed height underneath the old scroll offset.
+    this.applyFit(false, anchor);
 
     this.scrollTop = Math.max(
       0,
@@ -2663,7 +2666,7 @@ export class Viewer {
     const landing =
       after.slotFrom(before, wasAt) ??
       Math.min(wasAt, Math.max(0, after.length - 1));
-    this.applyFit();
+    this.applyFit(false, landing);
     this.scrollTop = Math.max(
       0,
       Math.min(this.scroller.pageTopOf(landing), this.scroller.maxScroll),
