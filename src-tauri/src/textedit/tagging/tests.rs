@@ -892,3 +892,118 @@ fn textedit_inline_separators_retain_tagged_paragraph_ownership() {
         .replacen("ET EMC", "ET", 1);
     assert!(textedit::scan(&fixture(source.as_bytes()).0, 0).is_err());
 }
+
+#[test]
+fn textedit_tagged_metadata_representations_preserve_the_original_graph() {
+    for flags in 0..16 {
+        let (mut doc, ids) = fixture(CONTENT);
+        let direct = textedit::scan(&doc, 0).unwrap();
+        for (bit, owner, key) in [
+            (1, ids[1], "RoleMap"),
+            (2, ids[3], "A"),
+            (4, ids[5], "Nums"),
+        ] {
+            if flags & bit != 0 {
+                let value = doc
+                    .get_dictionary(owner)
+                    .unwrap()
+                    .get(key.as_bytes())
+                    .unwrap()
+                    .clone();
+                let reference = doc.add_object(value);
+                doc.get_dictionary_mut(owner).unwrap().set(key, reference);
+            }
+        }
+        if flags & 8 != 0 {
+            for id in &ids[2..5] {
+                doc.get_dictionary_mut(*id).unwrap().remove(b"Type");
+            }
+        }
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs, direct.runs);
+        let objects = doc.objects.clone();
+        let change = Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        textedit::write(&mut doc, &[change]).unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        for (id, object) in objects {
+            if id != ids[0] {
+                assert_eq!(doc.objects[&id], object);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_tagged_metadata_references_keep_validation_and_atomic_refusal() {
+    for (owner, key) in [(1, "RoleMap"), (3, "A"), (5, "Nums")] {
+        for mode in 0..8 {
+            let (mut doc, ids) = fixture(CONTENT);
+            let before = textedit::scan(&doc, 0).unwrap();
+            let edit = Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            };
+            let value = match mode {
+                0 => Object::Null,
+                1 => Object::Boolean(false),
+                2 => Object::Array(vec![]),
+                3 => Object::Reference((999999, 0)),
+                4 => {
+                    let cycle = doc.new_object_id();
+                    doc.objects.insert(cycle, Object::Reference(cycle));
+                    Object::Reference(cycle)
+                }
+                5 => {
+                    let a = doc.new_object_id(); let b = doc.new_object_id();
+                    doc.objects.insert(a, b.into()); doc.objects.insert(b, a.into());
+                    Object::Reference(a)
+                }
+                6 | 7 => match key {
+                    "RoleMap" => dictionary! { "Standard" => "Figure" }.into(),
+                    "A" => dictionary! { "O" => "Layout", "Placement" => "Block", "BBox" => vec![0.into(), 0.into(), 1.into(), 1.into()] }.into(),
+                    _ => Object::Array(vec![0.into(), Object::Array(vec![ids[4].into(), ids[3].into()])]),
+                },
+                _ => unreachable!(),
+            };
+            // Check the same semantic error both inline and behind a reference.
+            let value = if mode == 7 {
+                value
+            } else {
+                Object::Reference(doc.add_object(value))
+            };
+            doc.get_dictionary_mut(ids[owner]).unwrap().set(key, value);
+            let objects = doc.objects.clone();
+            assert!(
+                textedit::scan(&doc, 0).is_err(),
+                "accepted {key} mode {mode}"
+            );
+            assert!(textedit::write(&mut doc, &[edit]).is_err());
+            assert_eq!(doc.objects, objects);
+        }
+    }
+    for value in [
+        Object::Null,
+        Object::Boolean(false),
+        Object::Name(b"Other".to_vec()),
+        Object::Reference((999999, 0)),
+    ] {
+        for owner in [2, 3, 4] {
+            let (mut doc, ids) = fixture(CONTENT);
+            doc.get_dictionary_mut(ids[owner])
+                .unwrap()
+                .set("Type", value.clone());
+            assert!(textedit::scan(&doc, 0).is_err());
+        }
+    }
+}

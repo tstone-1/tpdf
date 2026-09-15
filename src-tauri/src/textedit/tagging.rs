@@ -53,6 +53,7 @@ fn integer(value: &Object) -> Result<i64, String> {
 }
 
 fn element(
+    doc: &Document,
     dict: &Dictionary,
     parent: ObjectId,
     pages: &BTreeSet<ObjectId>,
@@ -72,7 +73,10 @@ fn element(
             return Err(INVALID.into());
         }
     }
-    if name(get(dict, b"Type")?)? != b"StructElem"
+    // ISO 32000-1 Table 323: Type is optional, but a supplied value must agree.
+    if dict
+        .get(b"Type")
+        .is_ok_and(|value| value.as_name().ok() != Some(b"StructElem"))
         || reference(get(dict, b"P")?)? != parent
         || page.is_some_and(|id| !pages.contains(&id))
     {
@@ -82,7 +86,9 @@ fn element(
         if name(get(dict, b"S")?)? == b"NonStruct" {
             return Err(INVALID.into());
         }
-        let attributes = attributes.as_dict().map_err(|_| INVALID)?;
+        let attributes = crate::encoding::resolve(doc, attributes)
+            .as_dict()
+            .map_err(|_| INVALID)?;
         keys(attributes, &[b"O", b"Placement", b"EndIndent"])?;
         if name(get(attributes, b"O")?)? != b"Layout"
             || name(get(attributes, b"Placement")?)? != b"Block"
@@ -145,7 +151,7 @@ fn groups<'a>(
                 return Err(INVALID.into());
             }
             let child = node(doc, *id)?;
-            let page = element(child, plain.id, pages)?;
+            let page = element(doc, child, plain.id, pages)?;
             let tag = name(get(child, b"S")?)?;
             if tag != b"NonStruct" {
                 return Err(INVALID.into());
@@ -215,7 +221,7 @@ impl Tags {
         let roles = root
             .get(b"RoleMap")
             .ok()
-            .map(Object::as_dict)
+            .map(|value| crate::encoding::resolve(doc, value).as_dict())
             .transpose()
             .map_err(|_| INVALID)?;
         if let Some(roles) = roles {
@@ -237,7 +243,7 @@ impl Tags {
         };
         let document_id = reference(document)?;
         let document = node(doc, document_id)?;
-        element(document, root_id, &page_ids)?;
+        element(doc, document, root_id, &page_ids)?;
         if name(get(document, b"S")?)? != b"Document" {
             return Err(INVALID.into());
         }
@@ -255,7 +261,7 @@ impl Tags {
         {
             return Err(INVALID.into());
         }
-        let nums = array(get(parent, b"Nums")?)?;
+        let nums = array(crate::encoding::resolve(doc, get(parent, b"Nums")?))?;
         if nums.len() != pages.len() * 2 {
             return Err(INVALID.into());
         }
@@ -309,7 +315,7 @@ impl Tags {
                 return Err(INVALID.into());
             }
             let child = node(doc, id)?;
-            let paragraph_page = element(child, document_id, &page_ids)?;
+            let paragraph_page = element(doc, child, document_id, &page_ids)?;
             let tag = name(get(child, b"S")?)?;
             if tag != b"P"
                 && roles

@@ -4446,6 +4446,14 @@ complete structure graph and resources are preserved, with zero changed pixels
 outside the edited line. Reproduction and negative controls are in `BUILD.md`,
 *Tagged paragraph text editing*.
 
+Tagging metadata now permits referenced role maps, layout dictionaries and
+parent-tree number arrays, and structure elements may omit their optional Type.
+The resolved values keep the existing role, layout and ownership checks; saving
+retains their object graph. A synthetic combined fixture covers native editing
+and independent graph/pixel readback. The public tagged documents also carry
+unsupported roles, deeper trees or extra metadata, so these representation
+variants alone do not make those documents editable.
+
 The tagged grammar supports a two-level Document/paragraph tree with at most 128
 marked-content items across the document, each owned by exactly one paragraph.
 A paragraph can own several items, including items on other pages. A flat parent

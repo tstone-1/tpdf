@@ -7,6 +7,7 @@ Append --spacing -0.005 to retain character spacing around the first line.
 Append --intent Perceptual to retain both ri and ExtGState RI settings.
 Append --image to retain an opaque RGB image alongside the text.
 Append --dash to edit an en dash through its original font code.
+Append --tagged-indirect for referenced tagging metadata and omitted element Type.
 Use --unit-font --word-code space --word-spacing 12.112 for a tab-sized gap;
 the font size is 1 and Tm supplies the 12pt scale. PDFKit readback uses --wide-spacing;
 the native fixture phase is textedit-wide-spacing (the gap forms geometric columns).
@@ -34,6 +35,7 @@ def main():
     parser.add_argument("--ranges", action="store_true")
     parser.add_argument("--spacing", type=float, default=0.)
     parser.add_argument("--word-spacing", type=float, default=0.)
+    parser.add_argument("--tagged-indirect", action="store_true")
     parser.add_argument("--unit-font", action="store_true", help="use Tf=1 and a 12x text matrix")
     parser.add_argument("--word-code", choices=["space", "letter"],
                         help="map a space or S to PDF byte 32; default has no code 32")
@@ -145,8 +147,38 @@ def main():
             NameObject("/Image1"): writer._add_object(image.flate_encode()),
         })
         first = "q 168.2 0 0 28.2 40 40 cm /Image1 Do Q\n" + first
-    content.set_data((first + "\n" +
-                     f"BT {position(140)} {encoded('SYNTHETIC SECOND')} Tj ET").encode())
+    second = f"BT {position(140)} {encoded('SYNTHETIC SECOND')} Tj ET"
+    if args.tagged_indirect:
+        root, document = DictionaryObject(), DictionaryObject()
+        root_ref, document_ref = writer._add_object(root), writer._add_object(document)
+        attributes = writer._add_object(DictionaryObject({
+            NameObject("/O"): NameObject("/Layout"),
+            NameObject("/Placement"): NameObject("/Block"),
+        }))
+        paragraphs = ArrayObject()
+        for mcid in range(2):
+            # Type is optional on structure elements; S and P are required.
+            paragraphs.append(writer._add_object(DictionaryObject({
+                NameObject("/S"): NameObject("/Standard"),
+                NameObject("/P"): document_ref,
+                NameObject("/Pg"): page.indirect_reference,
+                NameObject("/K"): NumberObject(mcid),
+                NameObject("/A"): attributes,
+            })))
+        document.update({NameObject("/S"): NameObject("/Document"),
+                         NameObject("/P"): root_ref, NameObject("/K"): paragraphs})
+        nums = writer._add_object(ArrayObject([NumberObject(0), paragraphs]))
+        parents = writer._add_object(DictionaryObject({NameObject("/Nums"): nums}))
+        roles = writer._add_object(DictionaryObject({NameObject("/Standard"): NameObject("/P")}))
+        root.update({NameObject("/Type"): NameObject("/StructTreeRoot"),
+                     NameObject("/K"): document_ref, NameObject("/RoleMap"): roles,
+                     NameObject("/ParentTree"): parents})
+        writer._root_object[NameObject("/StructTreeRoot")] = root_ref
+        writer._root_object[NameObject("/MarkInfo")] = DictionaryObject({NameObject("/Marked"): BooleanObject(True)})
+        page[NameObject("/StructParents")] = NumberObject(0)
+        first = f"/Standard << /MCID 0 >> BDC {first} EMC"
+        second = f"/Standard << /MCID 1 >> BDC {second} EMC"
+    content.set_data((first + "\n" + second).encode())
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(target)
     print("[PASS] generated symbolic TrueType fixture with distinct PDF and Unicode codes")
