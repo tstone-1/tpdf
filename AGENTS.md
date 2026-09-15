@@ -287,6 +287,12 @@ spacing/font changes, orthogonal axes and line resets. Generate fixtures and
 check independent saved geometry with `scripts/text_continuation_check.py`;
 `text-edit-probe` and `text_edit_pdfkit.swift` accept `--continued` for them.
 
+`textedit/refusal.rs` explains unsupported operation contexts using fixed PDF
+keywords; it never echoes operand values or unknown document tokens.
+`scripts/textedit_survey.py` reports `refusal_totals`, counting only the first
+refusal per page. Its contained `--self-test` covers specific inline-tag errors,
+continued discovery after refusals, report completeness and aggregation.
+
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
 `Arc` in the journal, limited to 512x256 pixels (including rotated equivalents)

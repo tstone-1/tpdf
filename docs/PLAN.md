@@ -4277,6 +4277,12 @@ unchanged public five-document survey still admits 1 of 45 pages because other
 unsupported constructs remain. Synthetic worker round trips are independently
 checked by pypdf and PDFKit; `scripts/text_continuation_check.py` records the
 fixture generation and readback commands.
+The follow-up refusal survey (same five originals, 2026-09-15) identifies 16
+pages blocked by tagged structure, 12 by inline `BDC`, 12 by embedded CFF fonts,
+three by images and one by a rectangle. These are first blockers per page;
+removing one may reveal another. The 12 inline markers carry `ActualText`: ten
+contain a tab and two contain U+0007. Inline marked content is the next measured
+text-state obstacle, rather than consecutive text positioning.
 
 Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 
