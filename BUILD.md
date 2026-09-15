@@ -6727,6 +6727,24 @@ parent-tree check follows ISO 32000-1 section 14.7.4.4; both forward and reverse
 references must agree. Alternate text and potentially stale layout attributes are
 refused before any document mutation.
 
+Referenced metadata and omitted structure-element types use a synthetic fixture:
+
+```bash
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/tag-metadata/source.pdf --tagged-indirect
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/tag-metadata/worker scratch/tag-metadata/source.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/tag-metadata/worker/synthetic-before.pdf scratch/tag-metadata/worker/synthetic-after.pdf
+swift scripts/text_edit_pdfkit.swift scratch/tag-metadata/worker
+```
+
+Use the ordinary `tabs_check.py --phase textedit` workflow on that source.
+The fixture shares an indirect layout dictionary, references its role map and
+parent-tree number array, and omits `/Type` on its structure elements. The
+independent graph comparison must preserve those references and omissions.
+Wrong types, unresolved/cyclic references, semantic overrides and inconsistent
+parent mappings remain refused. The public factsheet, mouse guide and W-9 use
+some of these representations but also exceed the supported tree grammar;
+this fixture does not establish that those documents are editable.
+
 Use the unchanged tagged LibreOffice fixture from the producer survey:
 
 ```bash

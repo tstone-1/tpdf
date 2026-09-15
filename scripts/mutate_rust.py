@@ -263,6 +263,11 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('tag metadata: require explicit element type', 'src/textedit/tagging.rs', '.is_ok_and(|value| value.as_name().ok() != Some(b"StructElem"))', '.map_or(true, |value| value.as_name().ok() != Some(b"StructElem"))', 'textedit_tagged_metadata_representations_preserve_the_original_graph'),
+    Mutation('tag metadata: ignore supplied element type', 'src/textedit/tagging.rs', '.is_ok_and(|value| value.as_name().ok() != Some(b"StructElem"))', '.is_ok_and(|_| false)', 'textedit_tagged_metadata_references_keep_validation_and_atomic_refusal'),
+    Mutation('tag metadata: skip attribute resolution', 'src/textedit/tagging.rs', 'crate::encoding::resolve(doc, attributes)', 'attributes', 'textedit_tagged_metadata_representations_preserve_the_original_graph'),
+    Mutation('tag metadata: skip role map resolution', 'src/textedit/tagging.rs', '.map(|value| crate::encoding::resolve(doc, value).as_dict())', '.map(Object::as_dict)', 'textedit_tagged_metadata_representations_preserve_the_original_graph'),
+    Mutation('tag metadata: skip parent number array resolution', 'src/textedit/tagging.rs', 'array(crate::encoding::resolve(doc, get(parent, b"Nums")?))?', 'array(get(parent, b"Nums")?)?', 'textedit_tagged_metadata_representations_preserve_the_original_graph'),
     Mutation('continued: omit discovery deletion check', 'src/textedit.rs', 'continuation_adjustment(run, 0.)?;', 'let _ = run;', 'textedit_continued_discovery_requires_representable_deletion'),
     Mutation('large word spacing: restore positive relative ceiling', 'src/textedit/fonts.rs', 'word_spacing > 1_000_000.', 'word_spacing > size * 0.25', 'textedit_large_word_spacing_preserves_scaled_continuations_and_ink_bounds'),
     Mutation('large word spacing: omit positive value ceiling', 'src/textedit/fonts.rs', 'word_spacing > 1_000_000.', 'false', 'textedit_large_word_spacing_keeps_original_code_semantics_and_finite_limits'),
@@ -336,7 +341,7 @@ MUTATIONS = [
     Mutation('CFF mapping: forget remapped space', 'src/textedit/fonts/cff.rs', 'Ok(None) if matches!(slot, 32 | 160)', 'Ok(None) if code == 32', 'textedit_cff_custom_encoding_roundtrips_original_codes_and_word_spacing'),
     Mutation('CFF: allow duplicate metadata', 'src/textedit/fonts/cff/profile.rs', 'if !seen.insert(op) {', 'if !seen.insert(op) && false {', 'textedit_cff_metadata_rejects_ambiguous_partial_and_nondefault_dicts'),
     Mutation('nested tags: allow any leaf role', 'src/textedit/tagging.rs', 'if tag != b"NonStruct" {', 'if false {', 'textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically'),
-    Mutation('nested tags: inherit an ancestor page', 'src/textedit/tagging.rs', 'let page = element(child, plain.id, pages)?;', 'let page = element(child, plain.id, pages)?.or(plain.page);', 'textedit_nested_optional_container_pages_and_scalar_children_are_explicit'),
+    Mutation('nested tags: inherit an ancestor page', 'src/textedit/tagging.rs', 'let page = element(doc, child, plain.id, pages)?;', 'let page = element(doc, child, plain.id, pages)?.or(plain.page);', 'textedit_nested_optional_container_pages_and_scalar_children_are_explicit'),
     Mutation('nested tags: raise language limit', 'src/textedit/tagging.rs', 'bytes.len() > 63', 'bytes.len() > 64', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
     Mutation('nested tags: raise language component limit', 'src/textedit/tagging.rs', 'part.len() > 8', 'part.len() > 9', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),
     Mutation('nested tags: skip language character check', 'src/textedit/tagging.rs', '!part.iter().all(u8::is_ascii_alphanumeric)', 'false', 'textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text'),

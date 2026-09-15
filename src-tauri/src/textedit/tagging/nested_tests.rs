@@ -347,3 +347,34 @@ fn textedit_nested_total_content_limit_covers_all_leaf_groups() {
         }
     }
 }
+
+#[test]
+fn textedit_nested_implicit_element_types_preserve_all_page_owners() {
+    let (mut doc, ids, leaves) = nested(true);
+    let before = [
+        textedit::scan(&doc, 0).unwrap(),
+        textedit::scan(&doc, 1).unwrap(),
+    ];
+    for id in [ids[2], ids[3], ids[4], ids[7], ids[8]]
+        .iter()
+        .chain(&leaves)
+    {
+        doc.get_dictionary_mut(*id).unwrap().remove(b"Type");
+    }
+    for page in 0..2 {
+        assert_eq!(
+            textedit::scan(&doc, page).unwrap().runs,
+            before[page as usize].runs
+        );
+    }
+    let objects = doc.objects.clone();
+    let edit = update(&doc, 1);
+    textedit::write(&mut doc, &[edit]).unwrap();
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs[0].text, "IN");
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs, before[0].runs);
+    for (id, object) in objects {
+        if id != ids[6] {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+}
