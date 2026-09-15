@@ -221,7 +221,7 @@ fn textedit_stroke_setters_validate_values_without_enabling_stroke_text() {
         "0 G BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
         "0 0 0 RG 0 0 m 100 100 l W S",
         "0 0 0 1 K /DeviceRGB CS 0 SC",
-        "0 G BT /F1 12 Tf 40 180 Td (FIRST) Tj 0 G (SECOND) Tj ET",
+        "0 G BT /F1 12 Tf 0 G (SECOND) Tj ET",
     ] {
         assert!(
             textedit::scan(&fixture(dictionary! {}.into(), body), 0).is_err(),
@@ -322,7 +322,7 @@ fn textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions(
         assert!(textedit::scan(&doc, 0).is_err());
     }
     for setter in ["/Perceptual ri", "/G3 gs"] {
-        let body = format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj {setter} (SECOND) Tj ET");
+        let body = format!("BT /F1 12 Tf {setter} (SECOND) Tj ET");
         let doc = fixture(dictionary! { "RI" => "Perceptual" }.into(), &body);
         assert!(textedit::scan(&doc, 0).is_err(), "{setter}");
     }

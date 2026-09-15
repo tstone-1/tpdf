@@ -146,6 +146,7 @@ fn run() -> Result<(), String> {
     let mut default_encoding = false;
     let mut wrapped = false;
     let mut spacers = false;
+    let mut continued = false;
     let mut page = 0;
     for option in std::env::args().skip(3) {
         if let Some(index) = option.strip_prefix("--page=") {
@@ -166,11 +167,13 @@ fn run() -> Result<(), String> {
             cid_latin1 = true;
         } else if option == "--wrapped" {
             wrapped = true;
+        } else if option == "--continued" {
+            continued = true;
         } else if option == "--spacers" {
             spacers = true;
         } else {
             return Err(
-                "expected --cff-ligatures, --cff-unicode, --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers or --page=N after the fixture path".into(),
+                "expected --cff-ligatures, --cff-unicode, --dash, --latin1, --cid-latin1, --overhang, --default-encoding, --wrapped, --spacers, --continued or --page=N after the fixture path".into(),
             );
         }
     }
@@ -184,6 +187,7 @@ fn run() -> Result<(), String> {
         default_encoding,
         wrapped,
         spacers,
+        continued,
     ]
     .into_iter()
     .filter(|v| *v)
@@ -256,7 +260,8 @@ fn run() -> Result<(), String> {
     let mapped = runs(&mut worker, page)?;
     let source_first = format!("{original}{}", if wrapped { " " } else { "" });
     let source_second = format!(
-        "SYNTHETIC SECOND{}",
+        "{}SYNTHETIC SECOND{}",
+        if continued { " " } else { "" },
         if wrapped && page + 1 < page_count {
             " "
         } else {

@@ -135,7 +135,14 @@ pub(super) fn rewrite(
     for (index, span) in spans.into_iter().enumerate() {
         let original = Content::decode_strict(&bytes[span.clone()]).map_err(|e| e.to_string())?;
         let next = &changed.operations[index];
-        if original.operations.len() != 1 || original.operations[0].operator != next.operator {
+        if original.operations.len() != 1 {
+            return Err("text operator boundaries disagree".into());
+        }
+        let same_operator = original.operations[0].operator == next.operator;
+        let compensated_show = edits.contains(&index)
+            && original.operations[0].operator == "Tj"
+            && next.operator == "TJ";
+        if !same_operator && !compensated_show {
             return Err("text operator boundaries disagree".into());
         }
         if edits.contains(&index) {

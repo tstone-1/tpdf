@@ -1,11 +1,10 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
 //! Supported text uses Helvetica with WinAnsi/default encoding or validated
-//! embedded TrueType/CFF glyphs, with explicit positioning between shows.
+//! embedded TrueType/CFF glyphs. Continued shows retain their original advances.
 //! Font/leading setup may precede a text block.
 //! Complete painted rectangles, straight-line strokes and bounded opaque images are preserved, and
-//! bounded character spacing is retained. Other graphics, custom text state and implicit
-//! advances between shows are refused.
+//! bounded character spacing is retained. Other graphics and custom text state are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod clipping;
@@ -307,11 +306,13 @@ struct Inspection {
     // A replacement must stay within these as well as the original advance.
     horizontal_bounds: BTreeMap<u32, [f64; 2]>,
     text_spacing: BTreeMap<u32, (f64, f64)>,
+    continued: BTreeSet<u32>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
 // matrices. Keep a single left-to-right envelope: no negative cursor, retreating
-// fragment ends, or leading/trailing adjustments. A replacement drops kerning
+// fragment ends or leading adjustments. Trailing forward padding is allowed.
+// A replacement drops kerning
 // within this run and must fit the resulting original advance.
 fn array_text(
     values: &[Object],
@@ -323,7 +324,6 @@ fn array_text(
     if values.is_empty()
         || values.len() > MAX_TEXT
         || !matches!(values.first(), Some(Object::String(..)))
-        || !matches!(values.last(), Some(Object::String(..)))
     {
         return Err("unsupported kerning array shape or size".into());
     }
@@ -354,6 +354,9 @@ fn array_text(
         if !advance.is_finite() || !(0.0..=1_000_000.0).contains(&advance) {
             return Err("kerning position exceeds its limit".into());
         }
+    }
+    if advance < furthest {
+        return Err("backtracking trailing kerning is not editable yet".into());
     }
     Ok((text, advance, bounds))
 }
@@ -387,11 +390,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     };
     // Never skip unknown operators: graphics and text state can change a Tj's
     // meaning without changing its string. Tf and TL persist across BT/ET;
-    // the text/line matrices reset at BT. Every accepted show has a position
-    // independent of the preceding show's advance, so shorter edits cannot
-    // move following text.
+    // the text/line matrices reset at BT. Keep the line matrix separate from
+    // the cursor advanced by each show. A shorter edit must compensate that
+    // advance whenever another show depends on it.
     let mut inside = false;
     let mut positioned = false;
+    let mut cursor = 0.0;
+    let mut previous_show = None;
+    let mut continued = BTreeSet::new();
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
@@ -498,6 +504,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("BT", []) if !inside => {
                 inside = true;
                 positioned = false;
+                cursor = 0.0;
+                previous_show = None;
                 matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
             }
             ("ET", []) if inside => inside = false,
@@ -577,23 +585,34 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     return Err("collapsed or skewed text is not editable yet".into());
                 }
                 positioned = true;
+                cursor = 0.0;
             }
             ("Td", [x, y]) if inside => {
                 move_line(&mut matrix, number(x)?, number(y)?)?;
                 positioned = true;
+                cursor = 0.0;
             }
             ("T*", []) if inside => {
                 move_line(&mut matrix, 0.0, -leading)?;
                 positioned = true;
+                cursor = 0.0;
             }
-            ("Tj", [_]) | ("TJ", [Object::Array(_)]) if inside && positioned => tags.text()?,
+            ("Tj", [_]) | ("TJ", [Object::Array(_)])
+                if inside && (positioned || previous_show.is_some()) =>
+            {
+                tags.text()?
+            }
             _ => return Err("unsupported text state or positioning between shows".into()),
         }
         if !matches!(op.operator.as_str(), "Tj" | "TJ") {
             continue;
         }
         let (name, size, font_operator) = selected_font.ok_or("text has no explicit font")?;
+        if !positioned {
+            continued.insert(previous_show.ok_or("text has no preceding position")?);
+        }
         positioned = false;
+        previous_show = Some(index as u32);
         let geometry = crate::pagetree::displayed_page(doc, id);
         let metrics = font_metrics.get(name).ok_or("missing text font")?;
         let (text, advance, horizontal) = if op.operator == "TJ" {
@@ -612,7 +631,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 word_spacing,
             )?
         };
-        let page_matrix = compose_orthogonal(page_transform, matrix)?;
+        let mut shown_matrix = matrix;
+        shift_position(&mut shown_matrix, cursor * matrix[0], cursor * matrix[1])?;
+        let page_matrix = compose_orthogonal(page_transform, shown_matrix)?;
+        cursor += advance;
+        if !cursor.is_finite() || cursor > 1_000_000.0 {
+            return Err("continued text advance exceeds its limit".into());
+        }
         if page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0 {
             return Err("reflected text is not editable yet".into());
         }
@@ -679,6 +704,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         font_operators,
         horizontal_bounds,
         text_spacing,
+        continued,
     })
 }
 
@@ -718,6 +744,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             font_operators,
             horizontal_bounds,
             text_spacing,
+            continued,
             patched,
             ..
         } = prepared.get_mut(&change.page).ok_or("missing text page")?;
@@ -756,7 +783,20 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         patched.insert(change.operator as usize);
         let show = &mut content.operations[change.operator as usize];
         let replacement = Object::string_literal(replacement);
-        show.operands[0] = if show.operator == "TJ" {
+        show.operands[0] = if continued.contains(&change.operator) {
+            // TJ offsets are subtracted in thousandths of text space. Keep
+            // following shows fixed, including after deletion of this string.
+            let adjustment = ((replacement_advance - run.advance) * 1000. / run.size) as f32;
+            number(&Object::Real(adjustment))?;
+            let saved_advance = replacement_advance - f64::from(adjustment) * run.size / 1000.;
+            let drift =
+                (saved_advance - run.advance).abs() * run.matrix[0].abs().max(run.matrix[1].abs());
+            if adjustment > 0. || drift > 0.000_001 {
+                return Err("cannot preserve following text at PDF number precision".into());
+            }
+            show.operator = "TJ".into();
+            Object::Array(vec![replacement, Object::Real(adjustment)])
+        } else if show.operator == "TJ" {
             Object::Array(vec![replacement])
         } else {
             replacement
@@ -785,6 +825,9 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod continuation_tests;
 
 #[cfg(test)]
 mod rotation_tests;
@@ -884,9 +927,6 @@ pub(crate) mod tests {
             "BT /F1 12 Tf 40 180 Td (TEXT) TJ ET",
             "BT /F1 12 Tf 40 180 Td [(TEXT)] [(MORE)] TJ ET",
             "BT /F1 12 Tf [(TEXT)] TJ ET",
-            "BT /F1 12 Tf 40 180 Td [(TEXT)] TJ (MORE) Tj ET",
-            "BT /F1 12 Tf 40 180 Td (TEXT) Tj [(MORE)] TJ ET",
-            "BT /F1 12 Tf 40 180 Td [(TEXT)] TJ [(MORE)] TJ ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET [(MORE)] TJ",
         ] {
             assert!(
@@ -1062,7 +1102,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn with_content(bytes: &[u8]) -> Document {
+    pub(super) fn with_content(bytes: &[u8]) -> Document {
         let mut doc = fixture();
         let page = crate::pagetree::ordered_pages(&doc)[0];
         let stream = doc.add_object(Stream::new(Dictionary::new(), bytes.to_vec()));
@@ -1277,15 +1317,11 @@ pub(crate) mod tests {
     #[test]
     fn textedit_default_setters_do_not_position_a_following_show() {
         for setting in ["0 Tc", "0 Tw", "100 Tz", "0 Ts", "0 Tr"] {
-            for content in [
-                format!("BT /F1 12 Tf {setting} (TEXT) Tj ET"),
-                format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj {setting} (SECOND) Tj ET"),
-            ] {
-                assert!(
-                    scan(&with_content(content.as_bytes()), 0).is_err(),
-                    "accepted {content}"
-                );
-            }
+            let content = format!("BT /F1 12 Tf {setting} (TEXT) Tj ET");
+            assert!(
+                scan(&with_content(content.as_bytes()), 0).is_err(),
+                "accepted {content}"
+            );
         }
     }
 
@@ -1543,7 +1579,6 @@ pub(crate) mod tests {
     #[test]
     fn textedit_refuses_unsupported_state_and_font_semantics() {
         for bytes in [
-            "BT /F1 12 Tf 40 180 Td (ONE) Tj (TWO) Tj ET",
             "3 Tr BT /F1 12 Tf 40 180 Td (HIDDEN) Tj ET",
             "-2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (REFLECTED) Tj ET",
             "/Span << /ActualText (OTHER) >> BDC BT /F1 12 Tf 40 180 Td (TEXT) Tj ET EMC",
@@ -1552,7 +1587,6 @@ pub(crate) mod tests {
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj ET ET",
             "BT 40 180 Td (TEXT) Tj ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj 4 Tc T* (MORE) Tj ET",
-            "BT /F1 12 Tf 40 180 Td (TEXT) Tj /F1 10 Tf (MORE) Tj ET",
             "BT /F1 12 Tf (TEXT) Tj ET",
             "BT /F1 12 Tf 1000000 0 0 1 40 180 Tm 2 0 Td (TEXT) Tj ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj 1 T* ET",

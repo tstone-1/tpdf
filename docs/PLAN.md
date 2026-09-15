@@ -4269,6 +4269,15 @@ Whether that is worth a C++ dependency is a Phase 3 decision, not a Phase 0 one.
 
 ## 7. In-place text editing
 
+Consecutive text shows now preserve following positions when shortened or deleted
+(2026-09-15). A compensating `TJ` offset retains each dependent advance while
+line-positioning operators reset the separate cursor. Numeric precision and
+accumulated positions remain bounded. This extends the supported grammar; the
+unchanged public five-document survey still admits 1 of 45 pages because other
+unsupported constructs remain. Synthetic worker round trips are independently
+checked by pypdf and PDFKit; `scripts/text_continuation_check.py` records the
+fixture generation and readback commands.
+
 Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 
 ### Why it is hard

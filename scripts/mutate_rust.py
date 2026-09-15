@@ -263,6 +263,12 @@ MUT_APPENDABLE = (
 )
 
 MUTATIONS = [
+    Mutation('continued: discard the text cursor', 'src/textedit.rs', 'cursor += advance;', 'cursor = 0.;', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),
+    Mutation('continued: discard dependent show tracking', 'src/textedit.rs', 'continued.insert(previous_show.ok_or("text has no preceding position")?);', 'let _ = previous_show;', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),
+    Mutation('continued: omit spacing compensation', 'src/textedit.rs', '((replacement_advance - run.advance) * 1000. / run.size) as f32', '0_f32', 'textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted'),
+    Mutation('continued: ignore PDF numeric precision', 'src/textedit.rs', 'adjustment > 0. || drift > 0.000_001', 'adjustment > 0.', 'textedit_continued_precision_and_accumulated_bounds_fail_atomically'),
+    Mutation('continued: omit cursor bound', 'src/textedit.rs', '!cursor.is_finite() || cursor > 1_000_000.0', 'false', 'textedit_continued_precision_and_accumulated_bounds_fail_atomically'),
+    Mutation('continued: forget cursor reset at new line', 'src/textedit.rs', 'move_line(&mut matrix, 0.0, -leading)?;\n                positioned = true;\n                cursor = 0.0;', 'move_line(&mut matrix, 0.0, -leading)?;\n                positioned = true;', 'textedit_continued_shows_follow_transformed_axes_and_reset_at_line_moves'),
     Mutation('text direction: reverse angle', 'src/text.rs', 'turns.round().rem_euclid(4.) as u8', '(-turns.round()).rem_euclid(4.) as u8', 'text_character_turns_accept_float_quarters_without_promoting_skew'),
     Mutation('text direction: round arbitrary skew', 'src/text.rs', '(turns - turns.round()).abs() < 0.0001', 'true', 'text_character_turns_accept_float_quarters_without_promoting_skew'),
     Mutation('ligature: measure source using re-encoding', 'src/textedit/fonts.rs', 'self.spaced_slots(&slots, size, spacing, word_spacing)?', 'self.spaced_layout(&text, size, spacing, word_spacing)?', 'textedit_ligatures_measure_original_glyphs_and_encode_longest_existing_match'),
@@ -317,7 +323,7 @@ MUTATIONS = [
     Mutation('stream patch: ignore changed untouched operands', 'src/textedit/streams.rs', 'original.operations[0].operands != next.operands', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
     Mutation('stream patch: raise container nesting limit', 'src/textedit/streams.rs', 'if depth > 32 {', 'if depth > 33 {', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
     Mutation('stream patch: raise string nesting limit', 'src/textedit/streams.rs', 'if nesting > 32 {', 'if nesting > 33 {', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
-    Mutation('stream patch: ignore operator identity', 'src/textedit/streams.rs', 'original.operations[0].operator != next.operator', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
+    Mutation('stream patch: ignore operator identity', 'src/textedit/streams.rs', '!same_operator && !compensated_show', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
     Mutation('stream patch: omit trailing source bytes', 'src/textedit/streams.rs', 'output.extend_from_slice(&bytes[copied..]);', '// trailing source omitted', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
 
     Mutation('browser state: skip external state validation', 'src/textedit.rs', 'graphics::normal(doc, resources, name)?;', '// external state unchecked', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
@@ -461,9 +467,9 @@ MUTATIONS = [
     Mutation("textedit: omit kerning text size", "src/textedit.rs", "advance -= number(value)? * size / 1000.0;", "advance -= number(value)? / 1000.0;", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
     Mutation("textedit: omit kerning character bound", "src/textedit.rs", "if characters > MAX_TEXT {", "if false {", "textedit_kerning_bounds_total_characters_and_array_items"),
     Mutation("textedit: omit kerning item bound", "src/textedit.rs", "|| values.len() > MAX_TEXT", "|| false", "textedit_kerning_bounds_total_characters_and_array_items"),
-    Mutation("textedit: allow retreating kerning ends", "src/textedit.rs", "if advance < furthest {", "if false {", "textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays"),
+    Mutation("textedit: allow retreating kerning ends", "src/textedit.rs", "if advance < furthest {\n                return Err(\"backtracking kerning text is not editable yet\".into());", "if false {\n                return Err(\"backtracking kerning text is not editable yet\".into());", "textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays"),
     Mutation("textedit: omit accumulated kerning bound", "src/textedit.rs", "if !advance.is_finite() || !(0.0..=1_000_000.0).contains(&advance) {", "if false {", "textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays"),
-    Mutation("textedit: write string instead of kerning array", "src/textedit.rs", "show.operands[0] = if show.operator == \"TJ\" {", "show.operands[0] = if false {", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
+    Mutation("textedit: write string instead of kerning array", "src/textedit.rs", "} else if show.operator == \"TJ\" {", "} else if false {", "textedit_kerning_geometry_and_rewrite_preserve_other_shows"),
 
     Mutation("textedit journal: retain a restored operand", "src/docmodel.rs", "self.text_edits.remove(&(page, operator));", "let _ = (page, operator);", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
     Mutation("textedit journal: retain discarded redo bodies", "src/docmodel.rs", "self.text_versions.remove(&version);", "let _ = version;", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
@@ -505,7 +511,7 @@ MUTATIONS = [
     Mutation('rotation: lose positive y extent', "src/textedit.rs", 'xb[0].max(xb[1])', 'xb[1]', 'textedit_rotation_positions_and_hitboxes_cover_every_quarter_turn'),
     Mutation('rotation: omit glyph clip rotation', "src/textedit.rs", 'let ink_bounds = text_bounds(\n                page_matrix,', 'let ink_bounds = text_bounds(\n                [1., 0., 0., 1., page_matrix[4], page_matrix[5]],', 'textedit_rotation_clips_use_transformed_glyph_envelopes_on_every_side'),
 
-    Mutation("textedit: omit translated text position", "src/textedit.rs", 'let page_matrix = compose_orthogonal(page_transform, matrix)?;', 'let page_matrix = matrix;', "textedit_translated_hitboxes_match_absolute_positions_after_crop_and_rotation"),
+    Mutation("textedit: omit translated text position", "src/textedit.rs", 'let page_matrix = compose_orthogonal(page_transform, shown_matrix)?;', 'let page_matrix = shown_matrix;', "textedit_translated_hitboxes_match_absolute_positions_after_crop_and_rotation"),
     Mutation('textedit: forget saved page translation', 'src/textedit.rs', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ));', 'states.push((selected_font, leading, [1., 0., 0., 1., 0., 0.], fill_components, clip, spacing, word_spacing, stroke_components));', 'textedit_page_translations_compose_restore_and_preserve_following_runs'),
     Mutation("textedit: accept arbitrary page transforms", "src/textedit.rs", 'if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if false {', "textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices"),
 
