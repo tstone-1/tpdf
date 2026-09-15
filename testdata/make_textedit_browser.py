@@ -10,6 +10,7 @@ Use --latin1 --latin1-font Verdana for the existing-glyph accented control;
 Add --rectangles for unchanged text surrounded by painted backgrounds.
 Add --headings for a heading and paragraph inside article/section containers.
 Add --list for an ordinary numbered list with separately tagged labels.
+Add --nested-list to put the second item in a list inside the first item.
 https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
 """
 import argparse
@@ -24,12 +25,14 @@ from pypdf import PdfReader
 import websocket
 
 
-def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False, headings=False, numbered_list=False):
+def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False, headings=False, numbered_list=False, nested_list=False):
+    numbered_list = numbered_list or nested_list
     output.mkdir(parents=True, exist_ok=True)
     # A failed rerun must not leave yesterday's successful export as evidence.
     for name in ("browser-tagged.pdf", "browser-untagged.pdf"):
         (output / name).write_bytes(b"")
     source = Path(__file__).with_name(
+        "textedit-producer-nested-list.html" if nested_list else
         "textedit-producer-list.html" if numbered_list else
         "textedit-producer-headings.html" if headings else
         "textedit-producer-rectangles.html" if rectangles else
@@ -106,24 +109,31 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                         assert len(reader.pages) == (2 if flow else 1), "wrong page count"
                         for page in reader.pages:
                             first = "SYNTHETIC ÄÖÜ äöü ß" if latin1 else "SYNTHETIC FIRST"
-                            expected = "1. " + first + " 2. SYNTHETIC SECOND" if numbered_list else first + " SYNTHETIC SECOND"
+                            label = "1." if nested_list else "2."
+                            expected = "1. " + first + " " + label + " SYNTHETIC SECOND" if numbered_list else first + " SYNTHETIC SECOND"
                             assert " ".join(page.extract_text().split()) == expected, "wrong synthetic text"
                         if (headings or numbered_list) and tagged:
-                            pending = [reader.trailer["/Root"]["/StructTreeRoot"]["/K"]]
+                            pending = [(reader.trailer["/Root"]["/StructTreeRoot"]["/K"], 0)]
+                            list_depth = 0
                             kinds = []
                             visited = 0
                             while pending:
                                 visited += 1
                                 assert visited <= 128, "unexpectedly large heading tree"
-                                item = pending.pop().get_object()
+                                item, depth = pending.pop()
+                                item = item.get_object()
                                 if isinstance(item, list):
-                                    pending.extend(item)
+                                    pending.extend((child, depth) for child in item)
                                 elif isinstance(item, dict):
                                     kinds.append(item.get("/S"))
+                                    depth += item.get("/S") == "/L"
+                                    list_depth = max(list_depth, depth)
                                     if "/K" in item:
-                                        pending.append(item["/K"])
+                                        pending.append((item["/K"], depth))
                             required = {"/L", "/LI", "/Lbl"} if numbered_list else {"/H1", "/P"}
                             assert required.issubset(kinds), "browser omitted required structure roles"
+                            if numbered_list:
+                                assert list_depth == (2 if nested_list else 1), "browser changed list nesting"
                         if flow and tagged:
                             root = reader.trailer["/Root"]["/StructTreeRoot"]
                             document = root["/K"]
@@ -141,7 +151,7 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                                 assert nums[index * 2] == page["/StructParents"] == index, "wrong page parent key"
                                 assert list(nums[index * 2 + 1].get_object()) == [leaf.indirect_reference], "wrong reverse ownership"
                     print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True,
-                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles, "headings": headings, "numbered_list": numbered_list,
+                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles, "headings": headings, "numbered_list": numbered_list, "nested_list": nested_list,
                                       "font": latin1_font if latin1 else "Arial"}))
                 finally:
                     connection.close()
@@ -159,6 +169,7 @@ if __name__ == "__main__":
     parser.add_argument("browser", type=Path)
     parser.add_argument("output", type=Path)
     variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--nested-list", action="store_true", help="export a numbered list nested inside an item")
     variant.add_argument("--list", dest="numbered_list", action="store_true", help="export a numbered list with separately tagged labels")
     variant.add_argument("--headings", action="store_true", help="export nested heading and paragraph markup")
     variant.add_argument("--rectangles", action="store_true", help="export painted backgrounds around the text")
@@ -168,4 +179,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.latin1_font != "Arial" and not args.latin1:
         parser.error("--latin1-font requires --latin1")
-    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles, args.headings, args.numbered_list)
+    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles, args.headings, args.numbered_list, args.nested_list)

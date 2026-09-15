@@ -331,7 +331,12 @@ symbolic generator covers aliases and metadata references. The browser generator
 `--headings` exports an unchanged Document/Art/NonStruct tree with H1/P blocks;
 ordinary native textedit checks and PDFKit `--browser` read it back.
 Lists admit literal L/LI with Lbl, LBody or neutral NonStruct content leaves;
-LBody children that are themselves blocks and nested lists remain refused.
+LBody children that are themselves blocks remain refused. Nested L containers
+may occur directly inside LI; each item must retain its own content. The same
+iterative queue, depth/count bounds and explicit page ownership apply at every
+level. The browser generator uses `--nested-list`; native `textedit` edits the
+parent and `textedit-list-child` edits the child. Independent readers use
+`--nested-list` / `--nested-list-child` respectively.
 List containers share the grouping bounds and may carry one List attribute
 object with a standard ListNumbering name, directly or in a singleton array;
 references are resolved without changing the saved graph. List-role aliases,
@@ -997,6 +1002,9 @@ reported 7/7 while `npm run tauri build` failed, because nothing in the list lin
 binary --- there is a `bins` gate now, and it was proved to fail before being trusted. And a
 `cargo build --release` binary is *not* a production build: the frontend is embedded by a
 cargo **feature**, not by the profile. Both are in `docs/TRAPS.md`.
+
+Short fuzz runs must advance beyond corpus initialization; compare `INITED` and
+`DONE` execution counts as described in `BUILD.md`, *Fuzzing*.
 
 Every *measurement* in this file is macOS arm64 unless it says otherwise. The two
 platforms differ enough --- on pre-spawn cost, on render constants --- that carrying a macOS

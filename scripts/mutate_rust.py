@@ -264,6 +264,11 @@ MUT_APPENDABLE = (
 
 MUTATIONS = [
     Mutation('tag containers: refuse neutral grouping', 'src/textedit/tagging.rs', ' || role == b"NonStruct"', '', 'textedit_containers_and_headings_preserve_roles_order_and_graph'),
+    Mutation('nested lists: discard child dispatch', 'src/textedit/tagging.rs', 'pending.push((item, id, depth));', '// dispatch omitted', 'textedit_nested_lists_keep_each_body_label_and_structure_object'),
+    Mutation('nested lists: reset depth on each item', 'src/textedit/tagging.rs', 'pending.push((item, id, depth));', 'pending.push((item, id, 0));', 'textedit_nested_lists_share_the_grouping_depth_bound'),
+    Mutation('nested lists: use enclosing list as parent', 'src/textedit/tagging.rs', 'pending.push((item, id, depth));', 'pending.push((item, parent_id, depth));', 'textedit_nested_lists_keep_each_body_label_and_structure_object'),
+    Mutation('nested lists: ignore pending siblings', 'src/textedit/tagging.rs', 'if items.len() + pending.len() > total {\n                    return Err("tagged list frontier exceeds its limit".into());', 'if items.len() > total {\n                    return Err("tagged list frontier exceeds its limit".into());', 'textedit_nested_lists_bound_pending_children_before_visiting_them'),
+    Mutation('nested lists: omit list frontier limit', 'src/textedit/tagging.rs', 'if items.len() + pending.len() > total {\n                    return Err("tagged list frontier exceeds its limit".into());', 'if false {\n                    return Err("tagged list frontier exceeds its limit".into());', 'textedit_nested_lists_bound_pending_children_before_visiting_them'),
     Mutation('lists: refuse list grouping', 'src/textedit/tagging.rs', '|| role == b"L" {', '{', 'textedit_lists_preserve_labels_numbering_structure_and_other_items'),
     Mutation('lists: reject list item blocks', 'src/textedit/tagging.rs', 'if !text_block(role) && role != b"LI" {', 'if !text_block(role) {', 'textedit_lists_preserve_labels_numbering_structure_and_other_items'),
     Mutation('lists: omit numbered attribute owner', 'src/textedit/tagging.rs', 'name(get(attributes, b"O")?)? != b"List"', 'false', 'textedit_lists_refuse_ambiguous_numbering_and_stale_attributes'),
@@ -275,7 +280,7 @@ MUTATIONS = [
 
     Mutation('tag containers: omit depth bound', 'src/textedit/tagging.rs', 'depth >= MAX_CONTAINER_DEPTH', 'false', 'textedit_container_depth_is_bounded_with_a_valid_boundary'),
     Mutation('tag containers: omit count bound', 'src/textedit/tagging.rs', 'containers > MAX_CONTAINERS', 'false', 'textedit_container_count_is_bounded_independently_of_depth_and_content'),
-    Mutation('tag containers: omit frontier bound', 'src/textedit/tagging.rs', 'items.len() + pending.len() > total', 'false', 'textedit_container_frontier_is_bounded_before_children_are_visited'),
+    Mutation('tag containers: omit frontier bound', 'src/textedit/tagging.rs', 'if items.len() + pending.len() > total {\n                    return Err("tagged grouping frontier exceeds its limit".into());', 'if false {\n                    return Err("tagged grouping frontier exceeds its limit".into());', 'textedit_container_frontier_is_bounded_before_children_are_visited'),
     Mutation('tag containers: accept layout attributes', 'src/textedit/tagging.rs', '|| (role != b"L" && child.has(b"A"))', '|| false', 'textedit_containers_refuse_cycles_aliases_attributes_and_wrong_owners_atomically'),
     Mutation('tag containers: discard immediate parent', 'src/textedit/tagging.rs', 'element(doc, child, parent_id, &page_ids)?', 'element(doc, child, document_id, &page_ids)?', 'textedit_containers_keep_interleaved_page_owners_and_nested_leaves'),
     Mutation('tag containers: refuse grouping elements', 'src/textedit/tagging.rs', 'if container(role) || role == b"NonStruct" || role == b"L" {', 'if false {', 'textedit_containers_and_headings_preserve_roles_order_and_graph'),

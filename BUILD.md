@@ -4849,6 +4849,12 @@ src-tauri/fuzz/run.py --build-only
 print nothing, which is indistinguishable from nine fuzzers finding nothing --- the trap index
 has that one.
 
+A short run can spend its whole time budget replaying the saved corpus. The
+budget includes initialization: compare the execution counters on `INITED` and
+`DONE`, and require the latter to be larger before reporting new-input fuzzing.
+If they are equal, extend the budget. `new_units_added=0` alone does not answer
+this question; it counts additions to coverage, not generated inputs.
+
 #### A target that reaches a defect we cannot fix has to fork
 
 libFuzzer stops at the **first** finding, which is the right default: a finding is the point,
@@ -6771,8 +6777,10 @@ content. Literal `LBody` content leaves are supported as well. The existing
 container depth/count and total-content bounds apply; parent links and every
 MCID still have to agree in both directions. Only one `O=List` attribute object
 with a standard `ListNumbering` name is admitted, directly or in a singleton
-array, including references. List-role aliases, nested lists, blocks below
-LBody, revision arrays and leaf attributes remain refused.
+array, including references. List-role aliases, blocks below LBody, revision
+arrays and leaf attributes remain refused. Nested L containers may be direct LI
+children, with each item retaining its own content. Lists at every level share
+the existing container bounds; LI does not add a container level.
 
 ```sh
 uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py <browser-executable> scratch/tag-lists/browser --list
@@ -6791,6 +6799,31 @@ the numbering metadata or reversing the list items fails the independent graph
 comparison. The native harness selects the expected text by its accessible name
 because the first editable run can now be the list number. The earlier browser
 heading fixture remains a separate regression control.
+
+Nested list verification uses an unchanged browser export with the second item
+inside a list owned by the first item:
+
+```sh
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py <browser-executable> scratch/tag-nested-lists/browser --nested-list
+uv run scripts/tabs_check.py <checks-binary> scratch/tag-nested-lists/browser/browser-tagged.pdf --phase textedit --saved-copy scratch/tag-nested-lists/native-parent/synthetic-after.pdf
+uv run scripts/tabs_check.py <checks-binary> scratch/tag-nested-lists/browser/browser-tagged.pdf --phase textedit-list-child --saved-copy scratch/tag-nested-lists/native-child/synthetic-after.pdf
+cp scratch/tag-nested-lists/browser/browser-tagged.pdf scratch/tag-nested-lists/native-parent/synthetic-before.pdf
+cp scratch/tag-nested-lists/browser/browser-tagged.pdf scratch/tag-nested-lists/native-child/synthetic-before.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/tag-nested-lists/native-parent/synthetic-before.pdf scratch/tag-nested-lists/native-parent/synthetic-after.pdf --float32 --nested-list
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/tag-nested-lists/native-child/synthetic-before.pdf scratch/tag-nested-lists/native-child/synthetic-after.pdf --float32 --nested-list-child
+swift scripts/text_edit_pdfkit.swift scratch/tag-nested-lists/native-parent --nested-list
+swift scripts/text_edit_pdfkit.swift scratch/tag-nested-lists/native-child --nested-list-child
+```
+
+Both native phases pass 15 checks on macOS. Independent readback preserves all
+structure objects and labels, with 2,423 changed pixels inside the parent edit
+and 2,906 inside the child edit, zero outside in both. Flattening the list or
+changing its numbering fails graph readback. Moving the child label produces
+170 pixels outside the child edit; moving the parent text produces 2,657.
+The depth test edits a valid eight-level chain and refuses nine levels. Separate
+queue controls cover a pending sibling as well as child count; cross-page tests
+edit the nested body without changing the parent page. The original public
+survey remains at 1 editable page of 45.
 
 Use the unchanged tagged LibreOffice fixture from the producer survey:
 
