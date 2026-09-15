@@ -6745,6 +6745,27 @@ parent mappings remain refused. The public factsheet, mouse guide and W-9 use
 some of these representations but also exceed the supported tree grammar;
 this fixture does not establish that those documents are editable.
 
+Grouping containers and headings use two complementary fixtures:
+
+```bash
+uv run --with fonttools --with pypdf testdata/make_textedit_symbolic.py scratch/tag-containers/source.pdf --tagged-containers
+uv run --with websocket-client --with pypdf testdata/make_textedit_browser.py <browser-executable> scratch/tag-containers/browser --headings
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe -- scratch/tag-containers/browser-worker scratch/tag-containers/browser/browser-tagged.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --check scratch/tag-containers/browser-worker/synthetic-before.pdf scratch/tag-containers/browser-worker/synthetic-after.pdf --float32
+swift scripts/text_edit_pdfkit.swift scratch/tag-containers/browser-worker --browser
+```
+
+Both sources use the ordinary native `textedit` phase. The symbolic fixture
+combines Part/Art/Sect/Div/NonStruct containers with aliased heading and section
+roles; its independent parser check needs no float32 opt-in and PDFKit needs no
+variant flag. The unchanged browser export carries Document/Art/NonStruct above
+H1/P, each with a NonStruct content leaf. Keep the browser's output unchanged;
+its tag names and font streams are part of this control.
+Container depth/count tests have accepting boundary controls at 8/128 and reject
+9/129. A separate frontier test requires rejection before oversized child arrays
+enter the work list. Standard-role remapping is tested on an unused name so a
+later shape refusal cannot mask a missing role-map check.
+
 Use the unchanged tagged LibreOffice fixture from the producer survey:
 
 ```bash

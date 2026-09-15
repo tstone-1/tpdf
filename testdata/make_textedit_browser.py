@@ -8,6 +8,7 @@ Add --flow to export one ordinary paragraph wrapping across two pages.
 Use --latin1 --latin1-font Verdana for the existing-glyph accented control;
 --latin1 alone exports Arial, whose leading overhang needs placement checks.
 Add --rectangles for unchanged text surrounded by painted backgrounds.
+Add --headings for a heading and paragraph inside article/section containers.
 https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
 """
 import argparse
@@ -22,12 +23,13 @@ from pypdf import PdfReader
 import websocket
 
 
-def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False):
+def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False, headings=False):
     output.mkdir(parents=True, exist_ok=True)
     # A failed rerun must not leave yesterday's successful export as evidence.
     for name in ("browser-tagged.pdf", "browser-untagged.pdf"):
         (output / name).write_bytes(b"")
     source = Path(__file__).with_name(
+        "textedit-producer-headings.html" if headings else
         "textedit-producer-rectangles.html" if rectangles else
         "textedit-producer-browser-flow.html" if flow else
         "textedit-producer-browser-latin1.html" if latin1 else "textedit-producer.html"
@@ -103,6 +105,21 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                         for page in reader.pages:
                             first = "SYNTHETIC ÄÖÜ äöü ß" if latin1 else "SYNTHETIC FIRST"
                             assert " ".join(page.extract_text().split()) == first + " SYNTHETIC SECOND", "wrong synthetic text"
+                        if headings and tagged:
+                            pending = [reader.trailer["/Root"]["/StructTreeRoot"]["/K"]]
+                            kinds = []
+                            visited = 0
+                            while pending:
+                                visited += 1
+                                assert visited <= 128, "unexpectedly large heading tree"
+                                item = pending.pop().get_object()
+                                if isinstance(item, list):
+                                    pending.extend(item)
+                                elif isinstance(item, dict):
+                                    kinds.append(item.get("/S"))
+                                    if "/K" in item:
+                                        pending.append(item["/K"])
+                            assert "/H1" in kinds and "/P" in kinds, "browser omitted heading/paragraph roles"
                         if flow and tagged:
                             root = reader.trailer["/Root"]["/StructTreeRoot"]
                             document = root["/K"]
@@ -120,7 +137,7 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                                 assert nums[index * 2] == page["/StructParents"] == index, "wrong page parent key"
                                 assert list(nums[index * 2 + 1].get_object()) == [leaf.indirect_reference], "wrong reverse ownership"
                     print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True,
-                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles,
+                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles, "headings": headings,
                                       "font": latin1_font if latin1 else "Arial"}))
                 finally:
                     connection.close()
@@ -138,6 +155,7 @@ if __name__ == "__main__":
     parser.add_argument("browser", type=Path)
     parser.add_argument("output", type=Path)
     variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--headings", action="store_true", help="export nested heading and paragraph markup")
     variant.add_argument("--rectangles", action="store_true", help="export painted backgrounds around the text")
     variant.add_argument("--flow", action="store_true", help="export one naturally wrapped paragraph across two pages")
     variant.add_argument("--latin1", action="store_true", help="export accented letters using the browser's embedded font")
@@ -145,4 +163,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.latin1_font != "Arial" and not args.latin1:
         parser.error("--latin1-font requires --latin1")
-    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles)
+    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles, args.headings)

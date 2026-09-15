@@ -1,17 +1,35 @@
-//! A bounded multi-page Document/P[/NonStruct] tree, preserved rather than regenerated.
+//! Bounded grouping and paragraph/heading trees, preserved rather than regenerated.
 //! Reject semantic overrides and layout attributes that a shorter edit could stale.
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(test)]
+mod container_tests;
+#[cfg(test)]
 mod nested_tests;
 #[cfg(test)]
 mod tests;
 
-// Every paragraph owns at least one item, so this also bounds pages and elements.
+// Every text block owns content. Grouping elements have separate count/depth
+// bounds because a chain can contain many containers and just one text block.
 const MAX_CONTENT_ITEMS: usize = 128;
+const MAX_CONTAINERS: usize = 128;
+const MAX_CONTAINER_DEPTH: usize = 8;
 const INVALID: &str = "unsupported or inconsistent tagged text structure";
+
+// ISO 32000-1 14.8.4: these grouping elements carry child elements; paragraph-
+// like blocks carry the marked content. Keep the two authorities separate.
+fn container(tag: &[u8]) -> bool {
+    matches!(tag, b"Part" | b"Art" | b"Sect" | b"Div")
+}
+
+fn text_block(tag: &[u8]) -> bool {
+    matches!(
+        tag,
+        b"P" | b"H" | b"H1" | b"H2" | b"H3" | b"H4" | b"H5" | b"H6"
+    )
+}
 
 fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
     if dict
@@ -195,7 +213,7 @@ impl Tags {
             }
             return Ok(Self::default());
         };
-        // No recursive graph walk: Document/P with one optional NonStruct level.
+        // The grouping walk below is iterative, with independent depth/count bounds.
         if pages.is_empty() || pages.len() > MAX_CONTENT_ITEMS {
             return Err(INVALID.into());
         }
@@ -230,9 +248,12 @@ impl Tags {
                     key.is_empty()
                         || key.len() > 127
                         || key == b"Document"
-                        || key == b"P"
+                        || text_block(key)
+                        || container(key)
                         || key == b"NonStruct"
-                        || value.as_name().ok() != Some(b"P")
+                        || !value
+                            .as_name()
+                            .is_ok_and(|tag| text_block(tag) || container(tag))
                 })
             {
                 return Err(INVALID.into());
@@ -309,23 +330,47 @@ impl Tags {
         let mut assigned = 0;
         let mut ids = page_ids.clone();
         ids.extend([root_id, document_id]);
-        for child in paragraphs {
+        let mut pending: Vec<_> = paragraphs
+            .iter()
+            .rev()
+            .map(|child| (child, document_id, 0))
+            .collect();
+        let mut containers = 0;
+        while let Some((child, parent_id, depth)) = pending.pop() {
             let id = reference(child)?;
             if !ids.insert(id) {
                 return Err(INVALID.into());
             }
             let child = node(doc, id)?;
-            let paragraph_page = element(doc, child, document_id, &page_ids)?;
+            let paragraph_page = element(doc, child, parent_id, &page_ids)?;
             let tag = name(get(child, b"S")?)?;
-            if tag != b"P"
-                && roles
-                    .and_then(|r| r.get(tag).ok())
-                    .and_then(|v| v.as_name().ok())
-                    != Some(b"P")
-            {
+            let role = roles
+                .and_then(|r| r.get(tag).ok())
+                .map(name)
+                .transpose()?
+                .unwrap_or(tag);
+            let items = children(doc, get(child, b"K")?)?;
+            if container(role) || role == b"NonStruct" {
+                containers += 1;
+                // Bound the work list before copying child references into it.
+                if items.len() + pending.len() > total {
+                    return Err("tagged grouping frontier exceeds its limit".into());
+                }
+                if depth >= MAX_CONTAINER_DEPTH
+                    || containers > MAX_CONTAINERS
+                    || items.is_empty()
+                    || child.has(b"A")
+                {
+                    return Err(INVALID.into());
+                }
+                // Container Pg never supplies a descendant's page. Its own
+                // identity is the immediate parent checked on every child.
+                pending.extend(items.iter().rev().map(|item| (item, id, depth + 1)));
+                continue;
+            }
+            if !text_block(role) {
                 return Err(INVALID.into());
             }
-            let items = children(doc, get(child, b"K")?)?;
             let paragraph = Group {
                 id,
                 page: paragraph_page,
