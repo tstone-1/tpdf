@@ -4,6 +4,9 @@
 uv run --with fonttools --with pypdf testdata/make_textedit_composite.py <output.pdf>
 Add --ligatures for mixed separate-letter and two-byte ligature text. Read back
 with text-edit-probe and scripts/text_edit_pdfkit.swift using --cid-ligatures.
+--clip-direction positive|x|y|both paints a background through equivalent signed
+rectangular clips; --clip-rule W|W* selects the winding rule. Ordinary readback
+flags apply to these fixtures.
 The geometric glyphs are MIT-licensed repository material, never installed fonts.
 """
 import argparse
@@ -16,11 +19,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
 
 
-def create(target, reflected=False, tight_clip=False, ligatures=False):
+def create(target, reflected=False, tight_clip=False, ligatures=False, clip_direction=None, clip_rule="W"):
     from fontTools.ttLib import TTFont
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject,
                               NameObject, NumberObject, TextStringObject)
+
+    if clip_direction and (reflected or tight_clip):
+        raise ValueError("choose a signed clip or the existing transformed/tight clip fixture")
 
     def dictionary(**values):
         return DictionaryObject({NameObject("/" + key): value for key, value in values.items()})
@@ -95,6 +101,12 @@ def create(target, reflected=False, tight_clip=False, ligatures=False):
         shows = [f".25 0 0 -.25 0 240 cm q {clip} re W* n q 4 0 0 4 0 0 cm", *shows, "Q Q"]
     elif tight_clip:
         shows = ["q 0 0 300 190 re W n", *shows, "Q"]
+    if clip_direction:
+        clip = {"positive": "30 120 240 80", "x": "270 120 -240 80",
+                "y": "30 200 240 -80", "both": "270 200 -240 -80"}[clip_direction]
+        # Painting the full page makes the clipping boundary visible to an
+        # independent pixel reader; the inner q/Q restores black text.
+        shows = [f"q {clip} re {clip_rule} n q .8 .9 1 rg 0 0 300 240 re f Q", *shows, "Q"]
     content.set_data("\n".join(shows).encode("ascii"))
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(target)
@@ -110,5 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--reflected", action="store_true", help="pair reflected page/text matrices with a clip")
     parser.add_argument("--tight-clip", action="store_true", help="clip inside the full-em box with taller and descending replacement glyphs")
     parser.add_argument("--ligatures", action="store_true", help="mix separate letters with exact ToUnicode ligature sequences")
+    parser.add_argument("--clip-direction", choices=("positive", "x", "y", "both"))
+    parser.add_argument("--clip-rule", choices=("W", "W*"), default="W")
     args = parser.parse_args()
-    create(args.output, args.reflected, args.tight_clip, args.ligatures)
+    create(args.output, args.reflected, args.tight_clip, args.ligatures, args.clip_direction, args.clip_rule)

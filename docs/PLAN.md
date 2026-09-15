@@ -4299,6 +4299,12 @@ with original CID boundaries retained when measuring source text. Synthetic
 worker round trips check mixed separate letters and ligatures; this increment
 does not remove the earlier control-character or tagged-structure refusals in
 the unchanged public survey.
+Passport page 2 also uses a negative-height rectangular clip. This is now
+accepted with the same interior as its positive-dimension equivalent; source
+operators stay unchanged. Independent rendering compares all four dimension-sign
+combinations under both winding rules, with an unclipped negative control.
+The page then reaches an unsupported DCT/JPEG image. Public admission remains
+1 of 45 pages; supporting these images is the next measured blocker on that page.
 
 Built on the earlier text round-trip spike and the content-stream rewrite primitives.
 
@@ -4647,8 +4653,10 @@ exactly match dimensions and components. Forms, masks, external data, alternate
 images, optional content and custom decode mappings remain refused. Image and
 profile bytes remain unchanged; painted images also retain marked-content items.
 Rectangular clips accept only consecutive `re W n` or `re W* n` sequences
-outside text blocks, with positive dimensions and coordinates bounded to one
-million after transformation. They intersect in original page space and restore
+outside text blocks, with nonzero signed dimensions and coordinates bounded to one
+million after transformation. Negative dimensions retain their authored winding;
+normalized corners describe the same single-rectangle interior. They intersect
+in original page space and restore
 through `q`/`Q`; later CTM changes do not move an existing clip. Every affected
 text run must have validated embedded glyph outlines. Its horizontal envelope and
 the font's measured vertical envelope must fit inside the clip before crop or
@@ -4668,26 +4676,28 @@ path. Every source and transformed point, including all cubic controls, is bound
 to one million per coordinate. The stream's 4,096-operator bound limits work;
 completed paths are consumed once, with every operand preserved. No clip/state/text
 operator may interrupt a path. Mixed `re`/curve subpaths, zero-size rectangles,
-reversed clipping rectangles, nonrectangular clips and clipping combined with painting remain unsupported. A bounded
+nonrectangular clips and clipping combined with painting remain unsupported. A bounded
 nonnegative `w` setter is preserved; filled text cannot use it and supported strokes
 retain it.
 Nonzero diagonal page scaling and translations compose across `cm` operators
 and are restored by `Q`. Reflections in page and text matrices are accepted only
 when the final text orientation is positive. Exact quarter-turn text matrices
 are supported; line movement and glyph envelopes follow those axes. Clip corners
-normalize after transformation, before intersection; reversed authored clipping
-rectangles remain refused. The reported matrix and hit box combine the text matrix with
+normalize after transformation, before intersection, including reversed authored
+rectangles. The reported matrix and hit box combine the text matrix with
 the page transform before crop and rotation. An existing page scale acts on a
 subsequent translation; the text matrix does not scale the page offset. Authored,
 accumulated and composed positions and scale factors are bounded to one million
 per coordinate or axis, and a scale that collapses to zero is refused. Saves inside
 text blocks, rotated page CTMs, skew and text whose combined axes remain reflected
 are unsupported. Each
-`Tj` or `TJ` must have positioning
-independent of the previous show's advance; adjacent implicit-advance shows and
-other graphics/text operators remain refused. A `TJ` array becomes one run with
-concatenated text and its adjusted advance. Arrays start and end with strings,
-contain at most 4,096 items and 4,096 total characters, and permit only strings
+`Tj` or `TJ` follows a separate text cursor and line matrix; an edit before a
+continued show preserves its advance with a trailing adjustment. Position resets
+retain their authored behavior; unknown graphics/text operators remain refused.
+A `TJ` array becomes one run with
+concatenated text and its adjusted advance. Arrays start with a string; a trailing
+offset may pad the advance but cannot reduce it. Arrays contain at most 4,096
+items and 4,096 total characters, and permit only strings
 and finite numeric offsets. Offsets are subtracted in thousandths of text space;
 each cursor stays between zero and one million and fragment ends cannot retreat.
 Replacement keeps `TJ` with one string, retaining the active character spacing
