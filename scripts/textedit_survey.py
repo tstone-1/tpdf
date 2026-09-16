@@ -112,6 +112,29 @@ def self_test(probe):
         def dictionary(**items):
             return DictionaryObject({NameObject('/' + key): value for key, value in items.items()})
 
+        # Type1 resource dictionaries can carry PostScript, CFF or OpenType.
+        # These declarations are refused without interpreting the program bytes.
+        program_base = fixture('program-base.pdf', 1)
+        for carrier, subtype, reason in [
+            ('FontFile', 'SYNTHETIC_SECRET', 'PostScript Type 1 fonts (FontFile) are not editable yet'),
+            ('FontFile2', 'SYNTHETIC_SECRET', 'FontFile2 is not supported in Type1 fonts'),
+            ('FontFile3', 'OpenType', 'OpenType programs in Type1 fonts are not editable yet'),
+            ('FontFile3', 'SYNTHETIC_SECRET', 'unsupported embedded program subtype in Type1 font'),
+        ]:
+            writer = PdfWriter(clone_from=program_base)
+            program = DecodedStreamObject()
+            program.set_data(b'SYNTHETIC SECRET PROGRAM')
+            program[NameObject('/Subtype')] = NameObject('/' + subtype)
+            descriptor = dictionary(Type=NameObject('/FontDescriptor'),
+                FontName=NameObject('/Helvetica'), Flags=NumberObject(32),
+                **{carrier: writer._add_object(program)})
+            writer.pages[0]['/Resources']['/Font']['/F1'][NameObject('/FontDescriptor')] = writer._add_object(descriptor)
+            path = root / f'program-{carrier}-{subtype}.pdf'
+            writer.write(path)
+            result = inspect(probe, path)['pages']
+            assert result == [{'page': 0, 'status': 'refused', 'reason': reason}]
+            assert 'SECRET' not in json.dumps(result)
+
         base = fixture('role-base.pdf', 1)
         for role in ['SyntheticParagraph', 'Figure', 'Table', 'Span', 'Link']:
             writer = PdfWriter(clone_from=base)
@@ -140,6 +163,24 @@ def self_test(probe):
             else:
                 assert result == [{'page': 0, 'status': 'refused',
                     'reason': 'tagged RoleMap contains unsupported or conflicting roles'}]
+        # Object entries in a valid parent tree do not indicate missing pages.
+        writer = PdfWriter(clone_from=root / 'role-SyntheticParagraph.pdf')
+        page = writer.pages[0]
+        tree = writer.root_object['/StructTreeRoot']
+        document = tree['/K']
+        annotation = writer._add_object(dictionary(Type=NameObject('/Annot'),
+            Subtype=NameObject('/Text'), StructParent=NumberObject(7),
+            Rect=ArrayObject([NumberObject(v) for v in (10, 10, 20, 20)])))
+        element = writer._add_object(dictionary(Type=NameObject('/StructElem'),
+            S=NameObject('/Annot'), P=document.indirect_reference,
+            K=dictionary(Type=NameObject('/OBJR'), Obj=annotation, Pg=page.indirect_reference)))
+        page[NameObject('/Annots')] = ArrayObject([annotation])
+        document[NameObject('/K')] = ArrayObject([document.raw_get('/K'), element])
+        tree['/ParentTree']['/Nums'].extend([NumberObject(7), element])
+        path = root / 'parent-tree-object.pdf'
+        writer.write(path)
+        assert inspect(probe, path)['pages'] == [{'page': 0, 'status': 'refused',
+            'reason': 'non-page parent-tree entries are not editable yet'}]
         assert len(inspect(probe, fixture('boundary.pdf', 128))['pages']) == 128
         too_many = fixture('oversized.pdf', 129)
         for args, reason in [([str(too_many), '--all-pages'], '1 to 128 pages'),
@@ -160,7 +201,7 @@ def self_test(probe):
                 pass
             else:
                 raise AssertionError('invalid report passed validation')
-    print('[PASS] later-page refusal, tagged metadata privacy, role-map semantics, empty page, continued discovery, page bound and incomplete-report controls')
+    print('[PASS] later-page refusal, font program kinds, parent-tree object entries, tagged metadata privacy, role-map semantics, empty page, continued discovery, page bound and incomplete-report controls')
 
 
 def refusal_totals(records):

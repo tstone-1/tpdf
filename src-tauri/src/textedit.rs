@@ -94,7 +94,7 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type1")
         && font.has(b"FontDescriptor")
     {
-        return fonts::cff(doc, font);
+        return fonts::type1(doc, font);
     }
     for (key, expected) in [
         (b"Type".as_slice(), b"Font".as_slice()),
@@ -103,8 +103,7 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     ] {
         if font.get(key).and_then(Object::as_name).ok() != Some(expected) {
             return Err(
-                "text editing requires standard Helvetica or a supported embedded TrueType font"
-                    .into(),
+                "text editing requires standard Helvetica or a supported embedded font".into(),
             );
         }
     }
@@ -950,6 +949,21 @@ pub(crate) mod tests {
 
     #[test]
     fn textedit_kerning_refuses_malformed_unbounded_and_retreating_arrays() {
+        // A bounded final cursor must not hide an out-of-bounds intermediate one.
+        // Scale the font into the page so later ink bounds cannot mask this guard.
+        for (adjustments, accepted) in [
+            ("-500000 -400000 500000 400000", true),
+            ("-600000 -600000 600000 600000", false),
+            ("9999 -9999", false),
+        ] {
+            let content =
+                format!("BT /F1 1000 Tf 0.001 0 0 0.001 40 180 Tm [(A) {adjustments}] TJ ET");
+            assert_eq!(
+                scan(&with_content(content.as_bytes()), 0).is_ok(),
+                accepted,
+                "{adjustments}"
+            );
+        }
         for array in [
             "[]",
             "[1 (TEXT)]",
@@ -1456,6 +1470,16 @@ pub(crate) mod tests {
 
     #[test]
     fn textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices() {
+        // Restoring the matrix before text prevents its later geometry check
+        // from hiding a page-transform admission failure.
+        for (matrix, accepted) in [
+            ("1 0 0 1 0 0", true),
+            ("0 1 -1 0 0 0", false),
+            ("0 -1 1 0 0 0", false),
+        ] {
+            let bytes = format!("q {matrix} cm Q BT /F1 12 Tf 40 180 Td (TEXT) Tj ET");
+            assert_eq!(scan(&with_content(bytes.as_bytes()), 0).is_ok(), accepted);
+        }
         for prefix in [
             "1 0 0 1 1000000 0 cm 1 0 0 1 1 0 cm",
             "1 0 0 1 0 -1000000 cm 1 0 0 1 0 -1 cm",

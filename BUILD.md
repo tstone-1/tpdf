@@ -19,6 +19,26 @@ The build
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
 
+**26.9.8 pre-tag verification (2026-09-16).** All 25 quality gates passed on
+macOS (775.3 seconds; 1,559 Rust tests, three explicit ignores, and 1,687 frontend
+tests). Windows passed all 25 gates across the full run and focused reruns after
+fixture setup and cross-platform fixture-output corrections. The Windows
+cross-compiler check passed. Selected mutations caught all 390 Rust, 228 frontend
+and nine native cases; all 29 gate-runner mutations were caught. Four initial
+Rust survivors led to three stronger regression fixtures and one combined
+mutation for two guards enforcing the same bound.
+
+Both platforms passed 314 text-heavy viewer checks (51 not applicable). The
+vector-heavy checks passed 219 on macOS and 216 on Windows, with 146 and 149
+not applicable respectively. Eight text-edit workflows passed on each platform,
+followed by independent parser and PDFKit readback. Saved structures
+were retained and no pixels outside the edited area changed. Normal-bundle
+rendering with the development engine hidden, the visible missing-engine
+control, macOS menu/save checks, Windows MSI extraction and NSIS upgrade from
+the published 26.9.7 installer passed. The packaged workers mapped PDFium; the
+coordinator did not. Original installations, registry exports and sessions were
+restored. Windows printing passed all 10 real-spooler checks.
+
 **26.9.7 release verification (2026-09-14).** The PDFium compatibility blocker
 is closed by the verified `pdfium-8044-tpdf.1` dependency release. The final source
 snapshot passed all 24 gates on macOS and Windows. The macOS run took 590.8 seconds
@@ -5666,6 +5686,14 @@ starts at 0 and increments within the month.
    7,556 regions on 260 pages: zero still read as text, 3,337 were shown unreadable,
    and 4,219 remained unverified. The sweep took 29.2 seconds; no arithmetic
    warnings were reported. The same build passed all 10 real-spooler print checks.
+
+   **Windows x64, 26.9.8 release check, 2026-09-16:** 141 documents opened, none
+   refused; 12,008 regions sampled, 8,326 taken whole and 3,682 not wholly
+   removable. The gate read back 7,820 regions on 267 pages: zero still read as
+   text, 3,492 were shown unreadable, and 4,328 remained unverified. The sweep
+   took 30.9 seconds; no arithmetic warnings were reported. Unverified is not a
+   clean verdict. This is the current local corpus, not a controlled comparison
+   with the earlier runs.
 
    **The state line stays, because the debt is now a different one.** The run separates
    nothing: the two corpora share no document, so a more permissive engine and a corpus of

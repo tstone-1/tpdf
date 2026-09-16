@@ -10,7 +10,14 @@ For paragraph spacing or language spans, export testdata/textedit-producer-spaci
 or testdata/textedit-producer-language.rtf with:
 soffice --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir <directory> <rtf>
 The unchanged export uses ordinary worker/native textedit checks and PDFKit
-readback; make_textedit_embedded.py --check <before> <after> --float32 also
+readback. The hanging-indent and first-indent RTF fixtures use the same export
+command; PDFKit readback takes --hanging-indent or --first-indent to check the
+12pt difference between first and following line origins. Keep producer PDF
+bytes unchanged and use each in the ordinary textedit native phase.
+For data tables, make_textedit_browser.py --table exports cells and borders;
+use the ordinary native phase and PDFKit --table. --table-header adds linked
+header cells; the independent structure comparison covers their IDTree and links.
+make_textedit_embedded.py --check <before> <after> --float32 also
 compares the complete tag graph, accounting for the writer's numeric precision.
 """
 import argparse

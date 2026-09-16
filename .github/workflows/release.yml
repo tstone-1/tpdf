@@ -419,19 +419,18 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Edit existing text from the command palette,
-          preview the actual PDF rendering, undo or redo changes, then save in
-          place or to a copy. The editor supports bounded layouts with Helvetica
-          and validated embedded TrueType fonts, including examples exported by
-          Word, LibreOffice and Edge. Supported tagged paragraphs retain their
-          structure and page ownership. Replacements must fit the original line
-          width and use characters available in the font; unsupported pages are
-          refused, and paragraph reflow is not supported. Save text edits before
-          marking redactions. Automatic update checks at launch can now be
-          disabled while manual checking remains available.
-          A verified PDFium compatibility build also restores Arabic and Hebrew
-          extraction/search regressions introduced by 8044, while preserving
-          upstream ActualText behavior.
+          **New in this release.** Existing-text editing supports more fonts and
+          layouts: bounded CFF/Type1C fonts and ligatures, rotated text, continued
+          text runs, paragraph spacing, headings, lists and simple tables with
+          linked headers. Supported JPEG images and vector artwork remain
+          unchanged. Text selection follows rotated lines, and tab switching,
+          fitting and page rotation retain the intended reading position.
+          Keyboard cancellation discards drafts and restores focus.
+
+          Replacements must fit the original line width and use characters
+          available in the font. Unsupported pages are refused with more specific
+          explanations; paragraph reflow and general text editing remain unbuilt.
+          Save text edits before marking redactions.
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to
           a second file, and cropped to what is actually printed on them — drag

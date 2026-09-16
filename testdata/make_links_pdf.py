@@ -659,7 +659,7 @@ def main() -> int:
     # viewer harness binds any `<fixture>-manifest.json` to its reading-order
     # check, and a differently shaped file there killed a whole run once.
     manifest_path = os.path.join(args.outdir, "links-corpus.json")
-    with open(manifest_path, "w", encoding="utf-8") as handle:
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(manifest, handle, indent=2)
         handle.write("\n")
     print("[OK] wrote %s" % manifest_path)

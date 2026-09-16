@@ -13,6 +13,7 @@ beforeEach(() => {
   const create = document.createElement.bind(document);
   vi.spyOn(document, "createElement").mockImplementation(((tag: string) => {
     const node = create(tag) as unknown as FakeElement & { select(): void; querySelectorAll(): FakeElement[] };
+    node.clientWidth = 800; node.clientHeight = 600;
     node.select = () => {};
     node.querySelectorAll = () => {
       const walk = (root: FakeElement): FakeElement[] => root.children.flatMap((child) => [child, ...walk(child)]);
@@ -23,10 +24,10 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); dom.restore(); });
 
-function mount(write: (change: TextChange) => Promise<EditState> = async (value) => ({ ...state, text_edits: [value] })) {
+function mount(write: (change: TextChange) => Promise<EditState> = async (value) => ({ ...state, text_edits: [value] }), source = runs, anchor: ConstructorParameters<typeof TextEditor>[3] = () => ({ left: 40, top: 48, right: 120, bottom: 63, clip: "inset(0px)" })) {
   const close = vi.fn();
-  const editor = new TextEditor(dom.root as unknown as HTMLElement, 1, runs,
-    () => ({ left: 40, top: 48, right: 120, bottom: 63, clip: "inset(0px)" }), write, close);
+  const editor = new TextEditor(dom.root as unknown as HTMLElement, 1, source,
+    anchor, write, close);
   editor.update(state);
   const root = dom.root.children[0]!;
   const hit = root.children[0]!;
@@ -37,6 +38,114 @@ function mount(write: (change: TextChange) => Promise<EditState> = async (value)
 }
 
 describe("existing text editing", () => {
+  it("Done waits for the draft before closing and returning focus to the viewer", async () => {
+    for (const outcome of ["accepted", "refused", "disposed"] as const) {
+      let finish!: (value: EditState) => void;
+      let refuse!: (error: Error) => void;
+      const write = vi.fn(() => new Promise<EditState>((resolve, reject) => { finish = resolve; refuse = reject; }));
+      const { editor, root, field, close } = mount(write);
+      const done = root.children.flatMap((node) => node.children).find((node) => node.getAttribute("aria-label") === "Done")!;
+      field.value = "ACME edit";
+      const focus = vi.spyOn(FakeElement.prototype, "focus");
+      close.mockImplementation(() => editor.destroy());
+      done.dispatch("click", {});
+      expect(write).toHaveBeenCalledExactlyOnceWith(change);
+      expect(close).not.toHaveBeenCalled();
+      expect(focus).not.toHaveBeenCalled();
+      if (outcome === "disposed") editor.destroy();
+      if (outcome === "refused") refuse(new Error("replacement refused"));
+      else finish({ ...state, text_edits: [change] });
+      if (outcome === "refused") await expect(editor.settle()).rejects.toThrow("replacement refused");
+      else await editor.settle();
+      if (outcome === "accepted") {
+        expect(close).toHaveBeenCalledOnce();
+        expect(dom.root.children).toHaveLength(0);
+        expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+        expect(focus.mock.contexts).toEqual([dom.root]);
+        expect(close.mock.invocationCallOrder[0]).toBeLessThan(focus.mock.invocationCallOrder[0]!);
+      } else {
+        expect(close).not.toHaveBeenCalled();
+        expect(focus).not.toHaveBeenCalled();
+        if (outcome === "refused") expect(dom.root.children).toEqual([root]);
+      }
+      editor.destroy(); focus.mockRestore();
+    }
+  });
+  it("returns focus to the selected text target when cancelling without scrolling", async () => {
+    for (const escape of [true, false]) {
+      const focus = vi.spyOn(FakeElement.prototype, "focus");
+      const write = vi.fn(async () => state);
+      const second = { ...runs.runs[0]!, operator: 9, text: "SECOND" };
+      const { editor, root, form, field } = mount(write, { ...runs, runs: [...runs.runs, second] });
+      const target = root.children[1]!;
+      target.dispatch("click", {});
+      field.value = "discard this draft";
+      focus.mockClear();
+      if (escape) form.dispatch("keydown", { key: "Escape" });
+      else form.children.find((node) => node.getAttribute("aria-label") === "Cancel")!.dispatch("click", {});
+      await editor.settle();
+      expect(form).toHaveProperty("hidden", true);
+      expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+      expect(focus.mock.contexts).toEqual([target]);
+      expect(write).not.toHaveBeenCalled();
+      target.dispatch("click", {});
+      expect(field.value).toBe("SECOND");
+      editor.destroy(); focus.mockRestore();
+    }
+  });
+  it("returns focus to Done when the selected text has scrolled out of view", async () => {
+    for (const escape of [true, false]) {
+      let offset = 0;
+      const write = vi.fn(async () => state);
+      const { editor, root, form, field, hit } = mount(write, runs, () => ({ left: 40, top: 48 + offset, right: 120, bottom: 63 + offset, clip: "inset(0px)" }));
+      const done = root.children.flatMap((node) => node.children).find((node) => node.getAttribute("aria-label") === "Done")!;
+      field.value = "discard this draft";
+      offset = 700; editor.layout();
+      expect(hit).toHaveProperty("hidden", true);
+      const focus = vi.spyOn(FakeElement.prototype, "focus");
+      if (escape) form.dispatch("keydown", { key: "Escape" });
+      else form.children.find((node) => node.getAttribute("aria-label") === "Cancel")!.dispatch("click", {});
+      await editor.settle();
+      expect(form).toHaveProperty("hidden", true);
+      expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+      expect(focus.mock.contexts).toEqual([done]);
+      expect(write).not.toHaveBeenCalled();
+      offset = 0; editor.layout(); hit.dispatch("click", {});
+      expect(field.value).toBe(change.original);
+      editor.destroy(); focus.mockRestore();
+    }
+  });
+  it("removes fully offscreen targets from keyboard navigation and restores them on return", () => {
+    let box: ReturnType<ConstructorParameters<typeof TextEditor>[3]> = null;
+    const { editor, hit } = mount(undefined, runs, () => box);
+    expect(hit).toHaveProperty("hidden", true);
+    for (const [left, top, right, bottom, hidden] of [
+      [-20, 48, 0, 63, true], [800, 48, 820, 63, true],
+      [40, -20, 120, 0, true], [40, 600, 120, 620, true],
+      [-20, 48, 1, 63, false], [799, 48, 820, 63, false],
+      [40, -20, 120, 1, false], [40, 599, 120, 620, false],
+      [40, 48, 120, 63, false],
+    ] as const) {
+      box = { left, top, right, bottom, clip: "inset(0px)" };
+      editor.layout();
+      expect(hit).toHaveProperty("hidden", hidden);
+    }
+    editor.destroy();
+  });
+  it("starts keyboard navigation at the first visible target or Done", () => {
+    for (const visible of [true, false]) {
+      const focus = vi.spyOn(FakeElement.prototype, "focus");
+      const second = { ...runs.runs[0]!, operator: 9, text: "SECOND" };
+      const { editor, root } = mount(undefined, { ...runs, runs: [...runs.runs, second] }, (run) => ({
+        left: 40, right: 120, top: visible && run.operator === 9 ? 48 : 700,
+        bottom: visible && run.operator === 9 ? 63 : 720, clip: "inset(0px)",
+      }));
+      const done = root.children.flatMap((node) => node.children).find((node) => node.getAttribute("aria-label") === "Done")!;
+      expect(focus.mock.contexts[0]).toBe(visible ? root.children[1] : done);
+      expect(focus.mock.calls[0]).toEqual([{ preventScroll: true }]);
+      editor.destroy(); focus.mockRestore();
+    }
+  });
   it("focuses targets and the input without scrolling their overlay", () => {
     const focus = vi.spyOn(FakeElement.prototype, "focus");
     mount();
@@ -102,13 +211,41 @@ describe("existing text editing", () => {
     const { editor, form, field } = mount(write);
     expect(form.tagName).toBe("div");
     field.value = "ACME edit";
-    form.dispatch("keydown", { key: "Enter", isComposing: true });
+    form.dispatch("keydown", { target: field, key: "Enter", isComposing: true });
     expect(write).not.toHaveBeenCalled();
-    form.dispatch("keydown", { key: "Enter", isComposing: false }); await editor.settle();
+    form.dispatch("keydown", { target: field, key: "Enter", isComposing: false }); await editor.settle();
     expect(write).toHaveBeenCalledExactlyOnceWith(change);
     field.value = "ACME";
     form.children.find((node) => node.classList.contains("text-edit-apply"))!.dispatch("click", {});
     await editor.settle(); expect(write).toHaveBeenLastCalledWith({ ...change, replacement: "ACME" });
+  });
+  it("Enter on popup buttons leaves their native activation in charge", async () => {
+    for (const action of ["Cancel", "Apply"]) {
+      const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+      const { editor, form, field, hit } = mount(write);
+      field.value = "ACME edit";
+      const button = form.children.find((node) => node.textContent === action)!;
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      // The fake DOM does not bubble or perform browser default actions.
+      form.dispatch("keydown", { target: button, key: "Enter", preventDefault, stopPropagation });
+      await editor.settle();
+      expect(write).not.toHaveBeenCalled();
+      expect(preventDefault).not.toHaveBeenCalled();
+      expect(stopPropagation).toHaveBeenCalledOnce();
+      button.dispatch("click", {});
+      await editor.settle();
+      if (action === "Cancel") {
+        expect(write).not.toHaveBeenCalled();
+        expect(form).toHaveProperty("hidden", true);
+        hit.dispatch("click", {});
+        expect(field.value).toBe(change.original);
+      } else {
+        expect(write).toHaveBeenCalledExactlyOnceWith(change);
+        expect(form).toHaveProperty("hidden", false);
+      }
+      editor.destroy();
+    }
   });
   it("cancel discards a draft and its refusal without writing", async () => {
     const write = vi.fn(async () => state);

@@ -1,5 +1,5 @@
 // Independent readback of text-edit-probe's synthetic or W3C output on macOS.
-// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--latin1|--image|--wide-spacing|--list|--nested-list|--nested-list-child]
+// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--table|--latin1|--image|--wide-spacing|--list|--nested-list|--nested-list-child|--hanging-indent|--first-indent]
 import Foundation
 import PDFKit
 import CoreGraphics
@@ -8,7 +8,7 @@ func fail(_ message: String) -> Never {
     print("[FAIL] \(message)")
     exit(1)
 }
-guard (2...4).contains(CommandLine.arguments.count) else { fail("expected probe output directory [--latin1|--browser|--browser-flow|--browser-latin1|--browser-overhang|--default-encoding] [--page=N]") }
+guard (2...4).contains(CommandLine.arguments.count) else { fail("expected probe output directory [--table|--latin1|--browser|--browser-flow|--browser-latin1|--browser-overhang|--default-encoding] [--page=N]") }
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
 var selected = 0
 var variant = ""
@@ -19,14 +19,14 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--nested-list-child", "--nested-list", "--list", "--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--table", "--nested-list-child", "--nested-list", "--list", "--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing", "--hanging-indent", "--first-indent"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
 let latin1 = variant == "--latin1"
 let overhang = variant == "--browser-overhang"
 let cidLatin1 = variant == "--browser-latin1" || overhang
-let browser = variant == "--browser" || ["--list", "--nested-list"].contains(variant) || cidLatin1
+let browser = variant == "--table" || variant == "--browser" || ["--list", "--nested-list"].contains(variant) || cidLatin1
 let browserFlow = variant == "--browser-flow"
 let defaultEncoding = variant == "--default-encoding"
 let w3c = variant == "--w3c-dummy"
@@ -34,6 +34,7 @@ let passport = variant == "--passport"
 let agenda = variant == "--agenda"
 let dash = variant == "--dash"
 let listChild = variant == "--nested-list-child"
+let indented = ["--hanging-indent", "--first-indent"].contains(variant)
 let original = listChild ? "SYNTHETIC SECOND" : ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "SYNTHETIC ffi ffi fi fl ff" : variant == "--cff-unicode" ? "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£" : dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
 let replacement = listChild ? "EDITED SECOND" : ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "EDITED ffi fi fl ff" : variant == "--cff-unicode" ? "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}" : dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
@@ -60,7 +61,7 @@ func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     [left.minX, left.minY, left.maxX, left.maxY].map(Float.init)
         == [right.minX, right.minY, right.maxX, right.maxY].map(Float.init)
 }
-if ["--continued", "--inline"].contains(variant) {
+if ["--continued", "--inline"].contains(variant) || indented || variant == "--table" {
     let old = before.findString("SYNTHETIC SECOND", withOptions: [])
     let new = after.findString("SYNTHETIC SECOND", withOptions: [])
     guard old.count == 1, new.count == 1, let oldPage = before.page(at: 0), let newPage = after.page(at: 0) else { fail("missing continuation") }
@@ -68,6 +69,23 @@ if ["--continued", "--inline"].contains(variant) {
     guard abs(a.minX-b.minX) < 0.0001, abs(a.minY-b.minY) < 0.0001,
           abs(a.width-b.width) < 0.0001, abs(a.height-b.height) < 0.0001 else { fail("following text moved") }
     print("[PASS] PDFKit: following text retains its position and bounds")
+}
+if indented {
+    // The RTF has a 40pt margin and a +/-240 twip (12pt) first-line offset.
+    // This comes from the source document, not the editor's own geometry.
+    for (document, first) in [(before, original), (after, replacement)] {
+        guard document.pageCount == 1, let page = document.page(at: 0) else { fail("expected one indented page") }
+        let a = document.findString(first, withOptions: [])
+        let b = document.findString("SYNTHETIC SECOND", withOptions: [])
+        guard a.count == 1, b.count == 1 else { fail("missing indented text") }
+        // Font selection bounds can offset both origins; their difference
+        // still equals the authored indent. Following-line bounds were checked
+        // against the original above, so a translated pair cannot pass.
+        let offset = variant == "--hanging-indent" ? -12.0 : 12.0
+        guard abs(a[0].bounds(for: page).minX-b[0].bounds(for: page).minX-offset) < 0.02
+        else { fail("authored first-line indentation changed") }
+    }
+    print("[PASS] PDFKit: both lines retain their authored indentation")
 }
 for pageIndex in 0..<before.pageCount {
 var pictures = [[UInt8]]()

@@ -277,6 +277,36 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (page === 1) check("both source pages have their original text", untouched.includes(agenda ? "REGULAR" : original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
+      field()!.value = "DISCARDED DRAFT";
+      document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      check("Escape returns focus to the selected text target", document.activeElement === target());
+      target()!.click();
+      check("cancelled text is discarded when the target is reopened", field()!.value === original + (wrapped ? " " : ""));
+      field()!.value = replacement;
+      const cancel = document.querySelector<HTMLButtonElement>('.text-edit-popup button[aria-label="Cancel"]')!;
+      cancel.focus({ preventScroll: true });
+      const cancelEnter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      cancel.dispatchEvent(cancelEnter);
+      await host.idle();
+      check("Enter on Cancel does not apply the draft", !host.edits()!.dirty && (await read()).includes(original));
+      check("Enter on Cancel leaves button activation available", !cancelEnter.defaultPrevented);
+      // Synthetic key events have no browser default click; exercise the
+      // handler separately only after proving keydown did not take that action.
+      cancel.click();
+      target()!.click();
+      check("Cancel button discards the keyboard draft", field()!.value === original + (wrapped ? " " : "") && !host.edits()!.dirty);
+      const done = document.querySelector<HTMLButtonElement>('.text-editor button[aria-label="Done"]')!;
+      done.focus({ preventScroll: true }); done.click();
+      if (!await settle(() => !document.querySelector(".text-editor"), SETTLE_MS)) throw new Error("Done did not close text editing");
+      check("Done returns keyboard control to the PDF", document.activeElement === document.querySelector(".surface"));
+      if (passport) {
+        const before = JSON.stringify(host.viewer()!.position);
+        document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+        check("arrow keys scroll the PDF after Done", await settle(() => JSON.stringify(host.viewer()!.position) !== before, 1000));
+        host.viewer()!.goToPage(page);
+        if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("returning after keyboard navigation did not settle");
+      }
+      await start();
       if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text target layout did not settle");
       await pause(100);
       const hit = target()!.getBoundingClientRect();
@@ -292,6 +322,22 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("the vertical target follows the authored text matrix", hit.height > hit.width * 2 &&
           hit.left >= editorBox.left + a.x - 5 && hit.right <= editorBox.left + b.x + 5 &&
           hit.top >= editorBox.top + a.y - 10 && hit.bottom <= editorBox.top + b.y + 5);
+      }
+      if (passport) {
+        field()!.value = "DISCARDED OFFSCREEN DRAFT";
+        host.viewer()!.goToStart();
+        if (!await settle(() => host.viewer()?.idle === true && host.viewer()!.position.page === 0, SETTLE_MS))
+          throw new Error("scrolling did not reach the first page");
+        check("offscreen text targets leave keyboard navigation", target()!.hidden === true);
+        const position = host.viewer()!.position;
+        document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        check("cancelling offscreen text focuses Done", document.activeElement === document.querySelector('.text-editor button[aria-label="Done"]'));
+        check("offscreen cancellation keeps the reading position", JSON.stringify(host.viewer()!.position) === JSON.stringify(position));
+        host.viewer()!.goToPage(page);
+        if (!await settle(() => host.viewer()?.idle === true && target()?.hidden === false, SETTLE_MS))
+          throw new Error("returning to the page did not restore its text target");
+        target()!.click();
+        check("offscreen cancellation discards the draft", field()!.value === original);
       }
       field()!.value = replacement; field()!.dispatchEvent(new Event("input", { bubbles: true }));
       // No Apply: switching tabs must drain the draft into its original document.
@@ -361,6 +407,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
       document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       await host.idle();
+      check("cancelling a refused draft returns focus to its text target", document.activeElement === target());
       if (overhang) {
         await start(); field()!.value = "ÄÖÜ äöü ß"; field()!.dispatchEvent(new Event("input", { bubbles: true }));
         document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();

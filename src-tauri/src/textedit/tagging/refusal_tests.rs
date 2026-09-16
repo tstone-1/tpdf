@@ -3,6 +3,67 @@ use crate::textedit;
 use lopdf::{dictionary, Object};
 
 #[test]
+fn textedit_parent_tree_refusals_identify_non_page_entries() {
+    for direct in [false, true] {
+        for extra in [false, true] {
+            let (mut doc, ids) = fixture(CONTENT);
+            let scan = textedit::scan(&doc, 0).unwrap();
+            let object: Object =
+                dictionary! { "Type" => "StructElem", "S" => "Form", "P" => ids[2],
+                "K" => dictionary! { "Type" => "OBJR", "Obj" => (9999, 0) } }
+                .into();
+            let object = if direct {
+                object
+            } else {
+                doc.add_object(object).into()
+            };
+            let nums = if extra {
+                vec![
+                    0.into(),
+                    Object::Array(vec![ids[3].into(), ids[4].into()]),
+                    7.into(),
+                    object,
+                ]
+            } else {
+                vec![0.into(), object]
+            };
+            doc.get_dictionary_mut(ids[5]).unwrap().set("Nums", nums);
+            let before = doc.objects.clone();
+            let expected = "non-page parent-tree entries are not editable yet";
+            assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected);
+            let change = textedit::Change {
+                page: 0,
+                revision: scan.revision,
+                operator: scan.runs[0].operator,
+                original: scan.runs[0].text.clone(),
+                replacement: "IN".into(),
+            };
+            assert_eq!(textedit::write(&mut doc, &[change]).unwrap_err(), expected);
+            assert_eq!(doc.objects, before);
+        }
+    }
+    // A missing page entry, malformed pair, or bad reference must not be
+    // diagnosed as an object entry merely because the lengths disagree.
+    for entries in [
+        vec![],
+        vec![Object::Integer(0)],
+        vec![
+            0.into(),
+            Object::Null,
+            7.into(),
+            Object::Reference((9999, 0)),
+        ],
+    ] {
+        let (mut doc, ids) = fixture(CONTENT);
+        doc.get_dictionary_mut(ids[5]).unwrap().set("Nums", entries);
+        assert_eq!(
+            textedit::scan(&doc, 0).unwrap_err(),
+            "tagged parent tree must contain one entry per page"
+        );
+    }
+}
+
+#[test]
 fn textedit_tagged_refusals_identify_metadata_without_echoing_document_data() {
     for (index, key, expected) in [
         (
@@ -10,6 +71,7 @@ fn textedit_tagged_refusals_identify_metadata_without_echoing_document_data() {
             "IDTree",
             "unsupported IDTree metadata in tagged structure root",
         ),
+        (3, "IDTree", "unsupported IDTree metadata in tagged element"),
         (
             1,
             "ClassMap",

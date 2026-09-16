@@ -530,7 +530,7 @@ def main() -> int:
         print(f"[OK] {path} ({os.path.getsize(path):,} bytes)")
 
     manifest = os.path.join(args.outdir, "comments-corpus.json")
-    with open(manifest, "w", encoding="utf-8") as handle:
+    with open(manifest, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(expected, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
     print(f"[OK] {manifest}")
