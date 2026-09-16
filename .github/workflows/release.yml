@@ -121,6 +121,10 @@ jobs:
           workspaces: |
             src-tauri
             src-tauri/fuzz
+          # Only main seeds reusable caches. Release/PR refs can restore main,
+          # but their saved copies cannot seed future releases. On v26.9.8,
+          # archiving the duplicate Windows gates cache cost over five minutes.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install JS deps
         run: npm ci
