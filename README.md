@@ -27,14 +27,16 @@ project conventions.
 
 ## Code signing policy
 
-Windows releases are currently unsigned. An application to SignPath Foundation
-was submitted on 2026-09-12; acceptance and signing are pending. The proposed
-provider is [SignPath.io](https://signpath.io/), with a certificate held by
-[SignPath Foundation](https://signpath.org/). macOS releases already use Apple
-Developer ID signing and notarization.
+Windows releases are currently unsigned. The application to
+[SignPath Foundation](https://signpath.org/) submitted on 2026-09-12 was declined
+because the project has not yet established the required public adoption and
+independent recognition. A new application may follow after broader adoption;
+there is no active signing arrangement. macOS releases use Apple Developer ID
+signing and notarization.
 
 The committer, reviewer and proposed signing approver is
-[Timo Stein (tstone-1)](https://github.com/tstone-1). Under the proposed policy,
+[Timo Stein (tstone-1)](https://github.com/tstone-1). Under the proposed policy for
+future [SignPath.io](https://signpath.io/) integration,
 each Windows release requires his manual signing approval. GitHub and SignPath
 accounts involved in signing must use two-factor authentication. Only project-owned
 binaries built on GitHub-hosted runners may be submitted; upstream PDFium binaries

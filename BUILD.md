@@ -4982,11 +4982,18 @@ and the defect does not, so a sixth adds nothing: check the message, then delete
 ## Windows signing onboarding
 
 The maintainer submitted the SignPath Foundation application on 2026-09-12.
-The application is awaiting a response; account configuration, a certificate
-and a signed Windows build have not yet been verified.
+The Foundation declined it because the project does not yet have sufficient
+public adoption and independent recognition. The decision was about public
+visibility, not a technical assessment of the project.
+
+Decision recorded 2026-09-16: continue development and unsigned Windows releases;
+defer a paid SignPath subscription. Reapply to the Foundation after the project
+has gained broader adoption and independent references. Account configuration,
+a certificate and a signed Windows build have not yet been verified. The steps
+below are retained for future onboarding, not an active release dependency.
 The proposed [code signing policy](README.md#code-signing-policy) records the owner,
-approval model and actual network behaviour. Do not change its status or add a
-claim that signing is provided until onboarding succeeds.
+approval model and actual network behaviour. Do not claim that signing is provided
+until onboarding succeeds.
 
 The manual `SignPath onboarding samples` workflow builds the normal executable,
 MSI and NSIS on `windows-2025`, checks the production frontend excludes the harness,
