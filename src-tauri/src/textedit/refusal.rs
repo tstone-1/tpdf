@@ -11,7 +11,7 @@ pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positione
         "Tj" | "TJ" if !inside => "text appears outside a text block",
         "Tj" | "TJ" if !positioned => "text has no explicit initial position",
         "Tj" | "TJ" => "text-show operands have an unsupported shape",
-        "TD" | "'" | "\"" => {
+        "'" | "\"" => {
             return format!("text positioning shorthand {name} is not editable yet");
         }
         "Ts" if operands.len() == 1 => "text rise must be zero for editing",
@@ -20,13 +20,14 @@ pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positione
         "q" | "Q" | "cm" | "re" | "m" | "n" | "Do" if inside => {
             return format!("graphics operation {name} inside a text block is not editable yet");
         }
-        "Tf" | "TL" | "Tm" | "Td" | "T*" if !inside => {
+        "Tf" | "TL" | "Tm" | "Td" | "TD" | "T*" if !inside => {
             return format!("text setup operation {name} outside a text block is not editable yet");
         }
         // Only fixed PDF keywords may be echoed. An unknown keyword could be
         // arbitrarily long, contain control characters or carry document text.
         "BMC" | "BDC" | "EMC" | "BT" | "ET" | "q" | "Q" | "cm" | "n" | "Do" | "w" | "Tc" | "Tw"
-        | "Ts" | "Tz" | "Tr" | "ri" | "gs" | "cs" | "CS" | "Tf" | "TL" | "Tm" | "Td" | "T*" => {
+        | "Ts" | "Tz" | "Tr" | "ri" | "gs" | "cs" | "CS" | "Tf" | "TL" | "Tm" | "Td" | "TD"
+        | "T*" => {
             return format!(
                 "unsupported operands for {name} (count: {})",
                 operands.len()
@@ -74,9 +75,10 @@ mod tests {
                 "text-show operands have an unsupported shape",
             ),
             (
-                "BT 0 -12 TD ET",
-                "text positioning shorthand TD is not editable yet",
+                "0 -12 TD",
+                "text setup operation TD outside a text block is not editable yet",
             ),
+            ("BT 0 TD ET", "unsupported operands for TD (count: 1)"),
             (
                 "BT (SYNTHETIC SECRET) ' ET",
                 "text positioning shorthand ' is not editable yet",

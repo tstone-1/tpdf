@@ -599,8 +599,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 positioned = true;
                 cursor = 0.0;
             }
-            ("Td", [x, y]) if inside => {
-                move_line(&mut matrix, number(x)?, number(y)?)?;
+            ("Td" | "TD", [x, y]) if inside => {
+                let (x, y) = (number(x)?, number(y)?);
+                // TD is exactly -ty TL followed by tx ty Td. Both move the
+                // line matrix, independently of the preceding show's advance.
+                if op.operator == "TD" {
+                    leading = -y;
+                }
+                move_line(&mut matrix, x, y)?;
                 positioned = true;
                 cursor = 0.0;
             }
@@ -862,6 +868,9 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
 
 #[cfg(test)]
 mod continuation_tests;
+
+#[cfg(test)]
+mod leading_tests;
 
 #[cfg(test)]
 mod rotation_tests;

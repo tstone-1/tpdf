@@ -280,12 +280,17 @@ Consecutive `Tj`/`TJ` text shows keep a separate text cursor and line matrix.
 When an edit precedes another show without a position reset, the writer adds a
 trailing `TJ` adjustment to preserve the original advance. It refuses an edit
 whose PDF number precision would move following text by more than 0.000001 page
-points. `Tm`, `Td` and `T*` reset the cursor; a new `BT` still requires explicit
+points. `Tm`, `Td`, `TD` and `T*` reset the cursor; a new `BT` still requires explicit
 positioning. Only edited `Tj` operators may become `TJ`; all untouched stream
 bytes remain unchanged. `textedit/continuation_tests.rs` covers deletion,
 spacing/font changes, orthogonal axes and line resets. Generate fixtures and
 check independent saved geometry with `scripts/text_continuation_check.py`;
 `text-edit-probe` and `text_edit_pdfkit.swift` accept `--continued` for them.
+`TD` also sets leading to minus its vertical operand, with the same coordinate
+bounds as `Td`. Leading persists across text blocks and follows `q`/`Q` saves.
+The generator's `--leading` fixture uses ordinary worker/native/PDFKit checks
+without `--continued`; `textedit/leading_tests.rs` covers signed spacing,
+transformed axes, line resets and preserved positioning bytes.
 
 Inline `/Span` sequences carrying only `ActualText` tab or U+0007 separators
 are preserved, with one optional `Tm`/`Td` and one space-only `Tj`/`TJ`. They
