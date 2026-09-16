@@ -239,11 +239,13 @@ The account behind this section --- what was measured, what it cost, and which e
 
 ---
 
-The SignPath Foundation application was submitted on 2026-09-12; a response and
-signing setup are pending. `BUILD.md`'s
-*Windows signing onboarding* records the sample workflow, account prerequisites
-and signing order. The public policy is in `README.md`; Windows releases remain
-unsigned until acceptance and a verified signing rehearsal.
+The SignPath Foundation application submitted on 2026-09-12 was declined for
+insufficient public adoption and independent recognition, not a technical finding.
+Decision recorded 2026-09-16: continue development with unsigned Windows releases,
+defer paid SignPath, and reconsider a Foundation application after broader adoption.
+`BUILD.md`'s *Windows signing onboarding* retains the sample workflow, account
+prerequisites and signing order for future use. The public policy is in `README.md`;
+signing is not available until approval and a verified signing rehearsal.
 
 ## Stack
 
