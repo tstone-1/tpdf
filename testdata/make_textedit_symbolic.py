@@ -9,6 +9,7 @@ Append --image to retain an opaque RGB image alongside the text.
 Append --dash to edit an en dash through its original font code.
 Append --tagged-indirect for referenced tagging metadata and omitted element Type.
 Append --tagged-containers to add Part/Art/section/Div nesting and an aliased heading.
+Append --inline-tags to put validated MCID markers inside each text object.
 Use --unit-font --word-code space --word-spacing 12.112 for a tab-sized gap;
 the font size is 1 and Tm supplies the 12pt scale. PDFKit readback uses --wide-spacing;
 the native fixture phase is textedit-wide-spacing (the gap forms geometric columns).
@@ -38,6 +39,7 @@ def main():
     parser.add_argument("--word-spacing", type=float, default=0.)
     parser.add_argument("--tagged-indirect", action="store_true")
     parser.add_argument("--tagged-containers", action="store_true")
+    parser.add_argument("--inline-tags", action="store_true")
     parser.add_argument("--unit-font", action="store_true", help="use Tf=1 and a 12x text matrix")
     parser.add_argument("--word-code", choices=["space", "letter"],
                         help="map a space or S to PDF byte 32; default has no code 32")
@@ -150,7 +152,7 @@ def main():
         })
         first = "q 168.2 0 0 28.2 40 40 cm /Image1 Do Q\n" + first
     second = f"BT {position(140)} {encoded('SYNTHETIC SECOND')} Tj ET"
-    if args.tagged_indirect or args.tagged_containers:
+    if args.tagged_indirect or args.tagged_containers or args.inline_tags:
         root, document = DictionaryObject(), DictionaryObject()
         root_ref, document_ref = writer._add_object(root), writer._add_object(document)
         attributes = writer._add_object(DictionaryObject({
@@ -194,8 +196,12 @@ def main():
             owner[NameObject("/K")] = paragraphs
             for paragraph in paragraphs:
                 paragraph.get_object()[NameObject("/P")] = owner_ref
-        first = f"/{first_tag} << /MCID 0 >> BDC {first} EMC"
-        second = f"/Standard << /MCID 1 >> BDC {second} EMC"
+        if args.inline_tags:
+            first = first.replace("BT ", f"BT /{first_tag} << /MCID 0 >> BDC ", 1).replace(" ET", " EMC ET", 1)
+            second = second.replace("BT ", "BT /Standard << /MCID 1 >> BDC ", 1).replace(" ET", " EMC ET", 1)
+        else:
+            first = f"/{first_tag} << /MCID 0 >> BDC {first} EMC"
+            second = f"/Standard << /MCID 1 >> BDC {second} EMC"
     content.set_data((first + "\n" + second).encode())
     page[NameObject("/Contents")] = writer._add_object(content)
     writer.write(target)
