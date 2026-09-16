@@ -90,6 +90,21 @@ def self_test(probe):
         assert refusal_totals([]) == {}
         assert digest(source) == original
         assert len(list(root.iterdir())) == 1, 'inspection wrote extra files'
+        # Exercise the real worker reply, including the privacy boundary on
+        # unknown metadata names. None of these keys or values may be echoed.
+        for key, feature in [('IDTree', 'IDTree'), ('ClassMap', 'ClassMap'),
+                             ('SYNTHETIC_SECRET', 'unrecognized')]:
+            writer = PdfWriter()
+            writer.add_blank_page(width=300, height=240)
+            tree = DictionaryObject({NameObject('/Type'): NameObject('/StructTreeRoot'),
+                                     NameObject('/' + key): NameObject('/SYNTHETIC_SECRET')})
+            writer.root_object[NameObject('/StructTreeRoot')] = writer._add_object(tree)
+            tagged = root / f'tagged-{key}.pdf'
+            writer.write(tagged)
+            tagged_report = inspect(probe, tagged)
+            assert tagged_report['pages'] == [{'page': 0, 'status': 'refused',
+                'reason': f'unsupported {feature} metadata in tagged structure root'}]
+            assert 'SECRET' not in json.dumps(tagged_report['pages'])
         assert len(inspect(probe, fixture('boundary.pdf', 128))['pages']) == 128
         too_many = fixture('oversized.pdf', 129)
         for args, reason in [([str(too_many), '--all-pages'], '1 to 128 pages'),
@@ -110,7 +125,7 @@ def self_test(probe):
                 pass
             else:
                 raise AssertionError('invalid report passed validation')
-    print('[PASS] later-page refusal, empty page, continued discovery, page bound and incomplete-report controls')
+    print('[PASS] later-page refusal, tagged metadata privacy, empty page, continued discovery, page bound and incomplete-report controls')
 
 
 def refusal_totals(records):

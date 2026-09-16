@@ -13,6 +13,8 @@ mod nested_list_tests;
 #[cfg(test)]
 mod nested_tests;
 #[cfg(test)]
+mod refusal_tests;
+#[cfg(test)]
 mod tests;
 
 // Every text block owns content. Grouping elements have separate count/depth
@@ -35,12 +37,33 @@ fn text_block(tag: &[u8]) -> bool {
     )
 }
 
-fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
-    if dict
+fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), String> {
+    if let Some((key, _)) = dict
         .iter()
-        .any(|(key, _)| !allowed.contains(&key.as_slice()))
+        .find(|(key, _)| !allowed.contains(&key.as_slice()))
     {
-        return Err(INVALID.into());
+        // Only fixed PDF keywords may appear in a refusal. Unknown keys and
+        // every value can carry document text, so never format them directly.
+        let feature = match key.as_slice() {
+            b"ActualText" => "ActualText",
+            b"Alt" => "Alt",
+            b"E" => "E",
+            b"T" => "T",
+            b"C" => "C",
+            b"R" => "R",
+            b"ID" => "ID",
+            b"IDTree" => "IDTree",
+            b"ClassMap" => "ClassMap",
+            b"Kids" => "Kids",
+            b"Limits" => "Limits",
+            b"BBox" => "BBox",
+            b"Stm" => "Stm",
+            b"StmOwn" => "StmOwn",
+            _ => "unrecognized",
+        };
+        return Err(format!(
+            "unsupported {feature} metadata in tagged {context}"
+        ));
     }
     Ok(())
 }
@@ -81,7 +104,11 @@ fn element(
     pages: &BTreeSet<ObjectId>,
 ) -> Result<Option<ObjectId>, String> {
     // In particular: no ActualText, Alt, E, title, class, or attribute revision.
-    keys(dict, &[b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang"])?;
+    keys(
+        dict,
+        &[b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang"],
+        "element",
+    )?;
     let page = dict.get(b"Pg").ok().map(reference).transpose()?;
     if let Ok(language) = dict.get(b"Lang") {
         let bytes = language.as_str().map_err(|_| INVALID)?;
@@ -116,7 +143,7 @@ fn element(
                 value => value,
             };
             let attributes = attributes.as_dict().map_err(|_| INVALID)?;
-            keys(attributes, &[b"O", b"ListNumbering"])?;
+            keys(attributes, &[b"O", b"ListNumbering"], "list attributes")?;
             if name(get(attributes, b"O")?)? != b"List"
                 || !matches!(
                     name(get(attributes, b"ListNumbering")?)?,
@@ -141,7 +168,11 @@ fn element(
         let attributes = crate::encoding::resolve(doc, attributes)
             .as_dict()
             .map_err(|_| INVALID)?;
-        keys(attributes, &[b"O", b"Placement", b"EndIndent"])?;
+        keys(
+            attributes,
+            &[b"O", b"Placement", b"EndIndent"],
+            "layout attributes",
+        )?;
         if name(get(attributes, b"O")?)? != b"Layout"
             || name(get(attributes, b"Placement")?)? != b"Block"
         {
@@ -269,6 +300,7 @@ impl Tags {
                 b"RoleMap",
                 b"ParentTreeNextKey",
             ],
+            "structure root",
         )?;
         if name(get(root, b"Type")?)? != b"StructTreeRoot" {
             return Err(INVALID.into());
@@ -294,17 +326,17 @@ impl Tags {
                             .is_ok_and(|tag| text_block(tag) || container(tag))
                 })
             {
-                return Err(INVALID.into());
+                return Err("tagged RoleMap contains unsupported or conflicting roles".into());
             }
         }
         let [document] = children(doc, get(root, b"K")?)? else {
-            return Err(INVALID.into());
+            return Err("tagged structure requires one Document root element".into());
         };
         let document_id = reference(document)?;
         let document = node(doc, document_id)?;
         element(doc, document, root_id, &page_ids)?;
         if name(get(document, b"S")?)? != b"Document" {
-            return Err(INVALID.into());
+            return Err("tagged structure requires one Document root element".into());
         }
         let paragraphs = children(doc, get(document, b"K")?)?;
         if paragraphs.is_empty() {
@@ -313,7 +345,7 @@ impl Tags {
         // ISO 32000-1 14.7.4.4: StructParents indexes the number tree; the MCID
         // indexes its array. Require both directions to agree, not just /K.
         let parent = node(doc, reference(get(root, b"ParentTree")?)?)?;
-        keys(parent, &[b"Type", b"Nums"])?;
+        keys(parent, &[b"Type", b"Nums"], "parent tree")?;
         if parent
             .get(b"Type")
             .is_ok_and(|value| value.as_name().ok() != Some(b"ParentTree"))
@@ -322,7 +354,7 @@ impl Tags {
         }
         let nums = array(crate::encoding::resolve(doc, get(parent, b"Nums")?))?;
         if nums.len() != pages.len() * 2 {
-            return Err(INVALID.into());
+            return Err("tagged parent tree must contain one entry per page".into());
         }
         let mut page_keys = BTreeMap::new();
         for &id in pages {
@@ -352,7 +384,7 @@ impl Tags {
             let entries = array(entry)?;
             total += entries.len();
             if entries.is_empty() || total > MAX_CONTENT_ITEMS {
-                return Err(INVALID.into());
+                return Err("tagged parent content is empty or exceeds its limit".into());
             }
             by_page.insert(owner, (entries, vec![Vec::new(); entries.len()]));
         }
@@ -414,7 +446,7 @@ impl Tags {
                 continue;
             }
             if !text_block(role) && role != b"LI" {
-                return Err(INVALID.into());
+                return Err("tagged element role is not editable yet".into());
             }
             if role == b"LI"
                 && (name(get(node(doc, parent_id)?, b"S")?)? != b"L" || child.has(b"A"))
@@ -464,7 +496,7 @@ impl Tags {
                     let (owner, mcid) = match item {
                         Object::Integer(mcid) => (paragraph_page.ok_or(INVALID)?, *mcid),
                         Object::Dictionary(mcr) => {
-                            keys(mcr, &[b"Type", b"Pg", b"MCID"])?;
+                            keys(mcr, &[b"Type", b"Pg", b"MCID"], "content reference")?;
                             if name(get(mcr, b"Type")?)? != b"MCR" {
                                 return Err(INVALID.into());
                             }
@@ -478,7 +510,7 @@ impl Tags {
                         || !names[mcid].is_empty()
                         || reference(&entries[mcid])? != id
                     {
-                        return Err(INVALID.into());
+                        return Err("tagged content and parent tree disagree on ownership".into());
                     }
                     names[mcid] = tag.to_vec();
                 }
@@ -499,21 +531,24 @@ impl Tags {
         tag: &Object,
         properties: Option<&Object>,
     ) -> Result<(), String> {
-        if self.names.is_empty() || self.active.is_some() {
-            return Err(INVALID.into());
+        if self.names.is_empty() {
+            return Err("marked content has no supported structure tree".into());
+        }
+        if self.active.is_some() {
+            return Err("nested marked content is not editable yet".into());
         }
         let tag = name(tag)?;
         let mcid = if let Some(properties) = properties {
             let properties = properties.as_dict().map_err(|_| INVALID)?;
-            keys(properties, &[b"MCID"])?;
+            keys(properties, &[b"MCID"], "marked-content properties")?;
             let mcid = usize::try_from(integer(get(properties, b"MCID")?)?).map_err(|_| INVALID)?;
             if self.names.get(mcid).map(Vec::as_slice) != Some(tag) || !self.seen.insert(mcid) {
-                return Err(INVALID.into());
+                return Err("marked content repeats or disagrees with its structure tag".into());
             }
             Some(mcid)
         } else {
             if tag != b"Artifact" {
-                return Err(INVALID.into());
+                return Err("marked content without MCID must be an Artifact".into());
             }
             None
         };
