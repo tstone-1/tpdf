@@ -82,91 +82,144 @@ fn flowing() -> (Document, [ObjectId; 9]) {
 }
 
 #[test]
-fn textedit_tagged_end_indent_and_source_spaces_survive_a_fitting_edit() {
-    for indent in [
-        Object::Integer(-1_000_000),
-        Object::Integer(0),
-        Object::Real(1.6),
-        Object::Real(1_000_000.0),
-    ] {
-        let content = std::str::from_utf8(CONTENT)
-            .unwrap()
-            .replace("(FIRST)", "(FIRST )");
-        let (mut doc, ids) = fixture(content.as_bytes());
-        doc.get_dictionary_mut(ids[3])
-            .unwrap()
-            .get_mut(b"A")
-            .unwrap()
-            .as_dict_mut()
-            .unwrap()
-            .set("EndIndent", indent.clone());
-        let before = textedit::scan(&doc, 0).unwrap();
-        assert_eq!(before.runs[0].text, "FIRST ");
-        let original = doc.objects.clone();
-        let edit = Change {
-            page: 0,
-            revision: before.revision,
-            operator: before.runs[0].operator,
-            original: "FIRST ".into(),
-            replacement: "IN".into(),
-        };
-        let mut stale = edit.clone();
-        stale.original.pop();
-        assert!(textedit::write(&mut doc, &[stale]).is_err());
-        assert_eq!(doc.objects, original);
-        textedit::write(&mut doc, &[edit]).unwrap();
-        let after = textedit::scan(&doc, 0).unwrap();
-        assert_eq!(after.runs[0].text, "IN");
-        assert_eq!(after.runs[1], before.runs[1]);
-        for (id, object) in original {
-            if id != ids[0] {
-                assert_eq!(doc.objects[&id], object);
+fn textedit_tagged_layout_spacing_and_source_spaces_survive_a_fitting_edit() {
+    for key in ["StartIndent", "EndIndent", "SpaceBefore", "SpaceAfter"] {
+        for indent in [
+            Object::Integer(-1_000_000),
+            Object::Integer(0),
+            Object::Real(1.6),
+            Object::Real(1_000_000.0),
+        ] {
+            let content = std::str::from_utf8(CONTENT)
+                .unwrap()
+                .replace("(FIRST)", "(FIRST )");
+            let (mut doc, ids) = fixture(content.as_bytes());
+            doc.get_dictionary_mut(ids[3])
+                .unwrap()
+                .get_mut(b"A")
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set(key, indent.clone());
+            let before = textedit::scan(&doc, 0).unwrap();
+            assert_eq!(before.runs[0].text, "FIRST ");
+            let original = doc.objects.clone();
+            let edit = Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST ".into(),
+                replacement: "IN".into(),
+            };
+            let mut stale = edit.clone();
+            stale.original.pop();
+            assert!(textedit::write(&mut doc, &[stale]).is_err());
+            assert_eq!(doc.objects, original);
+            textedit::write(&mut doc, &[edit]).unwrap();
+            let after = textedit::scan(&doc, 0).unwrap();
+            assert_eq!(after.runs[0].text, "IN");
+            assert_eq!(after.runs[1], before.runs[1]);
+            for (id, object) in original {
+                if id != ids[0] {
+                    assert_eq!(doc.objects[&id], object);
+                }
             }
+            assert_eq!(
+                doc.get_dictionary(ids[3])
+                    .unwrap()
+                    .get(b"A")
+                    .unwrap()
+                    .as_dict()
+                    .unwrap()
+                    .get(key.as_bytes())
+                    .unwrap(),
+                &indent
+            );
         }
-        assert_eq!(
-            doc.get_dictionary(ids[3])
-                .unwrap()
-                .get(b"A")
-                .unwrap()
-                .as_dict()
-                .unwrap()
-                .get(b"EndIndent")
-                .unwrap(),
-            &indent
-        );
     }
 }
 
 #[test]
-fn textedit_tagged_end_indent_rejects_invalid_values_and_document_scope() {
-    for indent in [
-        Object::Integer(1_000_001),
-        Object::Integer(-1_000_001),
-        Object::Real(f32::INFINITY),
-        Object::Real(f32::NEG_INFINITY),
-        Object::Real(f32::NAN),
-        Object::Null,
-        Object::Boolean(true),
-        Object::string_literal("1.6"),
-        Object::Array(vec![Object::Integer(1)]),
-        Object::Reference((999, 0)),
-    ] {
+fn textedit_tagged_shared_layout_spacing_preserves_all_pages_and_attributes() {
+    for indirect in [false, true] {
+        let (mut doc, ids) = multipage();
+        let attributes = dictionary! {
+            "O" => "Layout", "Placement" => "Block", "StartIndent" => -2,
+            "EndIndent" => 3, "SpaceBefore" => 0.12f32, "SpaceAfter" => 4,
+        };
+        let attributes = if indirect {
+            Object::Reference(doc.add_object(attributes))
+        } else {
+            Object::Dictionary(attributes)
+        };
+        for id in [ids[3], ids[4], ids[7], ids[8]] {
+            doc.get_dictionary_mut(id)
+                .unwrap()
+                .set("A", attributes.clone());
+        }
+        // The same constraints are valid on a heading resolved via RoleMap.
+        doc.get_dictionary_mut(ids[1])
+            .unwrap()
+            .set("RoleMap", dictionary! { "Standard" => "H2" });
+        let before = textedit::scan(&doc, 0).unwrap();
+        let other = textedit::scan(&doc, 1).unwrap();
+        let original = doc.objects.clone();
+        textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[0].matrix, before.runs[0].matrix);
+        assert_eq!(after.runs[1], before.runs[1]);
+        assert_eq!(textedit::scan(&doc, 1).unwrap().runs, other.runs);
+        for (id, value) in original {
+            if id != ids[0] {
+                assert_eq!(doc.objects[&id], value);
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_tagged_layout_spacing_rejects_invalid_values_and_document_scope() {
+    for key in ["StartIndent", "EndIndent", "SpaceBefore", "SpaceAfter"] {
+        for indent in [
+            Object::Integer(1_000_001),
+            Object::Integer(-1_000_001),
+            Object::Real(f32::INFINITY),
+            Object::Real(f32::NEG_INFINITY),
+            Object::Real(f32::NAN),
+            Object::Null,
+            Object::Boolean(true),
+            Object::string_literal("1.6"),
+            Object::Array(vec![Object::Integer(1)]),
+            Object::Reference((999, 0)),
+        ] {
+            let (mut doc, ids) = fixture(CONTENT);
+            doc.get_dictionary_mut(ids[3])
+                .unwrap()
+                .get_mut(b"A")
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set(key, indent);
+            assert!(textedit::scan(&doc, 0).is_err());
+        }
         let (mut doc, ids) = fixture(CONTENT);
-        doc.get_dictionary_mut(ids[3])
-            .unwrap()
-            .get_mut(b"A")
-            .unwrap()
-            .as_dict_mut()
-            .unwrap()
-            .set("EndIndent", indent);
+        doc.get_dictionary_mut(ids[2]).unwrap().set(
+            "A",
+            dictionary! { "O" => "Layout", "Placement" => "Block", key => 1 },
+        );
         assert!(textedit::scan(&doc, 0).is_err());
     }
-    let (mut doc, ids) = fixture(CONTENT);
-    doc.get_dictionary_mut(ids[2]).unwrap().set(
-        "A",
-        dictionary! { "O" => "Layout", "Placement" => "Block", "EndIndent" => 1 },
-    );
-    assert!(textedit::scan(&doc, 0).is_err());
 }
 
 #[test]
