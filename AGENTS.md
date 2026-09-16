@@ -325,6 +325,11 @@ values must be `/StructElem`. Reference resolution retains the existing bound,
 and every resolved value still passes the same grammar and ownership checks.
 `make_textedit_symbolic.py --tagged-indirect` generates the combined fixture for
 ordinary worker/native textedit checks and independent structure-graph readback.
+Block layout attributes admit bounded numeric StartIndent/EndIndent and
+SpaceBefore/SpaceAfter. These authored allocation constraints are retained;
+TextAlign, TextIndent and ink bounds remain refused. The unchanged LibreOffice
+export of `textedit-producer-spacing.rtf` exercises the combined attributes;
+`scripts/text_edit_producers.py` records its export and readback commands.
 Below the single Document root, an iterative walk admits Part/Art/Sect/Div and
 neutral NonStruct containers, then P/H/H1-H6 blocks with the existing optional
 NonStruct content leaves. It allows at most eight container levels and 128

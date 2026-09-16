@@ -471,9 +471,10 @@ MUTATIONS = [
     Mutation('overhang: remove right quarter em bound', 'src/textedit/fonts/composite.rs', 'right * unit <= width + 250.', 'true', 'textedit_composite_overhang_quarter_em_limits_have_boundary_controls'),
     Mutation('cid: count kerning bytes as characters', 'src/textedit.rs', 'characters += fragment.chars().count();', 'characters += bytes.len();', 'textedit_composite_kerning_limit_counts_characters_across_strings'),
 
-    Mutation('tagged indent: skip numeric validation', 'src/textedit/tagging.rs', 'super::number(indent)?;', '// unchecked indent', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
-    Mutation('tagged indent: accept document scope', 'src/textedit/tagging.rs', 'if name(get(dict, b"S")?)? == b"Document" {', 'if false {', 'textedit_tagged_end_indent_rejects_invalid_values_and_document_scope'),
-    Mutation('tagged indent: trim stale source text', 'src/textedit.rs', 'change.original != run.text', 'change.original.trim_end() != run.text.trim_end()', 'textedit_tagged_end_indent_and_source_spaces_survive_a_fitting_edit'),
+    Mutation('tagged indent: validate only end indent', 'src/textedit/tagging.rs', 'if let Ok(indent) = attributes.get(key) {', 'if let Ok(indent) = attributes.get(b"EndIndent") {', 'textedit_tagged_layout_spacing_rejects_invalid_values_and_document_scope'),
+    Mutation('tagged indent: skip numeric validation', 'src/textedit/tagging.rs', 'super::number(indent)?;', '// unchecked indent', 'textedit_tagged_layout_spacing_rejects_invalid_values_and_document_scope'),
+    Mutation('tagged indent: accept document scope', 'src/textedit/tagging.rs', 'if name(get(dict, b"S")?)? == b"Document" {', 'if false {', 'textedit_tagged_layout_spacing_rejects_invalid_values_and_document_scope'),
+    Mutation('tagged indent: trim stale source text', 'src/textedit.rs', 'change.original != run.text', 'change.original.trim_end() != run.text.trim_end()', 'textedit_tagged_layout_spacing_and_source_spaces_survive_a_fitting_edit'),
     Mutation('tagged flow: allow empty role names', 'src/textedit/tagging.rs', 'key.is_empty()', 'false', 'textedit_tagged_empty_role_name_cannot_hide_duplicate_items'),
     Mutation('tagged flow: ignore explicit item page', 'src/textedit/tagging.rs', '(reference(get(mcr, b"Pg")?)?, integer(get(mcr, b"MCID")?)?)', '(paragraph_page.ok_or(INVALID)?, integer(get(mcr, b"MCID")?)?)', 'textedit_tagged_flowing_paragraph_preserves_every_item_and_page'),
     Mutation('tagged flow: ignore MCR type', 'src/textedit/tagging.rs', 'if name(get(mcr, b"Type")?)? != b"MCR" {', 'if false {', 'textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation'),

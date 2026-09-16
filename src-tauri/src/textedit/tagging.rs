@@ -219,7 +219,14 @@ fn element(
             .map_err(|_| INVALID)?;
         keys(
             attributes,
-            &[b"O", b"Placement", b"EndIndent"],
+            &[
+                b"O",
+                b"Placement",
+                b"StartIndent",
+                b"EndIndent",
+                b"SpaceBefore",
+                b"SpaceAfter",
+            ],
             "layout attributes",
         )?;
         if name(get(attributes, b"O")?)? != b"Layout"
@@ -227,13 +234,21 @@ fn element(
         {
             return Err(INVALID.into());
         }
-        if let Ok(indent) = attributes.get(b"EndIndent") {
-            // An authored paragraph allocation constraint, not an ink bound.
-            // Replacing a fitting line preserves its position and this indent.
-            if name(get(dict, b"S")?)? == b"Document" {
-                return Err(INVALID.into());
+        for key in [
+            b"StartIndent".as_slice(),
+            b"EndIndent",
+            b"SpaceBefore",
+            b"SpaceAfter",
+        ] {
+            if let Ok(indent) = attributes.get(key) {
+                // ISO 32000-1 14.8.5.4: authored block allocation constraints,
+                // not ink bounds. A fitting fixed-position edit retains these
+                // indents and inter-paragraph spacing without reflowing text.
+                if name(get(dict, b"S")?)? == b"Document" {
+                    return Err(INVALID.into());
+                }
+                super::number(indent)?;
             }
-            super::number(indent)?;
         }
     }
     Ok(page)

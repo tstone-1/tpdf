@@ -441,7 +441,7 @@ def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bo
         objects[11] = objects[11].replace(b"/K [0]", b"/K [0 << /Type /MCR /Pg 13 0 R /MCID 0 >>]")
         objects[12] = b"<< /Nums [0 [11 0 R] 7 [11 0 R]] >>"
     if indented:
-        objects[11] = objects[11].replace(b"/Type /StructElem", b"/A << /O /Layout /Placement /Block /EndIndent 1.6 >> /Type /StructElem")
+        objects[11] = objects[11].replace(b"/Type /StructElem", b"/A << /O /Layout /Placement /Block /StartIndent 2 /EndIndent 1.6 /SpaceBefore 0.12 /SpaceAfter 4 >> /Type /StructElem")
     if nested:
         assert not multipage and not flowing
         objects[5] = stream(content.replace(b"/P <<", b"/NonStruct <<"))

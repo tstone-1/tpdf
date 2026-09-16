@@ -6,6 +6,11 @@ The worker verdict is for page zero. Independent pypdf inventory covers every
 page and follows only structure /K edges, never cyclic parent references.
 Exit zero means the survey completed, not that every sample is editable.
 This development tool parses synthetic exports only, outside the application.
+For paragraph spacing, export testdata/textedit-producer-spacing.rtf with:
+soffice --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir <directory> <rtf>
+The unchanged export uses ordinary worker/native textedit checks and PDFKit
+readback; make_textedit_embedded.py --check <before> <after> --float32 also
+compares the complete tag graph, accounting for the writer's numeric precision.
 """
 import argparse
 from collections import Counter
@@ -59,7 +64,7 @@ def inventory(path):
                                 for child in descendants],
             })
         content = page.get_contents()
-        operators = Counter(op.decode("ascii") for _, op in ContentStream(content, reader).operations) if content else Counter()
+        operators = Counter(op.decode("ascii") for _, op in ContentStream(content, reader).operations) if content is not None else Counter()
         # No document text or metadata is emitted in the report.
         text = " ".join(page.extract_text().split())
         if text not in ("", "SYNTHETIC FIRST SYNTHETIC SECOND"):
