@@ -56,6 +56,10 @@ pub(super) fn normal(doc: &Document, resources: &Dictionary, name: &[u8]) -> Res
             (b"SMask", Object::Name(name)) if name == b"None" => {}
             (b"AIS", Object::Boolean(false)) => {}
             (b"RI", Object::Name(name)) => super::colors::intent(name)?,
+            (b"LW", value) => super::clipping::line_width(value)?,
+            (b"LC", value) => stroke("J", std::slice::from_ref(value))?,
+            (b"LJ", value) => stroke("j", std::slice::from_ref(value))?,
+            (b"ML", value) => stroke("M", std::slice::from_ref(value))?,
             _ => return Err(invalid()),
         }
     }

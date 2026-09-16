@@ -32,6 +32,7 @@ pub(crate) fn fixture() -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::O
 fn change(doc: &Document, replacement: &str) -> Change {
     let runs = textedit::scan(doc, 0).unwrap();
     Change {
+        layout: None,
         page: 0,
         operator: runs.runs[0].operator,
         revision: runs.revision,
@@ -775,6 +776,7 @@ fn textedit_default_helvetica_preserves_resources_and_mapped_text() {
     let objects = doc.objects.clone();
     for replacement in ["Ä", "é", "SYNTHETIC FIRST FIRST FIRST"] {
         let edit = Change {
+            layout: None,
             page: 0,
             revision: before.revision.clone(),
             operator: before.runs[0].operator,
@@ -787,6 +789,7 @@ fn textedit_default_helvetica_preserves_resources_and_mapped_text() {
     textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -881,6 +884,7 @@ fn textedit_symbolic_dash_roundtrip_keeps_original_font_codes_and_ink() {
     assert_eq!(runs.runs[0].text, "\u{2013}A");
     assert_eq!(runs.runs[0].advance, 14.);
     let change = Change {
+        layout: None,
         page: 0,
         revision: runs.revision,
         operator: runs.runs[0].operator,

@@ -10,11 +10,15 @@
 //! It prints JSON without document text and never creates or saves a PDF.
 //! Exit 0 means inspection completed (read `status`); infrastructure errors exit 1.
 //! `--w3c-dummy <source.pdf> <new-output-directory>` edits the unchanged public
-//! W3C test fixture; every other writing mode uses synthetic fixtures.
+//! W3C test fixture. `--roundtrip <source.pdf> <requests.json> <new-output-directory>`
+//! checks requested edits on a disposable copy without printing document text.
 //! The example re-execs as its contained worker.
 
 #[path = "../src/probes/text_edit_public.rs"]
 mod public;
+
+#[path = "../src/probes/text_edit_roundtrip.rs"]
+mod roundtrip;
 
 use std::{fs::File, path::PathBuf};
 
@@ -115,6 +119,14 @@ fn inspect(source: &std::path::Path, all_pages: bool) -> Result<(), String> {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--roundtrip") {
+        if args.len() != 4 {
+            return Err(
+                "usage: --roundtrip <source.pdf> <requests.json> <new-output-directory>".into(),
+            );
+        }
+        return roundtrip::run(args[1].as_ref(), args[2].as_ref(), args[3].as_ref());
+    }
     if args.first().is_some_and(|arg| arg == "--w3c-dummy") {
         if args.len() != 3 {
             return Err(
@@ -299,6 +311,7 @@ fn run() -> Result<(), String> {
         discards: vec![],
         redactions: vec![],
         text_edits: vec![textedit::Change {
+            layout: None,
             page,
             revision: mapped.revision,
             operator: mapped.runs[0].operator,

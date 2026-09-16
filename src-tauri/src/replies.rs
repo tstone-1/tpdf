@@ -253,6 +253,12 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "PageRuns",
         &crate::textedit::PageRuns {
+            preview: Some(crate::textedit::Preview {
+                png: vec![137, 80, 78, 71],
+                font: "Noto Sans".into(),
+                rect: [40., 48., 120., 63.],
+                lines: 1,
+            }),
             page: 0,
             revision: vec![1; 32],
             runs: vec![crate::textedit::Run {
@@ -308,6 +314,13 @@ fn samples() -> BTreeMap<&'static str, String> {
         "EditState",
         &edits::EditState {
             text_edits: vec![crate::textedit::Change {
+                layout: Some(crate::textedit::Layout {
+                    width: 120.,
+                    height: 30.,
+                    size: 12.,
+                    wrap: true,
+                    font: crate::textedit::EditFont::Auto,
+                }),
                 page: 0,
                 revision: vec![1; 32],
                 operator: 3,

@@ -1,6 +1,43 @@
 use crate::textedit::{self, Change};
 use lopdf::{content::Content, Dictionary, Document, Stream};
 
+#[test]
+fn compound_clip_holes_winding_and_saved_state() {
+    let outer = "0 0 m 300 0 l 300 240 l 0 240 l 0 0 l h";
+    let hole = "50 170 m 60 170 l 60 200 l 50 200 l h";
+    let reversed = "50 170 m 50 200 l 60 200 l 60 170 l h";
+    for (inner, rule, accepted) in [
+        (hole, "W*", false),
+        (hole, "W", true),
+        (reversed, "W", false),
+    ] {
+        let doc = page(
+            format!("{outer} {inner} {rule} n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes(),
+        );
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted);
+    }
+    let mut doc =
+        page(format!("q {outer} {hole} W* n Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+    let source = textedit::scan(&doc, 0).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: source.revision,
+            operator: source.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    assert!(doc
+        .get_page_content(id)
+        .starts_with(format!("q {outer} {hole} W* n Q").as_bytes()));
+}
+
 fn page(bytes: &[u8]) -> Document {
     let (mut doc, _, _, _) = textedit::fonts::tests::fixture();
     let id = crate::pagetree::ordered_pages(&doc)[0];
@@ -19,6 +56,7 @@ fn textedit_rectangular_clips_preserve_operators_and_following_text() {
             .unwrap()
             .operations;
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -50,18 +88,15 @@ fn textedit_clip_intersections_contain_every_side_of_text() {
         "0 100 300 88",
     ] {
         let doc = page(format!("{rect} re W n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
-        assert!(
-            textedit::scan(&doc, 0)
-                .unwrap_err()
-                .contains("partly clipped"),
-            "accepted {rect}"
-        );
+        let runs = textedit::tests::clipped_roundtrip(&doc);
+        assert_ne!(runs.runs[0].display_rect, [40., 48., 76., 63.]);
     }
     // W/W* intersect; a later larger rectangle cannot reopen a smaller clip.
     let doc = page(b"0 0 50 240 re W n 0 0 300 240 re W* n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
-    assert!(textedit::scan(&doc, 0)
-        .unwrap_err()
-        .contains("partly clipped"));
+    assert_eq!(
+        textedit::tests::clipped_roundtrip(&doc).runs[0].display_rect[2],
+        50.
+    );
     let doc = page(b"0 0 10 10 re W n 20 20 10 10 re W n");
     assert!(textedit::scan(&doc, 0)
         .unwrap_err()
@@ -84,14 +119,12 @@ fn textedit_clip_transform_is_fixed_at_creation_and_restored_by_q() {
     // Q must not discard an outer clip either.
     let doc =
         page(b"40 177 80 15 re W n q 40 177 80 15 re W n Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
-    assert!(textedit::scan(&doc, 0)
-        .unwrap_err()
-        .contains("partly clipped"));
+    let hidden = textedit::tests::clipped_roundtrip(&doc).runs[0].display_rect;
+    assert_eq!(hidden[1], hidden[3]);
     // Translating text does not move an already established clip with it.
     let doc = page(b"0 0 100 240 re W n 1 0 0 1 150 0 cm BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
-    assert!(textedit::scan(&doc, 0)
-        .unwrap_err()
-        .contains("partly clipped"));
+    let hidden = textedit::tests::clipped_roundtrip(&doc).runs[0].display_rect;
+    assert_eq!(hidden[0], hidden[2]);
 }
 
 #[test]
@@ -107,7 +140,6 @@ fn textedit_clips_refuse_partial_compound_painted_and_unbounded_paths() {
         "0 0 300 240 re 0 0 100 100 re W n",
         "0 0 300 240 re W q n Q",
         "0 0 m 300 240 l W n",
-        "0 0 -300 240 re W n",
         "0 0 300 0 re W n",
         "0 0 1000001 240 re W n",
         "1000000 0 1 240 re W n",
@@ -194,6 +226,7 @@ fn textedit_painted_rectangles_preserve_paint_state_and_surrounding_operators() 
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -231,10 +264,12 @@ fn textedit_painted_rectangles_do_not_replace_or_discard_clipping() {
                 );
                 let doc = page(body.as_bytes());
                 let result = textedit::scan(&doc, 0);
-                assert_eq!(result.is_ok(), accepted, "{body}: {result:?}");
-                if !accepted {
-                    assert!(result.unwrap_err().contains("partly clipped"));
-                }
+                assert!(result.is_ok(), "{body}: {result:?}");
+                let runs = textedit::tests::clipped_roundtrip(&doc);
+                assert_eq!(
+                    runs.runs[0].display_rect[0],
+                    if accepted { 40. } else { 41. }
+                );
             }
         }
         // Clipping combined with painting still needs its own implementation.
@@ -278,6 +313,7 @@ fn textedit_painted_rectangles_refuse_invalid_geometry_and_incomplete_paths_atom
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 3,
@@ -303,6 +339,7 @@ fn textedit_stroked_lines_preserve_graphics_and_following_text() {
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -337,11 +374,11 @@ fn textedit_stroked_lines_cannot_replace_or_discard_a_clip() {
         for (clip, accepted) in [("0 0 300 240", true), ("41 0 259 240", false)] {
             for (open, before, after) in [("", "", ""), ("q", "", "Q"), ("q", "Q", "")] {
                 let body=format!("{clip} re W n {open} 0 0 m 20 20 l {ending} {before} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {after}");
-                let result = textedit::scan(&page(body.as_bytes()), 0);
-                assert_eq!(result.is_ok(), accepted, "{body}: {result:?}");
-                if !accepted {
-                    assert!(result.unwrap_err().contains("partly clipped"));
-                }
+                let runs = textedit::tests::clipped_roundtrip(&page(body.as_bytes()));
+                assert_eq!(
+                    runs.runs[0].display_rect[0],
+                    if accepted { 40. } else { 41. }
+                );
             }
         }
     }
@@ -385,6 +422,7 @@ fn textedit_stroked_lines_refuse_invalid_and_incomplete_paths_atomically() {
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 3,
@@ -411,6 +449,7 @@ fn textedit_curves_preserve_complete_subpaths_and_following_text() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: before.revision,
                     operator: before.runs[0].operator,
@@ -476,6 +515,7 @@ fn textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: vec![],
                     operator: 3,
@@ -495,7 +535,11 @@ fn textedit_curves_preserve_clip_and_validate_transformed_boundary() {
     let curve = "0 0 m 1 2 3 4 5 6 c 7 8 9 10 v 11 12 13 14 y f";
     for (rect, accepted) in [("0 0 300 240", true), ("41 0 259 240", false)] {
         let body = format!("{rect} re W n q {curve} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
-        assert_eq!(textedit::scan(&page(body.as_bytes()), 0).is_ok(), accepted);
+        let runs = textedit::tests::clipped_roundtrip(&page(body.as_bytes()));
+        assert_eq!(
+            runs.runs[0].display_rect[0],
+            if accepted { 40. } else { 41. }
+        );
     }
     for (op, count) in [("c", 6), ("v", 4), ("y", 4)] {
         for index in 0..count {
@@ -530,6 +574,7 @@ fn textedit_reversed_clips_preserve_geometry_and_authored_bytes() {
                 textedit::write(
                     &mut doc,
                     &[Change {
+                        layout: None,
                         page: 0,
                         revision: before.revision,
                         operator: before.runs[0].operator,
@@ -562,12 +607,8 @@ fn textedit_reversed_clips_still_reject_partial_empty_and_unbounded_regions() {
             "300 188 -300 -88",
         ] {
             let body = format!("{rect} re {rule} n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
-            assert!(
-                textedit::scan(&page(body.as_bytes()), 0)
-                    .unwrap_err()
-                    .contains("partly clipped"),
-                "{body}"
-            );
+            let runs = textedit::tests::clipped_roundtrip(&page(body.as_bytes()));
+            assert_ne!(runs.runs[0].display_rect, [40., 48., 76., 63.]);
         }
         for rect in [
             "0 0 0 -240",
@@ -580,9 +621,10 @@ fn textedit_reversed_clips_still_reject_partial_empty_and_unbounded_regions() {
             assert!(textedit::scan(&page(body.as_bytes()), 0).is_err(), "{body}");
         }
         let body = format!("50 240 -50 -240 re {rule} n 300 240 -300 -240 re {rule} n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
-        assert!(textedit::scan(&page(body.as_bytes()), 0)
-            .unwrap_err()
-            .contains("partly clipped"));
+        assert_eq!(
+            textedit::tests::clipped_roundtrip(&page(body.as_bytes())).runs[0].display_rect[2],
+            50.
+        );
         let body = format!("10 10 -10 -10 re {rule} n 30 30 -10 -10 re {rule} n");
         assert!(textedit::scan(&page(body.as_bytes()), 0)
             .unwrap_err()

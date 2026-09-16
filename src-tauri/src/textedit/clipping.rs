@@ -8,6 +8,148 @@ mod tests;
 
 pub(super) type Rect = [f64; 4];
 
+#[derive(Clone)]
+pub(super) struct Region {
+    rectangles: Vec<(Rect, i32)>,
+    even_odd: bool,
+}
+
+impl Region {
+    // Partition the candidate envelope at every clip edge. Testing every cell
+    // catches holes and disjoint interiors that a corner-only test would miss.
+    pub(super) fn contains(&self, text: Rect) -> Result<(), String> {
+        let mut xs = vec![text[0], text[2]];
+        let mut ys = vec![text[1], text[3]];
+        for (rect, _) in &self.rectangles {
+            xs.extend(
+                [rect[0], rect[2]]
+                    .into_iter()
+                    .filter(|x| *x > text[0] && *x < text[2]),
+            );
+            ys.extend(
+                [rect[1], rect[3]]
+                    .into_iter()
+                    .filter(|y| *y > text[1] && *y < text[3]),
+            );
+        }
+        xs.sort_by(f64::total_cmp);
+        ys.sort_by(f64::total_cmp);
+        for x in xs.windows(2).filter(|p| p[0] < p[1]) {
+            for y in ys.windows(2).filter(|p| p[0] < p[1]) {
+                let px = (x[0] + x[1]) / 2.;
+                let py = (y[0] + y[1]) / 2.;
+                let winding: i32 = self
+                    .rectangles
+                    .iter()
+                    .filter(|(r, _)| px > r[0] && px < r[2] && py > r[1] && py < r[3])
+                    .map(|(_, direction)| direction)
+                    .sum();
+                if winding == 0 || (self.even_odd && winding % 2 == 0) {
+                    return Err("partly clipped text is not editable yet".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// Rectangular subpaths emitted as m/l/h rather than re. Preserve the original
+// winding: nested rectangles can describe a hole, not a larger bounding box.
+pub(super) fn compound(
+    ops: &[Operation],
+    ctm: [f64; 6],
+) -> Result<Option<(usize, Region)>, String> {
+    let mut rectangles = Vec::new();
+    let mut index = 0;
+    while ops.get(index).is_some_and(|op| op.operator == "m") {
+        let mut points = Vec::new();
+        for expected in ["m", "l", "l", "l"] {
+            let Some(op) = ops
+                .get(index)
+                .filter(|op| op.operator == expected && op.operands.len() == 2)
+            else {
+                return Ok(None);
+            };
+            points.push([
+                super::number(&op.operands[0])?,
+                super::number(&op.operands[1])?,
+            ]);
+            index += 1;
+        }
+        if let Some(op) = ops
+            .get(index)
+            .filter(|op| op.operator == "l" && op.operands.len() == 2)
+        {
+            if [
+                super::number(&op.operands[0])?,
+                super::number(&op.operands[1])?,
+            ] != points[0]
+            {
+                return Ok(None);
+            }
+            index += 1;
+        }
+        if !ops
+            .get(index)
+            .is_some_and(|op| op.operator == "h" && op.operands.is_empty())
+        {
+            return Ok(None);
+        }
+        index += 1;
+        let [a, b, c, d] = points.as_slice() else {
+            unreachable!()
+        };
+        if !((a[1] == b[1] && b[0] == c[0] && c[1] == d[1] && d[0] == a[0])
+            || (a[0] == b[0] && b[1] == c[1] && c[0] == d[0] && d[1] == a[1]))
+        {
+            return Ok(None);
+        }
+        // Keep computed differences in f64, like the existing rectangle path.
+        let xs = [a[0] * ctm[0] + ctm[4], c[0] * ctm[0] + ctm[4]];
+        let ys = [a[1] * ctm[3] + ctm[5], c[1] * ctm[3] + ctm[5]];
+        let exact = [
+            xs[0].min(xs[1]),
+            ys[0].min(ys[1]),
+            xs[0].max(xs[1]),
+            ys[0].max(ys[1]),
+        ];
+        if exact.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.)
+            || exact[0] >= exact[2]
+            || exact[1] >= exact[3]
+        {
+            return Err("compound clip coordinates exceed their limit".into());
+        }
+        let direction = if (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) > 0. {
+            1
+        } else {
+            -1
+        };
+        rectangles.push((exact, direction));
+        if rectangles.len() > 32 {
+            return Err("too many compound clip rectangles".into());
+        }
+    }
+    let Some(rule) = ops
+        .get(index)
+        .filter(|op| matches!(op.operator.as_str(), "W" | "W*") && op.operands.is_empty())
+    else {
+        return Ok(None);
+    };
+    if !ops
+        .get(index + 1)
+        .is_some_and(|op| op.operator == "n" && op.operands.is_empty())
+    {
+        return Ok(None);
+    }
+    Ok(Some((
+        index + 2,
+        Region {
+            rectangles,
+            even_odd: rule.operator == "W*",
+        },
+    )))
+}
+
 // PDF 1.6, 4.4.3: W/W* takes effect at the path-ending operator, and clips
 // intersect. Consume only the complete `re W n` / `re W* n` sequence. A single
 // rectangle has the same interior under either winding rule; n paints nothing.

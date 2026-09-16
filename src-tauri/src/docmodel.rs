@@ -2186,11 +2186,11 @@ impl Doc {
             if previous.revision != change.revision || previous.original != change.original {
                 return Err(Refusal::TextEdit("text changed since it was selected"));
             }
-            if previous.replacement == change.replacement {
+            if previous.replacement == change.replacement && previous.layout == change.layout {
                 return Ok(());
             }
         }
-        if change.original == change.replacement {
+        if change.original == change.replacement && change.layout.is_none() {
             if self.now.text_edits.contains_key(&key) {
                 self.apply(Command::ReplaceText {
                     page,

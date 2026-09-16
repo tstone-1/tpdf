@@ -21,6 +21,7 @@ fn textedit_inline_separators_preserve_bytes_and_positions_without_edit_targets(
                 ["FIRST", "SECOND"]
             );
             let mut invalid = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision.clone(),
                 operator: before.runs[1].operator - 2,

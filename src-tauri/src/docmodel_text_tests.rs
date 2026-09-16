@@ -2,12 +2,40 @@ use super::*;
 
 fn change(page: u32, operator: u32, replacement: &str) -> crate::textedit::Change {
     crate::textedit::Change {
+        layout: None,
         page,
         revision: vec![1; 32],
         operator,
         original: "SYNTHETIC ORIGINAL TEXT".into(),
         replacement: replacement.into(),
     }
+}
+
+#[test]
+fn layout_only_edits_are_journaled_and_undo_restores_the_exact_layout() {
+    let mut doc = Doc::open(1);
+    let page = doc.working().order()[0];
+    let mut edit = change(0, 3, "SYNTHETIC ORIGINAL TEXT");
+    edit.layout = Some(crate::textedit::Layout {
+        width: 200.,
+        height: 40.,
+        size: 14.,
+        wrap: true,
+        font: crate::textedit::EditFont::NotoSans,
+    });
+    doc.replace_text(page, edit.clone()).unwrap();
+    assert_eq!(doc.text_changes(), [edit.clone()]);
+    let mut resized = edit.clone();
+    resized.layout.as_mut().unwrap().width = 220.;
+    doc.replace_text(page, resized.clone()).unwrap();
+    assert_eq!(doc.text_changes(), [resized.clone()]);
+    assert!(doc.undo());
+    assert_eq!(doc.text_changes(), [edit]);
+    assert!(doc.undo());
+    assert!(doc.text_changes().is_empty());
+    assert!(doc.redo());
+    assert!(doc.redo());
+    assert_eq!(doc.text_changes(), [resized]);
 }
 
 #[test]

@@ -12,7 +12,9 @@ mod colors;
 mod filters;
 mod fonts;
 mod graphics;
+mod grouping;
 mod images;
+mod layout;
 mod refusal;
 mod spacers;
 mod streams;
@@ -25,7 +27,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const MAX_CONTENT: usize = 1024 * 1024;
-const MAX_OPERATIONS: usize = 4096;
+// Character-positioned exports use two operators per glyph. Keep a finite
+// work bound without rejecting ordinary dense pages; decoded bytes stay at 1 MiB.
+const MAX_OPERATIONS: usize = 16_384;
 pub(crate) const MAX_TEXT: usize = 4096;
 pub(crate) const MAX_CHANGES: usize = 128;
 
@@ -48,6 +52,27 @@ pub struct PageRuns {
     /// Binds operator addresses to the exact decoded content that was inspected.
     pub revision: Vec<u8>,
     pub runs: Vec<Run>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<Preview>,
+}
+
+/// A bounded crop rendered by the same worker/writer used for the saved PDF.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Preview {
+    pub png: Vec<u8>,
+    pub font: String,
+    pub rect: [f32; 4],
+    pub lines: usize,
+}
+
+pub(crate) fn preview_layout(doc: &Document, change: &Change) -> Result<Preview, String> {
+    let prepared = layout::prepare(doc, &inspect(doc, change.page)?, change)?;
+    Ok(Preview {
+        png: Vec::new(),
+        font: prepared.label,
+        rect: prepared.rect,
+        lines: prepared.lines,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -57,6 +82,32 @@ pub struct Change {
     pub operator: u32,
     pub original: String,
     pub replacement: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<Layout>,
+}
+
+/// User-selected editing area and font size, in page points along the text axes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Layout {
+    pub width: f64,
+    pub height: f64,
+    pub size: f64,
+    #[serde(default)]
+    pub wrap: bool,
+    #[serde(default)]
+    pub font: EditFont,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditFont {
+    #[default]
+    Auto,
+    Original,
+    NotoSans,
+    NotoSansBold,
+    NotoSansItalic,
+    NotoSansBoldItalic,
 }
 
 fn dictionary<'a>(doc: &'a Document, value: &'a Object) -> Result<&'a Dictionary, String> {
@@ -308,6 +359,10 @@ struct Inspection {
     horizontal_bounds: BTreeMap<u32, [f64; 2]>,
     text_spacing: BTreeMap<u32, (f64, f64)>,
     continued: BTreeSet<u32>,
+    groups: BTreeMap<u32, Vec<u32>>,
+    compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
+    contexts: BTreeMap<u32, layout::Context>,
+    expanded: BTreeMap<usize, layout::Prepared>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
@@ -388,6 +443,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         page,
         revision: Sha256::digest(&bytes).to_vec(),
         runs: Vec::new(),
+        preview: None,
     };
     // Never skip unknown operators: graphics and text state can change a Tj's
     // meaning without changing its string. Tf and TL persist across BT/ET;
@@ -408,11 +464,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut stroke_components = 1;
     let mut states = Vec::new();
     let mut clip = None;
+    let mut compound_clips: Vec<clipping::Region> = Vec::new();
     let mut path_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut horizontal_bounds = BTreeMap::new();
     let mut text_spacing = BTreeMap::new();
+    let mut compound_run_clips = BTreeMap::new();
+    let mut contexts = BTreeMap::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
@@ -452,6 +511,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     spacing,
                     word_spacing,
                     stroke_components,
+                    compound_clips.clone(),
                 ));
             }
             ("Q", []) if !inside => {
@@ -464,6 +524,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     spacing,
                     word_spacing,
                     stroke_components,
+                    compound_clips,
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
@@ -484,6 +545,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 }
             }
             ("m", _) if !inside => {
+                if let Some((consumed, region)) =
+                    clipping::compound(&content.operations[index..], page_transform)?
+                {
+                    if compound_clips.len() >= 32 {
+                        return Err("too many compound clipping intersections".into());
+                    }
+                    compound_clips.push(region);
+                    path_until = index + consumed;
+                    continue;
+                }
                 let consumed = clipping::path(&content.operations[index..], page_transform)?;
                 if content.operations[index + consumed - 1].operator != "n" {
                     tags.paint();
@@ -670,7 +741,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         if page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0 {
             return Err("reflected text is not editable yet".into());
         }
-        let bounds = text_bounds(
+        let mut bounds = text_bounds(
             page_matrix,
             [horizontal[0], -size * 0.25, horizontal[1], size],
         );
@@ -678,7 +749,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         // vertical union covers every offered glyph. Writing additionally keeps
         // replacement ink inside these unrounded original horizontal bounds.
         // Standard-font widths cannot prove substituted glyph ink bounds.
-        if clip.is_some() {
+        if !text.is_empty() && (clip.is_some() || !compound_clips.is_empty()) {
             let [bottom, top] = metrics
                 .vertical_bounds
                 .ok_or("clipped text requires validated embedded glyph outlines")?;
@@ -691,7 +762,24 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     top * size / 1000.,
                 ],
             );
-            clipping::contains(clip, ink_bounds)?;
+            // A rectangular clip remains in the saved stream and in the worker
+            // preview. Partly clipped source text is still editable; rejecting
+            // it here would disable every other text object on the page.
+            if clipping::contains(clip, ink_bounds).is_err() {
+                let rect = clip.unwrap();
+                bounds = [
+                    bounds[0].clamp(rect[0], rect[2]),
+                    bounds[1].clamp(rect[1], rect[3]),
+                    bounds[2].clamp(rect[0], rect[2]),
+                    bounds[3].clamp(rect[1], rect[3]),
+                ];
+            }
+            for region in &compound_clips {
+                region.contains(ink_bounds)?;
+            }
+            if !compound_clips.is_empty() {
+                compound_run_clips.insert(index as u32, (compound_clips.clone(), ink_bounds));
+            }
         }
         let [left, bottom, right, top] = bounds;
         let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
@@ -711,6 +799,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         font_operators.insert(index as u32, font_operator);
         horizontal_bounds.insert(index as u32, horizontal);
         text_spacing.insert(index as u32, (spacing, word_spacing));
+        contexts.insert(
+            index as u32,
+            layout::Context {
+                line: matrix,
+                shown: shown_matrix,
+                cursor_after: cursor,
+                clip,
+                regions: compound_clips.clone(),
+            },
+        );
         result.runs.push(Run {
             display_rect,
             operator: index as u32,
@@ -735,7 +833,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             continuation_adjustment(run, 0.)?;
         }
     }
-    Ok(Inspection {
+    let mut inspection = Inspection {
         id,
         content,
         bytes,
@@ -745,7 +843,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         horizontal_bounds,
         text_spacing,
         continued,
-    })
+        groups: BTreeMap::new(),
+        compound_run_clips,
+        contexts,
+        expanded: BTreeMap::new(),
+    };
+    grouping::collect(&mut inspection);
+    Ok(inspection)
 }
 
 fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<f32, String> {
@@ -781,12 +885,40 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if !seen.insert((change.page, change.operator)) {
             return Err("duplicate text replacement".into());
         }
-        encode_text(&change.replacement)?;
-        if change.original == change.replacement {
+        if change.replacement.chars().count() > MAX_TEXT
+            || change.replacement.chars().any(|ch| {
+                (ch.is_control() && !(ch == '\n' && change.layout.as_ref().is_some_and(|l| l.wrap)))
+                    || matches!(ch, '\u{2028}' | '\u{2029}')
+            })
+        {
+            return Err("invalid or oversized replacement text".into());
+        }
+        if change.original == change.replacement && change.layout.is_none() {
             return Err("text replacement is unchanged".into());
         }
         if let std::collections::btree_map::Entry::Vacant(entry) = prepared.entry(change.page) {
             entry.insert(inspect(doc, change.page)?);
+        }
+        if change.layout.is_some() {
+            let page = prepared.get_mut(&change.page).ok_or("missing text page")?;
+            let replacement = layout::prepare(doc, page, change)?;
+            page.expanded.insert(change.operator as usize, replacement);
+            page.patched.insert(change.operator as usize);
+            let members = page
+                .groups
+                .get(&change.operator)
+                .cloned()
+                .unwrap_or_default();
+            for member in members {
+                let show = &mut page.content.operations[member as usize];
+                show.operands[0] = if show.operator == "TJ" {
+                    Object::Array(vec![Object::string_literal(Vec::new())])
+                } else {
+                    Object::string_literal(Vec::new())
+                };
+                page.patched.insert(member as usize);
+            }
+            continue;
         }
         let Inspection {
             id,
@@ -797,6 +929,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             text_spacing,
             continued,
             patched,
+            groups,
             ..
         } = prepared.get_mut(&change.page).ok_or("missing text page")?;
         let run = runs
@@ -845,6 +978,17 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         } else {
             replacement
         };
+        if let Some(members) = groups.get(&change.operator) {
+            for &member in members {
+                let show = &mut content.operations[member as usize];
+                show.operands[0] = if show.operator == "TJ" {
+                    Object::Array(vec![Object::string_literal(Vec::new())])
+                } else {
+                    Object::string_literal(Vec::new())
+                };
+                patched.insert(member as usize);
+            }
+        }
     }
     let ready = prepared
         .into_values()
@@ -854,13 +998,48 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                  content,
                  bytes,
                  patched,
+                 expanded,
                  ..
              }| {
-                streams::rewrite(&bytes, &content, &patched).map(|bytes| (id, bytes))
+                let mut font_names = BTreeSet::new();
+                for operation in content
+                    .operations
+                    .iter()
+                    .chain(expanded.values().flat_map(|value| &value.operations))
+                {
+                    if operation.operator == "Tf" {
+                        font_names
+                            .insert(operation.operands[0].as_name().map_err(|e| e.to_string())?);
+                    }
+                }
+                if font_names.len() > 32 {
+                    return Err("Text edits would exceed the page's 32-font limit".into());
+                }
+                let expansions = expanded
+                    .iter()
+                    .map(|(index, value)| (*index, value.operations.clone()))
+                    .collect();
+                streams::rewrite_expanded(&bytes, &content, &patched, &expansions)
+                    .map(|bytes| (id, bytes, expanded))
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
-    for (page, bytes) in ready {
+    let mut programs = BTreeMap::new();
+    for (page, bytes, expanded) in ready {
+        if expanded.values().any(|value| value.fallback.is_some()) {
+            let mut resources = resources(doc, page)?.clone();
+            let mut fonts =
+                dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?.clone();
+            for value in expanded.into_values() {
+                if let Some(font) = value.fallback {
+                    fonts.set(value.name, font.install(doc, &mut programs)?);
+                }
+            }
+            resources.set("Font", fonts);
+            doc.get_dictionary_mut(page)
+                .map_err(|e| e.to_string())?
+                .set("Resources", resources);
+        }
         let stream = doc.add_object(Stream::new(Dictionary::new(), bytes));
         doc.get_object_mut(page)
             .and_then(Object::as_dict_mut)
@@ -877,6 +1056,9 @@ mod continuation_tests;
 mod leading_tests;
 
 #[cfg(test)]
+mod layout_tests;
+
+#[cfg(test)]
 mod rotation_tests;
 
 #[cfg(test)]
@@ -889,6 +1071,84 @@ mod spacing_tests;
 pub(crate) mod tests {
     use super::*;
     use lopdf::dictionary;
+
+    // Clipping is authored artwork, not a reason to reject unrelated text.
+    // Exercise a real replacement and prove every non-text operator survives.
+    pub(crate) fn clipped_roundtrip(source: &Document) -> PageRuns {
+        let before = inspect(source, 0).unwrap();
+        let run = &before.runs.runs[0];
+        let mut doc = source.clone();
+        write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: before.runs.revision.clone(),
+                operator: run.operator,
+                original: run.text.clone(),
+                replacement: String::new(),
+            }],
+        )
+        .unwrap();
+        let after = inspect(&doc, 0).unwrap();
+        assert_eq!(
+            after.content.operations.len(),
+            before.content.operations.len()
+        );
+        for (index, (old, new)) in before
+            .content
+            .operations
+            .iter()
+            .zip(&after.content.operations)
+            .enumerate()
+        {
+            if index != run.operator as usize {
+                assert_eq!(old.operator, new.operator);
+                assert_eq!(old.operands, new.operands);
+            }
+        }
+        for (id, object) in &source.objects {
+            if *id != before.id {
+                assert_eq!(&doc.objects[id], object);
+            }
+        }
+        assert!(after.runs.runs[0].text.is_empty());
+        before.runs
+    }
+
+    #[test]
+    fn textedit_dense_pages_preserve_operators_and_enforce_work_limit() {
+        let body = format!(
+            "{}BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET",
+            "0 g\n".repeat(6000)
+        );
+        let mut doc = with_content(body.as_bytes());
+        let before = scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), 1);
+        write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "SYNTHETIC FIRST".into(),
+                replacement: "FIRST".into(),
+            }],
+        )
+        .unwrap();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let bytes = page_content(&doc, page).unwrap();
+        assert!(bytes.starts_with("0 g\n".repeat(6000).as_bytes()));
+        assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "FIRST");
+        assert!(scan(&with_content("0 g\n".repeat(MAX_OPERATIONS).as_bytes()), 0).is_ok());
+        assert!(scan(
+            &with_content("0 g\n".repeat(MAX_OPERATIONS + 1).as_bytes()),
+            0
+        )
+        .unwrap_err()
+        .contains("operator count"));
+    }
 
     #[test]
     fn textedit_kerning_geometry_and_rewrite_preserve_other_shows() {
@@ -1156,6 +1416,7 @@ pub(crate) mod tests {
     pub(crate) fn change(doc: &Document) -> Change {
         let runs = scan(doc, 0).unwrap();
         Change {
+            layout: None,
             page: 0,
             revision: runs.revision,
             operator: runs.runs[0].operator,

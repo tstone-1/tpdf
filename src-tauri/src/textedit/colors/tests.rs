@@ -53,6 +53,7 @@ fn textedit_colours_restore_state_and_preserve_operators() {
         .unwrap()
         .operations;
     let update = Change {
+        layout: None,
         page: 0,
         revision: before.revision,
         operator: before.runs[0].operator,
@@ -138,6 +139,7 @@ fn textedit_icc_checks_header_range_and_preserves_profile_bytes() {
     let before = doc.objects.clone();
     let runs = textedit::scan(&doc, 0).unwrap();
     let update = Change {
+        layout: None,
         page: 0,
         operator: runs.runs[0].operator,
         revision: runs.revision,
@@ -209,6 +211,7 @@ fn textedit_stroke_colours_restore_independent_state_and_preserve_operators() {
     textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,

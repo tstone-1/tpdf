@@ -27,6 +27,7 @@ fn textedit_normal_graphics_state_preserves_fill_geometry_and_saved_operators() 
     for state in [
         dictionary! {},
         dictionary! { "ca" => 1, "BM" => "Normal" },
+        dictionary! { "ca" => 1, "BM" => "Normal", "LW" => 0.5, "LC" => 0, "LJ" => 2, "ML" => 4, "SA" => true },
         dictionary! { "Type" => "ExtGState", "ca" => 1.0, "CA" => 1, "BM" => "Normal" },
     ] {
         let mut doc = fixture(state.into(), "/DeviceGray cs 0 0 0 RG 0.3 sc /G3 gs q /DeviceRGB cs 0.8 G 0 0 0 1 K 1 0 0 sc BT /F1 12 Tf /G3 gs 40 180 Td (FIRST) Tj ET Q 0.2 sc BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
@@ -37,6 +38,7 @@ fn textedit_normal_graphics_state_preserves_fill_geometry_and_saved_operators() 
         let old = Content::decode_strict(&doc.get_page_content(id)).unwrap();
         let objects = doc.objects.clone();
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -140,6 +142,7 @@ fn textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 0,
@@ -247,6 +250,7 @@ fn textedit_rendering_intents_preserve_operators_resources_and_geometry() {
         let bytes = doc.get_page_content(page);
         let objects = doc.objects.clone();
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -298,6 +302,7 @@ fn textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions(
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 0,
@@ -347,6 +352,7 @@ fn textedit_print_graphics_state_preserves_flags_resources_and_scoped_operators(
             let before = textedit::scan(&doc, 0).unwrap();
             let old = Content::decode_strict(&doc.get_page_content(page)).unwrap();
             let update = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -443,6 +449,7 @@ fn textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomicall
             assert!(textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: vec![],
                     operator: 5,
@@ -473,6 +480,7 @@ fn textedit_stroke_styles_preserve_scoped_operators_and_other_text() {
         let old = Content::decode_strict(&doc.get_page_content(id)).unwrap();
         let resources = textedit::resources(&doc, id).unwrap().clone();
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -547,6 +555,7 @@ fn textedit_stroke_styles_refuse_invalid_state_even_before_resets_atomically() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: vec![],
                     operator: 0,

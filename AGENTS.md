@@ -258,9 +258,23 @@ cannot supply the API that checker imports. See Microsoft's
 [side-by-side migration guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
 
 Existing-text editing admits exact 90/180/270-degree text matrices with positive
-orientation after composition; page CTMs remain diagonal. Line movement and both
-hit/ink envelopes use the transformed text axes. Skew and mirrored final text
-remain refused. `textedit/rotation_tests.rs` checks crop/page turns, clipping on
+orientation after composition; page CTMs remain diagonal. Decoded page content
+is bounded to 1 MiB and 16,384 operators, allowing character-positioned exports
+past the former 4,096-operator limit. Adjacent positioned text fragments are grouped
+within a line, without crossing graphics/text state changes. Saving a group
+replaces its first show and empties its other shows, preserving every authored
+positioning operation. Rectangular clips remain active during preview and saving;
+partly clipped text no longer blocks the page, and hit targets respect that clip.
+Compound rectangular paths retain their winding/hole semantics. Identity-H fonts
+also admit bounded Unicode mappings, with glyph indices, widths and outlines
+validated against their embedded TrueType program. Without an explicit layout,
+replacements need existing validated glyphs and must fit the original width.
+`text-edit-probe --roundtrip <input.pdf> <requests.json> <new-output-directory>`
+checks contained preview/save pixel agreement and unchanged adjacent pixels;
+request examples are in `src-tauri/src/probes/text_edit_roundtrip.rs`. Keep private inputs,
+request files and outputs in ignored directories, never in fixtures or assertions.
+Line movement and both hit/ink envelopes use the transformed text axes. Skew and
+mirrored final text remain refused. `textedit/rotation_tests.rs` checks crop/page turns, clipping on
 every edge, bounded replacements and preserved positioning.
 `tabs_check.py --phase textedit-passport` edits the vertical label on page 16 of
 the unchanged passport guide in `testdata/textedit-public-corpus.json`.
@@ -278,7 +292,22 @@ are treated as separate regions; author-defined tags still decide block order.
 `TextEditor` focuses with `preventScroll: true`: ordinary
 focus can scroll an overflow-hidden overlay and displace every hit target.
 
+Explicit text layouts support width/height, font size and wrapping within one
+editing area. `textedit/layout.rs` restores the original font, spacing, line
+matrix and cursor after drawing each replacement; later text remains fixed.
+`vendor/fonts/manifest.json` pins four OFL Noto Sans styles for automatic or
+explicit fallback. Full font programs are shared by style within a write;
+bounded CIDToGIDMap streams preserve the separate Unicode and glyph mappings.
+No system fonts, complex-script shaping or automatic table-row growth are used.
+New text must fit the page, active clips and the selected box without colliding
+with other source text. Draft previews use the worker's save path and a bounded
+PNG crop; cancelling a preview creates no journal entry. Independent synthetic
+generation/readback commands are in `scripts/text_layout_check.py`, and
+`textedit/layout_tests.rs` covers orthogonal matrices, continued shows, clipping,
+deletion and overflow. Layout changes participate in the normal undo journal.
+
 Consecutive `Tj`/`TJ` text shows keep a separate text cursor and line matrix.
+The following byte-patching rules describe changes without an explicit layout.
 When an edit precedes another show without a position reset, the writer adds a
 trailing `TJ` adjustment to preserve the original advance. It refuses an edit
 whose PDF number precision would move following text by more than 0.000001 page
@@ -315,7 +344,9 @@ edits and deletion across adjacent tags, malformed sequences and tab spacers.
 
 Single rectangular clips accept nonzero signed width and height, normalizing
 transformed corners before intersection. The saved `re W/W* n` bytes remain
-unchanged. Empty, compound, painted and partly clipped text cases remain refused.
+unchanged. Partly clipped text retains its clip and exposes only its visible hit
+area. Bounded compound rectangular clips preserve winding and holes; their text
+ink must remain fully contained. Unsupported clip shapes remain refused.
 Generate equivalent clip fixtures with `make_textedit_composite.py <path> --clip-direction
 positive|x|y|both --clip-rule W|W*`; the background makes a missing clip visible.
 
@@ -414,8 +445,9 @@ text and cyclic or non-array references.
 Identity-H TrueType fonts also admit the exact `ff`, `fi`, `fl` and `ffi`
 ToUnicode sequences already supported by CFF. Source measurements retain original
 CID boundaries; replacement encoding chooses the longest available ligature.
-Controls, compatibility characters, arbitrary sequences, duplicate targets and
-sequence ranges remain refused. Expanded text retains the normal character bound.
+Controls, arbitrary multi-character sequences, duplicate targets and sequence
+ranges remain refused. The Unicode path also admits individual compatibility
+characters when their embedded glyphs validate. Expanded text retains the normal character bound.
 Generate with `testdata/make_textedit_composite.py <path> --ligatures`;
 `text-edit-probe`, `make_textedit_embedded.py --check` and
 `text_edit_pdfkit.swift` accept `--cid-ligatures`. The native check reuses

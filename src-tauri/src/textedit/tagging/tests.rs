@@ -111,6 +111,7 @@ fn textedit_tagged_layout_spacing_and_source_spaces_survive_a_fitting_edit() {
             assert_eq!(before.runs[0].text, "FIRST ");
             let original = doc.objects.clone();
             let edit = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -173,6 +174,7 @@ fn textedit_tagged_shared_layout_spacing_preserves_all_pages_and_attributes() {
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -242,6 +244,7 @@ fn textedit_tagged_flowing_paragraph_preserves_every_item_and_page() {
         let other = textedit::scan(&doc, 1 - page).unwrap();
         let original = doc.objects.clone();
         let edit = Change {
+            layout: None,
             page,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -285,6 +288,7 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
         let (mut doc, ids) = flowing();
         let before = textedit::scan(&doc, 1).unwrap();
         let edit = Change {
+            layout: None,
             page: 1,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -421,6 +425,7 @@ fn textedit_tagged_flowing_batch_is_atomic_across_pages() {
     let edits = [0, 1].map(|page| {
         let before = textedit::scan(&doc, page).unwrap();
         Change {
+            layout: None,
             page,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -446,6 +451,7 @@ fn textedit_tagged_pages_keep_local_ids_and_shared_streams_isolated() {
         let other = textedit::scan(&doc, 1 - page).unwrap();
         let objects = doc.objects.clone();
         let edit = Change {
+            layout: None,
             page,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -485,6 +491,7 @@ fn textedit_tagged_multi_page_batches_validate_before_writing() {
     let edits = [0, 1].map(|page| {
         let before = textedit::scan(&doc, page).unwrap();
         Change {
+            layout: None,
             page,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -680,6 +687,7 @@ fn textedit_tagged_round_trip_preserves_structure_and_marked_content() {
     let before = textedit::scan(&doc, 0).unwrap();
     let objects = doc.objects.clone();
     let edit = Change {
+        layout: None,
         page: 0,
         revision: before.revision,
         operator: before.runs[0].operator,
@@ -719,6 +727,7 @@ fn textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes() {
             let (mut doc, ids) = fixture(CONTENT);
             let before = textedit::scan(&doc, 0).unwrap();
             let edit = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -896,6 +905,7 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -935,6 +945,7 @@ fn textedit_inline_separators_retain_tagged_paragraph_ownership() {
     textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: runs.revision,
             operator: runs.runs[0].operator,
@@ -988,6 +999,7 @@ fn textedit_tagged_metadata_representations_preserve_the_original_graph() {
         assert_eq!(before.runs, direct.runs);
         let objects = doc.objects.clone();
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -1013,6 +1025,7 @@ fn textedit_tagged_metadata_references_keep_validation_and_atomic_refusal() {
             let (mut doc, ids) = fixture(CONTENT);
             let before = textedit::scan(&doc, 0).unwrap();
             let edit = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,

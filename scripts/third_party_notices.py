@@ -58,6 +58,7 @@ Windows with nothing wrong, on the first CI run that reached it.
 """
 
 import argparse
+import hashlib
 import difflib
 import json
 import re
@@ -436,6 +437,25 @@ def render(
         "`scripts/gates.py`. Do not edit it by hand -- a hand-maintained notices file "
         "is wrong the first time a dependency changes, and nothing says so."
     )
+    add("")
+
+    font_root = ROOT / "vendor" / "fonts"
+    font_manifest = json.loads((font_root / "manifest.json").read_text(encoding="utf-8"))
+    listed = {item["file"] for item in font_manifest["files"]}
+    if listed != {path.name for path in font_root.glob("*.ttf")}:
+        raise ValueError("bundled font manifest does not enumerate every font")
+    if font_manifest["license"] != "OFL-1.1" or not listed:
+        raise ValueError("bundled font license or inventory is invalid")
+    for item in font_manifest["files"]:
+        if hashlib.sha256((font_root / item["file"]).read_bytes()).hexdigest() != item["sha256"]:
+            raise ValueError("bundled font bytes differ from the pinned manifest")
+    add("## Bundled editing fonts")
+    add("")
+    add(f"Noto Sans ({font_manifest['version']}), including Regular, Bold, Italic and Bold Italic, is distributed under OFL-1.1.")
+    add("")
+    add("```")
+    add("\n".join(line.rstrip() for line in (font_root / "OFL.txt").read_text(encoding="utf-8").strip().splitlines()))
+    add("```")
     add("")
 
     add("## PDFium, and the libraries compiled into it")

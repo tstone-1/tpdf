@@ -19,7 +19,75 @@ const PREFIX: &[u8] = br"/CIDInit /ProcSet findresource begin
 /CMapName /Adobe-Identity-UCS def /CMapType 2 def
 1 begincodespacerange <00> <FF> endcodespacerange";
 const SUFFIX: &[u8] = b"endcmap CMapName currentdict /CMap defineresource pop end end";
-const MAX_MAP: usize = 16 * 1024;
+const MAX_MAP: usize = 128 * 1024;
+
+// The general Identity-H path retains Unicode scalars instead of narrowing
+// them into the legacy Latin-1 metric slots. Glyph validation remains separate.
+pub(super) fn unicode_cid(
+    stream: &Stream,
+) -> Result<std::collections::BTreeMap<u16, String>, String> {
+    let invalid = || "unsupported or ambiguous Unicode character map".to_string();
+    let word = |object: &Object| -> Result<u16, String> {
+        let bytes = object.as_str().map_err(|_| invalid())?;
+        let [a, b] = bytes else {
+            return Err(invalid());
+        };
+        Ok(u16::from_be_bytes([*a, *b]))
+    };
+    let mut result = std::collections::BTreeMap::new();
+    let mut targets = std::collections::BTreeSet::new();
+    for block in blocks(stream, true)?.chunks_exact(2) {
+        let [Object::Integer(count)] = block[0].operands.as_slice() else {
+            return Err(invalid());
+        };
+        let stride = match (block[0].operator.as_str(), block[1].operator.as_str()) {
+            ("beginbfchar", "endbfchar") => 2,
+            ("beginbfrange", "endbfrange") => 3,
+            _ => return Err(invalid()),
+        };
+        if !(1..=100).contains(count) || block[1].operands.len() != *count as usize * stride {
+            return Err(invalid());
+        }
+        for entry in block[1].operands.chunks_exact(stride) {
+            let first = word(&entry[0])?;
+            let last = if stride == 3 { word(&entry[1])? } else { first };
+            if last < first || result.len() + usize::from(last - first) + 1 > 4096 {
+                return Err(invalid());
+            }
+            let bytes = entry[stride - 1].as_str().map_err(|_| invalid())?;
+            if bytes.is_empty() || bytes.len() % 2 != 0 || bytes.len() > 6 {
+                return Err(invalid());
+            }
+            let units = bytes
+                .chunks_exact(2)
+                .map(|p| u16::from_be_bytes([p[0], p[1]]))
+                .collect::<Vec<_>>();
+            for code in first..=last {
+                let text = if stride == 3 {
+                    let [start] = units.as_slice() else {
+                        return Err(invalid());
+                    };
+                    let target = u32::from(*start) + u32::from(code - first);
+                    if target > 0xffff {
+                        return Err(invalid());
+                    }
+                    char::from_u32(target).ok_or_else(invalid)?.to_string()
+                } else {
+                    String::from_utf16(&units).map_err(|_| invalid())?
+                };
+                if (text.chars().count() != 1
+                    && !matches!(text.as_str(), "ff" | "fi" | "fl" | "ffi"))
+                    || text.chars().any(char::is_control)
+                    || !targets.insert(text.clone())
+                    || result.insert(code, text).is_some()
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+    }
+    Ok(result)
+}
 
 fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
     blocks_with_header(stream, wide, false)

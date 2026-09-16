@@ -254,6 +254,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
             .into_iter()
             .take(128)
             .map(|change| tpdf_lib::textedit::Change {
+                layout: None,
                 page: u32::from(change.page),
                 revision: change.revision.to_vec(),
                 operator: u32::from(change.operator),

@@ -35,6 +35,7 @@ fn textedit_nested_lists_keep_each_body_label_and_structure_object() {
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[edited].operator,
@@ -110,6 +111,7 @@ fn textedit_nested_lists_share_the_grouping_depth_bound() {
     textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[7].operator,
@@ -291,6 +293,7 @@ fn textedit_nested_lists_keep_cross_page_content_ownership() {
     textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 1,
             revision: before.revision,
             operator: before.runs[1].operator,

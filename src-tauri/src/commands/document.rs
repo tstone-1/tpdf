@@ -16,6 +16,51 @@ use super::{await_reply, reply_channel, ReplyRx};
 use crate::render::{DocumentInfo, RenderService};
 use crate::{edits, progressive, recentdocs, render, startup, webopen};
 
+/// Selects a local file in the platform file manager without opening its contents.
+#[tauri::command]
+pub async fn reveal_file(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !path.is_absolute() || !path.is_file() {
+        return Err("The file no longer exists at this location".into());
+    }
+    reveal_local_file(&path)
+}
+
+#[cfg(windows)]
+fn reveal_local_file(path: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    // Explorer parses /select and its quoted path as one argument. Rust's normal
+    // argument quoting quotes that whole argument and opens Documents instead.
+    let text = path.to_str().ok_or("The file path is not valid Unicode")?;
+    if text.contains(['"', '\0']) {
+        return Err("The file path is invalid".into());
+    }
+    std::process::Command::new("explorer.exe")
+        .raw_arg(format!("/select,\"{text}\""))
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not show the file in Explorer: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_local_file(path: &Path) -> Result<(), String> {
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|error| format!("Could not show the file in Finder: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Finder could not show the file".into())
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn reveal_local_file(_path: &Path) -> Result<(), String> {
+    Err("Showing a file is supported on Windows and macOS".into())
+}
+
 /// A document open that was started before the webview asked for it.
 ///
 /// The path is known at launch --- from a file association, an argument, or

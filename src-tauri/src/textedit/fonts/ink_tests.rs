@@ -95,6 +95,7 @@ pub(in crate::textedit) fn exercise(mut doc: Document, font: ObjectId, program_i
         let page = crate::pagetree::ordered_pages(&doc)[0];
         let old = Content::decode_strict(&doc.get_page_content(page)).unwrap();
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -124,15 +125,11 @@ pub(in crate::textedit) fn exercise(mut doc: Document, font: ObjectId, program_i
         let mut doc = control.clone();
         set_content(&mut doc, &format!("{rect} re W n"), &encoded);
         let objects = doc.objects.clone();
-        assert!(
-            textedit::scan(&doc, 0)
-                .unwrap_err()
-                .contains("partly clipped"),
-            "{rect}"
-        );
+        textedit::tests::clipped_roundtrip(&doc);
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: Vec::new(),
                 operator: 0,
@@ -156,7 +153,14 @@ pub(in crate::textedit) fn exercise(mut doc: Document, font: ObjectId, program_i
             &format!("{rect} re W n 1 0 0 2 0 -180 cm"),
             &encoded,
         );
-        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "scaled {rect}");
+        let clipped = textedit::tests::clipped_roundtrip(&doc).runs.remove(0);
+        let mut plain = control.clone();
+        set_content(&mut plain, "1 0 0 2 0 -180 cm", &encoded);
+        assert_eq!(
+            clipped.display_rect == textedit::scan(&plain, 0).unwrap().runs[0].display_rect,
+            accepted,
+            "scaled {rect}"
+        );
     }
 }
 
@@ -216,11 +220,13 @@ fn textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources() {
         ] {
             let mut doc = source.clone();
             set_content(&mut doc, prefix, &metrics.encode(text).unwrap());
-            assert_eq!(
-                textedit::scan(&doc, 0).is_ok(),
-                accepted,
-                "kind={kind} {text} {prefix}"
-            );
+            let clipped = textedit::tests::clipped_roundtrip(&doc).runs.remove(0);
+            let mut plain = source.clone();
+            set_content(&mut plain, "", &metrics.encode(text).unwrap());
+            let plain = textedit::scan(&plain, 0).unwrap().runs.remove(0);
+            if !prefix.contains("cm") {
+                assert_eq!(clipped.display_rect == plain.display_rect, accepted);
+            }
         }
         for (replacement, accepted) in [("BA", false), ("AAD", false), ("AD", true), ("ABA", true)]
         {
@@ -235,6 +241,7 @@ fn textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources() {
             let result = textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: scanned.revision,
                     operator: scanned.runs[0].operator,

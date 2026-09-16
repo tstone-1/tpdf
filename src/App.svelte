@@ -59,7 +59,7 @@
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { call, isOpenRefusal } from "./lib/ipc";
   import { openWithPassword } from "./lib/unlock";
-  import { label, setPrintedKeys } from "./lib/keys";
+  import { isMac, label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -1211,7 +1211,8 @@
           });
           if (!result) throw failure ?? new Error("Text editing is currently unavailable.");
           return result;
-        }, () => { editor.destroy(); if (textEditor === editor) textEditor = null; });
+        }, () => { editor.destroy(); if (textEditor === editor) textEditor = null; },
+        (change) => call("document_text_runs", { doc: model.doc, page: page.id, change }));
       textEditor = editor; editor.update(model.state); editor.setBusy(documentBusy);
     } catch (error) {
       if (generation === textEditorGeneration && edits === model) say(`Cannot edit this text: ${String(error)}`);
@@ -2022,6 +2023,33 @@
    */
   function openContextMenu(entries: string[], at: { x: number; y: number }) {
     contextMenu?.show(entries, at);
+  }
+
+  function tabContextMenu(event: MouseEvent, id: number): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const tab = tabs.find(id);
+    if (!tab) return;
+    contextMenu?.show(["tab.reveal", "tab.copyPath", "---", "tab.close"], { x: event.clientX, y: event.clientY }, [{
+      id: "tab.reveal",
+      title: isMac() ? "Show in Finder" : "Show in Explorer",
+      enabled: () => tabs.find(id) === tab,
+      run: async () => {
+        try { await call("reveal_file", { path: tab.path }); }
+        catch (error) { say(String(error)); }
+      },
+    }, {
+      id: "tab.copyPath", title: "Copy file path",
+      enabled: () => tabs.find(id) === tab,
+      run: async () => {
+        try { await navigator.clipboard.writeText(tab.path); }
+        catch (error) { say(`Could not copy the file path: ${String(error)}`); }
+      },
+    }, {
+      id: "tab.close", title: "Close",
+      enabled: () => tabs.find(id) === tab && !opening && !documentBusy,
+      run: () => closeTab(id),
+    }]);
   }
 
   /**
@@ -3565,7 +3593,7 @@
         onclick={() => runToolbarCommand('file.print')}>Print</button>
     {/if}
     <span class="document-name">
-      <span class="title" title={title}>{title || 'tpdf'}</span>
+      {#if !title}<span class="title">tpdf</span>{/if}
       {#if dirty}<span class="edited">Edited</span>{/if}
       {#if degraded && status}<span class="degraded">{degraded}</span>{/if}
       {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
@@ -3743,6 +3771,7 @@
             aria-selected={tab.id === activeTab} aria-controls="document-panel"
             tabindex={tab.id === activeTab ? 0 : -1}
             title={tab.path} disabled={opening || documentBusy}
+            oncontextmenu={(event) => tabContextMenu(event, tab.id)}
             onclick={() => void activateTab(tab.id)} onkeydown={(event) => tabKey(event, tab.id)}>
             <span class="tab-name">{tabLabels[index]}</span>
             {#if tab.id === activeTab ? dirty : tab.dirty}<span aria-label="Unsaved changes">*</span>{/if}

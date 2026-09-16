@@ -23,6 +23,7 @@ fn textedit_td_sets_signed_leading_and_resets_both_text_origins() {
                 assert_eq!(before.runs[index].matrix[5], m[5] + x * m[1] + y * m[3]);
             }
             let changes = [0, 1, 2].map(|index| Change {
+                layout: None,
                 page: 0,
                 revision: before.revision.clone(),
                 operator: before.runs[index].operator,
@@ -79,6 +80,7 @@ fn textedit_td_preserves_authored_operators_and_comments_on_save() {
     write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -110,6 +112,7 @@ fn textedit_td_refuses_malformed_unbounded_and_inline_state_atomically() {
         let original = doc.objects.clone();
         assert!(scan(&doc, 0).is_err(), "{source}");
         assert!(write(&mut doc, &[Change {
+            layout: None,
             page: 0,
             revision: Vec::new(),
             operator: 3,

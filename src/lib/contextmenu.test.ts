@@ -194,6 +194,41 @@ describe("which menu a right-click on the page gets", () => {
 });
 
 describe("what a menu shows", () => {
+  it("runs the clicked tab's actions without changing or leaking into the registry", () => {
+    const { menu, commands, chosen } = menuOf();
+    const fired: string[] = [];
+    const actions = (path: string): Command[] => [
+      { id: "tab.reveal", title: "Show in Explorer", run: () => { fired.push(`reveal:${path}`); } },
+      { id: "tab.copyPath", title: "Copy file path", run: () => { fired.push(`copy:${path}`); } },
+      { id: "tab.close", title: "Close", run: () => { fired.push(`close:${path}`); } },
+    ];
+    for (const [index, name] of ["reveal", "copy", "close"].entries()) {
+      menu.show(["tab.reveal", "tab.copyPath", SEPARATOR, "tab.close"], { x: 10, y: 10 }, actions("second.pdf"));
+      expect(menu.offered).toEqual(["tab.reveal", "tab.copyPath", "tab.close"]);
+      menu.choose(index);
+      expect(fired.at(-1)).toBe(`${name}:second.pdf`);
+      expect(menu.isOpen).toBe(false);
+    }
+    expect(chosen).toEqual([]);
+    expect(commands.find("tab.reveal")).toBeUndefined();
+    expect(menu.show(["tab.reveal"], { x: 0, y: 0 })).toBe(false);
+    menu.show(PAGE_MENU, { x: 0, y: 0 });
+    menu.choose(0);
+    expect(chosen).toEqual(["edit.rotatePageClockwise"]);
+  });
+
+  it("rechecks a tab action before running after its tab was closed", () => {
+    const { menu } = menuOf();
+    let open = true, fired = false;
+    menu.show(["tab.close"], { x: 0, y: 0 }, [{
+      id: "tab.close", title: "Close", enabled: () => open,
+      run: () => { fired = true; },
+    }]);
+    open = false;
+    menu.choose(0);
+    expect(fired).toBe(false);
+  });
+
   it("offers every command whose guard is open", () => {
     const { menu } = menuOf();
     expect(menu.show(PAGE_MENU, { x: 10, y: 10 })).toBe(true);

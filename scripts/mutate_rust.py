@@ -421,7 +421,7 @@ MUTATIONS = [
     Mutation('nested tags: discard direct paragraph content', 'src/textedit/tagging.rs', 'if !plain.items.is_empty() || groups.is_empty() {', 'if groups.is_empty() {', 'textedit_nested_mixed_leaf_ownership_keeps_each_authored_tag'),
 
     Mutation('stream patch: skip discovery boundary validation', 'src/textedit.rs', 'streams::rewrite(&bytes, &content, &BTreeSet::new())?;', '// discovery boundary unchecked', 'textedit_stream_discovery_refuses_unpatchable_nesting'),
-    Mutation('stream patch: reserialize untouched operations', 'src/textedit.rs', 'streams::rewrite(&bytes, &content, &patched).map(|bytes| (id, bytes))', 'content.encode().map(|bytes| (id, bytes)).map_err(|e| e.to_string())', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
+    Mutation('stream patch: reserialize untouched operations', 'src/textedit.rs', 'streams::rewrite_expanded(&bytes, &content, &patched, &expansions)', 'content.encode().map_err(|e| e.to_string())', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
     Mutation('stream patch: ignore changed untouched operands', 'src/textedit/streams.rs', 'original.operations[0].operands != next.operands', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
     Mutation('stream patch: raise container nesting limit', 'src/textedit/streams.rs', 'if depth > 32 {', 'if depth > 33 {', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
     Mutation('stream patch: raise string nesting limit', 'src/textedit/streams.rs', 'if nesting > 32 {', 'if nesting > 33 {', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
@@ -443,7 +443,7 @@ MUTATIONS = [
     Mutation('glyph clip: omit composite bottom union', 'src/textedit/fonts/composite.rs', 'vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);', 'vertical_bounds[0] = 0.;', 'textedit_composite_glyph_envelope_covers_fractional_and_unused_replacements'),
     Mutation('glyph clip: omit composite top union', 'src/textedit/fonts/composite.rs', 'vertical_bounds[1] = vertical_bounds[1].max(top * unit);', 'vertical_bounds[1] = 700.;', 'textedit_composite_glyph_envelope_covers_fractional_and_unused_replacements'),
     Mutation('glyph clip: truncate fractional outline points', 'src/textedit/fonts/outlines.rs', 'let (x, y) = (f64::from(x), f64::from(y));', 'let (x, y) = (f64::from(x as i16), f64::from(y as i16));', 'textedit_outline_bounds_preserve_fractional_components_and_ignore_header_boxes'),
-    Mutation('glyph clip: reuse full em envelope', 'src/textedit.rs', 'clipping::contains(clip, ink_bounds)?;', 'let _ = ink_bounds; clipping::contains(clip, bounds)?;', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
+    Mutation('glyph clip: reuse full em envelope', 'src/textedit.rs', "if clipping::contains(clip, ink_bounds).is_err() {", "if clipping::contains(clip, bounds).is_err() {", 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
     Mutation('glyph clip: shrink lower glyph envelope', 'src/textedit.rs', 'bottom * size / 1000.', 'bottom * size / 10000.', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
     Mutation('glyph clip: shrink upper glyph envelope', 'src/textedit.rs', 'top * size / 1000.', 'top * size / 10000.', 'textedit_simple_glyph_envelope_covers_fractional_and_unused_replacements'),
 
@@ -465,7 +465,7 @@ MUTATIONS = [
     Mutation('cid: infer glyph from Unicode', 'src/textedit/fonts/composite.rs', 'let glyph = GlyphId(code);', 'let glyph = GlyphId(u16::from(ch));', 'textedit_composite_roundtrip_preserves_program_mapping_and_other_page'),
     Mutation('cid: ignore default width', 'src/textedit/fonts/composite.rs', '.copied().unwrap_or(default)', '.copied().unwrap_or(1000.)', 'textedit_composite_code_lengths_notdef_and_glyph_bounds'),
     Mutation('cid: skip width agreement', 'src/textedit/fonts/composite.rs', '(width - advance).abs() > 1.', 'false', 'textedit_composite_refusals_leave_every_object_unchanged'),
-    Mutation('cid: skip glyph map identity', 'src/textedit/fonts/composite.rs', 'name(child, b"CIDToGIDMap", b"Identity")?;', '// unchecked glyph map', 'textedit_composite_refusals_leave_every_object_unchanged'),
+    Mutation('cid: skip glyph map identity', 'src/textedit/fonts/composite.rs', 'Object::Name(name) if name == b"Identity" => None,', 'Object::Name(_) => None,', 'textedit_composite_refusals_leave_every_object_unchanged'),
     Mutation('cid: skip font permissions', 'src/textedit/fonts/composite.rs', 'super::face(&bytes, false)?', 'ttf_parser::Face::parse(&bytes, 0).map_err(|_| INVALID)?', 'textedit_composite_checks_embedding_rights_and_program_format'),
     Mutation('cid: raise width table bound', 'src/textedit/fonts/composite.rs', 'const MAX_WIDTHS: usize = 4096;', 'const MAX_WIDTHS: usize = 4097;', 'textedit_composite_width_table_bounds_and_defaults'),
     Mutation('cid: accept duplicate codes', 'src/textedit/fonts/mapping.rs', 'result.insert(code, ch).is_some()', '{ result.insert(code, ch); false }', 'textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width'),
@@ -489,7 +489,7 @@ MUTATIONS = [
     Mutation('curves: skip transformed coordinate bounds', 'src/textedit/clipping.rs', 'if point\n                .iter()\n                .any(|value| !value.is_finite() || value.abs() > 1_000_000.)', 'if false', 'textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically'),
     Mutation('curves: accept extra coordinates', 'src/textedit/clipping.rs', 'if op.operands.len() != coordinates {', 'if op.operands.len() < coordinates {', 'textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically'),
     Mutation('curves: accept painting operands', 'src/textedit/clipping.rs', 'if segments > 0 && op.operands.is_empty() =>', 'if segments > 0 =>', 'textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically'),
-    Mutation('stroked lines: discard clip', 'src/textedit.rs', 'path_until = index + consumed;', 'path_until = index + consumed; clip = None;', 'textedit_stroked_lines_cannot_replace_or_discard_a_clip'),
+    Mutation('stroked lines: discard clip', 'src/textedit.rs', "let consumed = clipping::path(&content.operations[index..], page_transform)?;", "let consumed = clipping::path(&content.operations[index..], page_transform)?; clip = None;", 'textedit_stroked_lines_cannot_replace_or_discard_a_clip'),
     Mutation('curves: consume following operator', 'src/textedit/clipping.rs', 'return Ok(index + 1);', 'return Ok(index + 2);', 'textedit_curves_preserve_complete_subpaths_and_following_text'),
     Mutation('stroked lines: count discard as tagged content', 'src/textedit.rs', 'if content.operations[index + consumed - 1].operator != "n" {', 'if true {', 'textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items'),
     Mutation('curves: accept empty subpath', 'src/textedit/clipping.rs', 'if segments > 0 && op.operands.is_empty() =>', 'if op.operands.is_empty() =>', 'textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically'),
@@ -532,8 +532,8 @@ MUTATIONS = [
     Mutation('tagged: allow repeated marked content id', 'src/textedit/tagging.rs', '|| !self.seen.insert(mcid)', '|| { self.seen.insert(mcid); false }', 'textedit_tagged_requires_balanced_unique_markers_and_paragraph_text'),
     Mutation('tagged: ignore page parent key', 'src/textedit/tagging.rs', 'integer(get(dict, b"StructParents")?)?', '0', 'textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids'),
 
-    Mutation('clip: omit text containment call', 'src/textedit.rs', 'clipping::contains(clip, ink_bounds)?;', '// containment omitted', 'textedit_clip_intersections_contain_every_side_of_text'),
-    Mutation('clip: discard saved clip', 'src/textedit.rs', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ));', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    None,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ));', 'textedit_clip_transform_is_fixed_at_creation_and_restored_by_q'),
+    Mutation('clip: omit text containment call', 'src/textedit.rs', "if clipping::contains(clip, ink_bounds).is_err() {", "if false {", 'textedit_clip_intersections_contain_every_side_of_text'),
+    Mutation('clip: discard saved clip', 'src/textedit.rs', "states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", "states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    None,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", 'textedit_clip_transform_is_fixed_at_creation_and_restored_by_q'),
     Mutation('clip: allow unproven glyph bounds', 'src/textedit.rs', '.vertical_bounds\n                .ok_or(', '.vertical_bounds.or(Some([0., 700.]))\n                .ok_or(', 'textedit_clips_require_proven_outline_bounds_not_only_advances'),
     Mutation('clip: replace intersection with union', 'src/textedit/clipping.rs', 'old[2].min(next[2])', 'old[2].max(next[2])', 'textedit_clip_intersections_contain_every_side_of_text'),
     Mutation('clip: omit rectangle horizontal scale', 'src/textedit/clipping.rs', '(x + width) * ctm[0] + ctm[4]', '(x + width) + ctm[4]', 'textedit_clip_transform_is_fixed_at_creation_and_restored_by_q'),
@@ -561,7 +561,7 @@ MUTATIONS = [
     Mutation("textedit: offer notdef as a MacRoman glyph", "src/textedit/fonts.rs", "if glyph.0 == 0 {", "if false {", "textedit_macroman_format6_preserves_font_and_refuses_notdef"),
     Mutation("textedit: omit required OpenType permissions table", "src/textedit/fonts.rs", "} else if !apple_true {", "} else if false {", "textedit_macroman_requires_matching_encoding_and_honours_present_rights"),
     Mutation("textedit: ignore present font permissions", "src/textedit/fonts.rs", "if rights & !0x108 != 0 {", "if false {", "textedit_macroman_requires_matching_encoding_and_honours_present_rights"),
-    Mutation('textedit: forget saved fill colour space', 'src/textedit.rs', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ));', 'states.push((selected_font, leading, page_transform, 1, clip, spacing, word_spacing, stroke_components));', 'textedit_colours_restore_state_and_preserve_operators'),
+    Mutation('textedit: forget saved fill colour space', 'src/textedit.rs', "states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", "states.push((selected_font, leading, page_transform, 1, clip, spacing, word_spacing, stroke_components, compound_clips.clone()));", 'textedit_colours_restore_state_and_preserve_operators'),
     Mutation("textedit: omit colour component count", "src/textedit/colors.rs", "if values.len() != components {", "if false {", "textedit_colours_refuse_bad_components_and_unsupported_spaces"),
     Mutation("textedit: omit colour component range", "src/textedit/colors.rs", "if !(0.0..=1.0).contains(&number(value)?) {", "if false {", "textedit_colours_refuse_bad_components_and_unsupported_spaces"),
     Mutation("textedit: omit ICC header signature", "src/textedit/colors.rs", "|| &bytes[36..40] != b\"acsp\"", "|| false", "textedit_icc_checks_header_range_and_preserves_profile_bytes"),
@@ -602,7 +602,7 @@ MUTATIONS = [
     Mutation('default encoding: retain widths for unavailable characters', 'src/textedit/fonts.rs', 'if !codes.contains(&Some(ch as u8)) {', 'if false {', 'textedit_default_helvetica_maps_codes_and_widths'),
 
     Mutation("textedit: treat a malformed space as blank", "src/textedit/fonts.rs", "empty_glyph(&face, glyph) == Some(true)", "true", "textedit_embedded_does_not_treat_a_broken_space_as_blank"),
-    Mutation('textedit: discard restored text state', 'src/textedit.rs', '("Q", []) if !inside => {\n                (\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ) =', '("Q", []) if !inside => {\n                let _ =', 'textedit_graphics_stack_restores_font_size_and_leading'),
+    Mutation('textedit: discard restored text state', 'src/textedit.rs', "(\"Q\", []) if !inside => {\n                (\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips,\n                ) =", '("Q", []) if !inside => {\n                let _ =', 'textedit_graphics_stack_restores_font_size_and_leading'),
     Mutation("textedit: allow unclosed graphics state", "src/textedit.rs", 'if !states.is_empty() {', 'if false {', "textedit_graphics_stack_requires_balanced_bounded_outer_saves"),
     Mutation("textedit: select last font instead of restored font", "src/textedit.rs", 'content.operations[*font_operator].operands[0]', 'content.operations[{ let _ = font_operator; content.operations[..change.operator as usize].iter().rposition(|op| op.operator == "Tf").unwrap() }].operands[0]', "textedit_graphics_restore_uses_the_active_font_for_replacement"),
     Mutation('rotation: omit line movement across the x axis', "src/textedit.rs", 'x * matrix[0] + y * matrix[2]', 'x * matrix[0]', 'textedit_rotation_positions_and_hitboxes_cover_every_quarter_turn'),
@@ -617,7 +617,7 @@ MUTATIONS = [
     Mutation('rotation: omit glyph clip rotation', "src/textedit.rs", 'let ink_bounds = text_bounds(\n                page_matrix,', 'let ink_bounds = text_bounds(\n                [1., 0., 0., 1., page_matrix[4], page_matrix[5]],', 'textedit_rotation_clips_use_transformed_glyph_envelopes_on_every_side'),
 
     Mutation("textedit: omit translated text position", "src/textedit.rs", 'let page_matrix = compose_orthogonal(page_transform, shown_matrix)?;', 'let page_matrix = shown_matrix;', "textedit_translated_hitboxes_match_absolute_positions_after_crop_and_rotation"),
-    Mutation('textedit: forget saved page translation', 'src/textedit.rs', 'states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ));', 'states.push((selected_font, leading, [1., 0., 0., 1., 0., 0.], fill_components, clip, spacing, word_spacing, stroke_components));', 'textedit_page_translations_compose_restore_and_preserve_following_runs'),
+    Mutation('textedit: forget saved page translation', 'src/textedit.rs', "states.push((\n                    selected_font,\n                    leading,\n                    page_transform,\n                    fill_components,\n                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", "states.push((selected_font, leading, [1., 0., 0., 1., 0., 0.], fill_components, clip, spacing, word_spacing, stroke_components, compound_clips.clone()));", 'textedit_page_translations_compose_restore_and_preserve_following_runs'),
     Mutation("textedit: accept arbitrary page transforms", "src/textedit.rs", 'if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {', 'if false {', "textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices"),
 
     Mutation("textedit: compose page translations in reverse order", "src/textedit.rs", 'inner[4] * outer[0] + outer[4]', 'outer[4] * inner[0] + inner[4]', "textedit_page_scales_compose_restore_and_preserve_following_runs"),
@@ -649,7 +649,7 @@ MUTATIONS = [
     Mutation('spacing: omit accumulated advance limit', 'src/textedit/fonts.rs', 'cursor > 1_000_000.', 'false', 'textedit_spacing_bounds_and_malformed_setters_remain_refused'),
     Mutation('spacing: ignore spacing in kerning arrays', 'src/textedit.rs', 'metrics.source_layout(bytes, size, spacing, word_spacing)?', 'metrics.source_layout(bytes, size, 0., word_spacing)?', 'textedit_spacing_measures_character_steps_and_tj_fragments'),
     Mutation('spacing: ignore spacing when writing', 'src/textedit.rs', 'metrics.spaced_layout(&change.replacement, run.size, spacing, word_spacing)?', 'metrics.spaced_layout(&change.replacement, run.size, 0., word_spacing)?', 'textedit_spacing_replacement_advance_and_ink_are_both_checked_atomically'),
-    Mutation('spacing: forget saved character spacing', 'src/textedit.rs', '                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                ));', '                    clip,\n                    0.,\n                    word_spacing,\n                    stroke_components,\n                ));', 'textedit_spacing_persists_across_blocks_and_restores_for_writing'),
+    Mutation('spacing: forget saved character spacing', 'src/textedit.rs', "                    clip,\n                    spacing,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", "                    clip,\n                    0.,\n                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", 'textedit_spacing_persists_across_blocks_and_restores_for_writing'),
     Mutation('spacing: reset spacing at each text block', 'src/textedit.rs', 'inside = true;\n                positioned = false;', 'inside = true;\n                spacing = 0.;\n                positioned = false;', 'textedit_spacing_persists_across_blocks_and_restores_for_writing'),
 
     Mutation('print state: accept nonboolean print flags', 'src/textedit/graphics.rs', '(b"OP" | b"op" | b"SA", Object::Boolean(_))', '(b"OP" | b"op" | b"SA", _)', 'textedit_print_graphics_state_refuses_masks_types_and_invalid_modes_atomically'),
@@ -663,7 +663,7 @@ MUTATIONS = [
     Mutation('word spacing: apply to two-byte code 32', 'src/textedit/fonts.rs', 'Some(Codes::Double(_)) => None,', 'Some(Codes::Double(codes)) => codes.get(&32).copied(),', 'textedit_word_spacing_uses_pdf_code_32_not_unicode_space'),
     Mutation('word spacing: ignore kerning fragment spacing', 'src/textedit.rs', 'metrics.source_layout(bytes, size, spacing, word_spacing)?', 'metrics.source_layout(bytes, size, spacing, 0.)?', 'textedit_word_spacing_measures_combined_steps_and_kerning_fragments'),
     Mutation('word spacing: ignore replacement spacing', 'src/textedit.rs', 'metrics.spaced_layout(&change.replacement, run.size, spacing, word_spacing)?', 'metrics.spaced_layout(&change.replacement, run.size, spacing, 0.)?', 'textedit_word_spacing_restores_state_and_checks_replacements_atomically'),
-    Mutation('word spacing: forget saved spacing', 'src/textedit.rs', '                    word_spacing,\n                    stroke_components,\n                ));', '                    0.,\n                    stroke_components,\n                ));', 'textedit_word_spacing_restores_state_and_checks_replacements_atomically'),
+    Mutation('word spacing: forget saved spacing', 'src/textedit.rs', "                    word_spacing,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", "                    0.,\n                    stroke_components,\n                    compound_clips.clone(),\n                ));", 'textedit_word_spacing_restores_state_and_checks_replacements_atomically'),
     Mutation('word spacing: reset at each text block', 'src/textedit.rs', 'inside = true;\n                positioned = false;', 'inside = true;\n                word_spacing = 0.;\n                positioned = false;', 'textedit_word_spacing_restores_state_and_checks_replacements_atomically'),
 
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
@@ -9089,6 +9089,33 @@ MUTATIONS += [
         "            && !self.rgba.is_empty()",
         "signature_rasters_reject_bad_lengths_limits_and_invisible_pixels",
     ),
+]
+
+MUTATIONS += [
+    Mutation("boxed edit: lose following cursor", "src/textedit/layout.rs",
+        "let adjustment = (-context.cursor_after * 1000. / run.size) as f32;",
+        "let adjustment = 0_f32;",
+        "layout_rotations_and_continued_shows_preserve_later_geometry"),
+    Mutation("boxed edit: lose original line origin", "src/textedit/layout.rs",
+        'operations.push(numeric("Tm", &context.line));',
+        'operations.push(numeric("Tm", &context.shown));',
+        "layout_rotations_and_continued_shows_preserve_later_geometry"),
+    Mutation("boxed edit: omit wrapped line movement", "src/textedit/layout.rs",
+        "let dy = first_baseline - index as f64 * line_height;",
+        "let dy = first_baseline;",
+        "wrapping_keeps_spaces_line_breaks_and_following_text_in_place"),
+    Mutation("boxed edit: bypass document clipping", "src/textedit/layout.rs",
+        'clipping::contains(context.clip, ink).map_err',
+        'clipping::contains(None, ink).map_err',
+        "fallback_deletion_and_clipped_growth_remain_editable_or_refuse_atomically"),
+    Mutation("boxed edit: allow collisions with other lines", "src/textedit/layout.rs",
+        "if intersection[2] > intersection[0] + 0.1",
+        "if false && intersection[2] > intersection[0] + 0.1",
+        "overflowing_clipped_colliding_and_invalid_layouts_refuse_atomically"),
+    Mutation("boxed edit: suppress automatic font fallback", "src/textedit/layout.rs",
+        "EditFont::Auto if encodable => None,",
+        "EditFont::Auto if encodable || true => None,",
+        "fallback_embeds_new_characters_and_reopens_for_another_edit"),
 ]
 
 if __name__ == "__main__":

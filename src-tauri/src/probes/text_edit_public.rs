@@ -1,7 +1,7 @@
 //! An unchanged external fixture, separate from the generated two-line cases.
 //! text-edit-probe --w3c-dummy <downloaded-dummy.pdf> <new-output-directory>
-//! Source URL/digest live in testdata/textedit-public-corpus.json. Only the last
-//! text fragment changes (file -> fill); the input is never rewritten for admission.
+//! Source URL/digest live in testdata/textedit-public-corpus.json. The sentence
+//! edits as one line (file -> fill); the input is never rewritten for admission.
 use super::*;
 
 pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(), String> {
@@ -22,7 +22,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         .iter()
         .map(|r| r.text.as_str())
         .collect::<Vec<_>>()
-        != ["Dumm", "y", " ", "PDF", " fi", "le"]
+        != ["Dummy PDF file"]
     {
         return Err("unexpected W3C source text fragments".into());
     }
@@ -41,11 +41,12 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         discards: vec![],
         redactions: vec![],
         text_edits: vec![textedit::Change {
+            layout: None,
             page: 0,
             revision: mapped.revision.clone(),
-            operator: mapped.runs[5].operator,
-            original: "le".into(),
-            replacement: "ll".into(),
+            operator: mapped.runs[0].operator,
+            original: "Dummy PDF file".into(),
+            replacement: "Dummy PDF fill".into(),
         }],
     };
     let tile = Request::Tile {
@@ -79,15 +80,15 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
     if preview == before || preview.len() != before.len() {
         return Err("preview did not change pixels".into());
     }
-    // Fixed independently from the fixture's 166.8pt final fragment origin and
+    // Fixed independently from the fixture's 56.8pt line origin and
     // 758.1pt baseline. Do not trust the editor's own hit rectangle as the oracle.
     for (i, (a, b)) in before
         .chunks_exact(4)
         .zip(preview.chunks_exact(4))
         .enumerate()
     {
-        if a != b && !((165..184).contains(&(i % 596)) && (68..87).contains(&(i / 596))) {
-            return Err("preview changed pixels outside the final fragment".into());
+        if a != b && !((55..184).contains(&(i % 596)) && (68..87).contains(&(i / 596))) {
+            return Err("preview changed pixels outside the edited line".into());
         }
     }
     if pixels(&mut worker, &tile)? != before || runs(&mut worker, 0)?.runs != mapped.runs {
@@ -114,15 +115,18 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
     drop(out);
     let mut saved = Worker::spawn(&saved_path, &library)?;
     let after = runs(&mut saved, 0)?;
-    if after.runs.len() != 6
-        || after.runs[5].text != "ll"
-        || after.runs[..5] != mapped.runs[..5]
+    if after
+        .runs
+        .iter()
+        .map(|run| run.text.as_str())
+        .collect::<String>()
+        != "Dummy PDF fill"
         || pixels(&mut saved, &tile)? != preview
     {
         return Err("saved content disagrees with the preview or changed adjacent text".into());
     }
-    for (index, invalid) in ["llllllllll", "B"].into_iter().enumerate() {
-        plan.text_edits[0].replacement = invalid.into();
+    for (index, invalid) in ["l".repeat(80), "B".into()].into_iter().enumerate() {
+        plan.text_edits[0].replacement = invalid;
         let mut out = File::create_new(dir.join(format!("refused-{index}.pdf")))
             .map_err(|e| e.to_string())?;
         if write(&plan, &mut out).is_ok() || out.metadata().map_err(|e| e.to_string())?.len() != 0 {

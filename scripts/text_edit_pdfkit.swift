@@ -51,9 +51,9 @@ if w3c && (selected != 0 || before.pageCount != 1) { fail("expected one-page W3C
 // its band excludes both the nested label and the parent line.
 // The flow HTML has 40pt line height: its first baseline is 63.75pt from the top.
 // Accented Verdana ink stays within the first 32..65pt band of the authored page.
-// W3C's final fragment begins at x=166.8pt with baseline y=758.1pt on an A4 page.
+// W3C's grouped line begins at x=56.8pt with baseline y=758.1pt on an A4 page.
 let targetRows = listChild ? (106..<139) : passport ? (926..<1056) : agenda ? (selected == 1 ? (80..<134) : (156..<200)) : w3c ? (136..<174) : cidLatin1 ? (64..<130) : browserFlow ? (108..<140) : browser ? (78..<110) : (85..<130)
-let targetColumns = listChild ? (158..<520) : ["--list", "--nested-list"].contains(variant) ? (118..<520) : variant == "--wide-spacing" ? (76..<600) : ["--continued", "--inline"].contains(variant) ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (330..<368) : (76..<520)
+let targetColumns = listChild ? (158..<520) : ["--list", "--nested-list"].contains(variant) ? (118..<520) : variant == "--wide-spacing" ? (76..<600) : ["--continued", "--inline"].contains(variant) ? (76..<298) : passport ? (744..<776) : agenda ? (selected == 1 ? (220..<400) : (740..<880)) : w3c ? (110..<368) : (76..<520)
 if browserFlow && before.pageCount != 2 { fail("expected two browser flow pages") }
 func sameBounds(_ left: CGRect, _ right: CGRect) -> Bool {
     // lopdf writes Real coordinates at f32 precision. Compare that representation

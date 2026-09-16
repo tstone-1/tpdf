@@ -63,6 +63,7 @@ fn textedit_role_map_cannot_redefine_any_standard_type_even_when_unused() {
             let (mut doc, ids) = fixture(CONTENT);
             let before = textedit::scan(&doc, 0).unwrap();
             let change = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -128,6 +129,7 @@ fn textedit_role_map_blocks_disguised_standard_content_but_preserves_custom_alia
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
