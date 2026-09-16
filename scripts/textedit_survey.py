@@ -54,7 +54,8 @@ def inspect(probe, source):
 
 def self_test(probe):
     from pypdf import PdfWriter
-    from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+    from pypdf.generic import (ArrayObject, DictionaryObject, NameObject,
+                               NumberObject, DecodedStreamObject)
     with tempfile.TemporaryDirectory(prefix='tpdf-inspection-') as directory:
         root = Path(directory)
 
@@ -91,7 +92,7 @@ def self_test(probe):
         assert digest(source) == original
         assert len(list(root.iterdir())) == 1, 'inspection wrote extra files'
         # Exercise the real worker reply, including the privacy boundary on
-        # unknown metadata names. None of these keys or values may be echoed.
+        # unknown metadata names. Unknown keys and all values must stay private.
         for key, feature in [('IDTree', 'IDTree'), ('ClassMap', 'ClassMap'),
                              ('SYNTHETIC_SECRET', 'unrecognized')]:
             writer = PdfWriter()
@@ -105,6 +106,40 @@ def self_test(probe):
             assert tagged_report['pages'] == [{'page': 0, 'status': 'refused',
                 'reason': f'unsupported {feature} metadata in tagged structure root'}]
             assert 'SECRET' not in json.dumps(tagged_report['pages'])
+        # Author a complete tagged page with an independent PDF writer. The
+        # custom-role control must be editable; standard types may not use the
+        # same alias to disguise their content as a supported paragraph.
+        def dictionary(**items):
+            return DictionaryObject({NameObject('/' + key): value for key, value in items.items()})
+
+        base = fixture('role-base.pdf', 1)
+        for role in ['SyntheticParagraph', 'Figure', 'Table', 'Span', 'Link']:
+            writer = PdfWriter(clone_from=base)
+            page = writer.pages[0]
+            tree = writer._add_object(dictionary(Type=NameObject('/StructTreeRoot')))
+            document = writer._add_object(dictionary(Type=NameObject('/StructElem'),
+                S=NameObject('/Document'), P=tree))
+            paragraph = writer._add_object(dictionary(Type=NameObject('/StructElem'),
+                S=NameObject('/' + role), P=document, Pg=page.indirect_reference, K=NumberObject(0)))
+            document.get_object()[NameObject('/K')] = paragraph
+            tree.get_object().update(dictionary(K=document,
+                RoleMap=dictionary(**{role: NameObject('/P')}),
+                ParentTree=writer._add_object(dictionary(Nums=ArrayObject([
+                    NumberObject(0), ArrayObject([paragraph])])))))
+            writer.root_object[NameObject('/StructTreeRoot')] = tree
+            page[NameObject('/StructParents')] = NumberObject(0)
+            stream = DecodedStreamObject()
+            stream.set_data(b'/' + role.encode('ascii') + b' << /MCID 0 >> BDC\n' +
+                            page.get_contents().get_data() + b'\nEMC')
+            page[NameObject('/Contents')] = writer._add_object(stream)
+            path = root / f'role-{role}.pdf'
+            writer.write(path)
+            result = inspect(probe, path)['pages']
+            if role == 'SyntheticParagraph':
+                assert result == [{'page': 0, 'status': 'editable', 'runs': 1}]
+            else:
+                assert result == [{'page': 0, 'status': 'refused',
+                    'reason': 'tagged RoleMap contains unsupported or conflicting roles'}]
         assert len(inspect(probe, fixture('boundary.pdf', 128))['pages']) == 128
         too_many = fixture('oversized.pdf', 129)
         for args, reason in [([str(too_many), '--all-pages'], '1 to 128 pages'),
@@ -125,7 +160,7 @@ def self_test(probe):
                 pass
             else:
                 raise AssertionError('invalid report passed validation')
-    print('[PASS] later-page refusal, tagged metadata privacy, empty page, continued discovery, page bound and incomplete-report controls')
+    print('[PASS] later-page refusal, tagged metadata privacy, role-map semantics, empty page, continued discovery, page bound and incomplete-report controls')
 
 
 def refusal_totals(records):

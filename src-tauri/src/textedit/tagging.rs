@@ -15,6 +15,8 @@ mod nested_tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
+mod role_tests;
+#[cfg(test)]
 mod tests;
 
 // Every text block owns content. Grouping elements have separate count/depth
@@ -35,6 +37,53 @@ fn text_block(tag: &[u8]) -> bool {
         tag,
         b"P" | b"H" | b"H1" | b"H2" | b"H3" | b"H4" | b"H5" | b"H6"
     )
+}
+
+// ISO 32000-1 14.8.4, Tables 333-340: standard roles keep their meaning even
+// when this editor does not support their content. Do not let RoleMap turn a
+// Figure, table cell or inline span into a supported paragraph/container.
+// This is the default PDF 1.7 namespace; namespace dictionaries are refused.
+// https://pdfa.org/download-area/cheat-sheets/StandardStructureElements.pdf
+fn standard_role(tag: &[u8]) -> bool {
+    text_block(tag)
+        || container(tag)
+        || matches!(tag, b"L" | b"LI" | b"Lbl" | b"LBody")
+        || matches!(
+            tag,
+            b"Document"
+                | b"BlockQuote"
+                | b"Caption"
+                | b"TOC"
+                | b"TOCI"
+                | b"Index"
+                | b"NonStruct"
+                | b"Private"
+                | b"Table"
+                | b"TR"
+                | b"TH"
+                | b"TD"
+                | b"THead"
+                | b"TBody"
+                | b"TFoot"
+                | b"Span"
+                | b"Quote"
+                | b"Note"
+                | b"Reference"
+                | b"BibEntry"
+                | b"Code"
+                | b"Link"
+                | b"Annot"
+                | b"Ruby"
+                | b"RB"
+                | b"RT"
+                | b"RP"
+                | b"Warichu"
+                | b"WT"
+                | b"WP"
+                | b"Figure"
+                | b"Formula"
+                | b"Form"
+        )
 }
 
 fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), String> {
@@ -316,11 +365,7 @@ impl Tags {
                 || roles.iter().any(|(key, value)| {
                     key.is_empty()
                         || key.len() > 127
-                        || key == b"Document"
-                        || text_block(key)
-                        || container(key)
-                        || key == b"NonStruct"
-                        || matches!(key.as_slice(), b"L" | b"LI" | b"Lbl" | b"LBody")
+                        || standard_role(key)
                         || !value
                             .as_name()
                             .is_ok_and(|tag| text_block(tag) || container(tag))
