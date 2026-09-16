@@ -326,7 +326,13 @@ NonStruct content leaves. It allows at most eight container levels and 128
 containers, independently of the 128-item content bound. Containers own child
 elements, never marked content or layout attributes; their Pg is not inherited.
 Role aliases may target supported grouping/heading types but not NonStruct;
-standard supported names cannot be remapped. `--tagged-containers` on the
+standard PDF 1.7 names cannot be remapped, including types the editor does not
+support. The RoleMap guard covers all 49 standard types; valid custom names
+remain case-sensitive. `tagging/role_tests.rs` covers unused definitions and
+disguised content, with atomic write refusal and preserved custom aliases.
+The survey self-test independently generates complete tagged pages to check
+both accepted aliases and refused standard-name remaps through the worker.
+`--tagged-containers` on the
 symbolic generator covers aliases and metadata references. The browser generator's
 `--headings` exports an unchanged Document/Art/NonStruct tree with H1/P blocks;
 ordinary native textedit checks and PDFKit `--browser` read it back.
