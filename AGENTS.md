@@ -304,6 +304,15 @@ patcher preserves the entire sequence, and preceding edits retain its origin.
 `scripts/text_continuation_check.py --generate <path> --inline tab|bell|tabs`.
 Use `text-edit-probe --continued` and `text_edit_pdfkit.swift --inline` for readback.
 
+MCID-bearing `BDC`/`EMC` markers also work inside text objects, using the same
+bounded structure, role and ownership validation as markers outside `BT`/`ET`.
+Text objects and marked-content sequences balance independently; tag boundaries
+never reset text position or continuation tracking. Extra semantic properties,
+nested MCIDs and untagged MCIDs remain refused. The symbolic generator's
+`--inline-tags` option runs through ordinary worker/native textedit checks and
+independent parser/PDFKit readback. `tagging/inline_tests.rs` also checks shorter
+edits and deletion across adjacent tags, malformed sequences and tab spacers.
+
 Single rectangular clips accept nonzero signed width and height, normalizing
 transformed corners before intersection. The saved `re W/W* n` bytes remain
 unchanged. Empty, compound, painted and partly clipped text cases remain refused.

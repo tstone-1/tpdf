@@ -3,7 +3,7 @@ use lopdf::Object;
 
 pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positioned: bool) -> String {
     let reason = match name {
-        "BMC" | "BDC" | "EMC" if inside => {
+        "BMC" if inside => {
             return format!("inline {name} marked content is not editable yet");
         }
         "BT" if inside => "nested text blocks are not editable",
@@ -62,7 +62,9 @@ mod tests {
                 "BT /Span BMC ET",
                 "inline BMC marked content is not editable yet",
             ),
-            ("BT EMC ET", "inline EMC marked content is not editable yet"),
+            ("BT EMC ET", "unmatched marked-content end"),
+            ("BT 1 EMC ET", "unsupported operands for EMC (count: 1)"),
+            ("BT /Span BDC ET", "unsupported operands for BDC (count: 1)"),
             ("BT BT ET", "nested text blocks are not editable"),
             ("ET", "text block ends without a matching beginning"),
             ("(SYNTHETIC SECRET) Tj", "text appears outside a text block"),

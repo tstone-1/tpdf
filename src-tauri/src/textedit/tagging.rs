@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 mod container_tests;
 #[cfg(test)]
+mod inline_tests;
+#[cfg(test)]
 mod list_tests;
 #[cfg(test)]
 mod nested_list_tests;
@@ -622,7 +624,7 @@ impl Tags {
     }
 
     pub(super) fn end(&mut self) -> Result<(), String> {
-        let active = self.active.take().ok_or(INVALID)?;
+        let active = self.active.take().ok_or("unmatched marked-content end")?;
         if active.is_some() && !self.has_content {
             return Err(INVALID.into());
         }

@@ -423,15 +423,20 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             spacer.step(&op.operator)?;
         }
         match (op.operator.as_str(), op.operands.as_slice()) {
-            ("BDC", [tag, properties]) if inside => {
+            // Marked content and text objects are independently balanced (ISO
+            // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
+            // only the narrow ActualText spacer grammar has a separate path.
+            ("BDC", [tag, properties])
+                if inside && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
+            {
                 spacer = Some(spacers::Spacer::new(tag, properties)?);
             }
             ("EMC", []) if inside && spacer.is_some() => {
                 spacer = None;
             }
             ("BMC", [tag]) if !inside => tags.begin(tag, None)?,
-            ("BDC", [tag, properties]) if !inside => tags.begin(tag, Some(properties))?,
-            ("EMC", []) if !inside => tags.end()?,
+            ("BDC", [tag, properties]) => tags.begin(tag, Some(properties))?,
+            ("EMC", []) => tags.end()?,
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
             // Only accept saves outside BT/ET. Preserve every accepted state
             // component; the next BT resets both text matrices.

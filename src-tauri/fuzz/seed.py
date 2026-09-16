@@ -360,14 +360,14 @@ def editable_composite(reflected: bool = False, tight_clip: bool = False, browse
     })
 
 
-def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False, flowing: bool = False, indented: bool = False, nested: bool = False, metadata: bool = False, containers: bool = False, numbered_list: bool = False, nested_list: bool = False, ranges: bool = False, dash: bool = False, span: bool = False) -> bytes:
+def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bool = False, flowing: bool = False, indented: bool = False, nested: bool = False, metadata: bool = False, containers: bool = False, numbered_list: bool = False, nested_list: bool = False, ranges: bool = False, dash: bool = False, span: bool = False, inline_tags: bool = False) -> bytes:
     """Remap two synthetic glyphs through PDF bytes 1/2 and a ToUnicode map."""
     nested = nested or span
     flowing = flowing or indented
     multipage = multipage or flowing
     metadata = metadata or containers
     numbered_list = numbered_list or nested_list
-    tagged = tagged or multipage or nested or metadata or numbered_list
+    tagged = tagged or multipage or nested or metadata or numbered_list or inline_tags
     font = bytearray((ROOT / "src-tauri/src/textedit/synthetic.ttf").read_bytes())
     font[:4] = b"true"
     cmap = bytearray.fromhex("00000001000100000000000c000001060000") + bytearray(256)
@@ -386,6 +386,10 @@ def editable_symbolic(clipped: bool = False, tagged: bool = False, multipage: bo
         content = b"0.1 w q 0 0 300 240 re W* n " + content + b" Q"
     if tagged:
         content = b"/P << /MCID 0 >> BDC " + content + b" EMC"
+    if inline_tags:
+        # Same complete structure graph, with MCID markers inside the text object.
+        content = content.replace(b"BDC BT ", b"BDC ").replace(b" ET EMC", b" EMC ET")
+        content = b"BT " + content
     mapping = b"/CIDInit/ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <01> <0041> <02> <0042> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"
     if ranges:
         mapping = mapping.replace(b"2 beginbfchar <01> <0041> <02> <0042> endbfchar",
@@ -489,6 +493,7 @@ def corpora() -> dict[str, list[tuple[str, bytes]]]:
         "forms_scan": docs,
         "textedit_scan": docs + [("editable-nested-list", editable_symbolic(nested_list=True))] + [("editable-list", editable_symbolic(numbered_list=True))] + [("editable-tag-containers", editable_symbolic(containers=True))] + [("editable-tag-metadata", editable_symbolic(metadata=True))] + [("editable-large-word-spacing", editable_text(word_spacing=12.112, continued=True)), ("editable-large-word-spacing-exact", editable_text(word_spacing=12., continued=True))] + [(f"editable-jpeg-{mode}", editable_text(jpeg=mode)) for mode in ("rgb", "gray", "progressive")] + [("editable-reversed-clip", editable_composite(reversed_clip=True))] + [("editable-cid-ligatures", editable_composite(ligatures=True))] + [("editable-inline", editable_text(inline=True))] + [("editable-continued", editable_text(continued=True))] + [(f"editable-rotation-{turn}", editable_text(rotation=turn)) for turn in (90, 180, 270)] + [("editable-ligatures", editable_embedded(cff="ligatures", cff_mapping=True)), ("editable-stroke-styles", editable_text(strokes=True, stroke_styles=True)), ("editable-cff-unicode", editable_embedded(cff="unicode", cff_mapping=True)), ("editable-cff-mapping", editable_embedded(cff="normal", cff_mapping=True)), ("editable-print-state", editable_text(print_state=True, word_spacing=1., curves=True)), ("editable-curves", editable_text(curves=True)), ("editable-dash", editable_symbolic(dash=True)), ("editable-image", editable_text(image=True)), ("editable-default-encoding", editable_text(default_encoding=True)), ("editable-strokes", editable_text(strokes=True)), ("editable-rectangles", editable_text(rectangles=True)), ("editable-composite-latin1", editable_composite(latin1=True)), ("editable-nested", editable_symbolic(nested=True)), ("editable-browser-state", editable_composite(tight_clip=True, browser_state=True)), ("editable-glyph-clip", editable_composite(tight_clip=True)), ("editable-reflected", editable_composite(reflected=True)), ("editable-composite", editable_composite()), ("editable-indented", editable_symbolic(indented=True)), ("editable-flowing", editable_symbolic(flowing=True)), ("editable-multipage", editable_symbolic(multipage=True)), ("editable-tagged", editable_symbolic(tagged=True)), ("editable-clipped", editable_symbolic(clipped=True)), ("editable-symbolic", editable_symbolic()), ("editable-single-ranges", editable_symbolic(ranges=True)), ("editable-macroman-colour", editable_embedded(mac_roman=True)),
                                  ("editable-span", editable_symbolic(span=True)),
+                                 ("editable-inline-tags", editable_symbolic(span=True, inline_tags=True)),
                                  ("editable-leading", editable_text(leading=True)),
                                  ("editable-kerning", editable_text(kerning=True)),
                                   ("editable-positive-word-spacing", editable_text(kerning=True, spacing=1., word_spacing=1.)),
