@@ -4,6 +4,101 @@ use lopdf::{dictionary, Stream};
 
 const NORMAL: &[u8] = include_bytes!("fixtures/normal.cff");
 
+#[test]
+fn textedit_font_refusals_identify_program_carriers_without_echoing_values() {
+    for (carrier, subtype, expected) in [
+        (
+            "FontFile",
+            "SYNTHETIC_SECRET",
+            "PostScript Type 1 fonts (FontFile) are not editable yet",
+        ),
+        (
+            "FontFile2",
+            "SYNTHETIC_SECRET",
+            "FontFile2 is not supported in Type1 fonts",
+        ),
+        (
+            "FontFile3",
+            "OpenType",
+            "OpenType programs in Type1 fonts are not editable yet",
+        ),
+        (
+            "FontFile3",
+            "SYNTHETIC_SECRET",
+            "unsupported embedded program subtype in Type1 font",
+        ),
+    ] {
+        let (mut doc, _, descriptor, program) = fixture(NORMAL);
+        let before = textedit::scan(&doc, 0).unwrap();
+        let fd = doc.get_dictionary_mut(descriptor).unwrap();
+        fd.remove(b"FontFile3");
+        fd.set(carrier, program);
+        doc.get_object_mut(program)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("Subtype", subtype);
+        let unchanged = doc.objects.clone();
+        let edit = Change {
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: before.runs[0].text.clone(),
+            replacement: "EDITED FIRST".into(),
+        };
+        assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected);
+        assert_eq!(textedit::write(&mut doc, &[edit]).unwrap_err(), expected);
+        assert_eq!(doc.objects, unchanged);
+    }
+}
+
+#[test]
+fn textedit_font_refusals_separate_missing_conflicting_and_invalid_programs() {
+    for case in 0..5 {
+        let (mut doc, _, descriptor, program) = fixture(NORMAL);
+        let expected = match case {
+            0 => {
+                doc.get_dictionary_mut(descriptor)
+                    .unwrap()
+                    .remove(b"FontFile3");
+                "Type1 font has no embedded font program"
+            }
+            1 => {
+                doc.get_dictionary_mut(descriptor)
+                    .unwrap()
+                    .set("FontFile", program);
+                "Type1 font has conflicting embedded font programs"
+            }
+            2 => {
+                doc.get_dictionary_mut(descriptor)
+                    .unwrap()
+                    .set("FontFile2", Object::Null);
+                "Type1 font has conflicting embedded font programs"
+            }
+            3 => {
+                doc.get_dictionary_mut(descriptor)
+                    .unwrap()
+                    .set("FontFile3", Object::Null);
+                "invalid embedded program in Type1 font"
+            }
+            _ => {
+                doc.get_object_mut(program)
+                    .unwrap()
+                    .as_stream_mut()
+                    .unwrap()
+                    .dict
+                    .remove(b"Subtype");
+                "unsupported embedded program subtype in Type1 font"
+            }
+        };
+        assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected);
+    }
+    // A genuinely CFF program still reaches the CFF validator.
+    let (doc, _, _, _) = fixture(b"SYNTHETIC INVALID CFF");
+    assert!(textedit::scan(&doc, 0).unwrap_err().contains("CFF"));
+}
+
 fn fixture(bytes: &[u8]) -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::ObjectId) {
     let (mut doc, font, descriptor, program) = super::super::tests::fixture();
     let f = doc.get_dictionary_mut(font).unwrap();

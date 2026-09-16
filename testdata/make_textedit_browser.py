@@ -11,6 +11,7 @@ Add --rectangles for unchanged text surrounded by painted backgrounds.
 Add --headings for a heading and paragraph inside article/section containers.
 Add --list for an ordinary numbered list with separately tagged labels.
 Add --nested-list to put the second item in a list inside the first item.
+Add --table for data cells with authored horizontal rules; --table-header adds linked headers.
 https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
 """
 import argparse
@@ -25,13 +26,15 @@ from pypdf import PdfReader
 import websocket
 
 
-def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False, headings=False, numbered_list=False, nested_list=False):
+def export(browser, output, flow=False, latin1=False, latin1_font="Arial", rectangles=False, headings=False, numbered_list=False, nested_list=False, table=False, table_header=False):
+    table = table or table_header
     numbered_list = numbered_list or nested_list
     output.mkdir(parents=True, exist_ok=True)
     # A failed rerun must not leave yesterday's successful export as evidence.
     for name in ("browser-tagged.pdf", "browser-untagged.pdf"):
         (output / name).write_bytes(b"")
     source = Path(__file__).with_name(
+        "textedit-producer-table.html" if table else
         "textedit-producer-nested-list.html" if nested_list else
         "textedit-producer-list.html" if numbered_list else
         "textedit-producer-headings.html" if headings else
@@ -89,6 +92,9 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                         time.sleep(0.1)
                     else:
                         raise RuntimeError("synthetic page did not finish loading")
+                    if table_header:
+                        call("Runtime.evaluate", {"expression":
+                             "document.querySelector('td').outerHTML = '<th scope=col>SYNTHETIC FIRST</th>'"}, session)
                     if latin1:
                         # A font control is authored before printing, never by
                         # normalizing the browser's PDF or its glyph metrics.
@@ -112,7 +118,7 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                             label = "1." if nested_list else "2."
                             expected = "1. " + first + " " + label + " SYNTHETIC SECOND" if numbered_list else first + " SYNTHETIC SECOND"
                             assert " ".join(page.extract_text().split()) == expected, "wrong synthetic text"
-                        if (headings or numbered_list) and tagged:
+                        if (headings or numbered_list or table) and tagged:
                             pending = [(reader.trailer["/Root"]["/StructTreeRoot"]["/K"], 0)]
                             list_depth = 0
                             kinds = []
@@ -130,7 +136,13 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                                     list_depth = max(list_depth, depth)
                                     if "/K" in item:
                                         pending.append((item["/K"], depth))
-                            required = {"/L", "/LI", "/Lbl"} if numbered_list else {"/H1", "/P"}
+                            if table:
+                                required = {"/Table", "/TR", "/TD"}
+                                if table_header:
+                                    required.add("/TH")
+                                    assert "/IDTree" in reader.trailer["/Root"]["/StructTreeRoot"], "browser omitted header identity tree"
+                            else:
+                                required = {"/L", "/LI", "/Lbl"} if numbered_list else {"/H1", "/P"}
                             assert required.issubset(kinds), "browser omitted required structure roles"
                             if numbered_list:
                                 assert list_depth == (2 if nested_list else 1), "browser changed list nesting"
@@ -151,7 +163,7 @@ def export(browser, output, flow=False, latin1=False, latin1_font="Arial", recta
                                 assert nums[index * 2] == page["/StructParents"] == index, "wrong page parent key"
                                 assert list(nums[index * 2 + 1].get_object()) == [leaf.indirect_reference], "wrong reverse ownership"
                     print(json.dumps({"browser": version["product"], "tagged": True, "untagged": True,
-                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles, "headings": headings, "numbered_list": numbered_list, "nested_list": nested_list,
+                                      "pages": 2 if flow else 1, "flow": flow, "latin1": latin1, "rectangles": rectangles, "headings": headings, "numbered_list": numbered_list, "nested_list": nested_list, "table": table, "table_header": table_header,
                                       "font": latin1_font if latin1 else "Arial"}))
                 finally:
                     connection.close()
@@ -169,6 +181,8 @@ if __name__ == "__main__":
     parser.add_argument("browser", type=Path)
     parser.add_argument("output", type=Path)
     variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--table-header", action="store_true", help="export linked table headers with an IDTree")
+    variant.add_argument("--table", action="store_true", help="export a simple tagged table with data cells")
     variant.add_argument("--nested-list", action="store_true", help="export a numbered list nested inside an item")
     variant.add_argument("--list", dest="numbered_list", action="store_true", help="export a numbered list with separately tagged labels")
     variant.add_argument("--headings", action="store_true", help="export nested heading and paragraph markup")
@@ -179,4 +193,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.latin1_font != "Arial" and not args.latin1:
         parser.error("--latin1-font requires --latin1")
-    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles, args.headings, args.numbered_list, args.nested_list)
+    export(args.browser, args.output, args.flow, args.latin1, args.latin1_font, args.rectangles, args.headings, args.numbered_list, args.nested_list, args.table, args.table_header)

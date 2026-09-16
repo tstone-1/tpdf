@@ -337,8 +337,13 @@ and every resolved value still passes the same grammar and ownership checks.
 `make_textedit_symbolic.py --tagged-indirect` generates the combined fixture for
 ordinary worker/native textedit checks and independent structure-graph readback.
 Block layout attributes admit bounded numeric StartIndent/EndIndent and
-SpaceBefore/SpaceAfter. These authored allocation constraints are retained;
-TextAlign, TextIndent and ink bounds remain refused. The unchanged LibreOffice
+SpaceBefore/SpaceAfter. These authored allocation constraints are retained. Bounded numeric TextIndent
+also works on paragraph-like blocks, preserving the first-line origin through
+shorter edits; TextAlign and ink bounds remain refused. The unchanged LibreOffice
+exports of `textedit-producer-hanging-indent.rtf` and
+`textedit-producer-first-indent.rtf` exercise both signs. PDFKit readback uses
+`--hanging-indent` / `--first-indent` and checks the authored 12pt line offsets;
+the ordinary parser readback also preserves the complete tag graph. The unchanged LibreOffice
 export of `textedit-producer-spacing.rtf` exercises the combined attributes;
 `scripts/text_edit_producers.py` records its export and readback commands.
 Below the single Document root, an iterative walk admits Part/Art/Sect/Div and
@@ -348,7 +353,7 @@ tags, accept no layout attributes or semantic overrides, and cannot nest further
 `textedit-producer-language.rtf` exports an unchanged LibreOffice language-span
 fixture for ordinary worker/native checks and independent structure readback.
 The tree allows at most eight container levels and 128
-containers, independently of the 128-item content bound. Containers own child
+containers, independently of the 128-item content bound. Grouping containers own child
 elements, never marked content or layout attributes; their Pg is not inherited.
 Role aliases may target supported grouping/heading types but not NonStruct or Span;
 standard PDF 1.7 names cannot be remapped, including types the editor does not
@@ -374,6 +379,21 @@ references are resolved without changing the saved graph. List-role aliases,
 leaf attributes and semantic overrides remain refused. The browser generator's
 `--list` fixture runs through the ordinary native textedit phase; independent
 parser/PDFKit readback both use `--list` (parser also `--float32`).
+
+Tables admit literal Table/TR/TD/TH with the existing single NonStruct/Span
+content-leaf level. Table and row containers share the grouping limits; a table
+may own painted borders, but text must belong to a cell. Cell Table attributes
+admit unit RowSpan/ColSpan, Headers and header-only Row/Column/Both Scope, in at
+most four dictionaries. IDs are bounded byte strings; the IDTree must enumerate
+exactly the visited identified headers. Data-cell links must be unique and point
+to headers in the same table. Header-to-header links, merged cells, cell sizing,
+nested tables, table-role aliases and cells containing blocks remain refused.
+`tagging/tables.rs` checks name-tree ordering, exact Limits and ownership, with
+independent limits of eight child levels, 128 nodes and 128 identifiers. Nothing in
+that graph is rewritten. The browser generator's `--table` and `--table-header`
+export unchanged tables with rules; ordinary worker/native textedit checks,
+parser `--float32` and PDFKit `--table` verify the complete graph, following-cell
+position and pixels outside the edit.
 
 Positive word spacing accepts values up to one million text-space units, with
 the combined advance bounded separately. Negative spacing retains its quarter-
@@ -409,11 +429,16 @@ continued discovery after refusals, report completeness and aggregation.
 Tagged-structure refusals distinguish unsupported metadata, role mappings,
 parent-tree ownership and marked-content context. Only fixed PDF keywords may
 be named; unknown keys, role names and all values stay out of errors. The survey
-self-test checks this through the worker. On the unchanged five-document public
-sample, all 45 page outcomes and source digests remain unchanged: the 16 formerly
-generic tag refusals split into RoleMap (6), IDTree (6), ClassMap (2) and marked
-content without a supported structure tree (2). These are first blockers, not a
-promise that supporting any one feature makes those pages editable.
+self-test checks this through the worker. These reports identify first blockers;
+removing one refusal does not imply that a page becomes editable. Re-survey
+unchanged source bytes after widening the supported profile.
+
+Font refusals distinguish the Type1 resource subtype from its program carrier:
+FontFile declares PostScript Type 1; FontFile3/Type1C declares CFF. This diagnostic
+dispatch does not decode unsupported programs. Parent-tree dictionary entries
+index non-page objects, so their presence is reported separately from a missing
+page entry. Neither diagnostic widens what the editor accepts.
+
 
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by

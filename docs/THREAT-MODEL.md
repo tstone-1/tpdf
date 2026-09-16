@@ -1799,6 +1799,16 @@ tag trees are checked in both directions for page and MCID ownership, bounded
 to 128 content items, and preserved. Alternate text and unsupported structure
 semantics are refused. Untouched content operands retain their original bytes.
 
+The editing grammar also validates embedded CFF/Type1C programs and opaque
+image XObjects inside the worker. JPEG preservation uses zune-jpeg after checking
+marker framing, at most 2 MiB of encoded data, at most 64 scans, and dimensions
+no greater than 8192 per axis; decoded samples share the page image budget.
+Decoder success does not prove every entropy sample is valid, and no image
+sample is rewritten. Tagged grouping and table structures use separate depth,
+container and identifier bounds. Linked headers must resolve to the same table;
+the original structure graph remains unchanged. Fixed refusal messages never
+include unknown document keys or operand values.
+
 A text change is not a redaction: duplicate text in metadata, annotations or
 other pages is not searched or removed. Pending text edits and redaction marks
 are mutually exclusive; save and reopen before marking redactions. Saving takes

@@ -44,6 +44,7 @@ export class TextEditor {
   private readonly message = document.createElement("p");
   private readonly apply = document.createElement("button");
   private readonly buttons: HTMLButtonElement[] = [];
+  private readonly done: HTMLButtonElement;
   private active: TextRun | null = null;
   private changes: readonly TextChange[] = [];
   private accepted = "";
@@ -62,9 +63,15 @@ export class TextEditor {
     this.root.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:12;overflow:hidden";
     this.toolbar.style.cssText = "position:absolute;top:8px;left:50%;transform:translateX(-50%);padding:8px;display:flex;align-items:center;gap:12px;background:Canvas;color:CanvasText;border:1px solid #888;border-radius:6px;pointer-events:auto;z-index:2";
     const title = document.createElement("span"); title.textContent = "Edit existing text: choose an outlined line";
-    this.toolbar.append(title, this.button("Done", () => {
-      this.commit(); void this.settle().then(() => this.close()).catch(() => {});
-    }));
+    this.done = this.button("Done", () => {
+      this.commit(); void this.settle().then(() => {
+        // A tab transition may have removed this editor while its draft saved.
+        if (this.disposed) return;
+        this.close();
+        host.focus({ preventScroll: true });
+      }).catch(() => {});
+    });
+    this.toolbar.append(title, this.done);
     this.popup.className = "text-edit-popup";
     this.popup.setAttribute("role", "group");
     this.popup.setAttribute("aria-label", "Replace existing text");
@@ -81,7 +88,9 @@ export class TextEditor {
     this.popup.append(label, help, this.message, this.button("Cancel", () => this.cancel()), this.apply);
     this.popup.addEventListener("keydown", (event) => {
       event.stopPropagation();
-      if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); this.commit(); }
+      // Buttons own their native Enter activation; intercepting Cancel here
+      // would apply the very draft the reader is trying to discard.
+      if (event.key === "Enter" && event.target === this.input && !event.isComposing) { event.preventDefault(); this.commit(); }
       if (event.key === "Escape") { event.preventDefault(); this.cancel(); }
     });
     this.input.addEventListener("input", () => { this.failure = null; this.message.textContent = ""; });
@@ -92,7 +101,7 @@ export class TextEditor {
       this.buttons.push(button); this.root.append(button);
     }
     this.root.append(this.toolbar, this.popup); host.append(this.root); this.layout();
-    this.buttons[0]?.focus({ preventScroll: true });
+    (this.buttons.find((button) => !button.hidden) ?? this.done).focus({ preventScroll: true });
   }
 
   private button(title: string, action: () => void): HTMLButtonElement {
@@ -116,7 +125,11 @@ export class TextEditor {
   }
   private cancel(): void {
     if (this.saving) return;
+    const selected = this.active ? this.buttons[this.source.runs.indexOf(this.active)] : null;
+    const target = selected?.hidden ? this.done : selected;
     this.active = null; this.failure = null; this.popup.hidden = true;
+    // A hidden input cannot retain keyboard navigation; keep the PDF in place.
+    target?.focus({ preventScroll: true });
   }
   update(state: EditState): void {
     if (!state.pages.some((page) => page.id === this.pageId)) { this.close(); return; }
@@ -152,14 +165,15 @@ export class TextEditor {
   }
   async settle(): Promise<void> { await this.pending; if (this.failure) throw this.failure; }
   layout(): void {
+    const width = this.root.clientWidth, height = this.root.clientHeight;
     this.source.runs.forEach((run, index) => {
       const button = this.buttons[index]!; const box = this.anchor(run);
-      button.hidden = !box;
+      // Clipped targets must also leave the keyboard navigation order.
+      button.hidden = !box || box.right <= 0 || box.bottom <= 0 || box.left >= width || box.top >= height;
       if (box) Object.assign(button.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${Math.max(12, box.right-box.left)}px`, height: `${Math.max(12, box.bottom-box.top)}px`, clipPath: box.clip });
     });
     if (this.active && !this.popup.hidden) {
       const box = this.anchor(this.active);
-      const width = this.root.clientWidth, height = this.root.clientHeight;
       this.popup.style.left = `${Math.max(8, Math.min(box?.left ?? 8, width - 456))}px`;
       this.popup.style.top = `${Math.max(48, Math.min((box?.bottom ?? 48) + 8, height - this.popup.offsetHeight - 8))}px`;
     }

@@ -2333,7 +2333,7 @@ SOFTWARE.
 
 ## Rust crates
 
-403 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+402 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2363,7 +2363,7 @@ SOFTWARE.
 | byteorder | 1.5.0 | Unlicense OR MIT |
 | byteorder-lite | 0.1.0 | Unlicense OR MIT |
 | bytes | 1.12.1 | MIT |
-| camino | 1.2.5 | MIT OR Apache-2.0 |
+| camino | 1.2.6 | MIT OR Apache-2.0 |
 | cargo-platform | 0.1.9 | MIT OR Apache-2.0 |
 | cargo_metadata | 0.19.2 | MIT |
 | caseless | 0.2.2 | MIT |
@@ -2574,7 +2574,7 @@ SOFTWARE.
 | ring | 0.17.14 | Apache-2.0 AND ISC |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
 | rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| rustls | 0.23.44 | Apache-2.0 OR ISC OR MIT |
+| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
 | rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 |
 | rustls-webpki | 0.103.15 | ISC |
@@ -2621,7 +2621,7 @@ SOFTWARE.
 | syn | 2.0.119 | MIT OR Apache-2.0 |
 | syn | 3.0.5 | MIT OR Apache-2.0 |
 | sync_wrapper | 1.0.2 | Apache-2.0 |
-| synstructure | 0.13.2 | MIT |
+| synstructure | 0.14.0 | MIT |
 | system-configuration | 0.7.0 | MIT OR Apache-2.0 |
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.35.3 | Apache-2.0 |
@@ -2646,8 +2646,7 @@ SOFTWARE.
 | time-core | 0.1.9 | MIT OR Apache-2.0 |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 |
 | tinystr | 0.8.4 | Unicode-3.0 |
-| tinyvec | 1.13.2 | Zlib OR Apache-2.0 OR MIT |
-| tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib |
+| tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
 | tokio | 1.53.1 | MIT |
 | tokio-rustls | 0.26.5 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.19 | MIT |
@@ -2728,15 +2727,15 @@ SOFTWARE.
 | x509-cert | 0.2.5 | Apache-2.0 OR MIT |
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
-| yoke-derive | 0.8.2 | Unicode-3.0 |
+| yoke-derive | 0.8.3 | Unicode-3.0 |
 | zerofrom | 0.1.8 | Unicode-3.0 |
-| zerofrom-derive | 0.1.7 | Unicode-3.0 |
+| zerofrom-derive | 0.1.8 | Unicode-3.0 |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT |
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.8 | Unicode-3.0 |
 | zerovec-derive | 0.11.6 | Unicode-3.0 |
 | zip | 4.6.1 | MIT |
-| zlib-rs | 0.6.7 | Zlib |
+| zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
@@ -2870,7 +2869,6 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2020 Frommi
 - Copyright (c) 2020 Nikolai Vazquez
 - Copyright (c) 2020 Osspial
-- Copyright (c) 2020 Soveu
 - Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
 - Copyright (c) 2020-2022 The RustCrypto Project Developers
 - Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy
@@ -2939,7 +2937,6 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright 2019 Jeffrey Parsons
 - Copyright 2019-2022 Jeff Parsons, and [contributors](https://github.com/jeffparsons/rangemap/contributors)
 - Copyright 2020 Andrew Straw
-- Copyright 2020 Tomasz "Soveu" Marx
 - Copyright 2022 Kirill Chibisov
 - Copyright 2023 Dirkjan Ochtman
 - Copyright 2023 Jacob Pratt et al.

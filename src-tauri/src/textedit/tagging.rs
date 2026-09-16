@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 mod container_tests;
 #[cfg(test)]
+mod header_tests;
+#[cfg(test)]
 mod inline_tests;
 #[cfg(test)]
 mod list_tests;
@@ -20,6 +22,9 @@ mod refusal_tests;
 mod role_tests;
 #[cfg(test)]
 mod span_tests;
+#[cfg(test)]
+mod table_tests;
+mod tables;
 #[cfg(test)]
 mod tests;
 
@@ -159,7 +164,11 @@ fn element(
     // In particular: no ActualText, Alt, E, title, class, or attribute revision.
     keys(
         dict,
-        &[b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang"],
+        if name(get(dict, b"S")?)? == b"TH" {
+            &[b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang", b"ID"]
+        } else {
+            &[b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang"]
+        },
         "element",
     )?;
     let page = dict.get(b"Pg").ok().map(reference).transpose()?;
@@ -185,6 +194,11 @@ fn element(
         return Err(INVALID.into());
     }
     if let Ok(attributes) = dict.get(b"A") {
+        // Cell attributes and identifiers are checked together with the IDTree
+        // after this element's row/table ownership has been established.
+        if matches!(name(get(dict, b"S")?)?, b"TD" | b"TH") {
+            return Ok(page);
+        }
         if name(get(dict, b"S")?)? == b"L" {
             // A single List attribute dictionary, optionally wrapped as emitted
             // by Chromium. Numbering describes labels; it is not an ink bound.
@@ -230,6 +244,7 @@ fn element(
                 b"EndIndent",
                 b"SpaceBefore",
                 b"SpaceAfter",
+                b"TextIndent",
             ],
             "layout attributes",
         )?;
@@ -243,11 +258,14 @@ fn element(
             b"EndIndent",
             b"SpaceBefore",
             b"SpaceAfter",
+            b"TextIndent",
         ] {
             if let Ok(indent) = attributes.get(key) {
                 // ISO 32000-1 14.8.5.4: authored block allocation constraints,
                 // not ink bounds. A fitting fixed-position edit retains these
                 // indents and inter-paragraph spacing without reflowing text.
+                // TextIndent offsets only the first line from StartIndent;
+                // its origin stays fixed even when that line gets shorter.
                 if name(get(dict, b"S")?)? == b"Document" {
                     return Err(INVALID.into());
                 }
@@ -369,12 +387,14 @@ impl Tags {
                 b"ParentTree",
                 b"RoleMap",
                 b"ParentTreeNextKey",
+                b"IDTree",
             ],
             "structure root",
         )?;
         if name(get(root, b"Type")?)? != b"StructTreeRoot" {
             return Err(INVALID.into());
         }
+        let mut tables = tables::Tables::read(doc, root)?;
         let roles = root
             .get(b"RoleMap")
             .ok()
@@ -419,6 +439,17 @@ impl Tags {
             return Err(INVALID.into());
         }
         let nums = array(crate::encoding::resolve(doc, get(parent, b"Nums")?))?;
+        // A parent tree can index annotations/XObjects as well as page MCIDs.
+        // Its dictionary-valued entries are unsupported, not missing pages.
+        // Keep diagnostic inspection bounded even when the tree is refused.
+        if nums.len() <= 2 * MAX_CONTENT_ITEMS
+            && nums.len() % 2 == 0
+            && nums
+                .chunks_exact(2)
+                .any(|pair| crate::encoding::resolve(doc, &pair[1]).as_dict().is_ok())
+        {
+            return Err("non-page parent-tree entries are not editable yet".into());
+        }
         if nums.len() != pages.len() * 2 {
             return Err("tagged parent tree must contain one entry per page".into());
         }
@@ -486,7 +517,8 @@ impl Tags {
                 .transpose()?
                 .unwrap_or(tag);
             let items = children(doc, get(child, b"K")?)?;
-            if container(role) || role == b"NonStruct" || role == b"L" {
+            let mut content_items = Vec::new();
+            if container(role) || matches!(role, b"NonStruct" | b"L" | b"Table" | b"TR") {
                 containers += 1;
                 // Bound the work list before copying child references into it.
                 if items.len() + pending.len() > total {
@@ -506,20 +538,62 @@ impl Tags {
                         }
                     }
                 }
+                if role == b"TR" && name(get(node(doc, parent_id)?, b"S")?)? != b"Table" {
+                    return Err(INVALID.into());
+                }
+                if matches!(role, b"Table" | b"TR") {
+                    let mut descendants = 0;
+                    for item in items {
+                        if role == b"Table" && !matches!(item, Object::Reference(_)) {
+                            content_items.push(item);
+                        } else {
+                            let tag = name(get(node(doc, reference(item)?)?, b"S")?)?;
+                            if !(if role == b"Table" {
+                                tag == b"TR"
+                            } else {
+                                matches!(tag, b"TD" | b"TH")
+                            }) {
+                                return Err(INVALID.into());
+                            }
+                            descendants += 1;
+                        }
+                    }
+                    if descendants == 0 {
+                        return Err(INVALID.into());
+                    }
+                }
                 // Container Pg never supplies a descendant's page. Its own
                 // identity is the immediate parent checked on every child.
-                pending.extend(items.iter().rev().map(|item| (item, id, depth + 1)));
-                continue;
+                pending.extend(
+                    items
+                        .iter()
+                        .rev()
+                        .filter(|item| role != b"Table" || matches!(item, Object::Reference(_)))
+                        .map(|item| (item, id, depth + 1)),
+                );
+                if content_items.is_empty() {
+                    continue;
+                }
             }
-            if !text_block(role) && role != b"LI" {
+            if !text_block(role) && !matches!(role, b"LI" | b"TD" | b"TH" | b"Table") {
                 return Err("tagged element role is not editable yet".into());
+            }
+            if matches!(role, b"TD" | b"TH") {
+                if name(get(node(doc, parent_id)?, b"S")?)? != b"TR" {
+                    return Err(INVALID.into());
+                }
+                tables.cell(
+                    doc,
+                    child,
+                    id,
+                    reference(get(node(doc, parent_id)?, b"P")?)?,
+                )?;
             }
             if role == b"LI"
                 && (name(get(node(doc, parent_id)?, b"S")?)? != b"L" || child.has(b"A"))
             {
                 return Err(INVALID.into());
             }
-            let mut content_items = Vec::new();
             if role == b"LI" {
                 // Nested lists use the same iterative walk and container bounds.
                 // LI itself owns content; it does not add a container level.
@@ -536,7 +610,7 @@ impl Tags {
                     }
                 }
                 content_items.reverse();
-            } else {
+            } else if role != b"Table" {
                 content_items.extend(items);
             }
             let paragraph = Group {
@@ -582,6 +656,7 @@ impl Tags {
                 }
             }
         }
+        tables.finish()?;
         if assigned != total {
             return Err(INVALID.into());
         }
@@ -640,6 +715,13 @@ impl Tags {
     pub(super) fn text(&mut self) -> Result<(), String> {
         if !self.names.is_empty() && !matches!(self.active, Some(Some(_))) {
             return Err("text outside a tagged paragraph is not editable".into());
+        }
+        if self
+            .active
+            .flatten()
+            .is_some_and(|mcid| self.names[mcid] == b"Table")
+        {
+            return Err("text outside a tagged table cell is not editable".into());
         }
         self.has_content = true;
         Ok(())

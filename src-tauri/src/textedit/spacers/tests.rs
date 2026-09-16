@@ -54,6 +54,10 @@ fn textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences()
     for span in [
         "/Span << /ActualText (WORDS) >> BDC ( ) Tj EMC",
         "/Span << /ActualText <09> /MCID 0 >> BDC ( ) Tj EMC",
+        // An MCID takes the tagging branch; these reach the separator guard.
+        "/Span << /ActualText <09> /Lang (en-US) >> BDC ( ) Tj EMC",
+        "/Span << /ActualText <09> /Alt (SYNTHETIC) >> BDC ( ) Tj EMC",
+        "/Span << /ActualText <09> /E (SYNTHETIC) >> BDC ( ) Tj EMC",
         "/Other << /ActualText <09> >> BDC ( ) Tj EMC",
         "/Span /Named BDC ( ) Tj EMC",
         "/Span << /ActualText <> >> BDC ( ) Tj EMC",

@@ -17,7 +17,18 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.8] - Unreleased
+## [26.9.8] - 2026-09-16
+
+- Edit supported rotated text, preserve continuation and line spacing, and retain
+  tagged headings, lists, language spans, paragraph indents and simple tables
+  with linked headers. Opaque grayscale/RGB JPEG images are preserved unchanged.
+- Keep rotated text selection in reading order and retain the reading position
+  when switching tabs, fitting mixed-size pages, rotating or reordering pages.
+- Keep text-editor keyboard focus on visible targets and return it after Cancel
+  or Done. Enter on Cancel now discards the draft instead of applying it.
+- Explain unsupported font programs and tagged structures without exposing
+  document values in refusal messages.
+- Update compatible Rust dependencies.
 
 - Edit existing CFF ligatures (`ff`, `fi`, `fl`, `ffi`) with matching Unicode
   maps, preserving the original glyph spacing and rejecting ambiguous mappings.

@@ -51,7 +51,7 @@ including the connection's IP address and request metadata, to GitHub. Downloadi
 and installing an update requires a click. GitHub's handling of those requests is
 covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
 Links in PDFs open in the browser only after confirmation, where the destination's
-privacy policy applies. **Unreleased:** use **Disable automatic update checks** in
+privacy policy applies. Use **Disable automatic update checks** in
 the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
 **Check for updates** remains available. A check already started may finish.
 <!-- built: app.disableAutomaticUpdates app.enableAutomaticUpdates -->
@@ -371,10 +371,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Apply previews the actual PDF rendering;
-save writes it. The editor supports Helvetica and validated embedded TrueType fonts,
-including existing-glyph composite fonts, bounded kerning, colours, page transforms
-and rectangular clips. Supported tagged paragraphs retain their structure and page
-ownership. Unchanged Word, LibreOffice and Edge exports are included in the verified
+save writes it. The editor supports Helvetica and validated embedded TrueType and
+CFF/Type1C fonts, including supported ligatures, bounded spacing, quarter-turn text,
+colours, page transforms and rectangular clips. Supported tagged paragraphs,
+headings, lists and simple tables retain their structure and page ownership.
+Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice and Edge exports are included in the verified
 examples; this does not mean every export from those applications is editable.
 Replacements must fit the original line width and use characters available in the
 font. Unsupported pages are refused. Text edits support undo and redo and must be

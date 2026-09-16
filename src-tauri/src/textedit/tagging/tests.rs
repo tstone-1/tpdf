@@ -83,7 +83,13 @@ fn flowing() -> (Document, [ObjectId; 9]) {
 
 #[test]
 fn textedit_tagged_layout_spacing_and_source_spaces_survive_a_fitting_edit() {
-    for key in ["StartIndent", "EndIndent", "SpaceBefore", "SpaceAfter"] {
+    for key in [
+        "StartIndent",
+        "EndIndent",
+        "SpaceBefore",
+        "SpaceAfter",
+        "TextIndent",
+    ] {
         for indent in [
             Object::Integer(-1_000_000),
             Object::Integer(0),
@@ -145,7 +151,7 @@ fn textedit_tagged_shared_layout_spacing_preserves_all_pages_and_attributes() {
         let (mut doc, ids) = multipage();
         let attributes = dictionary! {
             "O" => "Layout", "Placement" => "Block", "StartIndent" => -2,
-            "EndIndent" => 3, "SpaceBefore" => 0.12f32, "SpaceAfter" => 4,
+            "EndIndent" => 3, "SpaceBefore" => 0.12f32, "SpaceAfter" => 4, "TextIndent" => -1.2f32,
         };
         let attributes = if indirect {
             Object::Reference(doc.add_object(attributes))
@@ -190,7 +196,13 @@ fn textedit_tagged_shared_layout_spacing_preserves_all_pages_and_attributes() {
 
 #[test]
 fn textedit_tagged_layout_spacing_rejects_invalid_values_and_document_scope() {
-    for key in ["StartIndent", "EndIndent", "SpaceBefore", "SpaceAfter"] {
+    for key in [
+        "StartIndent",
+        "EndIndent",
+        "SpaceBefore",
+        "SpaceAfter",
+        "TextIndent",
+    ] {
         for indent in [
             Object::Integer(1_000_001),
             Object::Integer(-1_000_001),
@@ -724,7 +736,7 @@ fn textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes() {
             assert_eq!(doc.objects, objects);
         }
     }
-    for key in ["BBox", "Width", "Height", "TextIndent"] {
+    for key in ["BBox", "Width", "Height", "TextAlign"] {
         let (mut doc, ids) = fixture(CONTENT);
         doc.get_dictionary_mut(ids[3])
             .unwrap()

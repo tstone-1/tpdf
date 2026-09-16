@@ -13,11 +13,48 @@ pub(super) mod ink_tests;
 
 mod cff;
 mod composite;
-pub(super) use cff::embedded as cff;
 mod ligatures;
 mod mapping;
 mod outlines;
 pub(super) use composite::embedded as composite;
+
+pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
+    let descriptor = dictionary(
+        doc,
+        font.get(b"FontDescriptor")
+            .map_err(|_| "invalid Type1 font descriptor")?,
+    )?;
+    // PDF Type1 is a font dictionary subtype, not the embedded program format.
+    // ISO 32000-1 Table 126 distinguishes FontFile (PostScript) from Type1C in
+    // FontFile3 (CFF). Diagnose the declared carrier without decoding its bytes.
+    let mut carriers = [b"FontFile".as_slice(), b"FontFile2", b"FontFile3"]
+        .into_iter()
+        .filter(|key| descriptor.has(key));
+    let carrier = carriers
+        .next()
+        .ok_or("Type1 font has no embedded font program")?;
+    if carriers.next().is_some() {
+        return Err("Type1 font has conflicting embedded font programs".into());
+    }
+    let program = crate::encoding::resolve(
+        doc,
+        descriptor
+            .get(carrier)
+            .map_err(|_| "invalid embedded program in Type1 font")?,
+    )
+    .as_stream()
+    .map_err(|_| "invalid embedded program in Type1 font")?;
+    match carrier {
+        b"FontFile" => return Err("PostScript Type 1 fonts (FontFile) are not editable yet".into()),
+        b"FontFile2" => return Err("FontFile2 is not supported in Type1 fonts".into()),
+        _ => {}
+    }
+    match program.dict.get(b"Subtype").and_then(Object::as_name).ok() {
+        Some(b"Type1C") => cff::embedded(doc, font),
+        Some(b"OpenType") => Err("OpenType programs in Type1 fonts are not editable yet".into()),
+        _ => Err("unsupported embedded program subtype in Type1 font".into()),
+    }
+}
 
 enum Codes {
     Single(Box<[Option<u8>; 256]>),
