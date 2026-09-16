@@ -6,7 +6,8 @@ The worker verdict is for page zero. Independent pypdf inventory covers every
 page and follows only structure /K edges, never cyclic parent references.
 Exit zero means the survey completed, not that every sample is editable.
 This development tool parses synthetic exports only, outside the application.
-For paragraph spacing, export testdata/textedit-producer-spacing.rtf with:
+For paragraph spacing or language spans, export testdata/textedit-producer-spacing.rtf
+or testdata/textedit-producer-language.rtf with:
 soffice --headless --convert-to 'pdf:writer_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}' --outdir <directory> <rtf>
 The unchanged export uses ordinary worker/native textedit checks and PDFKit
 readback; make_textedit_embedded.py --check <before> <after> --float32 also

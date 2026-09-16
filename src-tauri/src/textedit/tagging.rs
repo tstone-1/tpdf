@@ -17,6 +17,8 @@ mod refusal_tests;
 #[cfg(test)]
 mod role_tests;
 #[cfg(test)]
+mod span_tests;
+#[cfg(test)]
 mod tests;
 
 // Every text block owns content. Grouping elements have separate count/depth
@@ -211,7 +213,7 @@ fn element(
             }
             return Ok(page);
         }
-        if name(get(dict, b"S")?)? == b"NonStruct" {
+        if matches!(name(get(dict, b"S")?)?, b"NonStruct" | b"Span") {
             return Err(INVALID.into());
         }
         let attributes = crate::encoding::resolve(doc, attributes)
@@ -275,7 +277,7 @@ struct Group<'a> {
     items: Vec<&'a Object>,
 }
 
-// Exactly one optional NonStruct level below a paragraph, never a recursive
+// Exactly one optional NonStruct/Span level below a paragraph, never a recursive
 // tree walk. Every group must own content, and total owns the allocation bound.
 fn groups<'a>(
     doc: &'a Document,
@@ -300,7 +302,9 @@ fn groups<'a>(
             let child = node(doc, *id)?;
             let page = element(doc, child, plain.id, pages)?;
             let tag = name(get(child, b"S")?)?;
-            if tag != b"NonStruct" && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody")) {
+            if !matches!(tag, b"NonStruct" | b"Span")
+                && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
+            {
                 return Err(INVALID.into());
             }
             if plain.tag == b"LI" && child.has(b"A") {

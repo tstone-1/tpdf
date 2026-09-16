@@ -2,7 +2,7 @@ use super::tests::{fixture, multipage, CONTENT};
 use crate::textedit::{self, Change};
 use lopdf::{dictionary, Document, Object, ObjectId};
 
-fn nested(multi: bool) -> (Document, Vec<ObjectId>, Vec<ObjectId>) {
+pub(super) fn nested(multi: bool) -> (Document, Vec<ObjectId>, Vec<ObjectId>) {
     let (mut doc, ids) = if multi {
         let (doc, ids) = multipage();
         (doc, ids.to_vec())
@@ -188,10 +188,10 @@ fn textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically() {
                 .set("RoleMap", dictionary! { "NonStruct" => "P" }),
             14 => {
                 // Both names agree, so the supported-role guard must refuse it.
-                doc.get_dictionary_mut(leaves[0]).unwrap().set("S", "Span");
+                doc.get_dictionary_mut(leaves[0]).unwrap().set("S", "Quote");
                 let source = String::from_utf8(doc.get_page_content(ids[0]))
                     .unwrap()
-                    .replacen("/NonStruct <<", "/Span <<", 1);
+                    .replacen("/NonStruct <<", "/Quote <<", 1);
                 let stream = doc.add_object(lopdf::Stream::new(
                     lopdf::Dictionary::new(),
                     source.into_bytes(),

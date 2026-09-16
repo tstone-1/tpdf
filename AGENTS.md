@@ -332,10 +332,14 @@ export of `textedit-producer-spacing.rtf` exercises the combined attributes;
 `scripts/text_edit_producers.py` records its export and readback commands.
 Below the single Document root, an iterative walk admits Part/Art/Sect/Div and
 neutral NonStruct containers, then P/H/H1-H6 blocks with the existing optional
-NonStruct content leaves. It allows at most eight container levels and 128
+NonStruct or literal Span content leaves. Span leaves retain optional language
+tags, accept no layout attributes or semantic overrides, and cannot nest further.
+`textedit-producer-language.rtf` exports an unchanged LibreOffice language-span
+fixture for ordinary worker/native checks and independent structure readback.
+The tree allows at most eight container levels and 128
 containers, independently of the 128-item content bound. Containers own child
 elements, never marked content or layout attributes; their Pg is not inherited.
-Role aliases may target supported grouping/heading types but not NonStruct;
+Role aliases may target supported grouping/heading types but not NonStruct or Span;
 standard PDF 1.7 names cannot be remapped, including types the editor does not
 support. The RoleMap guard covers all 49 standard types; valid custom names
 remain case-sensitive. `tagging/role_tests.rs` covers unused definitions and
