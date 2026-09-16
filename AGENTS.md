@@ -375,6 +375,14 @@ keywords; it never echoes operand values or unknown document tokens.
 `scripts/textedit_survey.py` reports `refusal_totals`, counting only the first
 refusal per page. Its contained `--self-test` covers specific inline-tag errors,
 continued discovery after refusals, report completeness and aggregation.
+Tagged-structure refusals distinguish unsupported metadata, role mappings,
+parent-tree ownership and marked-content context. Only fixed PDF keywords may
+be named; unknown keys, role names and all values stay out of errors. The survey
+self-test checks this through the worker. On the unchanged five-document public
+sample, all 45 page outcomes and source digests remain unchanged: the 16 formerly
+generic tag refusals split into RoleMap (6), IDTree (6), ClassMap (2) and marked
+content without a supported structure tree (2). These are first blockers, not a
+promise that supporting any one feature makes those pages editable.
 
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
