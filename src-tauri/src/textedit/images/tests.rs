@@ -65,6 +65,7 @@ fn textedit_jpeg_preserves_compressed_bytes_resources_and_following_text() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: before.revision,
                     operator: before.runs[0].operator,
@@ -175,6 +176,7 @@ fn textedit_jpeg_refuses_bad_envelopes_and_incomplete_streams_atomically() {
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 0,
@@ -278,6 +280,7 @@ fn textedit_images_preserve_pixels_resources_and_other_text() {
             let objects = doc.objects.clone();
             let bytes = textedit::page_content(&doc, id).unwrap();
             let change = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -365,6 +368,7 @@ fn textedit_images_refuse_masks_forms_and_malformed_samples_atomically() {
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 0,

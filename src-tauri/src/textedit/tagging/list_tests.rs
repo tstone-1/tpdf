@@ -49,6 +49,7 @@ pub(super) fn change(doc: &Document) -> Change {
         ["1.", "FIRST", "2.", "SECOND"]
     );
     Change {
+        layout: None,
         page: 0,
         revision: runs.revision,
         operator: runs.runs[1].operator,
@@ -63,6 +64,7 @@ pub(super) fn refused(mut doc: Document) {
     assert!(textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: vec![],
             operator: 0,

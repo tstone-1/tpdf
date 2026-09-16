@@ -15,7 +15,7 @@ somebody else left, and save --- over the open file or to a copy. **It redacts**
 the page's own instructions --- over the open file or to a copy --- with the result read
 back and reported either way. What is *not* built is the list further down, and
 general text editing is the one that matters. The editor supports a bounded set of
-text layouts and fonts, with replacements that fit the original line width.
+text layouts and fonts, with adjustable text boxes, wrapping and bundled font fallback.
 Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
@@ -92,6 +92,7 @@ the tpdf menu on macOS or command palette to remember an opt-out on this device.
 - **Document tabs** keep several PDFs open with separate edits, reading positions,
   searches and sidebar choices. Ctrl+Tab / Ctrl+Shift+Tab switch tabs; Ctrl+W
   (Cmd+W on macOS) closes one, checking for unsaved changes.
+  Right-click a tab to show its file in Explorer or Finder, copy its path, or close it.
   <!-- built: file.close view.nextTab view.previousTab -->
 - Session restore: the most recent document, page, zoom and rotation you left on.
   The full tab list is not restored after restarting.
@@ -370,15 +371,19 @@ measured the Windows render constants come out 1.5–1.8x worse.
   handed over unchanged.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
-outlined text run on the current page. Apply previews the actual PDF rendering;
-save writes it. The editor supports Helvetica and validated embedded TrueType and
+outlined text run on the current page. Adjust the box width and height, font size,
+font and wrapping while a live preview shows the actual PDF rendering. Apply keeps
+the edit in the document; save writes it. The editor supports Helvetica and validated embedded TrueType and
 CFF/Type1C fonts, including supported ligatures, bounded spacing, quarter-turn text,
 colours, page transforms and rectangular clips. Supported tagged paragraphs,
 headings, lists and simple tables retain their structure and page ownership.
 Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice and Edge exports are included in the verified
 examples; this does not mean every export from those applications is editable.
-Replacements must fit the original line width and use characters available in the
-font. Unsupported pages are refused. Text edits support undo and redo and must be
+Auto font selection uses the original font when possible and bundled Noto Sans
+when new characters need it. Replacements must fit the chosen box without crossing
+clips or neighbouring content. Automatic table resizing, flow across pages and
+complex-script shaping are not supported. Unsupported pages or glyphs are refused.
+Text edits support undo and redo and must be
 saved before marking redactions.
 <!-- built: edit.editText -->
 

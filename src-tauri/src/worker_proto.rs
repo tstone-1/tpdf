@@ -988,6 +988,7 @@ mod tests {
         for request in [
             Request::TextView {
                 changes: vec![crate::textedit::Change {
+                    layout: None,
                     page: 0,
                     revision: vec![1; 32],
                     operator: 3,

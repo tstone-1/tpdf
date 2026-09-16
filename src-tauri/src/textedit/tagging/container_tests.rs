@@ -34,6 +34,7 @@ fn wrap(doc: &mut Document, parent: ObjectId, tag: &str) -> ObjectId {
 fn edit(doc: &Document, page: u32) -> Change {
     let runs = textedit::scan(doc, page).unwrap();
     Change {
+        layout: None,
         page,
         revision: runs.revision,
         operator: runs.runs[0].operator,
@@ -48,6 +49,7 @@ fn refused(mut doc: Document) {
     assert!(textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: vec![],
             operator: 0,

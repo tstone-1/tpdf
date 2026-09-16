@@ -32,6 +32,7 @@ fn textedit_parent_tree_refusals_identify_non_page_entries() {
             let expected = "non-page parent-tree entries are not editable yet";
             assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected);
             let change = textedit::Change {
+                layout: None,
                 page: 0,
                 revision: scan.revision,
                 operator: scan.runs[0].operator,
@@ -93,6 +94,7 @@ fn textedit_tagged_refusals_identify_metadata_without_echoing_document_data() {
         let before = textedit::scan(&doc, 0).unwrap();
         assert_eq!(before.runs.len(), 2);
         let change = textedit::Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,

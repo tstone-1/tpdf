@@ -17,17 +17,17 @@ beforeEach(() => {
     node.select = () => {};
     node.querySelectorAll = () => {
       const walk = (root: FakeElement): FakeElement[] => root.children.flatMap((child) => [child, ...walk(child)]);
-      return walk(node).filter((child) => child.tagName === "button" || child.tagName === "input");
+      return walk(node).filter((child) => ["button", "input", "textarea", "select"].includes(child.tagName));
     };
     return node as unknown as HTMLElement;
   }) as typeof document.createElement);
 });
 afterEach(() => { vi.restoreAllMocks(); dom.restore(); });
 
-function mount(write: (change: TextChange) => Promise<EditState> = async (value) => ({ ...state, text_edits: [value] }), source = runs, anchor: ConstructorParameters<typeof TextEditor>[3] = () => ({ left: 40, top: 48, right: 120, bottom: 63, clip: "inset(0px)" })) {
+function mount(write: (change: TextChange) => Promise<EditState> = async (value) => ({ ...state, text_edits: [value] }), source = runs, anchor: ConstructorParameters<typeof TextEditor>[3] = () => ({ left: 40, top: 48, right: 120, bottom: 63, clip: "inset(0px)" }), preview?: ConstructorParameters<typeof TextEditor>[6]) {
   const close = vi.fn();
   const editor = new TextEditor(dom.root as unknown as HTMLElement, 1, source,
-    anchor, write, close);
+    anchor, write, close, preview);
   editor.update(state);
   const root = dom.root.children[0]!;
   const hit = root.children[0]!;
@@ -38,6 +38,47 @@ function mount(write: (change: TextChange) => Promise<EditState> = async (value)
 }
 
 describe("existing text editing", () => {
+  it("applies layout-only changes and wraps on Ctrl+Enter while Enter adds a line", async () => {
+    const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+    const { editor, root, form, field } = mount(write);
+    const control = (name: string) => (root as FakeElement & { querySelectorAll(): FakeElement[] }).querySelectorAll().find((node) => node.getAttribute("aria-label") === name)! as FakeElement & { value: string; checked: boolean };
+    control("Width (pt)").value = "150";
+    control("Width (pt)").dispatch("input", {});
+    control("Font").value = "noto_sans_bold";
+    control("Font").dispatch("change", {});
+    editor.commit(); await editor.settle();
+    expect(write).toHaveBeenLastCalledWith({ ...change, replacement: change.original,
+      layout: { width: 150, height: 15, size: 12, wrap: false, font: "noto_sans_bold" } });
+    control("Wrap within box").checked = true; control("Wrap within box").dispatch("change", {});
+    field.value = "ACME\nSECOND";
+    form.dispatch("keydown", { target: field, key: "Enter" });
+    expect(write).toHaveBeenCalledTimes(1);
+    form.dispatch("keydown", { target: field, key: "Enter", ctrlKey: true }); await editor.settle();
+    expect(write.mock.calls[1]![0]).toMatchObject({ replacement: "ACME\nSECOND", layout: { wrap: true } });
+    control("Width (pt)").value = "0"; editor.commit();
+    await expect(editor.settle()).rejects.toThrow("box");
+    expect(write).toHaveBeenCalledTimes(2);
+    editor.destroy();
+  });
+  it("debounces previews, discards stale replies and never writes a cancelled preview", async () => {
+    vi.useFakeTimers();
+    const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const finish: Array<(runs: TextRuns) => void> = [];
+    const preview = vi.fn(() => new Promise<TextRuns>((resolve) => finish.push(resolve)));
+    const write = vi.fn(async () => state);
+    const { editor, field, form } = mount(write, runs, undefined, preview);
+    const reply: TextRuns = { ...runs, preview: { png: [1,2,3], font: "Noto Sans", lines: 2, rect: [40,48,180,100] } };
+    field.value = "FIRST"; field.dispatch("input", {}); await vi.advanceTimersByTimeAsync(250);
+    field.value = "SECOND"; field.dispatch("input", {}); await vi.advanceTimersByTimeAsync(250);
+    expect(preview).toHaveBeenCalledTimes(2);
+    expect(preview.mock.calls[0]).toEqual([{ ...change, replacement: "FIRST", layout: { width: 80, height: 15, size: 12, wrap: false, font: "auto" } }]);
+    finish[0]!(reply); await Promise.resolve(); expect(create).not.toHaveBeenCalled();
+    finish[1]!(reply); await Promise.resolve(); expect(create).toHaveBeenCalledOnce();
+    form.dispatch("keydown", { key: "Escape" }); expect(revoke).toHaveBeenCalledWith("blob:preview");
+    expect(write).not.toHaveBeenCalled();
+    editor.destroy(); vi.useRealTimers();
+  });
   it("Done waits for the draft before closing and returning focus to the viewer", async () => {
     for (const outcome of ["accepted", "refused", "disposed"] as const) {
       let finish!: (value: EditState) => void;
@@ -162,7 +203,8 @@ describe("existing text editing", () => {
   it("bounds draft characters while allowing deletion", () => {
     expect(replacementError("")).toBeNull();
     expect(replacementError("x".repeat(4096))).toBeNull();
-    for (const value of ["x".repeat(4097), "a\nb", "\u03b1", "\u0000", "\u007f"]) expect(replacementError(value)).not.toBeNull();
+    for (const value of ["x".repeat(4097), "a\nb", "\ud800", "\u0000", "\u007f"]) expect(replacementError(value)).not.toBeNull();
+    for (const value of ["\u03b1", "€", "a\u0308", "日本語", "\u{20000}".repeat(4096)]) expect(replacementError(value)).toBeNull();
   });
   it("starts a drain immediately and waits for the backend before accepting it", async () => {
     let finish!: (value: EditState) => void;
@@ -185,21 +227,21 @@ describe("existing text editing", () => {
     expect(replacementError("ä".repeat(4096))).toBeNull();
     expect(replacementError("ä".repeat(4097))).not.toBeNull();
     for (let code = 160; code <= 255; code++) expect(replacementError(String.fromCharCode(code))).toBeNull();
-    for (const value of ["€", "a\u0308", "日本語", "\x80", "\x9f"]) expect(replacementError(value)).not.toBeNull();
+    for (const value of ["\x80", "\x9f"]) expect(replacementError(value)).not.toBeNull();
   });
-  it("sends en dashes unchanged and keeps controls and other punctuation refused", async () => {
+  it("sends punctuation unchanged and refuses controls", async () => {
     const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
     const { editor, field } = mount(write);
     field.value = "A\u2013\u2018\u2019\u2212B"; editor.commit(); await editor.settle();
     expect(write).toHaveBeenCalledExactlyOnceWith({ ...change, replacement: "A\u2013\u2018\u2019\u2212B" });
     expect(replacementError("\u2013".repeat(4096))).toBeNull();
-    for (const value of ["\u2013".repeat(4097), "\u0096", "\u2012", "\u2014", "\u201c", "\u0091", "\u0080"])
+    for (const value of ["\u2013".repeat(4097), "\u0096", "\u2028", "\u2029", "\u0091", "\u0080"])
       expect(replacementError(value)).not.toBeNull();
   });
   it("keeps invalid and refused drafts from passing the save drain", async () => {
     const write = vi.fn(async () => { throw new Error("replacement exceeds the original width"); });
     const { editor, field } = mount(write);
-    field.value = "\u03b1"; editor.commit(); await expect(editor.settle()).rejects.toThrow("printable");
+    field.value = "a\nb"; editor.commit(); await expect(editor.settle()).rejects.toThrow("control");
     expect(write).not.toHaveBeenCalled();
     field.value = "ACME"; field.dispatch("input", {}); editor.commit();
     await expect(editor.settle()).rejects.toThrow("original width");
@@ -250,7 +292,7 @@ describe("existing text editing", () => {
   it("cancel discards a draft and its refusal without writing", async () => {
     const write = vi.fn(async () => state);
     const { editor, form, field } = mount(write);
-    field.value = "\u03b1"; editor.commit();
+    field.value = "a\nb"; editor.commit();
     form.dispatch("keydown", { key: "Escape" });
     await expect(editor.settle()).resolves.toBeUndefined();
     editor.commit(); expect(write).not.toHaveBeenCalled();

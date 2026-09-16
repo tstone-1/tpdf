@@ -5063,6 +5063,26 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.9 local verification, Windows x64, 2026-09-16:** all 25 quality gates
+passed after refreshing the fuzz workspace lockfile. The full run took 258.9
+seconds; its corrected fuzz gate took 41.6 seconds. Rust passed 1,603 tests
+with three ignored; the frontend passed 1,691. Selected mutations caught
+12/12 Rust, 13/13 frontend and 1/1 native UI faults; historical tables were
+not run in full. Native viewer checks passed 314 text-heavy and 216 vector-heavy
+cases, with 51 and 149 not applicable, plus 22 text-edit workflow checks.
+The normal MSI app passed font fallback, box sizing, wrapping, live preview,
+undo/redo and save, with independent parser readback. PDFKit separately checked
+new glyphs, wrapping and unchanged neighbouring pixels. The worker round trip
+matched preview/save pixels on both pages and preserved adjacent content.
+The packaged engine worked with the development engine hidden; hiding both
+produced an engine error. PrintWindow captured only the application and its
+pixels stayed unchanged under an overlapping control window. The released
+26.9.8 NSIS installer upgraded to 26.9.9; the original installation and registry
+were restored. The real-spooler probe passed 10/10. The OCR sweep opened 141
+documents and sampled 12,008 regions, reading back 7,820 on 267 pages: zero
+still read as text, 3,492 were shown unreadable and 4,328 remained unverified.
+It took 46.7 seconds with no arithmetic warnings. Unverified is not clean.
+
 **26.9.5 local verification, Windows x64, 2026-09-11:** all 23 gates passed
 in 309 seconds (1,319 Rust tests passed, two ignored; 1,631 frontend tests).
 The selected mutations caught 14/14 Rust, 251/251 frontend and 2/2 native UI
@@ -5089,6 +5109,9 @@ starts at 0 and increments within the month.
    - `src-tauri/Cargo.toml`
    - `src-tauri/tauri.conf.json`
 3. `cargo check --manifest-path src-tauri/Cargo.toml` to refresh `Cargo.lock`.
+   Also run `cargo check --manifest-path src-tauri/fuzz/Cargo.toml --bins`:
+   the separate fuzz lockfile records the application version too, and the
+   locked fuzz gate otherwise rejects a version bump.
 4. In `CHANGELOG.md`, replace `Unreleased` with the release date.
 5. `scripts/gates.py` --- all gates pass.
 

@@ -423,17 +423,17 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Existing-text editing supports more fonts and
-          layouts: bounded CFF/Type1C fonts and ligatures, rotated text, continued
-          text runs, paragraph spacing, headings, lists and simple tables with
-          linked headers. Supported JPEG images and vector artwork remain
-          unchanged. Text selection follows rotated lines, and tab switching,
-          fitting and page rotation retain the intended reading position.
-          Keyboard cancellation discards drafts and restores focus.
+          **New in this release.** Text editing has adjustable box dimensions,
+          font size, wrapping and a live PDF preview. Bundled Noto Sans fonts
+          provide missing characters in regular, bold and italic styles.
+          Character-positioned text is grouped into editable lines, and more
+          rectangular clipping and embedded Unicode font cases are supported.
+          Right-click a document tab to show its file in Explorer or Finder,
+          copy its path, or close it. The duplicate toolbar filename is removed.
 
-          Replacements must fit the original line width and use characters
-          available in the font. Unsupported pages are refused with more specific
-          explanations; paragraph reflow and general text editing remain unbuilt.
+          Edits must fit their chosen box, clips and surrounding content.
+          Unsupported pages and glyphs are refused; automatic table resizing,
+          flow across pages and complex-script shaping remain unbuilt.
           Save text edits before marking redactions.
 
           **What it edits.** Pages can be turned, deleted, moved, extracted to

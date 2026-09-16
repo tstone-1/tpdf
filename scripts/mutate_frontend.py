@@ -113,8 +113,8 @@ MUTATIONS = [
     Mutation('direction: band every direction as upright', 'src/lib/reading.ts', 'const ownAxes = axesFor(turns);\n    for (const fragment', 'const ownAxes = axesFor(0);\n    for (const fragment', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
     Mutation('direction: cut reversed paragraphs in page frame', 'src/lib/reading.ts', 'if (text.char_turns?.length) {', 'if (false) {', 'keeps mixed orthogonal lines whole and copy order invariant under every view turn'),
     Mutation('direction: drop direction at tag ownership', 'src/lib/reading.ts', 'if (fragment.turns !== undefined) part.turns = fragment.turns;', '/* direction omitted */', 'retains character direction when tagged ownership splits a fragment'),
-    Mutation('text editor: refuse mapped en dash', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013\\u2018\\u2019\\u2212]/', '/[^\\x20-\\x7e\\xa0-\\xff\\u2018\\u2019\\u2212]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
-    Mutation('text editor: refuse mapped CFF punctuation', 'src/lib/textedit.ts', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013\\u2018\\u2019\\u2212]/', '/[^\\x20-\\x7e\\xa0-\\xff\\u2013]/', 'sends en dashes unchanged and keeps controls and other punctuation refused'),
+    Mutation('text editor: refuse mapped en dash', 'src/lib/textedit.ts', "/[\\x00-\\x1f\\x7f-\\x9f\\ud800-\\udfff\\u2028\\u2029]/u", "/[\\x00-\\x1f\\x7f-\\x9f\\ud800-\\udfff\\u2028\\u2029\\u2013]/u", "sends punctuation unchanged and refuses controls"),
+    Mutation('text editor: refuse mapped CFF punctuation', 'src/lib/textedit.ts', "/[\\x00-\\x1f\\x7f-\\x9f\\ud800-\\udfff\\u2028\\u2029]/u", "/[\\x00-\\x1f\\x7f-\\x9f\\ud800-\\udfff\\u2028\\u2029\\u2018\\u2019\\u2212]/u", "sends punctuation unchanged and refuses controls"),
     Mutation('text editor: scroll overlay on input focus', "src/lib/textedit.ts", 'this.input.focus({ preventScroll: true });', 'this.input.focus();', "focuses targets and the input without scrolling their overlay"),
     Mutation('text editor: scroll overlay on first target focus', "src/lib/textedit.ts", '(this.buttons.find((button) => !button.hidden) ?? this.done).focus({ preventScroll: true });', '(this.buttons.find((button) => !button.hidden) ?? this.done).focus();', "focuses targets and the input without scrolling their overlay"),
     Mutation("text editor: undo invalidates content", "src/lib/textedit.ts", "...old.keys(), ...next.keys()", "...next.keys()", "invalidates added, changed and undone pages without invalidating reordered changes"),
@@ -7468,6 +7468,24 @@ MUTATIONS += [
         "turn < 0",
         "rotates pixel orientation with the page and reverses a placement turn",
     ),
+]
+
+MUTATIONS += [
+    Mutation("boxed edit: ignore layout-only changes", "src/lib/textedit.ts",
+        'return this.input.value !== this.accepted || JSON.stringify(this.controls.read()) !== this.acceptedLayout;',
+        'return this.input.value !== this.accepted;',
+        "applies layout-only changes and wraps on Ctrl+Enter while Enter adds a line"),
+    Mutation("boxed edit: display stale preview", "src/lib/textedit.ts",
+        'if (this.disposed || generation !== this.previewGeneration || !result.preview) return;',
+        'if (this.disposed || !result.preview) return;',
+        "debounces previews, discards stale replies and never writes a cancelled preview"),
+]
+
+MUTATIONS += [
+    Mutation("tab menu: discard clicked tab actions", "src/lib/contextmenu.ts",
+        "const action = actions.find((candidate) => candidate.id === entry);",
+        "const action = actions.find((candidate) => candidate.id === entry && false);",
+        "runs the clicked tab's actions without changing or leaking into the registry"),
 ]
 
 if __name__ == "__main__":

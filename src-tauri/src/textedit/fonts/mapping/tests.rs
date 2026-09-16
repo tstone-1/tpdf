@@ -167,6 +167,33 @@ fn wide_map() -> String {
 }
 
 #[test]
+fn unicode_cid_preserves_scalars_and_refuses_ambiguous_or_overflowing_maps() {
+    let map = |body: &str| {
+        wide_map().replace(
+            "2 beginbfchar\n<0101> <0041>\n<0102> <0042>\nendbfchar",
+            body,
+        )
+    };
+    let valid = unicode_cid(&stream(&map(
+        "2 beginbfchar <0101> <4e00> <0102> <d840dc00> endbfchar",
+    )))
+    .unwrap();
+    assert_eq!(valid[&0x101], "\u{4e00}");
+    assert_eq!(valid[&0x102], "\u{20000}");
+    for invalid in [
+        "2 beginbfchar <0101> <4e00> <0102> <4e00> endbfchar",
+        "2 beginbfchar <0101> <4e00> <0101> <4e01> endbfchar",
+        "1 beginbfchar <0101> <d840> endbfchar",
+        "1 beginbfchar <0101> <000a> endbfchar",
+        "1 beginbfchar <0101> <00410042> endbfchar",
+        "1 beginbfrange <0101> <0102> <ffff> endbfrange",
+        "1 beginbfrange <0000> <1000> <4e00> endbfrange",
+    ] {
+        assert!(unicode_cid(&stream(&map(invalid))).is_err(), "{invalid}");
+    }
+}
+
+#[test]
 fn textedit_cid_mapping_accepts_bfchar_ranges_and_high_codes() {
     for map in [
         wide_map(),

@@ -41,6 +41,7 @@ fn textedit_font_refusals_identify_program_carriers_without_echoing_values() {
             .set("Subtype", subtype);
         let unchanged = doc.objects.clone();
         let edit = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,
@@ -140,6 +141,7 @@ fn textedit_cff_maps_ascii_by_glyph_name_and_preserves_resources() {
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: runs.revision,
                 operator: runs.runs[0].operator,
@@ -213,6 +215,7 @@ fn textedit_cff_bounds_replacement_ink_and_preserves_failed_document() {
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: runs.revision.clone(),
                 operator: runs.runs[0].operator,
@@ -318,6 +321,7 @@ fn textedit_cff_custom_encoding_roundtrips_original_codes_and_word_spacing() {
         textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision,
                 operator: before.runs[0].operator,
@@ -374,6 +378,7 @@ fn textedit_cff_custom_encoding_refuses_malformed_or_ambiguous_differences() {
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: vec![],
                 operator: 3,
@@ -512,6 +517,7 @@ fn textedit_cff_unicode_roundtrip_preserves_codes_ink_and_resources() {
     assert!((before.runs[0].advance - 43.2).abs() < 0.00001); // NBSP is not byte 32.
     let objects = doc.objects.clone();
     let change = Change {
+        layout: None,
         page: 0,
         revision: before.revision,
         operator: before.runs[0].operator,
@@ -716,6 +722,7 @@ fn textedit_ligatures_preserve_source_fragment_boundaries_and_other_operators() 
     assert!((before.runs[1].advance - 24.6).abs() < 1e-6); // Three separate glyphs.
     let objects = doc.objects.clone();
     let change = Change {
+        layout: None,
         page: 0,
         revision: before.revision,
         operator: before.runs[0].operator,
@@ -749,6 +756,7 @@ fn textedit_ligatures_refuse_overflow_expansion_and_stale_edits_atomically() {
         assert!(textedit::write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: before.revision.clone(),
                 operator: before.runs[0].operator,

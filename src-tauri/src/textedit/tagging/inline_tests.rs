@@ -24,6 +24,7 @@ fn textedit_inline_tags_preserve_continuations_and_every_unedited_operator() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: before.revision,
                     operator: before.runs[0].operator,
@@ -79,6 +80,7 @@ fn textedit_inline_tags_balance_independently_of_text_objects_and_keep_spacers()
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: before.revision,
                     operator: before.runs[0].operator,
@@ -131,6 +133,7 @@ fn textedit_inline_tags_refuse_invalid_semantics_and_balance_atomically() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: 0,
                     revision: before.revision,
                     operator: before.runs[0].operator,

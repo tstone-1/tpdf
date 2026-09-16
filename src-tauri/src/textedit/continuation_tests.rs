@@ -7,6 +7,7 @@ fn textedit_continued_precision_and_accumulated_bounds_fail_atomically() {
     let runs = scan(&doc, 0).unwrap();
     let original = doc.objects.clone();
     let edit = Change {
+        layout: None,
         page: 0,
         revision: runs.revision,
         operator: runs.runs[0].operator,
@@ -49,6 +50,7 @@ fn textedit_continued_discovery_requires_representable_deletion() {
         let mut doc = tests::with_content(body.as_bytes());
         let runs = scan(&doc, 0).unwrap();
         let change = Change {
+            layout: None,
             page: 0,
             revision: runs.revision,
             operator: runs.runs[0].operator,
@@ -74,6 +76,7 @@ fn textedit_continued_shows_keep_followers_fixed_when_shortened_or_deleted() {
             assert!((before.runs[1].matrix[4] - 40. - before.runs[0].advance).abs() < 1e-6);
             assert_eq!(before.runs[2].matrix[4..], [40., 150.]);
             let change = Change {
+                layout: None,
                 page: 0,
                 revision: before.revision.clone(),
                 operator: before.runs[0].operator,
@@ -124,6 +127,7 @@ fn textedit_continued_batch_preserves_every_advance_and_stream_boundary() {
         .runs
         .iter()
         .map(|run| Change {
+            layout: None,
             page: 0,
             revision: before.revision.clone(),
             operator: run.operator,

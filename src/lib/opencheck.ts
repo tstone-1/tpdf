@@ -239,8 +239,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const wrapped = phase === "textedit-wrapped";
       const wideSpacing = phase === "textedit-wide-spacing";
       const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
-      const original = listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "le" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "ll" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const original = listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
@@ -254,11 +254,11 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         throw new Error("the requested text-edit page did not settle");
       }
       const originalTab = host.tabs().find((tab) => tab.path === first)!;
-      const field = () => document.querySelector<HTMLInputElement>(".text-edit-popup input");
+      const field = () => document.querySelector<HTMLTextAreaElement>(".text-edit-popup textarea");
       const target = () => {
         const targets = [...document.querySelectorAll<HTMLButtonElement>(".text-edit-run")];
         // A list label may precede the item body; select the authored text.
-        return w3c ? targets[5] : targets.find((button) => [original + (wrapped ? " " : ""), replacement].some((text) => button.getAttribute("aria-label") === `Edit: ${text}`));
+        return targets.find((button) => [original + (wrapped ? " " : ""), replacement].some((text) => button.getAttribute("aria-label") === `Edit: ${text}`));
       };
       const start = async () => {
         const previous = target();
@@ -352,7 +352,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
         if (!canvas || !context) throw new Error("text check needs a readable composited surface");
-        const a = viewer.screenPoint(page, passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 160 : 35, passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
+        const a = viewer.screenPoint(page, passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 55 : 35, passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
         const left = Math.round(a.x*dpr), top = Math.round(a.y*dpr);
         const width = Math.round((b.x-a.x)*dpr), height = Math.round((b.y-a.y)*dpr);
         if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error(`text pixel sample is off screen: ${JSON.stringify({left,top,width,height,canvasWidth:canvas.width,canvasHeight:canvas.height})}`);
@@ -547,6 +547,22 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("both documents retain a tab", host.tabs().length === 2 && !!b);
       check("the second tab has no inherited edits", host.edits()?.state.dirty === false && host.edits()?.state.marks.length === 0);
       if (!b) return;
+      const background = document.getElementById(`document-tab-${a.id}`);
+      background?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 }));
+      const tabActions = Array.from(document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]'));
+      check("tab menu offers reveal, copy path and close", tabActions.length === 3 &&
+        /^Show in (Explorer|Finder)$/.test(tabActions[0]?.textContent ?? "") &&
+        tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Close");
+      check("right-clicking a background tab keeps the active document", host.edits()?.doc === b.id);
+      check("the header does not repeat the document filename", !document.querySelector("header .title"));
+      let copiedPath = "";
+      const clipboardWrite = navigator.clipboard.writeText;
+      try {
+        navigator.clipboard.writeText = async (value) => { copiedPath = value; };
+        tabActions[1]?.click();
+        await pause(50);
+        check("copy path uses the clicked background tab", copiedPath === first && host.edits()?.doc === b.id);
+      } finally { navigator.clipboard.writeText = clipboardWrite; }
       const button = document.getElementById(`document-tab-${a.id}`);
       button?.click();
       if (!await settle(() => host.path() === first && !!host.viewer(), SETTLE_MS))
@@ -568,7 +584,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("saving leaves the other tab usable", host.path() === second && host.edits()?.doc === b.id && host.hasViewer());
       const saved = host.tabs().find((tab) => tab.path === first);
       if (!saved) throw new Error("saved tab disappeared");
-      await host.close(saved.id);
+      document.getElementById(`document-tab-${saved.id}`)?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 }));
+      Array.from(document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]')).find((item) => item.textContent === "Close")?.click();
+      if (!await settle(() => host.tabs().length === 1, SETTLE_MS)) throw new Error("tab menu did not close the background tab");
+      await host.idle();
       check("closing a background tab keeps the active document", host.tabs().length === 1 && host.edits()?.doc === b.id);
       let released = false;
       try { await call("edit_state", { doc: saved.id }); } catch { released = true; }

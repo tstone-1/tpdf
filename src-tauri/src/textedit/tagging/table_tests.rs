@@ -59,6 +59,7 @@ fn textedit_tables_preserve_cells_borders_and_structure() {
             let runs = textedit::scan(&doc, 0).unwrap();
             assert_eq!(runs.runs.len(), 2);
             let edit = Change {
+                layout: None,
                 page: 0,
                 revision: runs.revision,
                 operator: runs.runs[target].operator,

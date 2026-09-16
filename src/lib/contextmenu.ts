@@ -215,6 +215,7 @@ export interface At {
 interface Row {
   command: Command;
   element: HTMLElement;
+  run?: () => void | Promise<void>;
 }
 
 /**
@@ -309,7 +310,9 @@ export class ContextMenu {
    * no entries reads as the application being broken rather than as there being
    * nothing to do.
    */
-  show(entries: Entry[], at: At): boolean {
+  show(entries: Entry[], at: At, actions: readonly Command[] = []): boolean {
+    // Scoped actions capture the clicked tab without changing the active document
+    // or leaving a target in the global command registry after the menu closes.
     this.close();
     const rows: Row[] = [];
     let pendingSeparator = false;
@@ -320,7 +323,8 @@ export class ContextMenu {
         pendingSeparator = rows.length > 0;
         continue;
       }
-      const command = this.registry.find(entry);
+      const action = actions.find((candidate) => candidate.id === entry);
+      const command = action ?? this.registry.find(entry);
       if (!command || !(command.enabled?.() ?? true)) continue;
       if (pendingSeparator) {
         this.root.appendChild(this.rule());
@@ -328,7 +332,7 @@ export class ContextMenu {
       }
       const element = this.row(command, rows.length);
       this.root.appendChild(element);
-      rows.push({ command, element });
+      rows.push({ command, element, ...(action?.run ? { run: action.run } : {}) });
     }
     if (rows.length === 0) return false;
 
@@ -388,6 +392,10 @@ export class ContextMenu {
     const opened = this.openedAt;
     this.close();
     if (!row) return;
+    if (row.run) {
+      if (row.command.enabled?.() ?? true) void row.run();
+      return;
+    }
     // Read before `close`, which clears it --- and `close` runs first above so
     // that a command opening something of its own does not fight a menu that is
     // still on screen.

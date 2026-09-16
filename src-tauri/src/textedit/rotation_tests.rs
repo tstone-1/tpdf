@@ -96,6 +96,7 @@ fn textedit_rotation_composes_page_scales_and_preserves_replacement_placement() 
     let run = &before.runs.runs[0];
     assert_eq!(run.matrix, [0., 6., -6., 0., 130., 140.]);
     let change = Change {
+        layout: None,
         page: 0,
         revision: before.runs.revision.clone(),
         operator: run.operator,
@@ -172,10 +173,10 @@ fn textedit_rotation_clips_use_transformed_glyph_envelopes_on_every_side() {
         for side in 0..4 {
             let mut cut = roomy;
             cut[side] = bounds[side] + if side < 2 { 0.5 } else { -0.5 };
-            assert!(
-                scan(&clipped(cut), 0)
-                    .unwrap_err()
-                    .contains("partly clipped"),
+            let runs = super::tests::clipped_roundtrip(&clipped(cut));
+            assert_ne!(
+                runs.runs[0].display_rect,
+                scan(&clipped(roomy), 0).unwrap().runs[0].display_rect,
                 "{axes}, side {side}"
             );
         }

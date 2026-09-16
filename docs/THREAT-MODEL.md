@@ -1789,12 +1789,20 @@ Text discovery, embedded-font parsing, preview rewriting and saved rewriting run
 inside document workers. The coordinator retains bounded changes in the edit
 journal and sends them over the existing protocol; no new file-writing command
 or filesystem authority is added. Preview serialisation is limited to 64 MiB.
-The parser limits decoded page content to 1 MiB and 4,096 operations, with at most
+The parser limits decoded page content to 1 MiB and 16,384 operations, with at most
 128 pending text changes. Embedded font streams use the same 1 MiB decode bound.
 
 Editing accepts a conservative grammar, not arbitrary PDF text. Font mappings,
-metrics and glyph outlines are validated before use. A replacement must fit the
-original line width and use the supported font's available characters. Supported
+metrics and glyph outlines are validated before use. Legacy replacements fit the
+original line width and use existing glyphs. Explicit layouts allow a bounded
+box (0.1 to 14,400 points per axis), font size (1 to 512 points), and at most 128
+wrapped lines. Four bundled OFL Noto Sans fonts provide fallback glyphs without
+filesystem access. Font programs are embedded once per style per write; bounded
+CIDToGIDMap streams map validated glyphs and ToUnicode streams are capped at
+128 KiB. Layout restores the authored font, spacing, line matrix and cursor,
+retains clipping, and refuses page overflow and new collisions with other text.
+Draft previews are PNG crops of at most 1024 by 512 pixels from the same writer.
+Supported
 tag trees are checked in both directions for page and MCID ownership, bounded
 to 128 content items, and preserved. Alternate text and unsupported structure
 semantics are refused. Untouched content operands retain their original bytes.

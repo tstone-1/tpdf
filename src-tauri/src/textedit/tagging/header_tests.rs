@@ -56,6 +56,7 @@ fn textedit_headers_preserve_identity_links_and_both_cells() {
                 textedit::write(
                     &mut doc,
                     &[Change {
+                        layout: None,
                         page: 0,
                         revision: scan.revision,
                         operator: original.operator,

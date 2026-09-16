@@ -17,6 +17,23 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.9] - 2026-09-16
+
+### Added
+
+- Existing-text editing now offers adjustable box dimensions, font size and
+  wrapping, with a live preview rendered from the actual PDF writer.
+- Bundled Noto Sans fonts provide fallback characters in regular, bold, italic
+  and bold italic styles. Edits retain undo, redo and save support.
+- Document tabs have a context menu with Show in Explorer or Finder, Copy file
+  path and Close.
+
+### Fixed
+
+- Character-positioned text is grouped into editable lines. More rectangular
+  clipping and validated embedded Unicode font cases can be edited.
+- Removed the redundant filename beside Print.
+
 ## [26.9.8] - 2026-09-16
 
 - Edit supported rotated text, preserve continuation and line spacing, and retain

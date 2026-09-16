@@ -16,6 +16,7 @@ mod composite;
 mod ligatures;
 mod mapping;
 mod outlines;
+mod unicode;
 pub(super) use composite::embedded as composite;
 
 pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
@@ -62,6 +63,7 @@ enum Codes {
 }
 
 pub(super) struct Metrics {
+    unicode: Option<unicode::Metrics>,
     // Union of all offered glyphs, in thousandths of an em, including baseline.
     // Any width-fitting replacement is therefore covered by the same envelope.
     pub(super) vertical_bounds: Option<[f64; 2]>,
@@ -73,6 +75,8 @@ pub(super) struct Metrics {
     // None retains the WinAnsi/Latin-1 path.
     codes: Option<Codes>,
 }
+
+pub(super) mod fallback;
 
 impl Metrics {
     fn text_slots(&self, text: &str) -> Result<Vec<u8>, String> {
@@ -108,6 +112,7 @@ impl Metrics {
             ));
         }
         Self {
+            unicode: None,
             vertical_bounds: None,
             widths,
             horizontal_overhangs: None,
@@ -166,6 +171,9 @@ impl Metrics {
     }
 
     pub(super) fn decode(&self, bytes: &[u8]) -> Result<String, String> {
+        if let Some(metrics) = &self.unicode {
+            return metrics.source(bytes, 1., 0., 0.).map(|(text, _, _)| text);
+        }
         let Some(codes) = &self.codes else {
             return super::decode_text(bytes);
         };
@@ -217,6 +225,9 @@ impl Metrics {
     }
 
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+        if let Some(metrics) = &self.unicode {
+            return metrics.encode(text);
+        }
         let bytes = self.text_slots(text)?;
         let Some(codes) = &self.codes else {
             // The unmapped font paths retain their existing Latin-1 repertoire.
@@ -259,6 +270,11 @@ impl Metrics {
     }
 
     pub(super) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
+        if let Some(metrics) = &self.unicode {
+            return metrics
+                .replacement(text, size, 0., 0.)
+                .map(|(advance, _)| advance);
+        }
         let mut width = 0.;
         for byte in self.text_slots(text)? {
             width += self.width(byte)?;
@@ -267,6 +283,11 @@ impl Metrics {
     }
 
     pub(super) fn horizontal_bounds(&self, text: &str, size: f64) -> Result<[f64; 2], String> {
+        if let Some(metrics) = &self.unicode {
+            return metrics
+                .replacement(text, size, 0., 0.)
+                .map(|(_, bounds)| bounds);
+        }
         let mut bounds = [0_f64; 2];
         let mut cursor = 0.;
         for byte in self.text_slots(text)? {
@@ -292,6 +313,9 @@ impl Metrics {
         spacing: f64,
         word_spacing: f64,
     ) -> Result<(f64, [f64; 2]), String> {
+        if let Some(metrics) = &self.unicode {
+            return metrics.replacement(text, size, spacing, word_spacing);
+        }
         if spacing == 0. && word_spacing == 0. {
             return Ok((
                 self.advance(text, size)?,
@@ -310,6 +334,9 @@ impl Metrics {
         spacing: f64,
         word_spacing: f64,
     ) -> Result<(String, f64, [f64; 2]), String> {
+        if let Some(metrics) = &self.unicode {
+            return metrics.source(bytes, size, spacing, word_spacing);
+        }
         let text = self.decode(bytes)?;
         let (advance, bounds) = if let Some(Codes::Single(codes)) = &self.codes {
             let slots = bytes
@@ -579,6 +606,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         result[byte as usize] = Some(width);
     }
     Ok(Metrics {
+        unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,
         horizontal_overhangs: Some(horizontal_overhangs),

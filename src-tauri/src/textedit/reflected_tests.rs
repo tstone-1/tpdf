@@ -59,6 +59,7 @@ fn textedit_reflections_cancel_before_hitboxes_and_preserve_other_operators() {
             assert_eq!(before.runs.runs.len(), 2);
             let original_objects = doc.objects.clone();
             let change = Change {
+                layout: None,
                 page: 0,
                 revision: before.runs.revision,
                 operator: before.runs.runs[0].operator,
@@ -110,12 +111,8 @@ fn textedit_reflections_restore_page_transform_and_keep_fixed_clip_intersections
         "0 52 300 100",
     ] {
         let bytes = format!("0 0 300 240 re W n 1 0 0 -1 0 240 cm {rect} re W* n BT /F1 12 Tf 1 0 0 -1 40 60 Tm (FIRST) Tj ET");
-        assert!(
-            scan(&page(bytes.as_bytes()), 0)
-                .unwrap_err()
-                .contains("partly clipped"),
-            "{rect}"
-        );
+        let runs = super::tests::clipped_roundtrip(&page(bytes.as_bytes()));
+        assert_ne!(runs.runs[0].display_rect, [40., 48., 76., 63.]);
     }
     let doc = page(b"0 0 10 10 re W n 1 0 0 -1 0 240 cm 20 210 10 10 re W n");
     assert!(scan(&doc, 0)
@@ -147,6 +144,7 @@ fn textedit_reflections_refuse_mirrored_collapsed_skewed_and_unbounded_text_atom
         assert!(write(
             &mut doc,
             &[Change {
+                layout: None,
                 page: 0,
                 revision: Vec::new(),
                 operator: 0,

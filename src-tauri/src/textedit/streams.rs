@@ -111,6 +111,20 @@ pub(super) fn rewrite(
     changed: &Content,
     edits: &BTreeSet<usize>,
 ) -> Result<Vec<u8>, String> {
+    rewrite_expanded(bytes, changed, edits, &std::collections::BTreeMap::new())
+}
+
+pub(super) fn rewrite_expanded(
+    bytes: &[u8],
+    changed: &Content,
+    edits: &BTreeSet<usize>,
+    expansions: &std::collections::BTreeMap<usize, Vec<lopdf::content::Operation>>,
+) -> Result<Vec<u8>, String> {
+    if changed.operations.len() + expansions.values().map(Vec::len).sum::<usize>()
+        > super::MAX_OPERATIONS
+    {
+        return Err("edited page exceeds the text operator limit".into());
+    }
     let mut spans: Vec<Range<usize>> = Vec::new();
     let mut pos = 0;
     let mut start = None;
@@ -152,7 +166,10 @@ pub(super) fn rewrite(
             output.extend_from_slice(&bytes[copied..span.start]);
             output.extend(
                 Content {
-                    operations: vec![next.clone()],
+                    operations: expansions
+                        .get(&index)
+                        .cloned()
+                        .unwrap_or_else(|| vec![next.clone()]),
                 }
                 .encode()
                 .map_err(|e| e.to_string())?,

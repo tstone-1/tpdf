@@ -265,10 +265,23 @@ pub async fn document_text_runs(
     edits: tauri::State<'_, crate::edits::Edits>,
     doc: u32,
     page: u64,
+    change: Option<crate::textedit::Change>,
 ) -> Result<crate::textedit::PageRuns, String> {
     let source = text_page(&edits, doc, page)?;
+    let mut changes = edits.text_changes(doc);
+    if let Some(change) = change {
+        if change.page != source {
+            return Err("Text no longer belongs to this page".into());
+        }
+        changes.retain(|old| (old.page, old.operator) != (change.page, change.operator));
+        if change.replacement != change.original || change.layout.is_some() {
+            changes.push(change);
+        }
+    } else {
+        changes.clear();
+    }
     let (reply, rx) = reply_channel();
-    service.text_runs(doc, source, Vec::new(), reply);
+    service.text_runs(doc, source, changes, reply);
     await_reply("document_text_runs", rx).await
 }
 
@@ -295,7 +308,7 @@ pub async fn text_replace(
     }
     let mut pending = edits.text_changes(doc);
     pending.retain(|old| (old.page, old.operator) != (change.page, change.operator));
-    if change.replacement != change.original {
+    if change.replacement != change.original || change.layout.is_some() {
         pending.push(change.clone());
     }
     let (reply, rx) = reply_channel();

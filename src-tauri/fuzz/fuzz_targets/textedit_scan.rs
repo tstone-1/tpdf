@@ -19,6 +19,7 @@ fuzz_target!(|data: &[u8]| {
         // reaches the writer as well as all malformed-input refusal branches.
         let operator = run.operator;
         let change = tpdf_lib::textedit::Change {
+            layout: None,
             page,
             revision: runs.revision,
             operator: run.operator,

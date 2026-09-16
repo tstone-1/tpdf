@@ -233,6 +233,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         codes[code] = Some(slot as u8);
     }
     Ok(Metrics {
+        unicode: None,
         widths: result,
         codes: Some(Codes::Single(codes)),
         vertical_bounds: Some(vertical_bounds),

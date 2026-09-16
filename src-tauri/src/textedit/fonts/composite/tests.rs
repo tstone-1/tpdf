@@ -62,6 +62,44 @@ fn update(doc: &Document, replacement: &str) -> Change {
 }
 
 #[test]
+fn unicode_cid_replacements_preserve_glyph_identity_and_other_runs() {
+    let (mut doc, [font, _, _, mapping]) = fixture();
+    let stream = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    // Relabel a synthetic geometric glyph; no real document or installed font.
+    let map = String::from_utf8(stream.content.clone())
+        .unwrap()
+        .replace("> <0053>", "> <4e00>");
+    stream.content = map.into_bytes();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let source = textedit::scan(&doc, 0).unwrap();
+    assert!(source.runs[0].text.contains('\u{4e00}'));
+    let bytes = metrics.encode("\u{4e00}YN").unwrap();
+    assert_eq!(
+        metrics.source_layout(&bytes, 12., 0., 0.).unwrap().0,
+        "\u{4e00}YN"
+    );
+    let before_font = doc.objects[&font].clone();
+    let change = Change {
+        layout: None,
+        replacement: "\u{4e00}YN".into(),
+        original: source.runs[0].text.clone(),
+        page: 0,
+        revision: source.revision,
+        operator: source.runs[0].operator,
+    };
+    textedit::write(&mut doc, &[change]).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "\u{4e00}YN");
+    assert_eq!(after.runs[1], source.runs[1]);
+    assert_eq!(doc.objects[&font], before_font);
+    assert!(metrics.encode("\u{4e01}").is_err());
+}
+
+#[test]
 fn textedit_spacing_counts_decoded_cids_and_keeps_font_resources() {
     let (mut doc, ids) = fixture();
     let original = textedit::scan(&doc, 0).unwrap();
@@ -468,6 +506,7 @@ fn textedit_composite_overhang_replacements_stay_inside_original_ink_atomically(
             let before = doc.objects.clone();
             let scanned = textedit::scan(&doc, 0).unwrap();
             let edit = Change {
+                layout: None,
                 page: 0,
                 revision: scanned.revision,
                 operator: scanned.runs[0].operator,
@@ -505,6 +544,7 @@ fn textedit_composite_overhang_replacements_stay_inside_original_ink_atomically(
     textedit::write(
         &mut doc,
         &[Change {
+            layout: None,
             page: 0,
             revision: scan.revision,
             operator: scan.runs[0].operator,
@@ -535,14 +575,12 @@ fn textedit_composite_overhang_source_clips_follow_kerning_and_page_scale() {
     ] {
         let (mut doc, font) = overhang_fixture(-10, 250);
         overhang_content(&mut doc, font, text, prefix, kerning);
-        let result = textedit::scan(&doc, 0);
-        assert_eq!(
-            result.is_ok(),
-            accepted,
-            "{text} {prefix} {kerning}: {result:?}"
-        );
-        if !accepted {
-            assert!(result.unwrap_err().contains("partly clipped"));
+        let clipped = textedit::tests::clipped_roundtrip(&doc).runs.remove(0);
+        let (mut plain, font) = overhang_fixture(-10, 250);
+        overhang_content(&mut plain, font, text, "", kerning);
+        let plain = textedit::scan(&plain, 0).unwrap().runs.remove(0);
+        if !prefix.contains("cm") {
+            assert_eq!(clipped.display_rect == plain.display_rect, accepted);
         }
     }
 }
@@ -732,6 +770,7 @@ fn textedit_cid_ligatures_preserve_fragments_followers_and_resources() {
     assert!((before.runs[0].advance - 32.8).abs() < 1e-6);
     let objects = doc.objects.clone();
     let edit = Change {
+        layout: None,
         page: 0,
         revision: before.revision.clone(),
         operator: before.runs[0].operator,
@@ -754,6 +793,7 @@ fn textedit_cid_ligatures_preserve_fragments_followers_and_resources() {
     }
     let snapshot = doc.objects.clone();
     let edit = Change {
+        layout: None,
         page: 0,
         revision: after.revision,
         operator: after.runs[0].operator,

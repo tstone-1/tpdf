@@ -97,7 +97,9 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
                   for page, reader in zip(pages, readers)]
     assert len(operations[0]) == len(operations[1]), "operator count changed"
     changes = [(old, new) for old, new in zip(*operations) if old != new]
-    assert len(changes) == 1, "expected exactly one changed operand"
+    assert len(changes) == (6 if w3c else 1), "wrong number of changed text operands"
+    if w3c:
+        assert all(old[1] == new[1] == b"Tj" and len(old[0]) == len(new[0]) == 1 for old, new in changes), "group edit changed non-text operators"
     old, new = changes[0]
     assert old[1] == new[1] and old[1] in (b"Tj", b"TJ"), "text-show operator changed"
     assert len(old[0]) == len(new[0]) == 1, "wrong text-show operand count"
@@ -136,6 +138,9 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             assert len(fonts) == len(symbolic) == 1, "symbolic readback requires a single fixture font"
             mapped_font = symbolic[0]
             expected_operands = [(old, "le" if w3c else "SYNTHETIC\u2013FIRST" if dash else "SYNTHETIC FIRST" + (" " if wrapped else "")), (new, "ll" if w3c else "EDITED\u2013FIRST" if dash else "EDITED FIRST")]
+            if w3c:
+                expected_operands = [(pair[0], text) for pair, text in zip(changes, ["Dumm", "y", " ", "PDF", " fi", "le"])]
+                expected_operands += [(pair[1], text) for pair, text in zip(changes, ["Dummy PDF fill", "", "", "", "", ""])]
         if list_child:
             expected_operands = [(old, "SYNTHETIC SECOND"), (new, "EDITED SECOND")]
         # extract_text() deliberately falls back to identity for unmapped codes.
@@ -205,9 +210,9 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
                 continue
             assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND")).split()), "wrong decoded text"
     if float32:
-        print("[PASS] independent parser: only target text operand changed; resources agree at float32 precision with exact stream bytes")
+        print("[PASS] independent parser: only target text operands changed; resources agree at float32 precision with exact stream bytes")
     else:
-        print("[PASS] independent parser: only target text operand changed; font and colour resources preserved")
+        print("[PASS] independent parser: only target text operands changed; font and colour resources preserved")
 
 
 def tagged_controls(before, after, page_index=0, wrapped=False):

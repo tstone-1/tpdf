@@ -613,7 +613,7 @@ fn handle(
         }
         Request::Outline => Response::reply(Reply::Outline(render::run_outline(document))),
         Request::TextRuns { page, changes } => {
-            match document.with_text_view(changes, |_| document.graph().text_runs(*page)) {
+            match render::text_edit_runs(bindings, document, *page, changes) {
                 Ok(runs) => Response::reply(Reply::TextRuns(runs)),
                 Err(error) => Response::err(error),
             }

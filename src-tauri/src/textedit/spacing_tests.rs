@@ -54,6 +54,7 @@ fn textedit_spacing_persists_across_blocks_and_restores_for_writing() {
     let resources = resources(&doc, before.id).unwrap().clone();
     let updates: Vec<_> = [0, 2]
         .map(|index| Change {
+            layout: None,
             page: 0,
             revision: before.runs.revision.clone(),
             operator: before.runs.runs[index].operator,
@@ -145,11 +146,9 @@ fn textedit_spacing_source_clips_use_ink_instead_of_final_cursor() {
         for (edge, accepted) in [(right, true), (right - 0.01, false)] {
             let bytes =
                 format!("q 0 0 {edge} 240 re W n BT /F1 10 Tf {spacing} Tc 40 180 Td (AB) Tj ET Q");
-            assert_eq!(
-                scan(&embedded(bytes.as_bytes()), 0).is_ok(),
-                accepted,
-                "{bytes}"
-            );
+            let runs = super::tests::clipped_roundtrip(&embedded(bytes.as_bytes()));
+            assert!((f64::from(runs.runs[0].display_rect[2]) - edge).abs() < 0.0001);
+            assert_eq!(edge == right, accepted);
         }
     }
 }
@@ -302,6 +301,7 @@ fn textedit_word_spacing_restores_state_and_checks_replacements_atomically() {
         .contains("original text advance"));
     assert_eq!(doc.objects, unchanged);
     let updates = [0, 2].map(|index| Change {
+        layout: None,
         page: 0,
         revision: before.runs.revision.clone(),
         operator: before.runs.runs[index].operator,

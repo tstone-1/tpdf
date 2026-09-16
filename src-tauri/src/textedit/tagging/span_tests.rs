@@ -36,6 +36,7 @@ fn textedit_span_languages_and_structure_survive_edits_across_pages() {
             textedit::write(
                 &mut doc,
                 &[Change {
+                    layout: None,
                     page: page as u32,
                     revision: before.revision,
                     operator: before.runs[0].operator,
@@ -63,6 +64,7 @@ fn textedit_spans_refuse_overrides_layout_nesting_and_wrong_owners_atomically() 
         let (mut doc, ids, leaves) = spans(false);
         let before = textedit::scan(&doc, 0).unwrap();
         let change = Change {
+            layout: None,
             page: 0,
             revision: before.revision,
             operator: before.runs[0].operator,

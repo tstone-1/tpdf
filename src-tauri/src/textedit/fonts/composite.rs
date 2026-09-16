@@ -134,7 +134,18 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     name(child, b"Type", b"Font")?;
     name(child, b"Subtype", b"CIDFontType2")?;
     name(child, b"BaseFont", base)?;
-    name(child, b"CIDToGIDMap", b"Identity")?;
+    let glyph_mapping =
+        match crate::encoding::resolve(doc, child.get(b"CIDToGIDMap").map_err(|_| INVALID)?) {
+            Object::Name(name) if name == b"Identity" => None,
+            Object::Stream(stream) => Some(super::filters::decode(stream, 131072)?),
+            _ => return Err(INVALID.into()),
+        };
+    if glyph_mapping
+        .as_ref()
+        .is_some_and(|bytes| bytes.is_empty() || bytes.len() % 2 != 0)
+    {
+        return Err(INVALID.into());
+    }
     let info = dictionary(doc, child.get(b"CIDSystemInfo").map_err(|_| INVALID)?)?;
     keys(info, &[b"Registry", b"Ordering", b"Supplement"])?;
     if info.get(b"Registry").and_then(Object::as_str).ok() != Some(b"Adobe")
@@ -158,8 +169,41 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| INVALID)?)
         .as_stream()
         .map_err(|_| INVALID)?;
-    let codes = mapping::parse_cid(stream)?;
     let (default, widths) = widths(child)?;
+    if let Some(mapping) = &glyph_mapping {
+        let (unicode, vertical_bounds) = super::unicode::Metrics::with_glyphs(
+            &face,
+            mapping::unicode_cid(stream)?,
+            default,
+            &widths,
+            Some(mapping),
+        )?;
+        return Ok(Metrics {
+            unicode: Some(unicode),
+            vertical_bounds: Some(vertical_bounds),
+            widths: Box::new([None; 256]),
+            horizontal_overhangs: None,
+            codes: None,
+        });
+    }
+    let codes = match mapping::parse_cid(stream) {
+        Ok(codes) => codes,
+        Err(_) => {
+            let (unicode, vertical_bounds) = super::unicode::Metrics::new(
+                &face,
+                mapping::unicode_cid(stream)?,
+                default,
+                &widths,
+            )?;
+            return Ok(Metrics {
+                unicode: Some(unicode),
+                vertical_bounds: Some(vertical_bounds),
+                widths: Box::new([None; 256]),
+                horizontal_overhangs: None,
+                codes: None,
+            });
+        }
+    };
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
     let mut vertical_bounds = [0_f64; 2];
@@ -197,6 +241,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         result[ch as usize] = Some(width);
     }
     Ok(Metrics {
+        unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,
         horizontal_overhangs: Some(horizontal_overhangs),

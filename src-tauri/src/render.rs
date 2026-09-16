@@ -1498,7 +1498,7 @@ impl Engine for InProcess {
     ) -> Result<crate::textedit::PageRuns, String> {
         let docs = self.docs.borrow();
         let document = open_slot(&docs, doc)?;
-        document.with_text_view(changes, |_| document.graph().text_runs(page))
+        text_edit_runs(self.bindings, document, page, changes)
     }
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {
@@ -1686,6 +1686,62 @@ pub(crate) fn render_tile(
         render_us,
         encode_us,
     }))
+}
+
+/// Preflight text edits and render a bounded crop for an uncommitted draft.
+pub(crate) fn text_edit_runs(
+    bindings: Bindings,
+    document: &OpenDocument,
+    page: u32,
+    changes: &[crate::textedit::Change],
+) -> Result<crate::textedit::PageRuns, String> {
+    let mut runs = document.graph().text_runs(page)?;
+    document.with_text_view(changes, |view| {
+        if let Some(change) = changes
+            .iter()
+            .rev()
+            .find(|change| change.page == page && change.layout.is_some())
+        {
+            let mut preview = crate::textedit::preview_layout(document.graph().parsed()?, change)?;
+            let original = runs
+                .runs
+                .iter()
+                .find(|run| run.operator == change.operator)
+                .ok_or("text preview source disappeared")?
+                .display_rect;
+            let rect = [
+                preview.rect[0].min(original[0]) - 8.,
+                preview.rect[1].min(original[1]) - 8.,
+                preview.rect[2].max(original[2]) + 8.,
+                preview.rect[3].max(original[3]) + 8.,
+            ];
+            let scale = 2_f32
+                .min(1024. / (rect[2] - rect[0]).max(1.))
+                .min(512. / (rect[3] - rect[1]).max(1.));
+            let request = TileRequest {
+                rid: 0,
+                doc: 0,
+                page,
+                scale,
+                turns: 0,
+                invert: false,
+                x: (rect[0].max(0.) * scale).floor() as i32,
+                y: (rect[1].max(0.) * scale).floor() as i32,
+                width: ((rect[2] - rect[0]).max(1.) * scale)
+                    .ceil()
+                    .clamp(1., 1024.) as u16,
+                height: ((rect[3] - rect[1]).max(1.) * scale).ceil().clamp(1., 512.) as u16,
+                format: TileFormat::Png,
+                crop: None,
+            };
+            match render_tile(bindings, view, &request, &CancelToken::new())? {
+                TileOutcome::Rendered(tile) => preview.png = tile.bytes,
+                TileOutcome::Abandoned => return Err("text preview was cancelled".into()),
+            }
+            runs.preview = Some(preview);
+        }
+        Ok(runs)
+    })
 }
 
 pub(crate) fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
