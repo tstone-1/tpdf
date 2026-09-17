@@ -258,7 +258,7 @@ cannot supply the API that checker imports. See Microsoft's
 [side-by-side migration guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
 
 Existing-text editing admits exact 90/180/270-degree text matrices with positive
-orientation after composition; page CTMs remain diagonal. Decoded page content
+orientation after composition; editable runs require diagonal page CTMs. Decoded page content
 is bounded to 1 MiB and 16,384 operators, allowing character-positioned exports
 past the former 4,096-operator limit. Adjacent positioned text fragments are grouped
 within a line, without crossing graphics/text state changes. Saving a group
@@ -274,7 +274,7 @@ checks contained preview/save pixel agreement and unchanged adjacent pixels;
 request examples are in `src-tauri/src/probes/text_edit_roundtrip.rs`. Keep private inputs,
 request files and outputs in ignored directories, never in fixtures or assertions.
 Line movement and both hit/ink envelopes use the transformed text axes. Skew and
-mirrored final text remain refused. `textedit/rotation_tests.rs` checks crop/page turns, clipping on
+mirrored final text are not offered for editing. `textedit/rotation_tests.rs` checks crop/page turns, clipping on
 every edge, bounded replacements and preserved positioning.
 `tabs_check.py --phase textedit-passport` edits the vertical label on page 16 of
 the unchanged passport guide in `testdata/textedit-public-corpus.json`.
@@ -295,9 +295,22 @@ focus can scroll an overflow-hidden overlay and displace every hit target.
 Explicit text layouts support width/height, font size and wrapping within one
 editing area. `textedit/layout.rs` restores the original font, spacing, line
 matrix and cursor after drawing each replacement; later text remains fixed.
-`vendor/fonts/manifest.json` pins four OFL Noto Sans styles for automatic or
-explicit fallback. Full font programs are shared by style within a write;
-bounded CIDToGIDMap streams preserve the separate Unicode and glyph mappings.
+`vendor/fonts/manifest.json` pins four OFL Noto Sans styles and upright regular/
+bold Noto Sans CJK SC for automatic or explicit fallback. Automatic mode keeps
+the original font when it covers the replacement, then tries Noto Sans and CJK.
+CJK uses Simplified Chinese glyph forms, including its mapped traditional Han,
+kana and Hangul; it does not choose regional forms by language or synthesize
+italics. Latin font programs are shared by style within a write. CJK programs
+are subsetted by the permissively licensed `subsetter` crate and shared only
+when style and source glyph sets match. CIDToGIDMap preserves remapped indices;
+the original OS/2 table is restored so saved subsets retain embedding rights
+and pass normal validation. Subsets retain the 1 MiB decoded-font bound.
+`scripts/build_cjk_fonts.py` reproducibly builds pinned static instances with
+FontTools, retaining all Unicode mappings and dropping unused shaping/vertical
+alternates. This avoids ttf-parser's loca-count overflow for 65,535 glyphs.
+`scripts/text_cjk_check.py` checks worker preview/save pixels and independently
+compares saved Unicode, outlines, widths, rights and sfnt checksums with the
+bundled fonts. Layout tests cover adding new characters after reopening a subset.
 No system fonts, complex-script shaping or automatic table-row growth are used.
 New text must fit the page, active clips and the selected box without colliding
 with other source text. Draft previews use the worker's save path and a bounded
@@ -332,6 +345,17 @@ patcher preserves the entire sequence, and preceding edits retain its origin.
 `textedit/spacers.rs` owns these checks; generate independent fixtures with
 `scripts/text_continuation_check.py --generate <path> --inline tab|bell|tabs`.
 Use `text-edit-probe --continued` and `text_edit_pdfkit.swift --inline` for readback.
+
+Other bounded inline or outer `/Span` ActualText sequences are validated without
+blocking unrelated runs. A single visible fragment whose logical text agrees can
+be edited; the writer patches both its show and ActualText, including deletion and
+single-line layout previews. Empty cursor-restoration shows stay read-only.
+Different logical text or multiple visible fragments remain read-only with embedded
+glyph bounds used for collision checks. Nested spans, extra semantic properties,
+malformed encodings and multiline ActualText layout edits remain refused.
+`textedit/actual.rs` owns this path. `uv run --with pypdf scripts/text_partial_check.py
+<text-edit-probe> <new-ignored-directory>` generates synthetic inputs and verifies
+contained preview/save pixels plus independent text, resource and structure readback.
 
 MCID-bearing `BDC`/`EMC` markers also work inside text objects, using the same
 bounded structure, role and ownership validation as markers outside `BT`/`ET`.
@@ -414,11 +438,14 @@ parser/PDFKit readback both use `--list` (parser also `--float32`).
 Tables admit literal Table/TR/TD/TH with the existing single NonStruct/Span
 content-leaf level. Table and row containers share the grouping limits; a table
 may own painted borders, but text must belong to a cell. Cell Table attributes
-admit unit RowSpan/ColSpan, Headers and header-only Row/Column/Both Scope, in at
+admit integer RowSpan/ColSpan from 1 through 128, Headers and header-only Row/Column/Both Scope, in at
 most four dictionaries. IDs are bounded byte strings; the IDTree must enumerate
 exactly the visited identified headers. Data-cell links must be unique and point
-to headers in the same table. Header-to-header links, merged cells, cell sizing,
-nested tables, table-role aliases and cells containing blocks remain refused.
+to headers in the same table. Header-to-header links, cell sizing,
+nested tables and table-role aliases remain refused. Cells may contain paragraph
+or heading blocks with the same optional Span/NonStruct leaf level; each content
+owner retains its explicit page and parent-tree mapping. Span attributes describe
+the existing structure; editing does not merge cells or change table geometry.
 `tagging/tables.rs` checks name-tree ordering, exact Limits and ownership, with
 independent limits of eight child levels, 128 nodes and 128 identifiers. Nothing in
 that graph is rewritten. The browser generator's `--table` and `--table-header`
@@ -465,11 +492,37 @@ self-test checks this through the worker. These reports identify first blockers;
 removing one refusal does not imply that a page becomes editable. Re-survey
 unchanged source bytes after widening the supported profile.
 
+Type3 fonts admit bounded, uncoloured `d1` glyph programs composed only of
+filled straight/Bezier outlines, with diagonal FontMatrix, consistent Widths
+and an unambiguous one-byte ToUnicode map. Glyph control-point hulls bound ink;
+FontBBox alone is not trusted. Original glyph programs remain unchanged.
+Original-font replacements use validated glyphs already in that subset;
+automatic layout can use the bundled CJK fallback for new characters.
+External glyph resources, coloured/stroked glyphs,
+recursive programs and other operators remain refused. Each font shares a
+1 MiB/16,384-operation budget, with a 64 KiB per-glyph bound. The `d1` header
+is validated and normalized only in a scratch buffer because lopdf's strict
+reader splits that operator into `d` and `1`. `fonts/type3/tests.rs` covers
+the grammar; `scripts/text_type3_check.py` independently generates and reads
+positive/negative font matrices, word spacing, replacements, deletion and layout
+through the contained worker, including unchanged font programs and pixels.
+
 Font refusals distinguish the Type1 resource subtype from its program carrier:
 FontFile declares PostScript Type 1; FontFile3/Type1C declares CFF. This diagnostic
 dispatch does not decode unsupported programs. Parent-tree dictionary entries
 index non-page objects, so their presence is reported separately from a missing
 page entry. Neither diagnostic widens what the editor accepts.
+
+Untagged pages may retain a bounded integer StructParents index with no
+StructTreeRoot. Preserve that unused index; actual MCIDs without a tree remain
+refused. Axial shading patterns with bounded type-2 interpolation functions can
+paint preserved paths; tiling patterns remain refused. Pattern-filled text,
+skewed or mirrored text matrices and text under a non-diagonal page CTM stay
+read-only, with validated embedded-font
+bounds retained for layout collision checks. Its text, positioning and resource
+bytes remain unchanged when ordinary text elsewhere on the page is edited.
+Non-diagonal paths and clips remain refused. See `textedit/patterns.rs` and
+`textedit/preserved_tests.rs`; private-document checks stay in ignored directories.
 
 
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on

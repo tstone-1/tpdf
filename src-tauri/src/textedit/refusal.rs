@@ -56,7 +56,7 @@ mod tests {
         for (source, expected) in [
             (
                 "BT /Span << /ActualText (SYNTHETIC SECRET) >> BDC ET",
-                "inline BDC marked content is not editable yet",
+                "unterminated ActualText marked content",
             ),
             (
                 "BT /Span BMC ET",

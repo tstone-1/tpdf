@@ -423,13 +423,13 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Text editing has adjustable box dimensions,
-          font size, wrapping and a live PDF preview. Bundled Noto Sans fonts
-          provide missing characters in regular, bold and italic styles.
-          Character-positioned text is grouped into editable lines, and more
-          rectangular clipping and embedded Unicode font cases are supported.
-          Right-click a document tab to show its file in Explorer or Finder,
-          copy its path, or close it. The duplicate toolbar filename is removed.
+          **New in this release.** Edit supported Type 3 vector fonts, more
+          tagged tables with merged cells and paragraphs, and matching
+          single-fragment ActualText spans. Supported gradients and read-only
+          skewed, mirrored or pattern-filled text remain intact while surrounding
+          supported text can be edited. Bundled regular and bold Noto Sans CJK SC
+          add Chinese, Japanese and Korean fallback characters; saved PDFs embed
+          only the CJK glyphs used by the edit.
 
           Edits must fit their chosen box, clips and surrounding content.
           Unsupported pages and glyphs are refused; automatic table resizing,

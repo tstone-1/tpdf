@@ -374,13 +374,18 @@ Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Adjust the box width and height, font size,
 font and wrapping while a live preview shows the actual PDF rendering. Apply keeps
 the edit in the document; save writes it. The editor supports Helvetica and validated embedded TrueType and
-CFF/Type1C fonts, including supported ligatures, bounded spacing, quarter-turn text,
+CFF/Type1C and uncolored Type 3 vector fonts, including supported ligatures, bounded spacing, quarter-turn text,
 colours, page transforms and rectangular clips. Supported tagged paragraphs,
-headings, lists and simple tables retain their structure and page ownership.
+headings, lists and tables, including merged cells and paragraph cells, retain
+their structure and page ownership. Matching single-fragment ActualText spans
+update their logical text with the visible edit. Unsupported skewed, mirrored
+or pattern-filled text can remain read-only beside editable text.
 Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice and Edge exports are included in the verified
 examples; this does not mean every export from those applications is editable.
 Auto font selection uses the original font when possible and bundled Noto Sans
-when new characters need it. Replacements must fit the chosen box without crossing
+when new characters need it. Regular and bold Noto Sans CJK SC also cover Chinese,
+Japanese and Korean characters, using Simplified Chinese glyph forms. CJK edits
+embed only the glyphs they use. Replacements must fit the chosen box without crossing
 clips or neighbouring content. Automatic table resizing, flow across pages and
 complex-script shaping are not supported. Unsupported pages or glyphs are refused.
 Text edits support undo and redo and must be

@@ -14,7 +14,7 @@ export interface TextRun {
 export interface TextPreview { png: number[]; font: string; rect: [number, number, number, number]; lines: number }
 export interface TextRuns { page: number; revision: number[]; runs: TextRun[]; preview?: TextPreview }
 export interface TextLayout { width: number; height: number; size: number; wrap: boolean;
-  font: "auto" | "original" | "noto_sans" | "noto_sans_bold" | "noto_sans_italic" | "noto_sans_bold_italic" }
+  font: "auto" | "original" | "noto_sans" | "noto_sans_bold" | "noto_sans_italic" | "noto_sans_bold_italic" | "noto_sans_cjk_sc" | "noto_sans_cjk_sc_bold" }
 export interface TextChange { page: number; revision: number[]; operator: number; original: string; replacement: string; layout?: TextLayout }
 
 /** Compare per-page bodies, including edits removed by undo. */

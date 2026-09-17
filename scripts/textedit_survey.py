@@ -84,13 +84,31 @@ def self_test(probe):
         assert json.loads(first.stdout) == {'page': 0, 'status': 'editable', 'runs': 1}
         report = inspect(probe, source)
         assert [p['status'] for p in report['pages']] == ['editable', 'refused', 'no_runs', 'refused', 'editable']
-        assert report['pages'][3]['reason'] == 'inline BDC marked content is not editable yet'
+        assert report['pages'][3]['reason'] == 'unterminated ActualText marked content'
         assert 'SECRET' not in json.dumps(report)
         totals = refusal_totals([report, report])
         assert sum(totals.values()) == 4 and totals[report['pages'][3]['reason']] == 2
         assert refusal_totals([]) == {}
         assert digest(source) == original
         assert len(list(root.iterdir())) == 1, 'inspection wrote extra files'
+        # Untagged exports may retain StructParents with no tree to index.
+        # Exercise the actual parser/worker, including a missing-tree MCID control.
+        for marked in [False, True]:
+            writer = PdfWriter(clone_from=source)
+            for index, page in enumerate(writer.pages):
+                page[NameObject('/StructParents')] = NumberObject(index)
+            if marked:
+                stream = DecodedStreamObject()
+                stream.set_data(b'/P << /MCID 0 >> BDC BT /F1 12 Tf '
+                                b'40 180 Td (SYNTHETIC FIRST) Tj ET EMC')
+                writer.pages[0][NameObject('/Contents')] = writer._add_object(stream)
+            path = root / f'unused-parent-index-{marked}.pdf'
+            writer.write(path)
+            pages = inspect(probe, path)['pages']
+            assert pages[1:] == report['pages'][1:]
+            assert pages[0] == ({'page': 0, 'status': 'refused',
+                'reason': 'marked content has no supported structure tree'} if marked
+                else report['pages'][0])
         # Exercise the real worker reply, including the privacy boundary on
         # unknown metadata names. Unknown keys and all values must stay private.
         for key, feature in [('IDTree', 'IDTree'), ('ClassMap', 'ClassMap'),

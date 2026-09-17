@@ -111,11 +111,91 @@ fn textedit_tables_accept_bounded_cell_attribute_representations() {
 }
 
 #[test]
+fn textedit_tables_preserve_merged_cells_and_paragraph_leaf_ownership() {
+    for nested_span in [false, true] {
+        for span in [1, 2, 128] {
+            let (mut doc, ids) = table();
+            let cell = ids[3];
+            let paragraph =
+                doc.add_object(dictionary! { "S" => "P", "P" => cell, "Pg" => ids[0], "K" => 0 });
+            let owner = if nested_span {
+                let leaf = doc.add_object(
+                    dictionary! { "S" => "Span", "P" => paragraph, "Pg" => ids[0], "K" => 0 },
+                );
+                doc.get_dictionary_mut(paragraph).unwrap().set("K", leaf);
+                leaf
+            } else {
+                paragraph
+            };
+            let cell = doc.get_dictionary_mut(cell).unwrap();
+            cell.set("K", paragraph);
+            cell.set(
+                "A",
+                dictionary! { "O" => "Table", "RowSpan" => span, "ColSpan" => span },
+            );
+            doc.get_dictionary_mut(ids[5]).unwrap().set(
+                "Nums",
+                vec![
+                    0.into(),
+                    Object::Array(vec![owner.into(), ids[4].into(), ids[6].into()]),
+                ],
+            );
+            let bytes = String::from_utf8(doc.get_page_content(ids[0])).unwrap();
+            let bytes = bytes.replacen(
+                "/TD << /MCID 0",
+                if nested_span {
+                    "/Span << /MCID 0"
+                } else {
+                    "/P << /MCID 0"
+                },
+                1,
+            );
+            let stream = doc.add_object(Stream::new(Dictionary::new(), bytes.into_bytes()));
+            doc.get_dictionary_mut(ids[0])
+                .unwrap()
+                .set("Contents", stream);
+            let before = doc.objects.clone();
+            let runs = textedit::scan(&doc, 0).unwrap();
+            textedit::write(
+                &mut doc,
+                &[Change {
+                    page: 0,
+                    revision: runs.revision,
+                    operator: runs.runs[0].operator,
+                    original: "FIRST".into(),
+                    replacement: "IN".into(),
+                    layout: None,
+                }],
+            )
+            .unwrap();
+            assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+            for (id, object) in before {
+                if id != ids[0] {
+                    assert_eq!(doc.objects[&id], object);
+                }
+            }
+            let mut wrong_owner = doc.clone();
+            wrong_owner
+                .get_dictionary_mut(owner)
+                .unwrap()
+                .set("P", ids[2]);
+            refused(wrong_owner);
+            let mut nested = doc.clone();
+            nested
+                .get_dictionary_mut(paragraph)
+                .unwrap()
+                .set("S", "Table");
+            refused(nested);
+        }
+    }
+}
+
+#[test]
 fn textedit_tables_refuse_spans_metadata_and_attribute_ambiguity() {
     for key in ["RowSpan", "ColSpan"] {
         for value in [
             0.into(),
-            2.into(),
+            129.into(),
             (-1).into(),
             Object::Real(1.0),
             "1".into(),

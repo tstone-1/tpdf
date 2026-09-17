@@ -1796,8 +1796,11 @@ Editing accepts a conservative grammar, not arbitrary PDF text. Font mappings,
 metrics and glyph outlines are validated before use. Legacy replacements fit the
 original line width and use existing glyphs. Explicit layouts allow a bounded
 box (0.1 to 14,400 points per axis), font size (1 to 512 points), and at most 128
-wrapped lines. Four bundled OFL Noto Sans fonts provide fallback glyphs without
-filesystem access. Font programs are embedded once per style per write; bounded
+wrapped lines. Four bundled OFL Noto Sans styles and regular/bold Noto Sans CJK SC
+provide fallback glyphs without filesystem access. Only the trusted bundled CJK
+programs pass through the subsetter; saved subsets retain embedding rights and
+must satisfy the existing embedded-font bounds. CJK programs are shared by style
+and glyph set, and Latin programs by style; bounded
 CIDToGIDMap streams map validated glyphs and ToUnicode streams are capped at
 128 KiB. Layout restores the authored font, spacing, line matrix and cursor,
 retains clipping, and refuses page overflow and new collisions with other text.
@@ -1805,7 +1808,17 @@ Draft previews are PNG crops of at most 1024 by 512 pixels from the same writer.
 Supported
 tag trees are checked in both directions for page and MCID ownership, bounded
 to 128 content items, and preserved. Alternate text and unsupported structure
-semantics are refused. Untouched content operands retain their original bytes.
+semantics are refused or retained read-only. Matching single-fragment ActualText
+spans are editable and update their logical text together with their visible text.
+Alternate logical text remains read-only. Untouched content operands retain their
+original bytes. Skewed, mirrored and pattern-filled text can remain read-only on
+an editable page; collision checks still account for its ink bounds.
+
+Uncolored Type 3 fonts admit only bounded d1 vector glyph programs with validated
+widths, Unicode mappings and ink bounds. Glyphs cannot invoke resources, images,
+text or other glyphs. Per-glyph streams are capped at 64 KiB; a font shares a
+1 MiB decoded budget and 16,384 operations. Supported axial gradient patterns
+are validated and preserved without rewriting their resources.
 
 The editing grammar also validates embedded CFF/Type1C programs and opaque
 image XObjects inside the worker. JPEG preservation uses zune-jpeg after checking

@@ -61,6 +61,137 @@ fn fallback_embeds_new_characters_and_reopens_for_another_edit() {
 }
 
 #[test]
+fn cjk_fallback_subsets_and_reopens_with_new_characters() {
+    for chosen in [
+        EditFont::Auto,
+        EditFont::NotoSansCjkSc,
+        EditFont::NotoSansCjkScBold,
+    ] {
+        let mut doc =
+            tests::with_content(b"BT /F1 12 Tf 40 180 Td (TITLE) Tj 0 -80 Td (SECOND) Tj ET");
+        let baseline = scan(&doc, 0).unwrap();
+        let mut change = edit(
+            &doc,
+            "ACME \u{65b0}\u{589e}\u{6c49}\u{5b57} \u{65e5}\u{672c}\u{8a9e} \u{d55c}\u{ae00}",
+            210.,
+            22.,
+            false,
+        );
+        change.layout.as_mut().unwrap().font = chosen;
+        let report = preview_layout(&doc, &change).unwrap();
+        assert_eq!(
+            report.font,
+            if chosen == EditFont::NotoSansCjkScBold {
+                "Noto Sans CJK SC Bold"
+            } else {
+                "Noto Sans CJK SC"
+            }
+        );
+        write(&mut doc, std::slice::from_ref(&change)).unwrap();
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        assert!(
+            bytes.len() < 64 * 1024,
+            "a short edit must not embed a full CJK font"
+        );
+        let mut reopened = Document::load_mem(&bytes).unwrap();
+        let after = scan(&reopened, 0).unwrap();
+        assert_eq!(after.runs[0].text, change.replacement);
+        assert_eq!(
+            after
+                .runs
+                .iter()
+                .find(|r| r.text == "SECOND")
+                .unwrap()
+                .matrix,
+            baseline.runs[1].matrix
+        );
+        // These characters did not exist in the first saved subset.
+        let next = edit(
+            &reopened,
+            "\u{66f4}\u{6362}\u{5185}\u{5bb9}",
+            210.,
+            22.,
+            false,
+        );
+        write(&mut reopened, std::slice::from_ref(&next)).unwrap();
+        assert_eq!(scan(&reopened, 0).unwrap().runs[0].text, next.replacement);
+    }
+}
+
+#[test]
+fn cjk_program_cache_distinguishes_glyph_sets_and_reuses_identical_sets() {
+    let mut doc = tests::with_content(
+        b"BT /F1 12 Tf 40 180 Td (FIRST) Tj 0 -60 Td (SECOND) Tj 0 -60 Td (THIRD) Tj ET",
+    );
+    let page = scan(&doc, 0).unwrap();
+    let changes: Vec<_> = page
+        .runs
+        .iter()
+        .zip(["\u{4e2d}\u{6587}", "\u{65e5}\u{672c}", "\u{6587}\u{4e2d}"])
+        .map(|(run, replacement)| Change {
+            page: 0,
+            revision: page.revision.clone(),
+            operator: run.operator,
+            original: run.text.clone(),
+            replacement: replacement.into(),
+            layout: Some(Layout {
+                width: 60.,
+                height: 20.,
+                size: 12.,
+                wrap: false,
+                font: EditFont::Auto,
+            }),
+        })
+        .collect();
+    write(&mut doc, &changes).unwrap();
+    let after = scan(&doc, 0).unwrap();
+    assert_eq!(
+        after
+            .runs
+            .iter()
+            .filter(|r| !r.text.is_empty())
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>(),
+        changes
+            .iter()
+            .map(|c| c.replacement.as_str())
+            .collect::<Vec<_>>()
+    );
+    let programs: BTreeSet<_> = doc
+        .objects
+        .values()
+        .filter_map(|v| v.as_dict().ok())
+        .filter_map(|d| d.get(b"FontFile2").ok()?.as_reference().ok())
+        .collect();
+    assert_eq!(programs.len(), 2);
+    for id in programs {
+        let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+        let face = ttf_parser::Face::parse(&stream.content, 0).unwrap();
+        assert!(face.number_of_glyphs() < 16);
+        assert_eq!(
+            face.raw_face()
+                .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+                .unwrap()[8..10],
+            [0, 0]
+        );
+    }
+}
+
+#[test]
+fn cjk_missing_glyphs_refuse_atomically_and_latin_style_stays_selected() {
+    assert_eq!(fonts::fallback::automatic(3, "ACME \u{3a9}").unwrap(), 3);
+    assert_eq!(fonts::fallback::automatic(3, "\u{4e2d}").unwrap(), 5);
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 40 180 Td (TITLE) Tj ET");
+    let objects = doc.objects.clone();
+    for text in ["\u{10ffff}", "\u{1f9ea}", "\u{4e2d}\u{fe0f}"] {
+        let change = edit(&doc, text, 100., 20., false);
+        assert!(write(&mut doc, &[change]).is_err());
+        assert_eq!(doc.objects, objects);
+    }
+}
+
+#[test]
 fn wrapping_keeps_spaces_line_breaks_and_following_text_in_place() {
     let mut doc =
         tests::with_content(b"BT /F1 12 Tf 40 180 Td (TITLE) Tj 0 -100 Td (SECOND) Tj ET");

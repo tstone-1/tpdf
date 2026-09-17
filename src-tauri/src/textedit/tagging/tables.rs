@@ -73,7 +73,7 @@ impl Tables {
             }
             for key in [b"RowSpan".as_slice(), b"ColSpan"] {
                 if let Ok(span) = value.get(key) {
-                    if integer(span)? != 1 || !seen.insert(key) {
+                    if !(1..=128).contains(&integer(span)?) || !seen.insert(key) {
                         return Err(INVALID.into());
                     }
                 }

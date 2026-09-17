@@ -38,6 +38,20 @@ function mount(write: (change: TextChange) => Promise<EditState> = async (value)
 }
 
 describe("existing text editing", () => {
+  it("offers CJK fonts and sends the selected style to the writer", async () => {
+    const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+    const { editor, root, field } = mount(write);
+    const font = (root as FakeElement & { querySelectorAll(): FakeElement[] }).querySelectorAll()
+      .find((node) => node.getAttribute("aria-label") === "Font")! as FakeElement & { value: string };
+    expect(font.children.map((node) => (node as FakeElement & { value: string }).value))
+      .toEqual(expect.arrayContaining(["noto_sans_cjk_sc", "noto_sans_cjk_sc_bold"]));
+    field.value = "\u65b0\u5b57";
+    font.value = "noto_sans_cjk_sc_bold"; font.dispatch("change", {});
+    editor.commit(); await editor.settle();
+    expect(write).toHaveBeenLastCalledWith(expect.objectContaining({ replacement: "\u65b0\u5b57",
+      layout: expect.objectContaining({ font: "noto_sans_cjk_sc_bold" }) }));
+    editor.destroy();
+  });
   it("applies layout-only changes and wraps on Ctrl+Enter while Enter adds a line", async () => {
     const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
     const { editor, root, form, field } = mount(write);

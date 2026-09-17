@@ -1,4 +1,4 @@
-//! Existing Identity-H glyphs with Unicode semantics, including CJK and symbols.
+//! Validated font glyphs with Unicode semantics, including CJK and symbols.
 use std::collections::BTreeMap;
 use ttf_parser::{Face, GlyphId};
 
@@ -6,6 +6,7 @@ pub(super) struct Metrics {
     codes: BTreeMap<u16, String>,
     glyphs: BTreeMap<u16, (f64, [f64; 2])>,
     reverse: BTreeMap<String, u16>,
+    single_byte: bool,
 }
 
 impl Metrics {
@@ -80,9 +81,27 @@ impl Metrics {
                 codes,
                 glyphs,
                 reverse,
+                single_byte: false,
             },
             vertical,
         ))
+    }
+
+    // Type3 validates its PDF glyph programs instead of a TrueType face.
+    pub(super) fn single(
+        codes: BTreeMap<u16, String>,
+        glyphs: BTreeMap<u16, (f64, [f64; 2])>,
+    ) -> Self {
+        let reverse = codes
+            .iter()
+            .map(|(code, text)| (text.clone(), *code))
+            .collect();
+        Self {
+            codes,
+            glyphs,
+            reverse,
+            single_byte: true,
+        }
     }
 
     fn slots(&self, text: &str) -> Result<Vec<u16>, String> {
@@ -106,6 +125,13 @@ impl Metrics {
     }
 
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+        if self.single_byte {
+            return self
+                .slots(text)?
+                .into_iter()
+                .map(|code| u8::try_from(code).map_err(|_| "invalid single-byte glyph code".into()))
+                .collect();
+        }
         Ok(self
             .slots(text)?
             .into_iter()
@@ -120,12 +146,19 @@ impl Metrics {
         spacing: f64,
         word_spacing: f64,
     ) -> Result<(String, f64, [f64; 2]), String> {
-        if bytes.len() % 2 != 0 || bytes.len() / 2 > crate::textedit::MAX_TEXT {
-            return Err("invalid or oversized two-byte text".into());
+        let code_size = if self.single_byte { 1 } else { 2 };
+        if bytes.len() % code_size != 0 || bytes.len() / code_size > crate::textedit::MAX_TEXT {
+            return Err("invalid or oversized encoded text".into());
         }
         let slots: Vec<_> = bytes
-            .chunks_exact(2)
-            .map(|p| u16::from_be_bytes([p[0], p[1]]))
+            .chunks_exact(code_size)
+            .map(|p| {
+                if self.single_byte {
+                    u16::from(p[0])
+                } else {
+                    u16::from_be_bytes([p[0], p[1]])
+                }
+            })
             .collect();
         let mut text = String::new();
         for code in &slots {
@@ -170,7 +203,13 @@ impl Metrics {
                 .glyphs
                 .get(code)
                 .ok_or("the font has no validated glyph for this character")?;
-            let step = width * size / 1000. + spacing;
+            let step = width * size / 1000.
+                + spacing
+                + if self.single_byte && *code == 32 {
+                    word_spacing
+                } else {
+                    0.
+                };
             if step <= 0. {
                 return Err("backtracking character spacing is not editable yet".into());
             }

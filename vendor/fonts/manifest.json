@@ -19,6 +19,21 @@
     {
       "sha256": "3d367743f371f28671d2764e911a53d7c20ec9b6aa8791d059e7090389fc52a5",
       "file": "NotoSans-BoldItalic.ttf"
+    },
+    {
+      "file": "NotoSansCJKsc-Regular.ttf",
+      "sha256": "3e9600a6703525fd038e96a3e3e59b6adcb4e3df1d586afd2194516ae66c86b7"
+    },
+    {
+      "file": "NotoSansCJKsc-Bold.ttf",
+      "sha256": "e80e1a7ad1f6b39e90035d5a95f0855931ff8dd4adf66d7a81d9941fb470e4d8"
     }
-  ]
+  ],
+  "cjk": {
+    "version": "NotoSansCJK-2.004",
+    "source_sha256": "990c807e79c25662a5a9ecf7f971baeb2bf2eab9a559e5ecf15cdfdb8561d21f",
+    "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/Variable/TTF/NotoSansCJKsc-VF.ttf",
+    "build": "scripts/build_cjk_fonts.py; fonttools 4.65.0; wght=400/700; all Unicode characters; no shaping/vertical alternates; original timestamps",
+    "license_file": "OFL-CJK.txt"
+  }
 }

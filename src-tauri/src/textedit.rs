@@ -7,6 +7,7 @@
 //! bounded character spacing is retained. Other graphics and custom text state are refused.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
+mod actual;
 mod clipping;
 mod colors;
 mod filters;
@@ -15,6 +16,9 @@ mod graphics;
 mod grouping;
 mod images;
 mod layout;
+mod patterns;
+#[cfg(test)]
+mod preserved_tests;
 mod refusal;
 mod spacers;
 mod streams;
@@ -108,6 +112,8 @@ pub enum EditFont {
     NotoSansBold,
     NotoSansItalic,
     NotoSansBoldItalic,
+    NotoSansCjkSc,
+    NotoSansCjkScBold,
 }
 
 fn dictionary<'a>(doc: &'a Document, value: &'a Object) -> Result<&'a Dictionary, String> {
@@ -136,6 +142,9 @@ fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
 fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Metrics, String> {
     let fonts = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
     let font = dictionary(doc, fonts.get(name).map_err(|e| e.to_string())?)?;
+    if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type3") {
+        return fonts::type3(doc, font);
+    }
     if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type0") {
         return fonts::composite(doc, font);
     }
@@ -310,18 +319,30 @@ fn orthogonal(matrix: [f64; 6]) -> bool {
 // page CTM stays diagonal; only text matrices may exchange the two axes.
 // Reflections may cancel; orientation is checked after composing at each show.
 fn compose_orthogonal(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
+    let result = compose_affine(outer, inner)?;
+    if !orthogonal(result) {
+        return Err("composed text transform exceeds its limit".into());
+    }
+    Ok(result)
+}
+
+fn diagonal(matrix: [f64; 6]) -> bool {
+    matrix[1] == 0. && matrix[2] == 0. && matrix[0] != 0. && matrix[3] != 0.
+}
+
+fn compose_affine(outer: [f64; 6], inner: [f64; 6]) -> Result<[f64; 6], String> {
     let result = [
-        inner[0] * outer[0],
-        inner[1] * outer[3],
-        inner[2] * outer[0],
-        inner[3] * outer[3],
-        inner[4] * outer[0] + outer[4],
-        inner[5] * outer[3] + outer[5],
+        inner[0] * outer[0] + inner[1] * outer[2],
+        inner[0] * outer[1] + inner[1] * outer[3],
+        inner[2] * outer[0] + inner[3] * outer[2],
+        inner[2] * outer[1] + inner[3] * outer[3],
+        inner[4] * outer[0] + inner[5] * outer[2] + outer[4],
+        inner[4] * outer[1] + inner[5] * outer[3] + outer[5],
     ];
     if result
         .iter()
         .any(|v| !v.is_finite() || v.abs() > 1_000_000.0)
-        || !orthogonal(result)
+        || result[0] * result[3] - result[1] * result[2] == 0.
     {
         return Err("composed text transform exceeds its limit".into());
     }
@@ -351,6 +372,10 @@ struct Inspection {
     bytes: Vec<u8>,
     patched: BTreeSet<usize>,
     runs: PageRuns,
+    // Validated non-diagonal text is preserved byte-for-byte. It supplies
+    // collision bounds but never an editable operator address.
+    preserved: Vec<Run>,
+    actual_text: BTreeMap<u32, usize>,
     // The active Tf can precede a restored state, not just the last Tf in the
     // stream. Keep its address privately; display font names can be lossy UTF-8.
     font_operators: BTreeMap<u32, usize>,
@@ -434,8 +459,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     // Discovery promises that deletion can use the byte-preserving writer too.
     streams::rewrite(&bytes, &content, &BTreeSet::new())?;
     let resources = resources(doc, id)?;
-    let mut fill_components = colors::named(doc, resources, b"DeviceGray")?;
+    let mut fill_components =
+        patterns::Colour::Solid(colors::named(doc, resources, b"DeviceGray")?);
     let mut colour_spaces = BTreeMap::new();
+    let mut shading_patterns = BTreeSet::new();
     let mut graphics_states = BTreeSet::new();
     let mut image_names = BTreeSet::new();
     let mut image_bytes = 0;
@@ -455,13 +482,15 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut cursor = 0.0;
     let mut previous_show = None;
     let mut spacer: Option<spacers::Spacer> = None;
+    let mut actual: Option<actual::Span> = None;
+    let mut actual_spans = Vec::new();
     let mut continued = BTreeSet::new();
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
     let mut leading = 0.0;
     let mut spacing = 0.0;
     let mut word_spacing = 0.0;
-    let mut stroke_components = 1;
+    let mut stroke_components = patterns::Colour::Solid(1);
     let mut states = Vec::new();
     let mut clip = None;
     let mut compound_clips: Vec<clipping::Region> = Vec::new();
@@ -472,6 +501,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut text_spacing = BTreeMap::new();
     let mut compound_run_clips = BTreeMap::new();
     let mut contexts = BTreeMap::new();
+    let mut preserved = Vec::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
@@ -480,14 +510,30 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         if let Some(spacer) = &mut spacer {
             spacer.step(&op.operator)?;
         }
+        if actual.is_some() && matches!(op.operator.as_str(), "BDC" | "BMC") {
+            return Err("nested ActualText marked content is not editable yet".into());
+        }
         match (op.operator.as_str(), op.operands.as_slice()) {
             // Marked content and text objects are independently balanced (ISO
             // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
             // only the narrow ActualText spacer grammar has a separate path.
             ("BDC", [tag, properties])
-                if inside && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
+                if !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
             {
-                spacer = Some(spacers::Spacer::new(tag, properties)?);
+                if let Some(value) = spacers::Spacer::new(tag, properties)
+                    .ok()
+                    .filter(|_| inside)
+                {
+                    spacer = Some(value);
+                } else {
+                    actual = Some(actual::Span::new(tag, properties, index)?);
+                }
+            }
+            ("EMC", []) if actual.is_some() => {
+                if actual_spans.len() >= 128 {
+                    return Err("too many ActualText spans".into());
+                }
+                actual_spans.push(actual.take().unwrap());
             }
             ("EMC", []) if inside && spacer.is_some() => {
                 spacer = None;
@@ -528,9 +574,17 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
+                if !diagonal(page_transform) {
+                    return Err("non-diagonal paths are not editable yet".into());
+                }
                 if let Some(rectangles_consumed) =
                     clipping::painted(&content.operations[index..], page_transform)?
                 {
+                    patterns::paint(
+                        &content.operations[index + rectangles_consumed - 1].operator,
+                        fill_components,
+                        stroke_components,
+                    )?;
                     if content.operations[index + rectangles_consumed - 1].operator != "n" {
                         tags.paint();
                     }
@@ -545,6 +599,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 }
             }
             ("m", _) if !inside => {
+                if !diagonal(page_transform) {
+                    return Err("non-diagonal paths are not editable yet".into());
+                }
                 if let Some((consumed, region)) =
                     clipping::compound(&content.operations[index..], page_transform)?
                 {
@@ -556,6 +613,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     continue;
                 }
                 let consumed = clipping::path(&content.operations[index..], page_transform)?;
+                patterns::paint(
+                    &content.operations[index + consumed - 1].operator,
+                    fill_components,
+                    stroke_components,
+                )?;
                 if content.operations[index + consumed - 1].operator != "n" {
                     tags.paint();
                 }
@@ -581,12 +643,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 for (dest, value) in next.iter_mut().zip(values) {
                     *dest = number(value)?;
                 }
-                if next[0] == 0.0 || next[3] == 0.0 || next[1] != 0.0 || next[2] != 0.0 {
-                    return Err(
-                        "collapsed, rotated or skewed page content is not editable yet".into(),
-                    );
-                }
-                page_transform = compose_orthogonal(page_transform, next)?;
+                page_transform = compose_affine(page_transform, next)?;
             }
             ("BT", []) if !inside => {
                 inside = true;
@@ -620,7 +677,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     if colour_spaces.len() >= 32 {
                         return Err("too many text colour spaces".into());
                     }
-                    colour_spaces.insert(name.clone(), colors::named(doc, resources, name)?);
+                    colour_spaces.insert(
+                        name.clone(),
+                        if name == b"Pattern" {
+                            patterns::Colour::Pattern { selected: false }
+                        } else {
+                            patterns::Colour::Solid(colors::named(doc, resources, name)?)
+                        },
+                    );
                 }
                 if op.operator == "cs" {
                     fill_components = colour_spaces[name];
@@ -628,15 +692,24 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     stroke_components = colour_spaces[name];
                 }
             }
-            ("sc" | "scn", values) => colors::values(values, fill_components)?,
-            ("SC" | "SCN", values) => colors::values(values, stroke_components)?,
+            ("sc" | "scn", values) => {
+                fill_components.set(doc, resources, &op.operator, values, &mut shading_patterns)?
+            }
+            ("SC" | "SCN", values) => stroke_components.set(
+                doc,
+                resources,
+                &op.operator,
+                values,
+                &mut shading_patterns,
+            )?,
             ("g" | "rg" | "k", values) => {
-                fill_components = match op.operator.as_str() {
+                let components = match op.operator.as_str() {
                     "g" => 1,
                     "rg" => 3,
                     _ => 4,
                 };
-                colors::values(values, fill_components)?;
+                fill_components = patterns::Colour::Solid(components);
+                colors::values(values, components)?;
             }
             ("G" | "RG" | "K", values) => {
                 // Filled text cannot use stroke colour; preserve the validated
@@ -646,7 +719,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     "RG" => 3,
                     _ => 4,
                 };
-                stroke_components = components;
+                stroke_components = patterns::Colour::Solid(components);
                 colors::values(values, components)?;
             }
             ("Tf", [name, size]) if inside => {
@@ -668,9 +741,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 for (dest, value) in matrix.iter_mut().zip(values) {
                     *dest = number(value)?;
                 }
-                if !orthogonal(matrix) {
-                    return Err("collapsed or skewed text is not editable yet".into());
-                }
+                compose_affine([1., 0., 0., 1., 0., 0.], matrix)?;
                 positioned = true;
                 cursor = 0.0;
             }
@@ -733,18 +804,47 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         };
         let mut shown_matrix = matrix;
         shift_position(&mut shown_matrix, cursor * matrix[0], cursor * matrix[1])?;
-        let page_matrix = compose_orthogonal(page_transform, shown_matrix)?;
+        let page_matrix = if diagonal(page_transform) && orthogonal(shown_matrix) {
+            compose_orthogonal(page_transform, shown_matrix)?
+        } else {
+            compose_affine(page_transform, shown_matrix)?
+        };
+        let read_only = !diagonal(page_transform)
+            || !orthogonal(page_matrix)
+            || page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0
+            || !matches!(fill_components, patterns::Colour::Solid(_));
+        patterns::paint("f", fill_components, stroke_components)?;
         cursor += advance;
         if !cursor.is_finite() || cursor > 1_000_000.0 {
             return Err("continued text advance exceeds its limit".into());
-        }
-        if page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0 {
-            return Err("reflected text is not editable yet".into());
         }
         let mut bounds = text_bounds(
             page_matrix,
             [horizontal[0], -size * 0.25, horizontal[1], size],
         );
+        if (read_only || (actual.is_some() && metrics.vertical_bounds.is_some()))
+            && !text.is_empty()
+        {
+            let (bottom, top) = metrics
+                .vertical_bounds
+                .map(|[bottom, top]| (bottom, top))
+                .ok_or("preserved transformed text requires validated glyph outlines")?;
+            let ink = text_bounds(
+                page_matrix,
+                [
+                    horizontal[0],
+                    bottom * size / 1000.,
+                    horizontal[1],
+                    top * size / 1000.,
+                ],
+            );
+            bounds = [
+                bounds[0].min(ink[0]),
+                bounds[1].min(ink[1]),
+                bounds[2].max(ink[2]),
+                bounds[3].max(ink[3]),
+            ];
+        }
         // Include actual horizontal overhang in hit boxes and clipping. The
         // vertical union covers every offered glyph. Writing additionally keeps
         // replacement ink inside these unrounded original horizontal bounds.
@@ -796,6 +896,21 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             spacer.text(&text)?;
             continue;
         }
+        if let Some(span) = &mut actual {
+            span.show(index as u32, &text, metrics.vertical_bounds.is_some())?;
+        }
+        if read_only {
+            preserved.push(Run {
+                display_rect,
+                operator: index as u32,
+                text,
+                font: String::from_utf8_lossy(name).into_owned(),
+                size,
+                matrix: page_matrix,
+                advance,
+            });
+            continue;
+        }
         font_operators.insert(index as u32, font_operator);
         horizontal_bounds.insert(index as u32, horizontal);
         text_spacing.insert(index as u32, (spacing, word_spacing));
@@ -819,6 +934,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             advance,
         });
     }
+    if actual.is_some() || spacer.is_some() {
+        return Err("unterminated ActualText marked content".into());
+    }
     if inside {
         return Err("unterminated text block".into());
     }
@@ -826,6 +944,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         return Err("unterminated graphics-state save".into());
     }
     tags.finish()?;
+    if result.runs.is_empty() && !preserved.is_empty() {
+        return Err("page contains only unsupported transformed text".into());
+    }
     // Discovery promises that every offered run can be deleted. Check the
     // actual f32 TJ compensation before offering implicit-advance text.
     for run in &result.runs {
@@ -839,6 +960,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         bytes,
         patched: BTreeSet::new(),
         runs: result,
+        preserved,
+        actual_text: BTreeMap::new(),
         font_operators,
         horizontal_bounds,
         text_spacing,
@@ -848,6 +971,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         contexts,
         expanded: BTreeMap::new(),
     };
+    for span in actual_spans {
+        span.finish(&mut inspection)?;
+    }
+    if inspection.runs.runs.is_empty() && !inspection.preserved.is_empty() {
+        return Err("page contains only read-only text".into());
+    }
     grouping::collect(&mut inspection);
     Ok(inspection)
 }
@@ -902,6 +1031,9 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if change.layout.is_some() {
             let page = prepared.get_mut(&change.page).ok_or("missing text page")?;
             let replacement = layout::prepare(doc, page, change)?;
+            if page.actual_text.contains_key(&change.operator) && replacement.lines > 1 {
+                return Err("ActualText editing currently requires a single line".into());
+            }
             page.expanded.insert(change.operator as usize, replacement);
             page.patched.insert(change.operator as usize);
             let members = page
@@ -989,6 +1121,14 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                 patched.insert(member as usize);
             }
         }
+    }
+    // Logical replacement strings are patched with their owning show.
+    for change in changes {
+        actual::patch(
+            prepared.get_mut(&change.page).ok_or("missing text page")?,
+            change.operator,
+            &change.replacement,
+        )?;
     }
     let ready = prepared
         .into_values()
@@ -1730,13 +1870,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn textedit_page_transforms_refuse_unbounded_or_nondiagonal_matrices() {
+    fn textedit_page_transforms_refuse_unbounded_matrices_and_preserve_restored_state() {
         // Restoring the matrix before text prevents its later geometry check
         // from hiding a page-transform admission failure.
         for (matrix, accepted) in [
             ("1 0 0 1 0 0", true),
-            ("0 1 -1 0 0 0", false),
-            ("0 -1 1 0 0 0", false),
+            ("0 1 -1 0 0 0", true),
+            ("0 -1 1 0 0 0", true),
+            ("0 0 0 1 0 0", false),
         ] {
             let bytes = format!("q {matrix} cm Q BT /F1 12 Tf 40 180 Td (TEXT) Tj ET");
             assert_eq!(scan(&with_content(bytes.as_bytes()), 0).is_ok(), accepted);

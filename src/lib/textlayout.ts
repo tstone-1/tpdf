@@ -33,7 +33,8 @@ export class TextLayoutControls {
     this.font.setAttribute("aria-label", "Font"); this.font.style.cssText = "display:block;max-width:260px";
     for (const [value, title] of [["auto", "Original with automatic fallback"], ["original", "Original only"],
       ["noto_sans", "Noto Sans"], ["noto_sans_bold", "Noto Sans Bold"],
-      ["noto_sans_italic", "Noto Sans Italic"], ["noto_sans_bold_italic", "Noto Sans Bold Italic"]]) {
+      ["noto_sans_italic", "Noto Sans Italic"], ["noto_sans_bold_italic", "Noto Sans Bold Italic"],
+      ["noto_sans_cjk_sc", "Noto Sans CJK SC"], ["noto_sans_cjk_sc_bold", "Noto Sans CJK SC Bold"]]) {
       const option = document.createElement("option"); option.value = value!; option.textContent = title!;
       this.font.append(option);
     }

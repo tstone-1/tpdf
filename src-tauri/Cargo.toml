@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.9.9"
+version = "26.9.10"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
@@ -145,6 +145,8 @@ quick-xml = "0.42"
 # MIT OR Apache-2.0. Worker-only validation of embedded TrueType subsets.
 # Layout/shaping, variations and glyph-name fallback are intentionally excluded.
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "glyph-names"] }
+# MIT OR Apache-2.0. Subset only the bundled static CJK fallback programs.
+subsetter = { version = "0.2.6", default-features = false }
 
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
